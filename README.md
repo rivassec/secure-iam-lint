@@ -1,3 +1,4 @@
+![CI](https://github.com/coldbootsec/secure-iam-lint/actions/workflows/test.yml/badge.svg)
 # secure-iam-lint
 
 `secure-iam-lint` is a lightweight CLI tool that scans AWS IAM policy files for common misconfigurations. It flags overly permissive actions like wildcards, missing conditions, and patterns that could lead to privilege escalation.
