@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name="secure-iam-lint",
     version="0.1.0",
-    author="[coldbootsec]",
+    author="[rivassec]",
     description="A lightweight linter for AWS IAM policies",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
