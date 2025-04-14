@@ -1,8 +1,9 @@
-__pycache__/
+*.egg-info/
 *.pyc
-.pytest_cache/
 .DS_Store
 .idea/
-dist/
+.pytest_cache/
+.venv
+__pycache__/
 build/
-*.egg-info/
+dist/
