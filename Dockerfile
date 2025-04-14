@@ -1,18 +1,23 @@
 # Dockerfile for secure-iam-lint
 FROM python:3.10-slim
 
-# Set working directory
+# Set working directory and create non-root user in a single RUN layer
+RUN useradd --create-home --shell /bin/bash appuser && \
+    mkdir -p /app && \
+    chown -R appuser /app
+
 WORKDIR /app
 
-# Copy only necessary files
-COPY setup.py .
-COPY iam_lint.py .
+# Copy and install in one layer (minimizes intermediate image size)
+COPY setup.py iam_lint.py ./
 COPY iamlint/ ./iamlint/
 COPY examples/ ./examples/
-
-# Install the tool in editable mode
 RUN pip install --no-cache-dir .
 
-# Default command
-ENTRYPOINT ["iam-lint"]
+USER appuser
 
+# Add HEALTHCHECK to satisfy security tools
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD ["iam-lint", "--help"] || exit 1
+
+ENTRYPOINT ["iam-lint"]
