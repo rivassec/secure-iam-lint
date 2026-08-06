@@ -9,7 +9,7 @@ def load_policy(path):
     try:
         with open(path, "r") as f:
             return json.load(f)
-    except Exception as e:
+    except (OSError, json.JSONDecodeError) as e:
         print(f"[ERROR] Failed to load policy: {e}")
         sys.exit(1)
 

@@ -1,5 +1,6 @@
 import json
 import os
+
 from iamlint import rules
 
 
