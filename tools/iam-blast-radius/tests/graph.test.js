@@ -199,8 +199,11 @@ test('acceptance (IAM-107): PassRole+Lambda encodes the privilege transition thr
   const exec = findEdge(r.graph, { from: 'role:passable:lambda', to: 'service:lambda', type: 'can-execute-as' });
   assert.ok(pass, 'expected a can-pass edge from principal to the passable-role pivot');
   assert.ok(exec, 'expected a can-execute-as edge from the pivot to service:lambda');
-  assert.equal(pass.certainty, CERTAINTY.CONFIRMED_BY_CONTEXT);
-  assert.equal(exec.certainty, CERTAINTY.CONFIRMED_BY_CONTEXT);
+  // IAM-202: the PassRole transition is `policy-supported`, NOT confirmed - both
+  // grants are in the policy, but a usable target role / accepting trust config
+  // is an out-of-scope precondition this policy cannot prove.
+  assert.equal(pass.certainty, CERTAINTY.POLICY_SUPPORTED);
+  assert.equal(exec.certainty, CERTAINTY.POLICY_SUPPORTED);
   // The old shortcut edge (principal straight to the service) must NOT exist:
   // the transition must go through the pivot.
   assert.ok(!findEdge(r.graph, { from: 'principal', to: 'service:lambda', type: 'can-pass' }),
@@ -219,7 +222,7 @@ test('acceptance (IAM-107): PassRole+Lambda encodes the privilege transition thr
   assert.ok(pass.evidence.some((ev) => ev.resources.includes('arn:aws:iam::1:role/app-*')));
 });
 
-test('acceptance: a conditioned execution statement downgrades the PassRole transition to conditionally-reachable', () => {
+test('acceptance: a conditioned execution statement downgrades the PassRole transition to context-required', () => {
   const r = buildGraphFromText(JSON.stringify({
     Statement: [
       { Effect: 'Allow', Action: 'iam:PassRole', Resource: '*' },
@@ -230,8 +233,8 @@ test('acceptance: a conditioned execution statement downgrades the PassRole tran
   const exec = findEdge(r.graph, { from: 'role:passable:ec2', to: 'service:ec2', type: 'can-execute-as' });
   assert.ok(pass);
   assert.ok(exec);
-  assert.equal(pass.certainty, CERTAINTY.CONDITIONALLY_REACHABLE);
-  assert.equal(exec.certainty, CERTAINTY.CONDITIONALLY_REACHABLE);
+  assert.equal(pass.certainty, CERTAINTY.CONTEXT_REQUIRED);
+  assert.equal(exec.certainty, CERTAINTY.CONTEXT_REQUIRED);
 });
 
 // ---------------------------------------------------------------------------
@@ -244,7 +247,7 @@ test('acceptance: Action "*" on Resource "*" -> allows(actiongroup:*) + can-writ
   }));
   const keys = new Set(r.graph.edges.map(edgeKey));
   // The two rule-derived edges: the wildcard-action group and the wildcard
-  // resource, both confirmed-by-context. Action:"*" is de-facto admin, so the
+  // resource, both confirmed-by-policy. Action:"*" is de-facto admin, so the
   // graph ALSO carries the escalation-path edges (can-pass / can-execute-as /
   // can-assume / can-modify) it necessarily grants; those are pinned exactly by
   // the admin-star fixture's exactGraphEdges. Here we assert the two rule edges
@@ -252,7 +255,7 @@ test('acceptance: Action "*" on Resource "*" -> allows(actiongroup:*) + can-writ
   for (const key of ['principal|allows|actiongroup:*', 'principal|can-write|resource:*']) {
     assert.ok(keys.has(key), `expected rule edge ${key}; got ${JSON.stringify([...keys])}`);
     const e = r.graph.edges.find((x) => edgeKey(x) === key);
-    assert.equal(e.certainty, CERTAINTY.CONFIRMED_BY_CONTEXT, `${key} confirmed-by-context`);
+    assert.equal(e.certainty, CERTAINTY.CONFIRMED_BY_POLICY, `${key} confirmed-by-policy`);
   }
   assert.equal(r.graph.nodes.find((n) => n.id === 'actiongroup:*').type, NODE_TYPES.ACTION_GROUP);
   assert.equal(r.graph.nodes.find((n) => n.id === 'resource:*').type, NODE_TYPES.RESOURCE);
@@ -266,7 +269,7 @@ test('acceptance: service wildcard s3:* (scoped resource) -> single allows edge 
 });
 
 // ---------------------------------------------------------------------------
-// Certainty classes: blocked-by-deny, conditionally-reachable, potentially,
+// Certainty classes: blocked-by-deny, context-required, potentially,
 // unknown. (Confirmed covered above.)
 // ---------------------------------------------------------------------------
 
@@ -279,13 +282,13 @@ test('unconditional Deny -> denies edge with blocked-by-deny certainty', () => {
   assert.equal(deny.certainty, CERTAINTY.BLOCKED_BY_DENY);
 });
 
-test('conditional Deny -> denies edge is conditionally-reachable, not blocked', () => {
+test('conditional Deny -> denies edge is context-required, not blocked', () => {
   const r = buildGraphFromText(JSON.stringify({
     Statement: [{ Effect: 'Deny', Action: 's3:DeleteBucket', Resource: '*', Condition: { Bool: { 'aws:MultiFactorAuthPresent': 'false' } } }],
   }));
   const deny = r.graph.edges.find((e) => e.type === EDGE_TYPES.DENIES);
   assert.ok(deny);
-  assert.equal(deny.certainty, CERTAINTY.CONDITIONALLY_REACHABLE);
+  assert.equal(deny.certainty, CERTAINTY.CONTEXT_REQUIRED);
 });
 
 test('broad AssumeRole -> can-assume edge is potentially-reachable (unknown targets)', () => {
@@ -298,11 +301,55 @@ test('broad AssumeRole -> can-assume edge is potentially-reachable (unknown targ
 });
 
 // ---------------------------------------------------------------------------
+// IAM-202: PassRole transition edges are `policy-supported`, and kms:Decrypt is
+// its OWN edge type `can-decrypt`, distinct from a plain `can-read` data read.
+// ---------------------------------------------------------------------------
+
+test('IAM-202: unconditional PassRole->service transition edges are policy-supported (not confirmed)', () => {
+  const r = buildGraphFromText(JSON.stringify({
+    Statement: [
+      { Effect: 'Allow', Action: 'iam:PassRole', Resource: '*' },
+      { Effect: 'Allow', Action: 'lambda:CreateFunction', Resource: '*' },
+    ],
+  }));
+  const pass = findEdge(r.graph, { from: 'principal', to: 'role:passable:lambda', type: EDGE_TYPES.CAN_PASS });
+  const exec = findEdge(r.graph, { from: 'role:passable:lambda', to: 'service:lambda', type: EDGE_TYPES.CAN_EXECUTE_AS });
+  assert.ok(pass && exec, 'both transition edges present');
+  // Both grants are unconditional (policyEvidence high), yet the transition is
+  // policy-supported: a usable target role / accepting trust config is an
+  // out-of-scope precondition this policy cannot prove (threat-model T8).
+  assert.equal(pass.certainty, CERTAINTY.POLICY_SUPPORTED);
+  assert.equal(exec.certainty, CERTAINTY.POLICY_SUPPORTED);
+});
+
+test('IAM-202: kms:Decrypt -> a distinct can-decrypt edge (never can-read)', () => {
+  const r = buildGraphFromText(JSON.stringify({
+    Statement: [{ Sid: 'dec', Effect: 'Allow', Action: 'kms:Decrypt', Resource: 'arn:aws:kms:us-east-1:1:key/k' }],
+  }));
+  const decrypt = findEdge(r.graph, { from: 'principal', to: 'datastore:kms-decrypt', type: EDGE_TYPES.CAN_DECRYPT });
+  assert.ok(decrypt, 'expected a can-decrypt edge for kms:Decrypt');
+  assert.equal(decrypt.certainty, CERTAINTY.CONFIRMED_BY_POLICY);
+  assert.equal(decrypt.label, 'can decrypt ciphertext', 'human label preserved');
+  // The KMS edge must NOT be typed can-read: decryption is not a data read.
+  assert.ok(!r.graph.edges.some((e) => e.to === 'datastore:kms-decrypt' && e.type === EDGE_TYPES.CAN_READ),
+    'kms:Decrypt must not produce a can-read edge');
+});
+
+test('IAM-202: a data-exfil read stays can-read, distinct from kms:Decrypt can-decrypt', () => {
+  const r = buildGraphFromText(JSON.stringify({
+    Statement: [{ Effect: 'Allow', Action: 'secretsmanager:GetSecretValue', Resource: '*' }],
+  }));
+  const read = findEdge(r.graph, { from: 'principal', to: 'datastore:sensitive-data', type: EDGE_TYPES.CAN_READ });
+  assert.ok(read, 'DATA-EXFIL still produces a can-read edge');
+  assert.notEqual(read.type, EDGE_TYPES.CAN_DECRYPT);
+});
+
+// ---------------------------------------------------------------------------
 // Deny-aware RULE edges: rules.js is deliberately not Deny-aware (a Deny is
 // never itself a blast-radius grant), so graph.js must apply AWS explicit-Deny
 // precedence to rule-derived edges. Escalation edges arrive pre-folded. Without
 // this, a rule grant that a same-policy Deny overrides would still read as
-// confirmed-by-context - an overstated-certainty (threat-model T8) harm.
+// confirmed-by-policy - an overstated-certainty (threat-model T8) harm.
 // ---------------------------------------------------------------------------
 
 test('rule edge fully overridden by an unconditional same-policy Deny -> blocked-by-deny', () => {
@@ -323,7 +370,7 @@ test('rule edge fully overridden by an unconditional same-policy Deny -> blocked
   );
 });
 
-test('rule edge partially narrowed by a same-policy Deny -> downgraded to conditionally-reachable', () => {
+test('rule edge partially narrowed by a same-policy Deny -> downgraded to context-required', () => {
   const arn = 'arn:aws:ec2:us-east-1:1:instance/i-abc';
   const r = buildGraphFromText(JSON.stringify({
     Statement: [
@@ -333,7 +380,7 @@ test('rule edge partially narrowed by a same-policy Deny -> downgraded to condit
   }));
   const destroy = findEdge(r.graph, { from: 'principal', to: `resource:${arn}`, type: EDGE_TYPES.CAN_DESTROY });
   assert.ok(destroy);
-  assert.equal(destroy.certainty, CERTAINTY.CONDITIONALLY_REACHABLE);
+  assert.equal(destroy.certainty, CERTAINTY.CONTEXT_REQUIRED);
 });
 
 test('conditional same-policy Deny narrows a rule edge but never hard-blocks it', () => {
@@ -347,7 +394,7 @@ test('conditional same-policy Deny narrows a rule edge but never hard-blocks it'
   assert.ok(self);
   assert.equal(
     self.certainty,
-    CERTAINTY.CONDITIONALLY_REACHABLE,
+    CERTAINTY.CONTEXT_REQUIRED,
     'a conditional Deny may not fire, so it downgrades rather than hard-blocks',
   );
 });
@@ -363,7 +410,7 @@ test('a narrow Deny does NOT downgrade a broad wildcard rule edge (no false down
   assert.ok(allows, 'expected the s3:* allows edge');
   assert.equal(
     allows.certainty,
-    CERTAINTY.CONFIRMED_BY_CONTEXT,
+    CERTAINTY.CONFIRMED_BY_POLICY,
     's3:* is still confirmed; a single denied action does not cover the wildcard grant',
   );
   // The Deny is still surfaced on its own separate denies edge.
@@ -391,7 +438,7 @@ test('a NotAction-Deny narrows a broad wildcard rule edge but NEVER hard-blocks 
   );
   assert.equal(
     allows.certainty,
-    CERTAINTY.CONDITIONALLY_REACHABLE,
+    CERTAINTY.CONTEXT_REQUIRED,
     'the wildcard grant is narrowed (downgraded), not blocked',
   );
   // The Deny is still surfaced on its own separate denies edge (NotAction form).
@@ -410,7 +457,7 @@ test('a NotAction-Deny narrows a full "*" rule edge but NEVER hard-blocks it', (
   assert.ok(allows, 'expected the "*" allows edge to survive');
   assert.equal(
     allows.certainty,
-    CERTAINTY.CONDITIONALLY_REACHABLE,
+    CERTAINTY.CONTEXT_REQUIRED,
     'iam:CreateAccessKey remains allowed, so "*" is narrowed, not blocked',
   );
 });
@@ -441,7 +488,7 @@ test('NotAction-Allow rule edge is narrowed (never fully blocked) by a same-poli
   assert.ok(e, 'expected the NotAction allows edge');
   // ec2:TerminateInstances is granted by "everything except iam:*" and denied,
   // so the all-but-listed grant is narrowed, but a Deny can never cover it all.
-  assert.equal(e.certainty, CERTAINTY.CONDITIONALLY_REACHABLE);
+  assert.equal(e.certainty, CERTAINTY.CONTEXT_REQUIRED);
 });
 
 test('escalation edges remain driven by escalation.js policyEvidence, not re-folded here', () => {
@@ -490,7 +537,7 @@ test('merged edge keeps the STRONGEST certainty across supporting findings', () 
   }));
   const self = r.graph.edges.find((e) => e.to === 'policy:self' && e.type === EDGE_TYPES.CAN_MODIFY);
   assert.ok(self);
-  assert.equal(self.certainty, CERTAINTY.CONFIRMED_BY_CONTEXT);
+  assert.equal(self.certainty, CERTAINTY.CONFIRMED_BY_POLICY);
 });
 
 // ---------------------------------------------------------------------------

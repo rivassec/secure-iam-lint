@@ -249,6 +249,35 @@
       ],
       "acceptance": ["pass-role fixtures render the unknown-privileges transition node", "graph injection fixtures still inert", "reduced-motion honored", "UX/a11y critic no serious/critical", "full node --test suite green"],
       "maximumIterations": 5
+    },
+    {
+      "id": "IAM-201",
+      "title": "Phase 2.1: extend subsumption to same-statement capability findings + summary metric + grammar",
+      "priority": 47,
+      "phase": 2.1,
+      "status": "pending",
+      "requirements": [
+        "Generalize correlate.js: a generic WILDCARD-RESOURCE finding on a statement that ALSO has a more-specific capability finding for the SAME statement (KMS-DECRYPT, DATA-EXFIL, DIRECT-IAM-ADMIN, DESTRUCTIVE-ACTION, DETECTION-IMPAIRMENT) is subsumed into that capability finding as a risk factor, not a separate top-level row (nothing lost; preserved in subsumed[] + risk factors). Do NOT subsume a WILDCARD-RESOURCE that stands alone (no more-specific finding on that statement) or a full-* WILDCARD-ACTION.",
+        "KMS example: kms:Decrypt on * yields ONE primary KMS-DECRYPT finding with risk factors [x] kms:Decrypt granted [x] Resource:* [ ] kms:ViaService restriction [ ] kms:EncryptionContext restriction; total primaries drop from 6 to 5",
+        "Rename the risk-summary metric 'Broad-resource grants' to 'Standalone broad-resource findings' (count reflects post-subsumption standalone wildcards only)",
+        "Fix grammar in rules.js: 'Grants actions that reads secret material' -> 'read secret material'"
+      ],
+      "acceptance": ["KMS fixture: 5 primaries, no duplicate WILDCARD-RESOURCE row for the KMS statement", "a genuinely standalone wildcard-resource still stands alone", "summary metric renamed", "grammar fixed", "IAM-semantics critic 100", "full node --test suite green"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-202",
+      "title": "Phase 2.1: graph edge certainty vocabulary + can-decrypt edge type",
+      "priority": 46,
+      "phase": 2.1,
+      "status": "pending",
+      "requirements": [
+        "PassRole->service transition edges: change certainty from 'confirmed-by-context' to 'policy-supported' (the policy confirms the grants but NOT that a usable target role / trust config exists). Keep AssumeRole as 'potentially-reachable'. Certainty vocabulary: confirmed-by-policy (a grant literally in the policy), policy-supported (grants present but transition needs an out-of-scope precondition), potentially-reachable, context-required, blocked-by-deny, unknown-incomplete-context.",
+        "Introduce a distinct graph edge type 'can-decrypt' for kms:Decrypt (was 'can-read'); keep the human label 'can decrypt ciphertext'. Update the edge-type ontology and render-graph legend/styles so can-decrypt is visually distinct from can-read.",
+        "Update graph fixtures + tests for the new certainty values and edge type; keep SVG text via textContent, injection fixtures inert"
+      ],
+      "acceptance": ["pass-role transition edges are policy-supported (not confirmed-by-context)", "kms:Decrypt edge is can-decrypt", "graph injection fixtures still inert", "UX/a11y critic no serious/critical", "full node --test suite green"],
+      "maximumIterations": 4
     }
   ]
 }

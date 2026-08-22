@@ -1,6 +1,6 @@
 {
   "name": "NotAction-Deny narrows a broad wildcard rule grant -> downgraded, NEVER blocked-by-deny",
-  "note": "Allow s3:* on * with a same-policy Deny that uses NotAction:s3:GetObject on *. In real AWS that Deny denies every action EXCEPT s3:GetObject, so s3:GetObject stays ALLOWED - the wildcard grant is NARROWED, not fully blocked. A NotAction-Deny can never cover a broad/wildcard grant token (the NotAction-preserved action survives), so the allows(actiongroup:s3:*) edge must stay reachable (downgraded to conditionally-reachable), and the Deny is surfaced on its own separate denies edge. Rendering this identically to the genuinely-blocked control (Allow s3:* + Deny s3:*) would tell the user a still-reachable capability is definitively blocked - a false deny (threat-model T8). Regression fixture for the NotAction-Deny-vs-wildcard false-deny defect.",
+  "note": "Allow s3:* on * with a same-policy Deny that uses NotAction:s3:GetObject on *. In real AWS that Deny denies every action EXCEPT s3:GetObject, so s3:GetObject stays ALLOWED - the wildcard grant is NARROWED, not fully blocked. A NotAction-Deny can never cover a broad/wildcard grant token (the NotAction-preserved action survives), so the allows(actiongroup:s3:*) edge must stay reachable (downgraded to context-required), and the Deny is surfaced on its own separate denies edge. Rendering this identically to the genuinely-blocked control (Allow s3:* + Deny s3:*) would tell the user a still-reachable capability is definitively blocked - a false deny (threat-model T8). Regression fixture for the NotAction-Deny-vs-wildcard false-deny defect.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -12,7 +12,7 @@
     "valid": true,
     "findingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
     "graphEdges": [
-      { "from": "principal", "to": "actiongroup:s3:*", "type": "allows", "certainty": "conditionally-reachable" },
+      { "from": "principal", "to": "actiongroup:s3:*", "type": "allows", "certainty": "context-required" },
       { "from": "principal", "to": "actiongroup:not-action#1", "type": "denies", "certainty": "blocked-by-deny" }
     ]
   }

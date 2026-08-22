@@ -98,8 +98,12 @@ export function toMarkdown(analysis) {
     if (f.limit) out.push(line(['- What this does NOT prove: ', String(f.limit)]));
     if (f.remediation) out.push(line(['- Remediation: ', String(f.remediation)]));
     if (f.docRef) out.push(line(['- Reference: ', String(f.docRef)]));
-    // IAM-105: a compound path's present/absent risk-factor checklist, and any
-    // subordinate wildcard/broad-resource findings folded into it.
+    // A finding's present/absent risk-factor checklist (IAM-105 compound paths
+    // and IAM-201 capability findings both expose one), plus any subordinate
+    // wildcard/broad-resource findings folded into it. The heading is
+    // capability-neutral ("this finding") because subsumption also happens on a
+    // standalone capability finding that is NOT an escalation path - asserting a
+    // "path" here would claim one the analysis never detected.
     if (Array.isArray(f.riskFactors) && f.riskFactors.length > 0) {
       out.push('- Risk factors:');
       for (const rf of f.riskFactors) {
@@ -107,7 +111,7 @@ export function toMarkdown(analysis) {
       }
     }
     if (Array.isArray(f.subsumed) && f.subsumed.length > 0) {
-      out.push('- Subsumed findings (risk factors of this path, not separate rows):');
+      out.push('- Subsumed findings (risk factors folded into this finding, not separate rows):');
       for (const s of f.subsumed) {
         out.push(line([
           '  - ', String(s.id || ''), ' on ', String(s.statementSid || ''),

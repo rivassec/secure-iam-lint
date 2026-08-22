@@ -300,7 +300,14 @@ function renderDetailRow(finding, columnCount, detailId) {
   if (factors.length > 0) {
     const heading = document.createElement('p');
     heading.className = 'risk-factors-heading';
-    heading.textContent = 'Risk factors for this escalation path:';
+    // Only a compound escalation-path finding may call its checklist "for this
+    // escalation path". IAM-201 capability findings (KMS-DECRYPT, DATA-EXFIL, ...)
+    // also expose a risk-factor checklist but are NOT paths - no escalation
+    // enrichment - so their heading stays capability-neutral to avoid asserting a
+    // path the analysis never detected.
+    heading.textContent = finding.escalation
+      ? 'Risk factors for this escalation path:'
+      : 'Risk factors for this finding:';
     td.appendChild(heading);
 
     const ul = document.createElement('ul');
@@ -325,7 +332,7 @@ function renderDetailRow(finding, columnCount, detailId) {
     const heading = document.createElement('p');
     heading.className = 'subsumed-heading';
     heading.textContent =
-      'Subordinate findings folded into this path (not shown as separate rows):';
+      'Subordinate findings folded into this finding (not shown as separate rows):';
     td.appendChild(heading);
 
     const ul = document.createElement('ul');

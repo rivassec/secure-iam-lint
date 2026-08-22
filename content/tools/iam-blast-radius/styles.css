@@ -27,11 +27,13 @@
   --graph-unknown-fill: #2b2620;
   --graph-unknown-stroke: #e0a44a;
   --graph-arrow: #c9ccd1;
-  --cert-confirmed: #ff6b81; /* confirmed by context (highest concern) */
-  --cert-conditional: #e0a44a; /* conditionally reachable */
+  --cert-confirmed: #ff6b81; /* confirmed-by-policy (grant literally in policy) */
+  --cert-policy-supported: #c98af0; /* policy-supported (needs out-of-scope precondition) */
+  --cert-context-required: #e0a44a; /* context-required (a Condition may gate it) */
   --cert-potential: #6ea8ff; /* potentially reachable */
   --cert-blocked: #57c98a; /* blocked by an explicit Deny (safe) */
   --cert-unknown: #9aa0a8; /* unknown - incomplete context */
+  --edge-decrypt: #4fd6c9; /* can-decrypt (kms:Decrypt) label accent, distinct from can-read */
 }
 * { box-sizing: border-box; }
 body {
@@ -153,10 +155,17 @@ svg.iam-graph text { fill: var(--fg); font-family: "Source Sans Pro", -apple-sys
 /* Per-certainty edge encoding: distinct COLOR and distinct DASH (non-color cue).
    Applied to the visible edge-path within each certainty-tagged edge group. */
 .iam-graph .graph-edge.cert-confirmed .edge-path { stroke: var(--cert-confirmed); stroke-width: 2.6; }
-.iam-graph .graph-edge.cert-conditional .edge-path { stroke: var(--cert-conditional); stroke-dasharray: 7 4; }
+.iam-graph .graph-edge.cert-policy-supported .edge-path { stroke: var(--cert-policy-supported); stroke-width: 2.6; stroke-dasharray: 10 3; }
+.iam-graph .graph-edge.cert-context-required .edge-path { stroke: var(--cert-context-required); stroke-dasharray: 7 4; }
 .iam-graph .graph-edge.cert-potential .edge-path { stroke: var(--cert-potential); stroke-dasharray: 2 4; stroke-linecap: round; }
 .iam-graph .graph-edge.cert-blocked .edge-path { stroke: var(--cert-blocked); stroke-dasharray: 9 3 2 3; }
 .iam-graph .graph-edge.cert-unknown .edge-path { stroke: var(--cert-unknown); stroke-dasharray: 4 6; }
+
+/* IAM-202 edge-TYPE accent. Certainty owns the path stroke/dash; the edge-type
+   class rides the LABEL so kms:Decrypt (can-decrypt, "can decrypt ciphertext")
+   is visually distinct from a plain data read (can-read, "reads sensitive
+   data") regardless of certainty color. */
+.iam-graph .graph-edge.edge-type-can-decrypt .edge-label { fill: var(--edge-decrypt); font-style: italic; }
 
 /* Shared arrowhead marker. A neutral light fill guarantees it is visible on the
    dark theme; where supported, context-stroke tints it to match the edge color

@@ -1,6 +1,6 @@
 {
-  "name": "Conditioned UpdateAssumeRolePolicy -> conditionally-reachable can-modify (role)",
-  "note": "iam:UpdateAssumeRolePolicy gated by a Condition drops the escalation to medium confidence, mapping the can-modify edge onto the target Role node as conditionally-reachable.",
+  "name": "Conditioned UpdateAssumeRolePolicy -> context-required can-modify (role)",
+  "note": "iam:UpdateAssumeRolePolicy gated by a Condition drops the escalation to medium confidence, mapping the can-modify edge onto the target Role node as context-required.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -17,7 +17,7 @@
     "valid": true,
     "findingIds": ["TRUST-POLICY-MODIFY"],
     "graphEdges": [
-      { "from": "principal", "to": "role:arn:aws:iam::111122223333:role/target", "type": "can-modify", "certainty": "conditionally-reachable" }
+      { "from": "principal", "to": "role:arn:aws:iam::111122223333:role/target", "type": "can-modify", "certainty": "context-required" }
     ]
   }
 }

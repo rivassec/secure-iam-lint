@@ -28,6 +28,7 @@ import {
   createGraphRenderer,
   CERTAINTY_CLASSES,
   EDGE_STYLE_ORDER,
+  EDGE_TYPE_CLASSES,
   SVG_NS,
 } from '../../../content/tools/iam-blast-radius/engine/render-graph.js';
 
@@ -177,7 +178,7 @@ test('computeLayout tolerates empty / malformed graph input without throwing', (
 test('an edge to an absent node is dropped from the layout', () => {
   const graph = {
     nodes: [{ id: 'principal', type: 'Principal', label: 'P' }],
-    edges: [{ id: 'e1', from: 'principal', to: 'ghost', type: 'allows', certainty: 'confirmed-by-context', label: 'x', evidence: [] }],
+    edges: [{ id: 'e1', from: 'principal', to: 'ghost', type: 'allows', certainty: 'confirmed-by-policy', label: 'x', evidence: [] }],
   };
   const layout = computeLayout(graph);
   assert.equal(layout.edges.length, 0, 'edge to missing target is not laid out');
@@ -275,6 +276,31 @@ test('IAM-107: the transition lays out left-to-right across columns (pivot betwe
 test('EDGE_STYLE_ORDER lists every certainty class exactly once', () => {
   const keys = Object.keys(CERTAINTY_CLASSES).sort();
   assert.deepEqual([...EDGE_STYLE_ORDER].sort(), keys);
+});
+
+test('IAM-202: the kms:Decrypt edge renders with the distinct can-decrypt edge-type class', () => {
+  const doc = fakeDocument();
+  const r = createGraphRenderer(doc);
+  const el = mount(doc);
+  const result = analyzeFixture('graph/kms-decrypt-can-decrypt-edge.json');
+  const svg = r.render(result.graph, el, { reducedMotion: true });
+
+  const decryptEdge = svg.find(
+    (n) => n.tag === 'g' && (n.getAttribute('class') || '').includes(EDGE_TYPE_CLASSES['can-decrypt']),
+  );
+  assert.ok(decryptEdge, 'expected an edge group flagged edge-type-can-decrypt');
+  // It still carries a certainty class (the type accent rides alongside it).
+  const cls = decryptEdge.getAttribute('class');
+  assert.ok(
+    Object.values(CERTAINTY_CLASSES).some((c) => cls.includes(c.cssClass)),
+    'can-decrypt edge still carries its certainty class',
+  );
+  // The human label is preserved on the edge.
+  assert.match(decryptEdge.textContent, /can decrypt ciphertext/);
+  // Only whitelisted tags were synthesized.
+  for (const created of doc.created) {
+    assert.ok(ALLOWED_TAGS.has(created.tag), `unexpected element tag created: ${created.tag}`);
+  }
 });
 
 test('reduced-motion is honored: entrance-animation class is omitted', () => {
@@ -422,7 +448,7 @@ test('renderEvidence serializes a hostile condition object as inert JSON text', 
   const edge = {
     label: 'x',
     type: 'allows',
-    certainty: 'conditionally-reachable',
+    certainty: 'context-required',
     from: 'principal',
     to: 'resource:x',
     evidence: [{

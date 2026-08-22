@@ -18,7 +18,7 @@
     "findingIds": ["WILDCARD-RESOURCE"],
     "notFindingIds": ["WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-EXFIL"],
     "exactGraphEdges": [
-      { "from": "principal", "to": "resource:*", "type": "can-write", "certainty": "confirmed-by-context" }
+      { "from": "principal", "to": "resource:*", "type": "can-write", "certainty": "confirmed-by-policy" }
     ]
   }
 }

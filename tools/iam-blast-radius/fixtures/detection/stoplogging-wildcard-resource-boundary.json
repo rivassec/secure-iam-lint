@@ -1,11 +1,26 @@
 {
   "name": "cloudtrail:StopLogging on * (boundary, multi-finding)",
-  "note": "StopLogging on Resource \"*\" is both a detection-impairment grant and a non-read wildcard-resource grant, so DETECTION-IMPAIRMENT and WILDCARD-RESOURCE both fire. Boundary showing the two rules compose.",
+  "note": "StopLogging on Resource \"*\" is both a detection-impairment grant and a generic broad-resource grant, so the rule catalog produces DETECTION-IMPAIRMENT AND WILDCARD-RESOURCE on this one statement (exactFindingIds is the pre-correlation rule set). IAM-201 then folds the same-statement WILDCARD-RESOURCE INTO the more-specific DETECTION-IMPAIRMENT finding as a risk factor, so the authoritative (post-correlation) findings show ONE DETECTION-IMPAIRMENT row with the broad-resource scope captured as a risk factor rather than a duplicate WILDCARD-RESOURCE row.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
       { "Sid": "StopAllLogging", "Effect": "Allow", "Action": "cloudtrail:StopLogging", "Resource": "*" }
     ]
   },
-  "expect": { "valid": true, "exactFindingIds": ["WILDCARD-RESOURCE", "DETECTION-IMPAIRMENT"], "findingIds": ["WILDCARD-RESOURCE", "DETECTION-IMPAIRMENT"], "notFindingIds": ["WILDCARD-ACTION", "DESTRUCTIVE-ACTION"] }
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["WILDCARD-RESOURCE", "DETECTION-IMPAIRMENT"],
+    "findingIds": ["DETECTION-IMPAIRMENT"],
+    "notFindingIds": ["WILDCARD-ACTION", "DESTRUCTIVE-ACTION"],
+    "compound": {
+      "primaryId": "DETECTION-IMPAIRMENT",
+      "subsumes": [{ "id": "WILDCARD-RESOURCE", "statementIndex": 0 }],
+      "independentFindings": [],
+      "note": "IAM-201: the WILDCARD-RESOURCE on statement 0 is the broad-resource scope of the co-located DETECTION-IMPAIRMENT capability, so it is folded in as a risk factor instead of a separate top-level row.",
+      "riskFactors": [
+        { "key": "cloudtrail:StopLogging", "present": true },
+        { "key": "resource-wildcard", "present": true }
+      ]
+    }
+  }
 }

@@ -17,7 +17,7 @@
     "findingIds": ["DESTRUCTIVE-ACTION"],
     "assertInertRendering": true,
     "graphEdges": [
-      { "from": "principal", "to": "resource:arn:aws:ec2:us-east-1:111122223333:instance/\"><script>alert(document.domain)</script>", "type": "can-destroy", "certainty": "confirmed-by-context" }
+      { "from": "principal", "to": "resource:arn:aws:ec2:us-east-1:111122223333:instance/\"><script>alert(document.domain)</script>", "type": "can-destroy", "certainty": "confirmed-by-policy" }
     ]
   }
 }

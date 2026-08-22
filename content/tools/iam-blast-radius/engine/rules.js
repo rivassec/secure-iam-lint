@@ -482,7 +482,7 @@ function ruleDataExfil(stmt, out) {
   const whyParts = [];
   if (secret.length > 0) {
     whyParts.push(
-      'reads secret material (Secrets Manager / SSM parameters)',
+      'read secret material (Secrets Manager / SSM parameters)',
     );
   }
   if (bulk.length > 0) {

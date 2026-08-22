@@ -1,6 +1,6 @@
 {
-  "name": "Conditional Deny -> conditionally-reachable denies edge",
-  "note": "A Deny gated by a Condition may not fire at runtime, so its edge is conditionally-reachable, NOT blocked-by-deny (overstating a false block is a truthfulness harm).",
+  "name": "Conditional Deny -> context-required denies edge",
+  "note": "A Deny gated by a Condition may not fire at runtime, so its edge is context-required, NOT blocked-by-deny (overstating a false block is a truthfulness harm).",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -17,7 +17,7 @@
     "valid": true,
     "findingIds": [],
     "exactGraphEdges": [
-      { "from": "principal", "to": "actiongroup:deny#0", "type": "denies", "certainty": "conditionally-reachable" }
+      { "from": "principal", "to": "actiongroup:deny#0", "type": "denies", "certainty": "context-required" }
     ]
   }
 }

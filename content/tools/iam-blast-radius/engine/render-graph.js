@@ -33,14 +33,22 @@ export const SVG_NS = 'http://www.w3.org/2000/svg';
 // evidence panel. Distinct visual styles per class (NOT blended into one score),
 // per docs/architecture.md "Graph model". These strings are our own constants;
 // none of them ever derive from analyzed input.
+// IAM-202 certainty vocabulary. `confirmed-by-policy` (was confirmed-by-context)
+// and `context-required` (was conditionally-reachable) are renamed for accuracy;
+// `policy-supported` is new (the grants are present but the transition needs an
+// out-of-scope precondition this policy cannot prove).
 export const CERTAINTY_CLASSES = Object.freeze({
-  'confirmed-by-context': Object.freeze({
+  'confirmed-by-policy': Object.freeze({
     cssClass: 'cert-confirmed',
-    label: 'Confirmed by this policy context',
+    label: 'Confirmed by this policy text',
   }),
-  'conditionally-reachable': Object.freeze({
-    cssClass: 'cert-conditional',
-    label: 'Conditionally reachable (a Condition may gate it)',
+  'policy-supported': Object.freeze({
+    cssClass: 'cert-policy-supported',
+    label: 'Policy-supported (grants present; the transition needs an out-of-scope precondition)',
+  }),
+  'context-required': Object.freeze({
+    cssClass: 'cert-context-required',
+    label: 'Context required (a Condition may gate it)',
   }),
   'potentially-reachable': Object.freeze({
     cssClass: 'cert-potential',
@@ -60,11 +68,28 @@ export const CERTAINTY_CLASSES = Object.freeze({
 // intent that a Deny is the single most important fact to surface).
 export const EDGE_STYLE_ORDER = Object.freeze([
   'blocked-by-deny',
-  'confirmed-by-context',
-  'conditionally-reachable',
+  'confirmed-by-policy',
+  'policy-supported',
+  'context-required',
   'potentially-reachable',
   'unknown-incomplete-context',
 ]);
+
+// Edge-TYPE -> the FIXED css class + human label used to visually separate the
+// relationship kinds (IAM-202 introduces `can-decrypt` for kms:Decrypt, distinct
+// from a plain `can-read` data read). These strings are our own vocabulary; none
+// derive from analyzed input. The certainty class still drives the primary edge
+// stroke; the edge-type class rides alongside so decrypt never looks like a read.
+export const EDGE_TYPE_CLASSES = Object.freeze({
+  'can-read': 'edge-type-can-read',
+  'can-decrypt': 'edge-type-can-decrypt',
+});
+
+function edgeTypeClass(type) {
+  return Object.prototype.hasOwnProperty.call(EDGE_TYPE_CLASSES, type)
+    ? EDGE_TYPE_CLASSES[type]
+    : null;
+}
 
 function certaintyClass(certainty) {
   const entry = CERTAINTY_CLASSES[certainty];
@@ -381,8 +406,12 @@ export function createGraphRenderer(doc) {
 
   function buildEdge(le, onSelect) {
     const cls = certaintyClass(le.certainty);
+    // Edge-type class (IAM-202) is appended when the type has a distinct visual
+    // treatment (e.g. can-decrypt vs can-read); it comes from our fixed
+    // vocabulary, never from analyzed input.
+    const typeCls = edgeTypeClass(le.type);
     const g = svgEl('g', {
-      class: `graph-edge ${cls}`,
+      class: typeCls ? `graph-edge ${cls} ${typeCls}` : `graph-edge ${cls}`,
       tabindex: 0,
       role: 'button',
     });

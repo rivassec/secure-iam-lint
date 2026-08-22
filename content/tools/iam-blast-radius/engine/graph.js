@@ -15,10 +15,20 @@
 //   Account, ExternalPrincipal.
 // Edge types:
 //   allows, denies, can-assume, trusts, can-pass, can-modify, can-execute-as,
-//   can-read, can-write, can-destroy.
-// Edge certainty classes (kept distinct, NOT blended into one score):
-//   confirmed-by-context, conditionally-reachable, potentially-reachable,
-//   blocked-by-deny, unknown-incomplete-context.
+//   can-read, can-decrypt, can-write, can-destroy.
+//   (IAM-202 adds `can-decrypt` for kms:Decrypt, distinct from a plain
+//   `can-read` data read: it turns ciphertext into plaintext, not secret
+//   enumeration/retrieval.)
+// Edge certainty classes (kept distinct, NOT blended into one score) - IAM-202
+// vocabulary:
+//   confirmed-by-policy   - a grant literally present in this policy text
+//   policy-supported      - the grants are present, but the transition needs an
+//                           out-of-scope precondition (e.g. a usable target
+//                           role / trust config) that this policy cannot prove
+//   context-required      - a Condition in the policy may gate it at runtime
+//   potentially-reachable - multiple unknowns stack up
+//   blocked-by-deny       - an explicit same-policy Deny overrides the grant
+//   unknown-incomplete-context
 //
 // Every edge carries the EXACT supporting evidence (statement Sid + index,
 // actions, resources, condition) so IAM-008's inspect panel and the findings
@@ -28,7 +38,7 @@
 //
 // TRUTHFULNESS INVARIANT (docs/architecture.md #6, threat-model T8): an edge's
 // certainty describes reachability WITHIN THE SUPPLIED POLICY CONTEXT, never
-// effective permissions. `confirmed-by-context` means "this policy text, on its
+// effective permissions. `confirmed-by-policy` means "this policy text, on its
 // own, grants this" - not that the principal effectively has it (boundaries,
 // SCPs, resource policies, session policies are out of scope). The graph is
 // never the only representation; the findings table remains authoritative.
@@ -81,13 +91,20 @@ export const EDGE_TYPES = Object.freeze({
   CAN_MODIFY: 'can-modify',
   CAN_EXECUTE_AS: 'can-execute-as',
   CAN_READ: 'can-read',
+  // IAM-202: kms:Decrypt is its own edge type, distinct from a plain data read.
+  CAN_DECRYPT: 'can-decrypt',
   CAN_WRITE: 'can-write',
   CAN_DESTROY: 'can-destroy',
 });
 
 export const CERTAINTY = Object.freeze({
-  CONFIRMED_BY_CONTEXT: 'confirmed-by-context',
-  CONDITIONALLY_REACHABLE: 'conditionally-reachable',
+  // IAM-202 vocabulary. `confirmed-by-policy` replaces the former
+  // `confirmed-by-context`; `context-required` replaces `conditionally-reachable`;
+  // `policy-supported` is new (grants present, transition needs an out-of-scope
+  // precondition this policy cannot prove - e.g. a usable passable target role).
+  CONFIRMED_BY_POLICY: 'confirmed-by-policy',
+  POLICY_SUPPORTED: 'policy-supported',
+  CONTEXT_REQUIRED: 'context-required',
   POTENTIALLY_REACHABLE: 'potentially-reachable',
   BLOCKED_BY_DENY: 'blocked-by-deny',
   UNKNOWN_INCOMPLETE_CONTEXT: 'unknown-incomplete-context',
@@ -137,6 +154,7 @@ const EDGE_TYPE_ORDER = new Map(
     EDGE_TYPES.CAN_MODIFY,
     EDGE_TYPES.CAN_EXECUTE_AS,
     EDGE_TYPES.CAN_READ,
+    EDGE_TYPES.CAN_DECRYPT,
     EDGE_TYPES.CAN_WRITE,
     EDGE_TYPES.CAN_DESTROY,
   ].map((t, i) => [t, i]),
@@ -149,9 +167,10 @@ const EDGE_TYPE_ORDER = new Map(
 const CERTAINTY_RANK = new Map([
   [CERTAINTY.UNKNOWN_INCOMPLETE_CONTEXT, 0],
   [CERTAINTY.POTENTIALLY_REACHABLE, 1],
-  [CERTAINTY.CONDITIONALLY_REACHABLE, 2],
-  [CERTAINTY.CONFIRMED_BY_CONTEXT, 3],
-  [CERTAINTY.BLOCKED_BY_DENY, 4],
+  [CERTAINTY.CONTEXT_REQUIRED, 2],
+  [CERTAINTY.POLICY_SUPPORTED, 3],
+  [CERTAINTY.CONFIRMED_BY_POLICY, 4],
+  [CERTAINTY.BLOCKED_BY_DENY, 5],
 ]);
 
 // --- The single Principal node -----------------------------------------------
@@ -189,9 +208,9 @@ function firstResource(finding) {
 // so it keys off policyEvidence, NOT pathExploitability (how likely the grant is
 // actually exploitable is a separate signal that never strengthens/weakens what
 // the policy text demonstrably says):
-//   high   -> confirmed-by-context   (granted by this policy text, unconditional)
-//   medium -> conditionally-reachable (a Condition may gate it at runtime)
-//   low    -> potentially-reachable   (multiple unknowns stack up)
+//   high   -> confirmed-by-policy    (granted by this policy text, unconditional)
+//   medium -> context-required       (a Condition may gate it at runtime)
+//   low    -> potentially-reachable  (multiple unknowns stack up)
 //
 // DENY-AWARENESS (see ruleCertainty / ESCALATION vs RULE findings below).
 // escalation.js findings arrive with gating Conditions, unresolved PassedToService
@@ -202,7 +221,7 @@ function firstResource(finding) {
 // Deny is never itself a blast-radius grant, so rules.js does not model it). That
 // left rule edges overstating certainty: a wildcard/destructive/IAM-admin grant
 // whose action a same-policy explicit Deny overrides would still read as
-// `confirmed-by-context`, a truthfulness harm (docs/architecture.md #6,
+// `confirmed-by-policy`, a truthfulness harm (docs/architecture.md #6,
 // threat-model T8). graph.js therefore applies AWS explicit-Deny precedence to
 // rule findings here, mirroring what escalation.js already does for its own
 // findings: see ruleCertainty(). A confirming Condition (e.g. an
@@ -211,9 +230,28 @@ function firstResource(finding) {
 function certaintyFromEvidence(policyEvidence) {
   switch (policyEvidence) {
     case 'high':
-      return CERTAINTY.CONFIRMED_BY_CONTEXT;
+      return CERTAINTY.CONFIRMED_BY_POLICY;
     case 'medium':
-      return CERTAINTY.CONDITIONALLY_REACHABLE;
+      return CERTAINTY.CONTEXT_REQUIRED;
+    default:
+      return CERTAINTY.POTENTIALLY_REACHABLE;
+  }
+}
+
+// PassRole->service transition certainty (IAM-202). A PassRole path always needs
+// an OUT-OF-SCOPE precondition the policy cannot prove: a usable target role
+// actually exists and its trust policy accepts this service. So even when both
+// grants are unconditional (policyEvidence high), the transition is
+// `policy-supported`, NOT `confirmed-by-policy` - the policy supports the grants
+// but does not confirm the transition end-to-end (threat-model T8: never
+// overclaim). A gating Condition on the execution/pass statement still weakens it
+// further (medium -> context-required, low -> potentially-reachable).
+function passRoleCertainty(policyEvidence) {
+  switch (policyEvidence) {
+    case 'high':
+      return CERTAINTY.POLICY_SUPPORTED;
+    case 'medium':
+      return CERTAINTY.CONTEXT_REQUIRED;
     default:
       return CERTAINTY.POTENTIALLY_REACHABLE;
   }
@@ -226,9 +264,10 @@ function certaintyFromEvidence(policyEvidence) {
 // blocked-by-deny result), so it cannot overstate certainty.
 function downgradeCertainty(certainty) {
   switch (certainty) {
-    case CERTAINTY.CONFIRMED_BY_CONTEXT:
-      return CERTAINTY.CONDITIONALLY_REACHABLE;
-    case CERTAINTY.CONDITIONALLY_REACHABLE:
+    case CERTAINTY.CONFIRMED_BY_POLICY:
+    case CERTAINTY.POLICY_SUPPORTED:
+      return CERTAINTY.CONTEXT_REQUIRED;
+    case CERTAINTY.CONTEXT_REQUIRED:
       return CERTAINTY.POTENTIALLY_REACHABLE;
     default:
       return certainty;
@@ -482,9 +521,11 @@ const RULE_MAP = {
       toId: 'datastore:kms-decrypt',
       toType: NODE_TYPES.DATA_STORE,
       toLabel: 'KMS-decryptable ciphertext',
-      // Decryption of caller-supplied ciphertext for usable keys: a read-style
-      // reach over that ciphertext, NOT secret enumeration/retrieval (IAM-103).
-      type: EDGE_TYPES.CAN_READ,
+      // Decryption of caller-supplied ciphertext for usable keys (IAM-103). This
+      // is its OWN edge type `can-decrypt` (IAM-202), distinct from a plain
+      // `can-read` data read: it turns ciphertext into plaintext, it does NOT
+      // enumerate or retrieve secret material.
+      type: EDGE_TYPES.CAN_DECRYPT,
       certainty,
       finding: f,
       statementIndex: f.statementIndex,
@@ -605,11 +646,15 @@ function selfIamModify(f, b, label, certainty) {
 // that node so the renderer can visually separate what is known (the two edges)
 // from what is not (the role's power); `boundaryCrossing` marks the service node
 // as the potential crossing point. The passed-role ARN(s) ride in the edge
-// evidence (`resources`). Both edges take the finding's policyEvidence-derived
-// certainty (escalation.js already folded any gating Condition / Deny in).
+// evidence (`resources`). Both edges take the PassRole transition certainty
+// (IAM-202): even with both grants unconditional the transition is
+// `policy-supported`, never `confirmed-by-policy`, because a usable target role
+// / accepting trust config is an out-of-scope precondition this policy cannot
+// prove. A gating Condition (already folded into policyEvidence by
+// escalation.js) weakens it further.
 function passRoleEdges(f, b) {
   const svc = f.escalation && f.escalation.service ? String(f.escalation.service) : 'service';
-  const certainty = certaintyFromEvidence(f.policyEvidence);
+  const certainty = passRoleCertainty(f.policyEvidence);
   const roleId = `role:passable:${svc}`;
   const svcId = `service:${svc}`;
   // Hop 1 (KNOWN): the principal can pass a role to the service.
@@ -647,7 +692,7 @@ function passRoleEdges(f, b) {
 // explicit Deny is the single most decisive fact about reachability. Each Deny
 // statement becomes one `denies` edge to an ActionGroup node describing what it
 // blocks. An unconditional Deny is `blocked-by-deny`; a conditional one is only
-// `conditionally-reachable` (it may not fire).
+// `context-required` (it may not fire).
 function addDenyEdges(model, b) {
   for (const stmt of model.statements) {
     if (stmt.effect !== 'Deny') continue;
@@ -680,7 +725,7 @@ function addDenyEdges(model, b) {
       toLabel: label,
       type: EDGE_TYPES.DENIES,
       certainty: conditioned
-        ? CERTAINTY.CONDITIONALLY_REACHABLE
+        ? CERTAINTY.CONTEXT_REQUIRED
         : CERTAINTY.BLOCKED_BY_DENY,
       finding: pseudo,
       statementIndex: stmt.index,

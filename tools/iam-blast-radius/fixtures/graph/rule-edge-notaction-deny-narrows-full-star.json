@@ -1,6 +1,6 @@
 {
   "name": "NotAction-Deny narrows a full '*' rule grant -> downgraded, NEVER blocked-by-deny",
-  "note": "Allow Action:'*' on Resource:'*' with a same-policy Deny that uses NotAction:iam:CreateAccessKey. The Deny denies everything EXCEPT iam:CreateAccessKey, so that action stays ALLOWED - the '*' grant is narrowed, not blocked. The allows(actiongroup:*) edge must stay reachable (downgraded to conditionally-reachable), with the Deny on its own denies edge. Companion to the Allow s3:* case; asserts the same fix holds for a bare '*' grant token.",
+  "note": "Allow Action:'*' on Resource:'*' with a same-policy Deny that uses NotAction:iam:CreateAccessKey. The Deny denies everything EXCEPT iam:CreateAccessKey, so that action stays ALLOWED - the '*' grant is narrowed, not blocked. The allows(actiongroup:*) edge must stay reachable (downgraded to context-required), with the Deny on its own denies edge. Companion to the Allow s3:* case; asserts the same fix holds for a bare '*' grant token.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -12,7 +12,7 @@
     "valid": true,
     "findingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
     "graphEdges": [
-      { "from": "principal", "to": "actiongroup:*", "type": "allows", "certainty": "conditionally-reachable" },
+      { "from": "principal", "to": "actiongroup:*", "type": "allows", "certainty": "context-required" },
       { "from": "principal", "to": "actiongroup:not-action#1", "type": "denies", "certainty": "blocked-by-deny" }
     ]
   }

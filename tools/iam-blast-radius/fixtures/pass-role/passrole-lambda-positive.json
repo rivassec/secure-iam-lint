@@ -34,8 +34,8 @@
       "highestRisk": { "id": "PASSROLE-LAMBDA", "severity": "critical", "path": "Principal -> iam:PassRole -> Lambda -> passed role (unknown privileges)" }
     },
     "graphEdges": [
-      { "from": "principal", "to": "role:passable:lambda", "type": "can-pass", "certainty": "confirmed-by-context" },
-      { "from": "role:passable:lambda", "to": "service:lambda", "type": "can-execute-as", "certainty": "confirmed-by-context" }
+      { "from": "principal", "to": "role:passable:lambda", "type": "can-pass", "certainty": "policy-supported" },
+      { "from": "role:passable:lambda", "to": "service:lambda", "type": "can-execute-as", "certainty": "policy-supported" }
     ]
   }
 }

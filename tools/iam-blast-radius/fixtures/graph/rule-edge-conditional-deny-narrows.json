@@ -1,6 +1,6 @@
 {
   "name": "Conditional same-policy Deny narrows a rule edge (may-block, not blocked)",
-  "note": "Allow iam:PutUserPolicy with an unconditional grant, but a same-policy Deny of the same action carries a Condition (MFA absent). A conditional Deny may not fire, so it must NOT be reported as a hard block; graph.js downgrades the can-modify(policy:self) edge to conditionally-reachable instead of blocked-by-deny.",
+  "note": "Allow iam:PutUserPolicy with an unconditional grant, but a same-policy Deny of the same action carries a Condition (MFA absent). A conditional Deny may not fire, so it must NOT be reported as a hard block; graph.js downgrades the can-modify(policy:self) edge to context-required instead of blocked-by-deny.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -12,7 +12,7 @@
     "valid": true,
     "findingIds": ["DIRECT-IAM-ADMIN", "PUT-INLINE-POLICY"],
     "graphEdges": [
-      { "from": "principal", "to": "policy:self", "type": "can-modify", "certainty": "conditionally-reachable" }
+      { "from": "principal", "to": "policy:self", "type": "can-modify", "certainty": "context-required" }
     ]
   }
 }

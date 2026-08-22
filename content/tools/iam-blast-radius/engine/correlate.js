@@ -50,6 +50,50 @@
 // credential-creation, ...) are NOT compound and never subsume anything.
 const COMPOUND_TECHNIQUE = 'passrole-service-execution';
 
+// --- IAM-201: same-statement capability subsumption --------------------------
+//
+// A second, narrower correlation. Independently of any compound escalation
+// path, a generic WILDCARD-RESOURCE finding is often just the scope amplifier
+// of a MORE-SPECIFIC capability that trips on the SAME statement: kms:Decrypt on
+// "*", secretsmanager:GetSecretValue on "*", iam:* on "*", a delete-family grant
+// on "*", cloudtrail:StopLogging on "*". In each case the broad-resource grant
+// does not name an independent risk - it says the co-located capability applies
+// to every resource. Reporting it as its own top-level WILDCARD-RESOURCE row is
+// duplicate noise that buries the capability that actually matters.
+//
+// So a WILDCARD-RESOURCE on a statement that ALSO carries one of the capability
+// findings below is folded INTO that capability finding (as a `subsumed` entry +
+// a synthesized risk-factor checklist), exactly as IAM-105 folds subordinate
+// wildcards into a compound path. Nothing is lost: the full subordinate finding
+// is preserved in `subsumed[]` and its scope signal is captured in the primary's
+// risk factors.
+//
+// SAFETY (threat-model T8 - never understate blast radius). Two guards:
+//   1. Only WILDCARD-RESOURCE is subsumed here, never a full-"*" WILDCARD-ACTION
+//      (that grants EVERY action and is strictly broader than any one
+//      capability - it stays an independent top-level row).
+//   2. Service-relatedness gate, as in the compound pass: the WILDCARD-RESOURCE
+//      is subsumed ONLY when every service its action list touches is a service
+//      some capability finding on that statement already covers. A broad-resource
+//      grant that also spans an unrelated service (e.g. iam:PutUserPolicy AND
+//      s3:PutObject, both on "*") keeps that unrelated breadth visible as its own
+//      row rather than hiding it under the IAM finding.
+// A WILDCARD-RESOURCE with NO more-specific capability on its statement (e.g.
+// s3:PutObject on "*" alone) is genuinely standalone and never subsumed.
+//
+// Deterministic priority: when several capability findings sit on one statement,
+// the WILDCARD-RESOURCE attaches to the highest-priority one in this fixed order.
+const CAPABILITY_PRIMARY_IDS = [
+  'KMS-DECRYPT',
+  'DATA-EXFIL',
+  'DIRECT-IAM-ADMIN',
+  'DESTRUCTIVE-ACTION',
+  'DETECTION-IMPAIRMENT',
+];
+const CAPABILITY_PRIORITY = new Map(
+  CAPABILITY_PRIMARY_IDS.map((id, i) => [id, i]),
+);
+
 // Standalone rule findings that can be subordinate to a compound path when they
 // land on a statement the path consumes AND cover only services the path uses
 // (see the service-relatedness gate above). Same-service breadth of a pass/exec
@@ -137,10 +181,30 @@ function coversOnlyPathServices(finding, pathServices) {
   return tokens.every((t) => pathServices.has(actionServiceOf(t)));
 }
 
+// Reason wording for the two DISTINCT subsumption relationships. Keeping them
+// separate matters for truthfulness (adversarial-iam-semantics): only the
+// compound pass has actually detected an escalation path, so only its wording
+// may assert one. The capability pass folds a WILDCARD-RESOURCE into a
+// standalone capability finding (KMS-DECRYPT, DATA-EXFIL, ...) that carries NO
+// escalation enrichment and NO compound technique - claiming a "path"/"compound
+// escalation path" there would assert a path the analysis never found (T8-style
+// over-assertion). Its wording therefore speaks only of a more-specific
+// capability finding, never of a path.
+const COMPOUND_SUBSUMED_REASON =
+  'Subordinate to a compound escalation path on the same statement: ' +
+  'it broadens only the scope of a grant the path already uses (same-service ' +
+  'breadth), so it is reported as a risk factor of that path rather than a ' +
+  'separate row.';
+const CAPABILITY_SUBSUMED_REASON =
+  'Subordinate to the more-specific capability finding on the same statement: ' +
+  'it only broadens the resource scope of that capability, so it is folded in ' +
+  'as a risk factor of that finding rather than a separate row.';
+
 // A compact, inert snapshot of a subordinate finding for the primary's detail
 // panel / export. Keeps the full prose so nothing is lost when the row is
-// folded away.
-function subsumedView(f) {
+// folded away. `reason` names WHY the row was folded and is caller-supplied so
+// the compound and capability passes can each state their true relationship.
+function subsumedView(f, reason) {
   return deepFreeze({
     id: f.id,
     title: f.title,
@@ -152,17 +216,14 @@ function subsumedView(f) {
     why: f.why,
     limit: f.limit,
     remediation: f.remediation,
-    reason: 'Subordinate to a compound escalation path on the same statement: ' +
-      'it broadens only the scope of a grant the path already uses (same-service ' +
-      'breadth), so it is reported as a risk factor of that path rather than a ' +
-      'separate row.',
+    reason: String(reason == null ? COMPOUND_SUBSUMED_REASON : reason),
   });
 }
 
 function withSubsumed(primary, subs) {
   const clone = {};
   for (const key of Object.keys(primary)) clone[key] = primary[key];
-  clone.subsumed = subs.map(subsumedView);
+  clone.subsumed = subs.map((s) => subsumedView(s, COMPOUND_SUBSUMED_REASON));
   return deepFreeze(clone);
 }
 
@@ -176,6 +237,11 @@ function withSubsumed(primary, subs) {
  *          input order (the caller re-sorts for display).
  */
 export function correlateFindings(findings) {
+  const afterCompound = correlateCompoundPaths(findings);
+  return correlateSameStatementCapabilities(afterCompound);
+}
+
+function correlateCompoundPaths(findings) {
   const list = Array.isArray(findings) ? findings.slice() : [];
   const primaries = list.filter(isCompoundPrimary);
   if (primaries.length === 0) return list;
@@ -224,6 +290,133 @@ export function correlateFindings(findings) {
   for (const f of list) {
     if (subsumed.has(f)) continue; // folded into a primary's risk factors
     if (attachments.has(f)) out.push(withSubsumed(f, attachments.get(f)));
+    else out.push(f);
+  }
+  return out;
+}
+
+// --- IAM-201 capability pass -------------------------------------------------
+
+function isCapabilityPrimary(f) {
+  return !!(f && CAPABILITY_PRIORITY.has(f.id));
+}
+
+// Case-insensitive scan for a Condition key anywhere in the statement's
+// condition block ({ Operator: { "kms:ViaService": ... } }). Returns true when
+// any inner key equals `needleLower`. Treats input as inert data only.
+function conditionHasKey(condition, needleLower) {
+  if (!condition || typeof condition !== 'object') return false;
+  for (const op of Object.keys(condition)) {
+    const inner = condition[op];
+    if (!inner || typeof inner !== 'object') continue;
+    for (const key of Object.keys(inner)) {
+      if (String(key).toLowerCase() === needleLower) return true;
+    }
+  }
+  return false;
+}
+
+// Synthesize the present/absent risk-factor checklist a capability finding
+// exposes once it absorbs a WILDCARD-RESOURCE scope amplifier. Deterministic
+// order: one factor per granted capability action, then the resource-scope
+// factor, then any capability-specific scope-restriction factors (KMS).
+function capabilityRiskFactors(primary, wr) {
+  const factors = [];
+  const actions = Array.isArray(primary.actions) ? primary.actions : [];
+  for (const action of actions) {
+    factors.push({ key: String(action), label: `${String(action)} granted`, present: true });
+  }
+  const broadStar = Array.isArray(wr.resources) && wr.resources.includes('*');
+  factors.push({
+    key: 'resource-wildcard',
+    label: broadStar ? 'Resource:*' : 'Resource scope broad (NotResource-based)',
+    present: true,
+  });
+  if (primary.id === 'KMS-DECRYPT') {
+    factors.push({
+      key: 'kms-viaservice',
+      label: 'kms:ViaService restriction',
+      present: conditionHasKey(primary.conditions, 'kms:viaservice'),
+    });
+    factors.push({
+      key: 'kms-encryptioncontext',
+      label: 'kms:EncryptionContext restriction',
+      present: conditionHasKey(primary.conditions, 'kms:encryptioncontext'),
+    });
+  }
+  return factors;
+}
+
+function withCapabilitySubsumed(primary, wr) {
+  const clone = {};
+  for (const key of Object.keys(primary)) clone[key] = primary[key];
+  clone.riskFactors = capabilityRiskFactors(primary, wr);
+  clone.subsumed = [subsumedView(wr, CAPABILITY_SUBSUMED_REASON)];
+  return deepFreeze(clone);
+}
+
+/**
+ * Fold a same-statement WILDCARD-RESOURCE scope amplifier into the more-specific
+ * capability finding on that statement (IAM-201). Runs after the compound pass,
+ * so a WILDCARD-RESOURCE already subsumed by an escalation path is gone from the
+ * top level and never reaches here.
+ *
+ * @param {Array<object>} findings post-compound-pass finding list
+ * @returns {Array<object>} new list: same-statement WILDCARD-RESOURCE rows folded
+ *          into their capability primary; standalone wildcards untouched.
+ */
+function correlateSameStatementCapabilities(findings) {
+  const list = Array.isArray(findings) ? findings.slice() : [];
+
+  // Index capability primaries by statement index; keep only the highest-priority
+  // one per statement as the attach target, but track every capability's services
+  // on that statement for the relatedness gate.
+  const capsByStmt = new Map(); // statementIndex -> [capability findings]
+  for (const f of list) {
+    if (!isCapabilityPrimary(f)) continue;
+    if (typeof f.statementIndex !== 'number') continue;
+    if (!capsByStmt.has(f.statementIndex)) capsByStmt.set(f.statementIndex, []);
+    capsByStmt.get(f.statementIndex).push(f);
+  }
+  if (capsByStmt.size === 0) return list;
+
+  const attachTo = new Map(); // capability finding -> WILDCARD-RESOURCE finding
+  const subsumed = new Set(); // WILDCARD-RESOURCE findings folded away
+
+  for (const f of list) {
+    if (f.id !== 'WILDCARD-RESOURCE') continue;
+    if (typeof f.statementIndex !== 'number') continue;
+    const caps = capsByStmt.get(f.statementIndex);
+    if (!caps || caps.length === 0) continue; // standalone broad-resource -> keep
+
+    // Service-relatedness gate: every service the broad-resource grant touches
+    // must be covered by some capability on this statement, else it also spans an
+    // unrelated capability and must stay a visible independent row.
+    const covered = new Set();
+    for (const c of caps) {
+      for (const a of (Array.isArray(c.actions) ? c.actions : [])) {
+        covered.add(actionServiceOf(a));
+      }
+    }
+    const wrActions = Array.isArray(f.actions) ? f.actions : [];
+    if (wrActions.length === 0) continue;
+    if (!wrActions.every((a) => covered.has(actionServiceOf(a)))) continue;
+
+    // Attach to the highest-priority capability on this statement (deterministic).
+    let target = caps[0];
+    for (const c of caps) {
+      if (CAPABILITY_PRIORITY.get(c.id) < CAPABILITY_PRIORITY.get(target.id)) target = c;
+    }
+    attachTo.set(target, f);
+    subsumed.add(f);
+  }
+
+  if (subsumed.size === 0) return list;
+
+  const out = [];
+  for (const f of list) {
+    if (subsumed.has(f)) continue; // folded into its capability primary
+    if (attachTo.has(f)) out.push(withCapabilitySubsumed(f, attachTo.get(f)));
     else out.push(f);
   }
   return out;

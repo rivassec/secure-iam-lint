@@ -165,7 +165,7 @@ test('risk-summary header renders above the table with counts and the highest-ri
   await expect(summary).toContainText('Privilege-escalation paths');
   await expect(summary).toContainText('Role-assumption capabilities');
   await expect(summary).toContainText('Sensitive-data access capabilities');
-  await expect(summary).toContainText('Broad-resource grants');
+  await expect(summary).toContainText('Standalone broad-resource findings');
   // The single highest-risk path is shown in one line.
   await expect(summary.locator('.risk-summary-top')).toContainText(
     'Principal -> iam:PassRole -> Lambda -> passed role (unknown privileges)',

@@ -1,0 +1,17 @@
+{
+  "name": "kms:Decrypt -> a distinct can-decrypt edge (IAM-202)",
+  "note": "kms:Decrypt is a decryption capability, not a data read: IAM-202 gives it its OWN graph edge type `can-decrypt` (was `can-read`), so it is visually and semantically distinct from a DATA-EXFIL `can-read` edge. The edge points at the fixed `datastore:kms-decrypt` node, keeps the human label 'can decrypt ciphertext', and is confirmed-by-policy (the grant is literally present, unconditional). The key is scoped to a concrete ARN so the generic WILDCARD-RESOURCE rule does not also fire - the statement yields exactly this one capability edge.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "DecryptAppKey", "Effect": "Allow", "Action": "kms:Decrypt", "Resource": "arn:aws:kms:us-east-1:111122223333:key/abcd-1234" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["KMS-DECRYPT"],
+    "exactGraphEdges": [
+      { "from": "principal", "to": "datastore:kms-decrypt", "type": "can-decrypt", "certainty": "confirmed-by-policy" }
+    ]
+  }
+}

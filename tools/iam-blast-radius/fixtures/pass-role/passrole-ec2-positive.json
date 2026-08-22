@@ -35,8 +35,8 @@
       ]
     },
     "graphEdges": [
-      { "from": "principal", "to": "role:passable:ec2", "type": "can-pass", "certainty": "confirmed-by-context" },
-      { "from": "role:passable:ec2", "to": "service:ec2", "type": "can-execute-as", "certainty": "confirmed-by-context" }
+      { "from": "principal", "to": "role:passable:ec2", "type": "can-pass", "certainty": "policy-supported" },
+      { "from": "role:passable:ec2", "to": "service:ec2", "type": "can-execute-as", "certainty": "policy-supported" }
     ]
   }
 }

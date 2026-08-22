@@ -43,7 +43,10 @@ test('renders the attack path as an inline SVG with styled edges', async ({ page
   await expect(edge).toHaveAttribute('role', 'button');
   await expect(edge).toHaveAttribute('tabindex', '0');
   const cls = await edge.getAttribute('class');
-  expect(cls).toMatch(/cert-(confirmed|conditional|potential|blocked|unknown)/);
+  // IAM-202 certainty css vocabulary. A PassRole transition edge is
+  // `policy-supported` (cert-policy-supported); other edges use the renamed
+  // cert-confirmed / cert-context-required / cert-potential / cert-blocked / cert-unknown.
+  expect(cls).toMatch(/cert-(confirmed|policy-supported|context-required|potential|blocked|unknown)/);
 
   // The visible edge-path must actually be painted by styles.css - the earlier
   // defect was that NO graph rules existed, so SVG defaulted to fill:black /
@@ -83,7 +86,7 @@ test('renders the attack path as an inline SVG with styled edges', async ({ page
 test('each edge-certainty class resolves to a visually distinct stroke', async ({ page }) => {
   // admin-star yields edges of several certainties. Distinct certainty classes
   // must map to distinct stroke colors so blocked-by-deny never looks like
-  // confirmed-by-context (threat-model T8: certainty must be truthful).
+  // confirmed-by-policy (threat-model T8: certainty must be truthful).
   await page.fill('#policy-input', fixture('wildcard/admin-star.json'));
   await page.click('#analyze-btn');
   await expect(page.locator('#graph svg')).toBeVisible();

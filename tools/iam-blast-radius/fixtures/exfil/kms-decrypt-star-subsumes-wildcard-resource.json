@@ -1,0 +1,36 @@
+{
+  "name": "kms:Decrypt on * subsumes the same-statement WILDCARD-RESOURCE (IAM-201)",
+  "note": "kms:Decrypt on Resource \"*\" trips BOTH KMS-DECRYPT (the decryption capability) and the generic WILDCARD-RESOURCE (broad scope) on the SAME statement. IAM-201 folds the WILDCARD-RESOURCE row INTO the more-specific KMS-DECRYPT finding as a risk factor (nothing lost: it is preserved in subsumed[] and reflected in the risk-factor checklist), so the KMS statement yields ONE primary KMS-DECRYPT finding rather than a duplicate WILDCARD-RESOURCE row. The four other statements are scoped and each yield a single capability finding, so the total primaries drop from 6 (pre-correlation rule set) to 5 (post-correlation). Because every non-KMS statement is resource-scoped, none of them trips WILDCARD-RESOURCE, and the only broad-resource grant is the one subsumed here - so the Standalone broad-resource findings count is 0.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "DecryptAnything", "Effect": "Allow", "Action": "kms:Decrypt", "Resource": "*" },
+      { "Sid": "ReadSecret", "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": "arn:aws:secretsmanager:us-east-1:111122223333:secret:app/db-*" },
+      { "Sid": "NukeTable", "Effect": "Allow", "Action": "dynamodb:DeleteTable", "Resource": "arn:aws:dynamodb:us-east-1:111122223333:table/legacy" },
+      { "Sid": "BlindTrail", "Effect": "Allow", "Action": "cloudtrail:StopLogging", "Resource": "arn:aws:cloudtrail:us-east-1:111122223333:trail/org" },
+      { "Sid": "MakeUsers", "Effect": "Allow", "Action": "iam:CreateUser", "Resource": "arn:aws:iam::111122223333:user/contractor-*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["DATA-EXFIL", "DESTRUCTIVE-ACTION", "DETECTION-IMPAIRMENT", "DIRECT-IAM-ADMIN", "KMS-DECRYPT", "WILDCARD-RESOURCE"],
+    "findingIds": ["KMS-DECRYPT", "DATA-EXFIL", "DESTRUCTIVE-ACTION", "DETECTION-IMPAIRMENT", "DIRECT-IAM-ADMIN"],
+    "notFindingIds": ["WILDCARD-ACTION", "PASSROLE-LAMBDA"],
+    "compound": {
+      "primaryId": "KMS-DECRYPT",
+      "subsumes": [{ "id": "WILDCARD-RESOURCE", "statementIndex": 0 }],
+      "independentFindings": [],
+      "note": "The WILDCARD-RESOURCE on statement 0 is the broad-resource scope of the KMS-DECRYPT capability on that same statement, so it is subsumed. The other capability findings sit on scoped statements and trip no WILDCARD-RESOURCE.",
+      "riskFactors": [
+        { "key": "kms:Decrypt", "present": true },
+        { "key": "resource-wildcard", "present": true },
+        { "key": "kms-viaservice", "present": false },
+        { "key": "kms-encryptioncontext", "present": false }
+      ]
+    },
+    "summary": {
+      "counts": { "privEscPaths": 0, "roleAssumption": 0, "sensitiveData": 2, "broadResource": 0 },
+      "highestRisk": null
+    }
+  }
+}

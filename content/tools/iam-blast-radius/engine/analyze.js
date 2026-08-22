@@ -145,7 +145,11 @@ export const SUMMARY_CATEGORIES = Object.freeze([
   { key: 'privEscPaths', label: 'Privilege-escalation paths' },
   { key: 'roleAssumption', label: 'Role-assumption capabilities' },
   { key: 'sensitiveData', label: 'Sensitive-data access capabilities' },
-  { key: 'broadResource', label: 'Broad-resource grants' },
+  // IAM-201: renamed - the count reflects only standalone WILDCARD-RESOURCE rows
+  // that survive correlation (same-statement capability subsumption folds the
+  // rest into their capability finding), so it is a count of STANDALONE broad-
+  // resource findings, not of every broad-resource grant in the policy.
+  { key: 'broadResource', label: 'Standalone broad-resource findings' },
 ]);
 
 // Documented, deterministic mapping from finding id -> summary category. Findings
@@ -153,7 +157,7 @@ export const SUMMARY_CATEGORIES = Object.freeze([
 // DESTRUCTIVE-ACTION, DETECTION-IMPAIRMENT) remain in the authoritative table but
 // are not part of these four highlighted families - the summary is a curated
 // risk overview, not a total. WILDCARD-ACTION is action breadth, not resource
-// breadth, so it is intentionally NOT counted under Broad-resource grants.
+// breadth, so it is intentionally NOT counted under Standalone broad-resource findings.
 const SUMMARY_CATEGORY_BY_ID = Object.freeze({
   'PASSROLE-LAMBDA': 'privEscPaths',
   'PASSROLE-EC2': 'privEscPaths',
