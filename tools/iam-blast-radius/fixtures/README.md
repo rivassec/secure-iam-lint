@@ -41,7 +41,76 @@ Every finding/escalation rule ships with at least: one positive fixture, one
 negative fixture, one boundary fixture, one malformed-input fixture.
 Categories: safe, wildcard, explicit-deny, not-action, not-resource,
 direct-iam, destructive, exfil, detection, notaction-allow,
-pass-role, assume-role, malformed, adversarial (XSS/proto-pollution/DoS).
+pass-role, assume-role, malformed, adversarial (XSS/proto-pollution/DoS),
+family (policy-family classification + fail-closed, IAM-501).
+
+## Per-rule fixture matrix (IAM-504)
+
+`tests/fixture-matrix.test.js` is a release gate that requires every rule
+(rules.js risk catalog + escalation.js path catalog) to ship a fixture for each
+kind that is SEMANTICALLY APPLICABLE to it: `positive`, `negative`, `deny`
+(explicit-Deny interaction), `condition`, `notAction`, `notResource`, and
+`hostile` (a positive witness whose Sid/ARN/Condition carry HTML/JS payloads
+that must ride through analyze() as inert DATA). `deterministic-export` is a
+global cell asserted once. Applicability ("where semantically applicable") and
+its rationale live in `APPLICABILITY` in that test; coverage is DERIVED from
+real analyze() output, so a mislabeled fixture cannot paper over a gap, and the
+gate FAILS (not skips) if any applicable cell loses its fixture.
+
+Most cells are witnessed by the existing category fixtures. Fixtures added for
+IAM-504 gaps live in their capability/escalation dir (e.g. `exfil/`,
+`detection/`, `pass-role/`) and are ordinary `expect`-carrying fixtures. The
+two `hostile` witnesses live in `adversarial/` and add:
+
+```json
+{ "expect": { "valid": true, "hostile": true,
+  "assertInertRendering": true,
+  "hostileFor": ["<RULE-ID>", "..."] } }
+```
+
+- `hostile: true` marks the fixture as a hostile-string-rendering witness.
+- `hostileFor` lists the rule ids it witnesses; each MUST fire AND carry a
+  hostile string verbatim in a finding field (proof the payload is inert data).
+
+Evidence completeness (`tests/evidence.test.js`) asserts every finding exposes
+the full explainable-evidence set - policy family, statement index + Sid,
+normalized action(s)/resource(s), relevant condition, rule id, split certainty,
+and the capability-not-effective limitation - and that the JSON export carries
+it verbatim. Privacy invariants (`tests/privacy-invariants.test.js` +
+`tests/e2e/privacy-invariants.spec.js`) gate zero egress, no storage/URL writes,
+Clear/pagehide wipe, self-describing exports, hostile HTML/SVG/MD/Unicode
+inertness, and browser-worker vs Node-module parity.
+
+## Policy-family corpus (`family/`, IAM-501)
+
+`family/` exercises the policy-family model: auto-detect from shape and
+fail-closed on shapes the engine does not model. Each fixture adds a
+`familyExpect` block consumed by `tests/family.test.js`:
+
+```json
+{
+  "policy": { "Version": "2012-10-17", "Statement": [ ... ] },
+  "familyExpect": {
+    "detected": "identity|resource|role-trust|ambiguous",
+    "family": "effective family (== detected unless a manual override is set)",
+    "blocked": true,
+    "supported": false,
+    "blockingCodes": [ { "code": "UNSUPPORTED_POLICY_FAMILY", "path": "Statement[0].Principal" } ]
+  }
+}
+```
+
+- Auto-detect resolves identity policies (no Principal/NotPrincipal) to the
+  `identity` family; they analyze normally (paste-and-go preserved).
+- Resource / role-trust / ambiguous-mixed shapes, and any `NotPrincipal`
+  element, FAIL CLOSED: `analyze()` returns `ok:true` with an empty result and
+  `coverage.blocked = true`, carrying a machine-readable code + exact JSON path
+  (`UNSUPPORTED_POLICY_FAMILY`, `UNSUPPORTED_NOTPRINCIPAL`,
+  `AMBIGUOUS_POLICY_SHAPE`, `OVERRIDE_SHAPE_MISMATCH`). No confident findings are
+  produced on a shape the engine does not understand.
+- A statement carrying BOTH `Principal` and `NotPrincipal` is a hard schema
+  error (`PRINCIPAL_AND_NOTPRINCIPAL`, `expect.valid = false`); use
+  `familyExpect.modelError` / `familyExpect.modelErrorPath` for that case.
 
 ## Negative regression corpus (`negative/`, IAM-301)
 

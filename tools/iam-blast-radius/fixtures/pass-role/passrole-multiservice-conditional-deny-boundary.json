@@ -1,0 +1,27 @@
+{
+  "name": "PassRole + EC2/ECS execution with a conditional Deny (boundary)",
+  "note": "IAM-504 fixture matrix: PASSROLE-EC2 and PASSROLE-SERVICE explicit-Deny cells. Statement 0 grants iam:PassRole + ec2:RunInstances + ecs:RunTask on Resource '*' (two compound execution paths). Statement 1 is a conditional Deny on ec2:RunInstances: a conditional Deny may not apply at runtime, so escalation.js keeps the paths but downgrades exploitability (denyNarrowed). Exercises both compound paths' interaction with an explicit Deny.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassAndRun",
+        "Effect": "Allow",
+        "Action": ["iam:PassRole", "ec2:RunInstances", "ecs:RunTask"],
+        "Resource": "*"
+      },
+      {
+        "Sid": "DenyRunWithoutMfa",
+        "Effect": "Deny",
+        "Action": "ec2:RunInstances",
+        "Resource": "*",
+        "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "false" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-EC2", "PASSROLE-SERVICE"],
+    "notFindingIds": ["PASSROLE-LAMBDA"]
+  }
+}

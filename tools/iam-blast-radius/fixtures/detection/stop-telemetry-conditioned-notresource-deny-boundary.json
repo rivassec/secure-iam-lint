@@ -1,0 +1,29 @@
+{
+  "name": "Detection impairment with Condition + NotResource + conditional Deny (boundary)",
+  "note": "IAM-504 fixture matrix: DETECTION-IMPAIRMENT Condition + NotResource + explicit-Deny cells in one witness. Statement 0 allows cloudtrail:StopLogging + guardduty:DeleteDetector on NotResource with a region Condition (still fires; a Condition narrows, it does not remove the grant; NotResource is broad so WILDCARD-RESOURCE is subsumed). Statement 1 is a conditional Deny on cloudtrail:StopLogging which does not definitively suppress the capability but exercises the explicit-Deny interaction.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "BlindTelemetryExceptKeep",
+        "Effect": "Allow",
+        "Action": ["cloudtrail:StopLogging", "guardduty:DeleteDetector"],
+        "NotResource": ["arn:aws:cloudtrail:us-east-1:111122223333:trail/keep-audit"],
+        "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      },
+      {
+        "Sid": "DenyStopLoggingWithoutMfa",
+        "Effect": "Deny",
+        "Action": "cloudtrail:StopLogging",
+        "Resource": "*",
+        "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "false" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["WILDCARD-RESOURCE", "DETECTION-IMPAIRMENT"],
+    "findingIds": ["DETECTION-IMPAIRMENT"],
+    "notFindingIds": ["DATA-EXFIL"]
+  }
+}

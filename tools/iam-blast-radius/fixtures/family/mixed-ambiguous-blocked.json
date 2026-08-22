@@ -1,0 +1,23 @@
+{
+  "name": "Mixed shape (some statements name a Principal, some do not) is ambiguous",
+  "note": "IAM-501: statement 0 has no Principal (identity-shaped) while statement 1 names a Principal (resource-shaped). A single policy cannot be both families; the shape is ambiguous, so analysis fails closed before rule evaluation and cites the first statement that breaks consistency.",
+  "phase": 5,
+  "story": "IAM-501",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "IdentityLike", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::b/*" },
+      { "Sid": "ResourceLike", "Effect": "Allow", "Principal": { "AWS": "*" }, "Action": "s3:PutObject", "Resource": "arn:aws:s3:::b/*" }
+    ]
+  },
+  "expect": { "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"] },
+  "familyExpect": {
+    "detected": "ambiguous",
+    "family": "ambiguous",
+    "blocked": true,
+    "supported": false,
+    "blockingCodes": [
+      { "code": "AMBIGUOUS_POLICY_SHAPE", "path": "Statement[1]" }
+    ]
+  }
+}

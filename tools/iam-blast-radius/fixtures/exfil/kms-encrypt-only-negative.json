@@ -1,0 +1,20 @@
+{
+  "name": "KMS encrypt / GenerateDataKey only (negative)",
+  "note": "IAM-504 fixture matrix: KMS-DECRYPT negative. kms:Encrypt and kms:GenerateDataKey are not decryption capabilities and are not secret-retrieval, so neither KMS-DECRYPT nor DATA-EXFIL fires. Scoped key resource, so no WILDCARD-RESOURCE. Proves the decryption rule keys strictly on kms:Decrypt.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "KmsEncryptOnly",
+        "Effect": "Allow",
+        "Action": ["kms:Encrypt", "kms:GenerateDataKey"],
+        "Resource": ["arn:aws:kms:us-east-1:111122223333:key/abcd-1234"]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["KMS-DECRYPT", "DATA-EXFIL", "WILDCARD-RESOURCE"]
+  }
+}

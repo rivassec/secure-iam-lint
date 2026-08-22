@@ -1,0 +1,22 @@
+{
+  "name": "Destructive actions with Condition + NotResource (boundary)",
+  "note": "IAM-504 fixture matrix: DESTRUCTIVE-ACTION Condition + NotResource cells in one witness. ec2:TerminateInstances + s3:DeleteBucket on NotResource (everything except one bucket) with a StringEquals region Condition. The destructive capability still fires (a Condition narrows when/where, it does not remove the grant); NotResource makes the scope broad, so WILDCARD-RESOURCE fires and is subsumed into DESTRUCTIVE-ACTION in the table.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DestroyExceptKeep",
+        "Effect": "Allow",
+        "Action": ["ec2:TerminateInstances", "s3:DeleteBucket"],
+        "NotResource": ["arn:aws:s3:::keep-me-bucket"],
+        "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["WILDCARD-RESOURCE", "DESTRUCTIVE-ACTION"],
+    "findingIds": ["DESTRUCTIVE-ACTION"],
+    "notFindingIds": ["DATA-EXFIL"]
+  }
+}

@@ -3,9 +3,66 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--
+    Content-Security-Policy: the SOURCE OF TRUTH is the HTTP response header set
+    by Cloudflare on this route (see docs/DEPLOY.md). The <meta> tag below is a
+    documented, WEAKER FALLBACK only - for environments that receive this file
+    without that header (opened from disk, a preview server, a mirror). It
+    intentionally OMITS frame-ancestors, which is ignored inside a meta tag and
+    is enforceable ONLY via the HTTP header. Rule: the meta must equal the
+    authoritative header MINUS frame-ancestors, and never add a directive of its
+    own - keep them in lockstep. The exact authoritative header value is mirrored
+    here so the two cannot silently diverge; a drift guard
+    (tests/csp-consistency.test.js) fails the suite if the meta, this line, and
+    DEPLOY.md ever disagree. No build step rewrites this: the committed file is
+    what ships, and per-deploy asset coherence relies on the Cloudflare cache purge.
+    AUTHORITATIVE-CSP-HEADER: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; worker-src 'self'; manifest-src 'self'
+  -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
-  <title>IAM Blast Radius - client-side policy analyzer</title>
+  <title>IAM Blast Radius - client-side AWS IAM policy analyzer</title>
+
+  <!--
+    IAM-509: SEO / indexing launch bundle is STAGED but GATED.
+    The <meta name="robots" content="noindex"> below is intentionally KEPT, and
+    NO sitemap entry is added (this static tool is not emitted by Pelican's
+    sitemap plugin, and none is to be added by hand). The canonical, description,
+    Open Graph, Twitter Card, and SoftwareApplication JSON-LD below are STAGED so
+    the launch bundle is ready and reviewable, but the page stays out of the
+    index until the human flip.
+    TODO(Oliver): flip noindex + add sitemap + submit to Search Console when the
+    Phase-B gates are signed off (Oliver decision). Until then this page is not
+    indexable and advertises no crawlable URL.
+    Every claim in the metadata/JSON-LD below is also stated in the visible
+    "About this tool" docs section, and all of it is static + CSP-clean.
+  -->
   <meta name="robots" content="noindex">
+  <link rel="canonical" href="https://rivassec.com/tools/iam-blast-radius/">
+  <meta name="description" content="Privacy-preserving, client-side AWS IAM policy analyzer. Paste one policy and see its potential blast radius - privilege-escalation paths, role-assumption reach, sensitive-data access, and broad-resource grants - analyzed entirely in your browser, with every finding graded by certainty. It shows the potential blast radius of a single policy, not a full account-wide permission evaluation.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://rivassec.com/tools/iam-blast-radius/">
+  <meta property="og:site_name" content="RivasSec">
+  <meta property="og:title" content="IAM Blast Radius - client-side AWS IAM policy analyzer">
+  <meta property="og:description" content="Privacy-preserving, client-side AWS IAM policy analyzer. See a single policy's potential blast radius - privilege-escalation paths, role-assumption reach, sensitive-data access, and broad-resource grants - analyzed entirely in your browser, every finding graded by certainty.">
+  <meta property="og:image" content="https://rivassec.com/images/og-default.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="IAM Blast Radius - client-side AWS IAM policy analyzer">
+  <meta name="twitter:description" content="Privacy-preserving, client-side AWS IAM policy analyzer. See a single policy's potential blast radius - privilege-escalation paths, role-assumption reach, sensitive-data access, and broad-resource grants - analyzed entirely in your browser, every finding graded by certainty.">
+  <meta name="twitter:image" content="https://rivassec.com/images/og-default.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "IAM Blast Radius",
+    "applicationCategory": "SecurityApplication",
+    "operatingSystem": "Any (runs in a modern web browser)",
+    "browserRequirements": "Requires JavaScript",
+    "url": "https://rivassec.com/tools/iam-blast-radius/",
+    "isAccessibleForFree": true,
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "author": { "@type": "Person", "name": "Oliver Rivas" },
+    "description": "IAM Blast Radius maps the potential blast radius of a single AWS IAM policy - privilege-escalation paths, role-assumption reach, sensitive-data access, and broad-resource grants - analyzed entirely in your browser, with every finding graded by certainty."
+  }
+  </script>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -35,10 +92,36 @@
       <div class="controls">
         <label for="policy-file" class="file-label">or import a .json file</label>
         <input id="policy-file" type="file" accept="application/json,.json">
+        <label for="policy-family" class="family-label">Policy family</label>
+        <select id="policy-family">
+          <option value="">Auto-detect (default)</option>
+          <option value="identity">Identity policy</option>
+          <option value="resource">Resource-based policy</option>
+          <option value="role-trust">Role trust policy</option>
+          <option value="permissions-boundary">Permissions boundary</option>
+          <option value="scp-rcp">SCP / RCP (organizations)</option>
+          <option value="session">Session policy</option>
+        </select>
         <button id="analyze-btn" type="button">Analyze locally</button>
         <button id="clear-btn" type="button">Clear analysis</button>
       </div>
       <p id="status" class="status" role="status" aria-live="polite"></p>
+
+      <div class="samples" aria-labelledby="samples-h">
+        <h3 id="samples-h" class="samples-h">Or load a built-in sample</h3>
+        <p class="hint">Fictional policies (AWS example account 111122223333). Loading one fills the
+        box and runs the normal local analysis - including the coverage panel. One is an obvious
+        escalation; the rest look dangerous but are neutralized by an explicit Deny, a boundary
+        shape, or an unsupported shape the analyzer fails closed on.</p>
+        <ul id="samples" class="samples-list"></ul>
+      </div>
+    </section>
+
+    <section aria-labelledby="coverage-h">
+      <h2 id="coverage-h">Analysis coverage</h2>
+      <p class="hint">What this analysis did and did not cover. A clean parse is not a complete
+      conclusion, and unsupported does not mean safe.</p>
+      <div id="coverage" class="coverage"></div>
     </section>
 
     <section aria-labelledby="findings-h">
@@ -59,6 +142,86 @@
       <h2 id="export-h">Export</h2>
       <button id="export-json" type="button">Download JSON</button>
       <button id="export-md" type="button">Download Markdown</button>
+    </section>
+    <section class="docs" aria-labelledby="docs-h">
+      <h2 id="docs-h">About this tool</h2>
+      <p>IAM Blast Radius maps the potential blast radius of a single AWS IAM policy - privilege-escalation
+      paths, role-assumption reach, sensitive-data access, and broad-resource grants - analyzed entirely
+      in your browser, with every finding graded by certainty.</p>
+      <p>It is a free tool that needs no sign-up, no AWS credentials, and no installation - it runs
+      as static files in a modern web browser with JavaScript enabled.</p>
+
+      <h3>Supported policy families</h3>
+      <p>The analyzer auto-detects the policy family from the document shape (paste-and-go; you can also
+      set the family manually). This phase fully evaluates <strong>identity-based policies</strong>.
+      Auto-detect keys off the presence of a <code>Principal</code> or <code>NotPrincipal</code> element:
+      <strong>resource-based</strong> and <strong>role-trust</strong> shapes (and any <code>NotPrincipal</code>,
+      ambiguous, or mixed shape) carry that element, so they are detected and <strong>fail closed</strong> -
+      the tool reports a coverage state rather than presenting findings for a shape it does not yet model.
+      <strong>Permissions-boundary, SCP, and session policies</strong> carry no <code>Principal</code>
+      and are indistinguishable from an identity policy by shape alone; on the paste-and-go path they are
+      labeled <em>Identity policy</em> and evaluated with identity rules, unless you set that family manually
+      in the selector, which then fails closed. A <strong>resource control policy (RCP)</strong> is the
+      exception in that group: like a resource-based policy, an RCP carries a <code>Principal</code> element
+      (the default <code>RCPFullAWSAccess</code> uses <code>"Principal": "*"</code>), so by shape it is
+      detected as a resource policy and <strong>fails closed</strong> - it is never labeled an identity
+      policy on paste-and-go. <code>NotPrincipal</code> and other recognized-but-unmodeled
+      elements are rejected with a machine-readable code and the exact JSON path, never silently ignored.</p>
+
+      <h3>Coverage behavior</h3>
+      <p>Every run produces an analysis-coverage summary shown above the findings: the detected family,
+      how many statements were accepted or rejected, unrecognized actions, unsupported conditions or
+      elements, the AWS evaluation layers this single document did not cover, whether the graph is complete
+      or truncated, and the rule and action-catalog versions. A clean JSON parse is not a complete
+      conclusion, and <strong>unsupported does not mean safe</strong>: an element the tool cannot model
+      prevents a complete conclusion rather than clearing the policy.</p>
+
+      <h3>Limitations</h3>
+      <ul>
+        <li>It reads one policy document. It shows the potential blast radius of that policy, not a
+        principal's account-wide permissions, which AWS computes from identity, resource, and trust
+        policies, permission boundaries, SCPs, and session policies together.</li>
+        <li>It never contacts AWS and uses no credentials, so it cannot see whether a passable or
+        assumable target role actually exists, what that role can do, or how service and trust
+        configuration would gate a path. Those are reported as unknown, never inferred.</li>
+        <li>Conditions are classified by how the text reads (narrows / selects / broadens /
+        context-required). The tool does not simulate a request context and never claims a live AWS
+        request would be allowed or denied.</li>
+        <li>The action catalog is a small, curated, dated snapshot of the services the rules reason
+        about, not the full AWS service reference. Actions outside it are reported as unknown in
+        coverage, not dropped and not treated as safe.</li>
+      </ul>
+
+      <h3>Privacy boundary</h3>
+      <p>The analysis runs entirely in your browser. The shipped JavaScript contains no network calls -
+      no <code>fetch</code>, no background upload, no analytics - so pasted policy content is not sent
+      anywhere by the page, and a strict Content-Security-Policy is layered on top as defense in depth.
+      Policy content is not written to local storage, session storage, or cookies. The "Clear analysis"
+      button and leaving the page both wipe the in-memory state.</p>
+
+      <h3>Examples</h3>
+      <p>Built-in sample policies (fictional, using AWS example account 111122223333) load into the input
+      and run the normal local analysis, including the coverage panel. One is an obvious escalation; the
+      others look dangerous but are neutralized by an explicit Deny, a permissions-boundary shape, or an
+      unsupported shape the analyzer fails closed on - useful for seeing when the tool declines to fire.</p>
+
+      <h3>Rule catalog</h3>
+      <p>Capability rules flag wildcard actions and resources, direct IAM administration, destructive
+      action families, data exfiltration and KMS decryption, and detection impairment. Escalation rules
+      correlate action combinations into privilege-escalation paths: <code>iam:PassRole</code> into a
+      workload-execution service (Lambda, EC2, and peers), policy-version manipulation, attach/put policy
+      to self, trust-policy modification, credential creation, and AssumeRole expansion. Each finding
+      carries its evidence, a split policy-evidence / path-exploitability certainty, the limitation of
+      what it does not prove, and a remediation. The rule catalog and the action catalog are independently
+      versioned and their versions are shown in the coverage panel and in every export.</p>
+
+      <h3>How it differs from AWS Access Analyzer and Policy Simulator</h3>
+      <p>AWS IAM Access Analyzer and the AWS IAM Policy Simulator are AWS services that reason against
+      your live account context - resolving effective policies, resource and trust relationships, and
+      organization controls on AWS's side. IAM Blast Radius is a static, client-side, single-document
+      analyzer. It never calls AWS, needs no credentials, and does not resolve account-wide outcomes;
+      it maps the potential blast radius of the one policy you paste and is complementary to, not a
+      replacement for, those AWS tools.</p>
     </section>
   </main>
 

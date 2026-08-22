@@ -323,6 +323,117 @@
       ],
       "acceptance": ["a multi-category policy renders distinct PRIVILEGE ESCALATION / IDENTITY EXPANSION / DATA ACCESS / SCOPE lane sections", "escalation paths show the unknown-privileges transition node within their lane", "graph injection fixtures still inert; reduced-motion honored", "UX/a11y critic no serious/critical", "security critic no high/critical", "full node --test suite green (graph fixtures/e2e updated)"],
       "maximumIterations": 5
+    },
+    {
+      "id": "IAM-501",
+      "title": "Phase 5: policy-family model with auto-detect + fail-closed on unsupported shapes",
+      "priority": 25, "phase": 5, "status": "pending",
+      "requirements": [
+        "Detect the policy family from shape (identity / resource / role-trust / permissions-boundary / SCP-RCP / session). AUTO-DETECT is the default (preserve paste-and-go); do NOT force a manual selector before Analyze. Offer an optional manual family override.",
+        "FAIL CLOSED: if the shape is ambiguous, mixed, unknown, or contains a recognized-but-unmodeled element, STOP before rule evaluation and return a blocking coverage state - never present confident findings on a shape not understood.",
+        "Model Principal and NotPrincipal as distinct, mutually-exclusive elements. Until a family-aware NotPrincipal evaluator exists, reject NotPrincipal with error code UNSUPPORTED_NOTPRINCIPAL. Same fail-closed treatment for other recognized-but-unmodeled top-level elements, with exact JSON paths.",
+        "Every export records the selected/detected family and any blocking coverage state."
+      ],
+      "acceptance": ["ambiguous/mixed/unknown shapes fail before rule evaluation with a machine-readable code + JSON path", "NotPrincipal is rejected UNSUPPORTED_NOTPRINCIPAL, never silently ignored", "existing single identity-policy fixtures still analyze (auto-detect = identity)", "QA/IAM-semantics critic 100 (family classification correct per AWS grammar)", "security + reliability critics clean", "full node --test suite green"],
+      "maximumIterations": 6
+    },
+    {
+      "id": "IAM-502",
+      "title": "Phase 5: coverage summary above findings + in every export",
+      "priority": 24, "phase": 5, "status": "pending",
+      "requirements": [
+        "Render a COMPACT 'Analysis coverage' summary above the findings/graph (not a giant dashboard): detected family, statements accepted/rejected, unrecognized actions, unsupported conditions/elements, missing layers, graph complete/truncated, build SHA + rule version + catalog version.",
+        "Unsupported elements produce a visually prominent warning state. When any unsupported semantic input exists, replace 'No findings' with 'No findings in the supported subset - unsupported elements prevent a complete conclusion.' Use 'unsupported != safe' wording anywhere exports travel.",
+        "Coverage is part of JSON + Markdown exports with stable machine-readable codes; a clean parse is NOT equivalent to complete coverage.",
+        "Coverage precedes findings in visual AND DOM order; safe DOM; CSP-clean; keyboard-accessible."
+      ],
+      "acceptance": ["coverage panel precedes findings in DOM order", "zero-findings wording flips automatically when coverage incomplete", "coverage present in JSON + MD exports with stable codes", "QA + security + reliability + compat/a11y critics clean", "csp_audit clean; full node --test green"],
+      "maximumIterations": 5
+    },
+    {
+      "id": "IAM-503",
+      "title": "Phase 5: single-flight worker + fail-closed execution boundary",
+      "priority": 23, "phase": 5, "status": "pending",
+      "requirements": [
+        "Single active analysis job: monotonic job IDs; terminate + invalidate the prior worker when a new job starts; ignore stale responses; clear prior findings/export state at job start; expose a busy state (aria-busy) and prevent duplicate submission; terminate on watchdog expiry.",
+        "Fallback boundary: synchronous analysis is permitted ONLY when Worker construction is unavailable BEFORE analysis starts. A worker crash / runtime error / malformed message / watchdog after dispatch must NEVER reprocess hostile input on the main thread - return a bounded error instead.",
+        "Add browser-CI (Playwright e2e) tests for two-rapid-submissions (older result cannot overwrite newer), worker-crash + timeout fixtures (engine never runs on main thread), and status/aria-busy/completion/failure/timeout announcements."
+      ],
+      "acceptance": ["rapid double-submit: newer result wins, stale ignored", "post-dispatch worker crash/timeout never runs engine on main thread", "aria-busy + announcements tested in e2e across chromium/firefox/webkit", "reliability + security critics clean", "full node --test + e2e green"],
+      "maximumIterations": 6
+    },
+    {
+      "id": "IAM-504",
+      "title": "Phase 5: per-rule fixture matrix, explainable evidence, privacy invariants as release gates",
+      "priority": 22, "phase": 5, "status": "pending",
+      "requirements": [
+        "Every rule has, where semantically applicable: positive, negative, explicit-Deny, condition, NotAction, NotResource, policy-family-mismatch, hostile-string-rendering, deterministic-export fixtures. Add missing ones.",
+        "Every finding exposes human- + machine-readable evidence: policy family, statement index/Sid (Sid is display evidence, not stable identity), normalized action, normalized resource, relevant condition, rule ID, certainty, limitation.",
+        "Add gating tests (node + browser) asserting: no app-initiated network after initial asset load; no localStorage/sessionStorage/IndexedDB writes by default; policy text excluded from URLs and error payloads; Clear + pagehide wipe in-memory state; exports include caveat/coverage/catalog-version/build-SHA; hostile HTML/SVG/MD/Unicode inert; fixtures behave identically in browser worker and Node module."
+      ],
+      "acceptance": ["fixture matrix complete for every rule (gaps filled)", "evidence completeness asserted per finding", "privacy invariants gated in CI (storage/network/url)", "QA + security + reliability critics clean", "full node --test + e2e green"],
+      "maximumIterations": 6
+    },
+    {
+      "id": "IAM-505",
+      "title": "Phase 5: built-in abuse-case sample policies (visible, fictional, deterministic)",
+      "priority": 21, "phase": 5, "status": "pending",
+      "requirements": [
+        "Add a small set of built-in sample policies loadable from the UI: at least one obvious escalation, and CRUCIALLY 'scary-but-neutralized' samples where a dangerous-looking grant is blocked by explicit Deny, a permission boundary shape, or unsupported/incomplete context (reuse the negative-corpus intent).",
+        "Samples are fictional (placeholder ARNs/account 111122223333), deterministic, keyboard-accessible, and covered by engine tests (a UI sample is not a substitute for a regression fixture).",
+        "Loading a sample fills the input and runs the normal flow (incl. coverage panel)."
+      ],
+      "acceptance": ["samples load via keyboard + mouse; deterministic output", "at least one scary-but-neutralized sample demonstrates fail-closed/coverage or Deny suppression", "each sample has a matching engine fixture", "QA + compat/a11y + security critics clean", "full node --test + e2e green"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-506",
+      "title": "Phase 5: condition classification v1 (classify, do not claim runtime allow/deny)",
+      "priority": 20, "phase": 5, "status": "pending",
+      "requirements": [
+        "Classify known conditions as constraint (narrows when/where/who), selector (selects service/resource/principal/encryption-context), expansion (negated/wildcarded/missing-key broadening), or unsupported/context-required.",
+        "Cover iam:PassedToService, iam:AssociatedResourceArn, kms:ViaService, MFA (aws:MultiFactorAuthPresent), aws:SourceIp, aws:SourceVpc, aws:SourceVpce, aws:PrincipalOrgID, plus Null / ...IfExists / negated operators / multivalue set operators (to avoid wrong missing-key conclusions).",
+        "Unknown conditions remain context-required and are NEVER credited as protective. The classifier may say text appears to narrow/select; it must NOT claim a runtime AWS request will match or be denied. Feeds pathExploitability + coverage; interactive request-context simulation is OUT of scope."
+      ],
+      "acceptance": ["each covered key classified correctly with negative fixtures (protective/irrelevant/negated/dangerous distinguished)", "unknown conditions never lower risk to 'safe'", "QA/IAM-semantics critic 100", "reliability critic clean", "full node --test green"],
+      "maximumIterations": 5
+    },
+    {
+      "id": "IAM-507",
+      "title": "Phase 5: small versioned curated action catalog + unknown-action reporting",
+      "priority": 19, "phase": 5, "status": "pending",
+      "requirements": [
+        "Add a small, curated, VERSIONED action catalog (a dated snapshot, not the full AWS service-reference build): action existence + access-level annotation for the services the rules already reason about (iam, sts, s3, lambda, ec2, kms, secretsmanager, cloudtrail/guardduty/config, etc.).",
+        "Report actions NOT in the catalog as 'unknown action' in coverage (not an error, not silently dropped). Show a visible catalog version/date in the UI + exports.",
+        "Design the catalog behind an interface so a generated/sharded catalog can replace it later without touching rules. Do NOT fetch anything at runtime (connect-src 'none')."
+      ],
+      "acceptance": ["unknown actions surface in coverage with the catalog version", "no runtime network (grep gate)", "catalog is swappable behind an interface", "QA + security + reliability critics clean", "full node --test green"],
+      "maximumIterations": 5
+    },
+    {
+      "id": "IAM-508",
+      "title": "Phase 5: CSP single source of truth (HTTP header authoritative)",
+      "priority": 18, "phase": 5, "status": "pending",
+      "requirements": [
+        "Treat the Cloudflare HTTP CSP header as authoritative. Keep the <meta> CSP only as a documented fallback (comment in index.html explaining the header is the source of truth and frame-ancestors is header-only). Do NOT introduce drift.",
+        "Document the exact header value alongside the meta so the two cannot silently diverge; note this in DEPLOY.md.",
+        "No build step is introduced (per Oliver's no-build decision); asset coherence continues to rely on the per-deploy Cloudflare cache purge."
+      ],
+      "acceptance": ["meta CSP annotated as fallback; header documented as authoritative in DEPLOY.md", "csp_audit clean; no inline anything", "security critic clean", "full node --test green"],
+      "maximumIterations": 3
+    },
+    {
+      "id": "IAM-509",
+      "title": "Phase 5: STAGE the SEO/indexing launch bundle (do NOT remove noindex)",
+      "priority": 17, "phase": 5, "status": "pending",
+      "requirements": [
+        "Prepare (but keep gated) the full indexability bundle: self-referential canonical, an accurate title + meta description, Open Graph + Twitter Card (name='twitter:*'), truthful SoftwareApplication JSON-LD, and a crawlable docs section covering supported families, coverage behavior, limitations, privacy boundary, examples, rule catalog, and how it differs from AWS Access Analyzer / Policy Simulator.",
+        "KEEP <meta name='robots' content='noindex'> in place and DO NOT add the sitemap entry yet - leave a clear TODO comment 'flip noindex + add sitemap + submit to Search Console when Phase-B gates are signed off (Oliver decision)'. This story STAGES only.",
+        "Wording rules (SEO critic enforces): use 'potential blast radius', NEVER 'policy simulator' or 'effective permissions'; NO meta keywords; NO absolute claims ('100% private', 'mathematically prove', 'zero exfiltration'); every structured-data claim must be visible on the page; do not promise rich results.",
+        "All metadata/JSON-LD is static, CSP-clean, and accurate to the tool."
+      ],
+      "acceptance": ["canonical/description/OG/Twitter/JSON-LD present and accurate; docs section crawlable and truthful", "noindex STILL present; no sitemap entry added; TODO comment for the human flip", "SEO critic: wording precise, no keywords, no absolute claims, no rich-result promises, structured data matches visible content", "QA + security critics clean; csp_audit clean", "full node --test green"],
+      "maximumIterations": 4
     }
   ]
 }

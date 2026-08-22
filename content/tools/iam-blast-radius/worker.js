@@ -15,10 +15,13 @@ self.addEventListener('message', (event) => {
   const data = event && event.data;
   const id = data && typeof data.id !== 'undefined' ? data.id : null;
   const text = data && typeof data.text === 'string' ? data.text : '';
+  // IAM-501: optional manual family override forwarded from the UI. Only a
+  // string family token is honored; anything else falls back to auto-detect.
+  const family = data && typeof data.family === 'string' ? data.family : undefined;
 
   let result;
   try {
-    result = analyze(text);
+    result = analyze(text, family ? { family } : undefined);
   } catch (e) {
     // analyze() already backstops, but never let the worker die silently.
     result = {
@@ -29,6 +32,8 @@ self.addEventListener('message', (event) => {
       graph: { nodes: [], edges: [], truncated: false, limits: {} },
       catalogVersion: '1',
       counts: { findings: 0, edges: 0, nodes: 0 },
+      family: null,
+      coverage: null,
     };
   }
 

@@ -1,0 +1,24 @@
+{
+  "name": "Principal and NotPrincipal in one statement is a schema error",
+  "note": "IAM-501: Principal and NotPrincipal are mutually-exclusive elements; AWS forbids both in one statement. This is a hard model-level schema error (PRINCIPAL_AND_NOTPRINCIPAL), so the whole pipeline fails (ok:false) before any family classification or rule evaluation.",
+  "phase": 5,
+  "story": "IAM-501",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "BothExclusive",
+        "Effect": "Deny",
+        "Principal": { "AWS": "*" },
+        "NotPrincipal": { "AWS": "arn:aws:iam::111122223333:root" },
+        "Action": "s3:*",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": { "valid": false },
+  "familyExpect": {
+    "modelError": "PRINCIPAL_AND_NOTPRINCIPAL",
+    "modelErrorPath": "Statement[0]"
+  }
+}

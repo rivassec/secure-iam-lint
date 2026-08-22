@@ -1,0 +1,40 @@
+{
+  "name": "Mixed known condition keys across statements (constraint / selector / negated-expansion distinguished)",
+  "note": "One statement narrows a broad read by MFA (constraint, credited), one pins kms:Decrypt to a calling service (selector, not credited - it changes scope, not a guardrail), one uses a negated aws:SourceIp (expansion - 'any IP except', broadening not restricting). All keys are modelled, so coverage stays complete (no unsupported conditions).",
+  "story": "IAM-506",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadWithMfa",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "*",
+        "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "true" } }
+      },
+      {
+        "Sid": "DecryptViaS3",
+        "Effect": "Allow",
+        "Action": "kms:Decrypt",
+        "Resource": "*",
+        "Condition": { "StringEquals": { "kms:ViaService": "s3.us-east-1.amazonaws.com" } }
+      },
+      {
+        "Sid": "ReadExceptOneRange",
+        "Effect": "Allow",
+        "Action": "secretsmanager:GetSecretValue",
+        "Resource": "*",
+        "Condition": { "StringNotEquals": { "aws:SourceIp": "203.0.113.0/24" } }
+      }
+    ]
+  },
+  "conditionClass": {
+    "coverageIncomplete": false,
+    "unsupportedConditions": [],
+    "entries": [
+      { "key": "aws:MultiFactorAuthPresent", "class": "constraint", "appears": "narrows", "credited": true, "known": true },
+      { "key": "kms:ViaService", "class": "selector", "appears": "selects", "credited": false, "known": true },
+      { "key": "aws:SourceIp", "class": "expansion", "appears": "broadens", "credited": false, "known": true, "negated": true }
+    ]
+  }
+}

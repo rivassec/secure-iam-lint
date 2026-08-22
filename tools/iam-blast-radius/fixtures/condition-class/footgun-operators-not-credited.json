@@ -1,0 +1,49 @@
+{
+  "name": "Footgun operators on known keys (missing-key Null, ...IfExists, ForAllValues, wildcard value) are NOT credited",
+  "note": "Each entry uses a modelled key but an operator/value form that does not dependably restrict: Null:true tests the key is ABSENT (missing-key broadening); BoolIfExists MFA passes when the key is absent; ForAllValues matches an absent key; a wildcard value does not constrain. None may be credited as a guardrail; each is classified honestly (expansion or a weakened constraint) and never lowers risk to 'safe'.",
+  "story": "IAM-506",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "NullAbsentSourceVpc",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "*",
+        "Condition": { "Null": { "aws:SourceVpc": "true" } }
+      },
+      {
+        "Sid": "MfaIfExists",
+        "Effect": "Allow",
+        "Action": "s3:PutObject",
+        "Resource": "*",
+        "Condition": { "BoolIfExists": { "aws:MultiFactorAuthPresent": "true" } }
+      },
+      {
+        "Sid": "ForAllValuesRegion",
+        "Effect": "Allow",
+        "Action": "s3:ListBucket",
+        "Resource": "*",
+        "Condition": { "ForAllValues:StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      },
+      {
+        "Sid": "WildcardVpce",
+        "Effect": "Allow",
+        "Action": "s3:DeleteObject",
+        "Resource": "*",
+        "Condition": { "StringLike": { "aws:SourceVpce": "*" } }
+      }
+    ]
+  },
+  "conditionClass": {
+    "coverageIncomplete": false,
+    "unsupportedConditions": [],
+    "noneCredited": true,
+    "entries": [
+      { "key": "aws:SourceVpc", "class": "expansion", "appears": "broadens", "credited": false, "nullTest": "absent" },
+      { "key": "aws:MultiFactorAuthPresent", "class": "constraint", "appears": "narrows", "credited": false, "ifExists": true },
+      { "key": "aws:RequestedRegion", "class": "constraint", "appears": "narrows", "credited": false, "setOperator": "ForAllValues" },
+      { "key": "aws:SourceVpce", "class": "expansion", "appears": "broadens", "credited": false, "wildcardValue": true }
+    ]
+  }
+}

@@ -16,9 +16,16 @@ import { analyzeRules, ruleFindingDenySuppressed } from './rules.js';
 import { analyzeEscalations } from './escalation.js';
 import { correlateFindings } from './correlate.js';
 import { buildGraph, GRAPH_LIMITS } from './graph.js';
+import { detectFamily } from './family.js';
+import { enrichCoverage } from './coverage.js';
+import { classifyConditions, unsupportedConditionKeys } from './conditions.js';
+import { defaultCatalog, unrecognizedActions } from './catalog.js';
 
-// The catalog version reported in the UI footer + export. Rule + escalation
-// findings all carry ruleVersion '1' in this phase.
+// The RULE/finding catalog version reported at the top level of the result (UI
+// footer + export "Rule catalog version"). Rule + escalation findings all carry
+// ruleVersion '1' in this phase. This is DISTINCT from the ACTION-catalog version
+// (catalog.js ACTION_CATALOG_VERSION), a dated snapshot surfaced separately in the
+// coverage summary (versions.catalogVersion) - the two version on their own cadence.
 export const CATALOG_VERSION = '1';
 
 // Severity display order (highest blast radius first). Used to sort the
@@ -259,6 +266,30 @@ export function summarize(findings) {
   return { categories, highestRisk, total: list.length };
 }
 
+// IAM-504: explainable evidence. Every finding must expose the policy FAMILY it
+// was evaluated under alongside the statement/action/resource/condition/rule-id/
+// certainty/limitation it already carries. The family is an analyze()-level fact
+// (rules.js / escalation.js do not know it), so it is stamped here. Findings are
+// deep-frozen at creation, so we return NEW objects with the field added rather
+// than mutating. Subsumed sub-findings (IAM-105/201) are findings too and get the
+// same stamp so a folded row is equally explainable in the export.
+function stampFamily(finding, family) {
+  if (!finding || typeof finding !== 'object') return finding;
+  const subsumed = Array.isArray(finding.subsumed)
+    ? finding.subsumed.map((s) => Object.freeze({ ...s, policyFamily: family }))
+    : finding.subsumed;
+  const stamped = { ...finding, policyFamily: family };
+  if (subsumed !== finding.subsumed) stamped.subsumed = Object.freeze(subsumed);
+  // IAM-506: attach the condition classification for the condition block this
+  // finding carries. This makes the path-exploitability story explainable (why a
+  // condition does or does not read like a guardrail) without ever claiming a
+  // runtime allow/deny. `null` conditions classify to a stable "not present"
+  // shape. This is additive evidence; it does not change severity/exploitability
+  // (the escalation/rule engines already fold conditions into those numbers).
+  stamped.conditionClassification = classifyConditions(finding.conditions);
+  return Object.freeze(stamped);
+}
+
 function emptyGraph() {
   return {
     nodes: [],
@@ -277,6 +308,47 @@ function fail(errors) {
     graph: Object.freeze(emptyGraph()),
     catalogVersion: CATALOG_VERSION,
     counts: Object.freeze({ findings: 0, edges: 0, nodes: 0 }),
+    // IAM-501: input never reached family classification (validation/model
+    // failed first), so there is no family/coverage to record.
+    family: null,
+    coverage: null,
+  });
+}
+
+// IAM-501: the model parsed cleanly but its SHAPE is not one the engine can
+// faithfully evaluate (NotPrincipal, resource/role-trust/other unmodeled family,
+// ambiguous mixed shape, or an unmodeled manual override). We STOP before rule
+// evaluation and return a BLOCKING COVERAGE STATE: ok:true (the pipeline ran to
+// a well-formed conclusion the UI can render), zero findings, an empty graph
+// (no confident graph on a shape we do not understand), and the coverage object
+// carrying the machine-readable blocking codes + exact JSON paths. Exports read
+// `family` + `coverage` from here (requirement: every export records them).
+function blockedResult(model, coverage) {
+  const graph = emptyGraph();
+  // IAM-502: enrich the family-gate coverage into the full analysis-coverage
+  // summary (statements accepted/rejected, unsupported elements, missing layers,
+  // graph state, versions). A blocked shape has zero statements accepted and is
+  // marked incomplete, which flips the zero-findings wording in every export.
+  const enriched = enrichCoverage(coverage, {
+    model,
+    graph,
+    // IAM-507: report the ACTION-catalog version (a dated snapshot) and any
+    // concrete actions the snapshot does not recognize. A blocked shape is
+    // already incomplete, but naming its unknown actions keeps the coverage
+    // honest and the version traceable in the export.
+    catalogVersion: defaultCatalog.version,
+    unrecognizedActions: unrecognizedActions(model, defaultCatalog),
+  });
+  return Object.freeze({
+    ok: true,
+    errors: Object.freeze([]),
+    findings: Object.freeze([]),
+    model,
+    graph: Object.freeze(graph),
+    catalogVersion: CATALOG_VERSION,
+    counts: Object.freeze({ findings: 0, edges: 0, nodes: 0 }),
+    family: enriched.family,
+    coverage: enriched,
   });
 }
 
@@ -291,10 +363,17 @@ function fail(errors) {
  * @returns {{ok:boolean, errors:Array, findings:Array<object>, model:(object|null),
  *            graph:object, catalogVersion:string, counts:object}}
  */
-export function analyze(text) {
+export function analyze(text, options) {
   try {
     const m = modelFromText(text);
     if (!m.ok) return fail(m.errors);
+
+    // IAM-501: classify the policy family from shape (auto-detect by default;
+    // an optional manual override is honored). Fail closed BEFORE any rule
+    // evaluation on a shape the engine does not model - never present confident
+    // identity findings on a resource/trust/ambiguous/NotPrincipal document.
+    const coverage = detectFamily(m.model, options || {});
+    if (coverage.blocked) return blockedResult(m.model, coverage);
 
     const rules = analyzeRules(m.model);
     const esc = analyzeEscalations(m.model);
@@ -323,7 +402,12 @@ export function analyze(text) {
     // primary path finding with a risk-factor checklist instead of duplicate
     // subordinate rows. Independent wildcard findings are untouched.
     const correlated = correlateFindings(tableFindings);
-    const findings = Object.freeze(sortFindings(correlated));
+    // IAM-504: stamp the effective policy family onto every finding so each row
+    // carries the full explainable-evidence set (family + statement + action +
+    // resource + condition + rule id + certainty + limitation).
+    const effectiveFamily = coverage.family || coverage.detected || 'unknown';
+    const stamped = correlated.map((f) => stampFamily(f, effectiveFamily));
+    const findings = Object.freeze(sortFindings(stamped));
 
     // The graph is built from the full (pre-correlation, pre-Deny-suppression)
     // finding set: a subsumed wildcard grant is still a real edge, and a
@@ -331,6 +415,28 @@ export function analyze(text) {
     // findings table stays the authoritative, de-duplicated, live-capability view.
     const g = buildGraph(m.model, combined);
     const graph = g.ok ? g.graph : emptyGraph();
+
+    // IAM-502: enrich the family-gate coverage into the full analysis-coverage
+    // summary now that the model + graph exist (statement counts, graph
+    // complete/truncated, missing evaluation layers, versions). Exports and the
+    // coverage panel read this single object.
+    // IAM-506: report condition keys the classifier does not model as
+    // unsupported conditions. A single such key marks coverage incomplete
+    // (unsupported does NOT mean safe) - the honest signal that the analysis
+    // could not reason about part of the request-context gating.
+    // IAM-507: the ACTION-catalog reports concrete actions it does not recognize
+    // as "unknown action" in coverage (not an error, not silently dropped), and
+    // its dated version travels in the summary. Unknown actions mark coverage
+    // incomplete - the snapshot could not vouch for that grant (unsupported does
+    // NOT mean safe). The catalog sits behind an interface (defaultCatalog) so a
+    // generated/sharded snapshot can replace it without touching this pipeline.
+    const enriched = enrichCoverage(coverage, {
+      model: m.model,
+      graph,
+      catalogVersion: defaultCatalog.version,
+      unsupportedConditions: unsupportedConditionKeys(m.model),
+      unrecognizedActions: unrecognizedActions(m.model, defaultCatalog),
+    });
 
     return Object.freeze({
       ok: true,
@@ -344,6 +450,11 @@ export function analyze(text) {
         edges: graph.edges.length,
         nodes: graph.nodes.length,
       }),
+      // IAM-501/502: the detected/selected family + enriched coverage summary
+      // travel with every successful result so exports and the coverage panel
+      // can name the family they analyzed and what they did / did not cover.
+      family: enriched.family,
+      coverage: enriched,
     });
   } catch (e) {
     // Absolute backstop: the UI must never see an uncaught exception.

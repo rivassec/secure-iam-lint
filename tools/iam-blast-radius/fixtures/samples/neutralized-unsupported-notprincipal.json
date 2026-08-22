@@ -1,0 +1,29 @@
+{
+  "name": "Built-in sample: NotPrincipal resource policy - analyzer fails closed (scary-but-neutralized)",
+  "note": "IAM-505 UI sample. Matches samples.js id 'neutralized-unsupported-notprincipal'. A dangerous-looking resource policy using NotPrincipal. The analyzer models identity-policy semantics only, so it fails closed BEFORE rule evaluation and returns a blocking coverage state (UNSUPPORTED_NOTPRINCIPAL) with the exact JSON path, rather than presenting confident findings on a shape it does not understand. Demonstrates the coverage/fail-closed neutralization path. Reuses fixtures/family/notprincipal-rejected.json intent.",
+  "phase": 5,
+  "story": "IAM-505",
+  "sampleId": "neutralized-unsupported-notprincipal",
+  "kind": "neutralized",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyExceptTrustedOrg",
+        "Effect": "Deny",
+        "NotPrincipal": { "AWS": "arn:aws:iam::111122223333:root" },
+        "Action": "s3:*",
+        "Resource": "arn:aws:s3:::locked-bucket/*"
+      }
+    ]
+  },
+  "sampleExpect": {
+    "blocked": true,
+    "mustFind": [],
+    "mustNotFind": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
+    "severity": {},
+    "blockingCodes": [
+      { "code": "UNSUPPORTED_NOTPRINCIPAL", "path": "Statement[0].NotPrincipal" }
+    ]
+  }
+}

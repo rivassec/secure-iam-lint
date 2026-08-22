@@ -1,0 +1,32 @@
+{
+  "name": "Built-in sample: PassRole + Lambda create (obvious escalation)",
+  "note": "IAM-505 UI sample. Matches samples.js id 'escalation-passrole-lambda'. iam:PassRole scoped to Lambda plus lambda:CreateFunction = a compound privilege-escalation path (critical). This is the 'obvious escalation' the loadable sample set demonstrates.",
+  "phase": 5,
+  "story": "IAM-505",
+  "sampleId": "escalation-passrole-lambda",
+  "kind": "escalation",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowLambdaDeployment",
+        "Effect": "Allow",
+        "Action": ["iam:PassRole"],
+        "Resource": ["arn:aws:iam::111122223333:role/app-*"],
+        "Condition": { "StringEquals": { "iam:PassedToService": "lambda.amazonaws.com" } }
+      },
+      {
+        "Sid": "CreateFn",
+        "Effect": "Allow",
+        "Action": ["lambda:CreateFunction", "lambda:UpdateFunctionCode"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "sampleExpect": {
+    "blocked": false,
+    "mustFind": ["PASSROLE-LAMBDA"],
+    "mustNotFind": [],
+    "severity": { "PASSROLE-LAMBDA": "critical" }
+  }
+}

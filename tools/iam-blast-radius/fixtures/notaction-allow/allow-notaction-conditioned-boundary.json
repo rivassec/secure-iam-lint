@@ -1,0 +1,22 @@
+{
+  "name": "Allow NotAction with a Condition (boundary)",
+  "note": "IAM-504 fixture matrix: NOTACTION-ALLOW Condition cell. Allow NotAction ['s3:GetObject'] on a scoped resource with a region Condition. NOTACTION-ALLOW still fires (Allow-NotAction grants everything except the listed actions; a Condition narrows when/where, it does not remove the inverted grant). Scoped Resource keeps WILDCARD-RESOURCE from firing so the rule-catalog output is exactly NOTACTION-ALLOW.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowAllButOneRead",
+        "Effect": "Allow",
+        "NotAction": ["s3:GetObject"],
+        "Resource": "arn:aws:s3:::app-bucket/*",
+        "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["NOTACTION-ALLOW"],
+    "findingIds": ["NOTACTION-ALLOW"],
+    "notFindingIds": ["WILDCARD-RESOURCE"]
+  }
+}

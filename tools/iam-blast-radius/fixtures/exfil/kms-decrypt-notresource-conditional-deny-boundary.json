@@ -1,0 +1,28 @@
+{
+  "name": "KMS decrypt with NotResource scope + conditional Deny (boundary)",
+  "note": "IAM-504 fixture matrix: KMS-DECRYPT NotResource + explicit-Deny cells in one witness. Statement 0 allows kms:Decrypt on NotResource (everything except one pinned key) - broad, so KMS-DECRYPT fires and WILDCARD-RESOURCE is subsumed into it. Statement 1 is a CONDITIONAL Deny on kms:Decrypt: a conditional Deny may not apply at runtime, so it does NOT definitively suppress the capability (KMS-DECRYPT survives in the authoritative table) but it exercises the rule's interaction with an explicit Deny.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DecryptExceptPinned",
+        "Effect": "Allow",
+        "Action": "kms:Decrypt",
+        "NotResource": ["arn:aws:kms:us-east-1:111122223333:key/pinned-key"]
+      },
+      {
+        "Sid": "DenyDecryptWithoutMfa",
+        "Effect": "Deny",
+        "Action": "kms:Decrypt",
+        "Resource": "*",
+        "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "false" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["WILDCARD-RESOURCE", "KMS-DECRYPT"],
+    "findingIds": ["KMS-DECRYPT"],
+    "notFindingIds": ["DATA-EXFIL"]
+  }
+}

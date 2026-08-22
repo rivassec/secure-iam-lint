@@ -1,0 +1,21 @@
+{
+  "name": "Direct IAM write scoped by NotResource (boundary)",
+  "note": "IAM-504 fixture matrix: DIRECT-IAM-ADMIN with a NotResource scope. Allow iam:PutUserPolicy + iam:AttachRolePolicy on NotResource (everything EXCEPT one protected role) still grants direct self-administration, so DIRECT-IAM-ADMIN fires; the NotResource 'allow everything except' shape is broad, so WILDCARD-RESOURCE also fires (subsumed into DIRECT-IAM-ADMIN in the authoritative table per IAM-201). Provides the DIRECT-IAM-ADMIN NotResource cell of the per-rule matrix.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "IamWriteExceptProtected",
+        "Effect": "Allow",
+        "Action": ["iam:PutUserPolicy", "iam:AttachRolePolicy"],
+        "NotResource": ["arn:aws:iam::111122223333:role/protected-break-glass"]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["WILDCARD-RESOURCE", "DIRECT-IAM-ADMIN"],
+    "findingIds": ["DIRECT-IAM-ADMIN"],
+    "notFindingIds": ["DATA-EXFIL", "DESTRUCTIVE-ACTION"]
+  }
+}

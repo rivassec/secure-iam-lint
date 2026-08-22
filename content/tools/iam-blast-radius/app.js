@@ -14,6 +14,8 @@ import { analyze, findingToRow, FINDING_COLUMNS, FINDING_DETAIL_FIELDS, CATALOG_
 import { LIMITS } from './engine/validate.js';
 import { toJSON, toMarkdown } from './engine/report.js';
 import { createGraphRenderer } from './engine/render-graph.js';
+import { noFindingsMessage } from './engine/coverage.js';
+import { SAMPLES } from './samples.js';
 
 // Wall-clock budget for a single worker run before we terminate it (T5).
 const WATCHDOG_MS = 8000;
@@ -26,6 +28,14 @@ const state = {
 let els = null;
 let graphRenderer = null;
 
+// IAM-503: single-flight analysis boundary. At most one analysis job may be in
+// flight. A monotonic id identifies the current job; starting a new job
+// terminates and invalidates the previous worker so a stale (older) response
+// can never overwrite a newer result. A message whose id is not the current
+// job's id - or that arrives after the job was superseded - is ignored.
+let jobSeq = 0;
+let currentJob = null; // { id, worker, watchdog }
+
 function byId(id) {
   return document.getElementById(id);
 }
@@ -34,9 +44,12 @@ function collectElements() {
   return {
     input: byId('policy-input'),
     file: byId('policy-file'),
+    family: byId('policy-family'),
     analyzeBtn: byId('analyze-btn'),
     clearBtn: byId('clear-btn'),
+    samples: byId('samples'),
     status: byId('status'),
+    coverage: byId('coverage'),
     findings: byId('findings'),
     graph: byId('graph'),
     evidence: byId('evidence'),
@@ -73,6 +86,17 @@ function setExportEnabled(enabled) {
   if (els.exportMd) els.exportMd.disabled = !ok;
 }
 
+// IAM-503: expose the in-flight state as aria-busy on the findings region (the
+// primary output) so assistive tech announces that analysis is running, and set
+// the analyze button's aria-busy for the same reason. Called with true at
+// dispatch and false the moment a job settles (success, failure, crash, or
+// timeout).
+function setBusy(busy) {
+  const value = busy ? 'true' : 'false';
+  if (els.findings) els.findings.setAttribute('aria-busy', value);
+  if (els.analyzeBtn) els.analyzeBtn.setAttribute('aria-busy', value);
+}
+
 // --- Rendering ---------------------------------------------------------------
 
 function renderErrors(errors) {
@@ -102,14 +126,190 @@ function renderErrors(errors) {
   els.findings.appendChild(wrap);
 }
 
-function renderNoFindings() {
+// IAM-501: the optional manual family override. Empty string ("Auto-detect")
+// means no override - the engine auto-detects the family from shape.
+function selectedFamily() {
+  const v = els.family && typeof els.family.value === 'string' ? els.family.value : '';
+  return v || undefined;
+}
+
+// IAM-501: a compact blocking-coverage notice. When the policy shape is one the
+// engine does not model (NotPrincipal, a resource/role-trust/other family, an
+// ambiguous mixed shape, or an unmodeled manual override), analysis fails closed
+// BEFORE rule evaluation and returns no findings. Rendering this notice makes the
+// blocking state visible and explicit ("unsupported does NOT mean safe") rather
+// than showing a misleading empty result. Safe DOM only; the blocking codes /
+// JSON paths / messages ride through as inert textContent. The full coverage
+// panel is IAM-502; this is the minimum so a blocked shape is never silent.
+function renderCoverageNotice(coverage) {
+  const section = document.createElement('section');
+  section.className = 'coverage-blocked';
+  section.setAttribute('role', 'alert');
+  section.setAttribute('aria-labelledby', 'coverage-blocked-h');
+
+  const heading = document.createElement('h3');
+  heading.id = 'coverage-blocked-h';
+  heading.textContent = 'Analysis stopped - policy shape not supported';
+  section.appendChild(heading);
+
+  const dl = document.createElement('dl');
+  dl.className = 'coverage-meta';
+  appendProse(dl, 'Detected family', coverage.detected);
+  if (coverage.override) appendProse(dl, 'Manual override', coverage.override);
+  section.appendChild(dl);
+
+  const intro = document.createElement('p');
+  intro.textContent =
+    'This analyzer models identity-policy semantics only. It stopped before ' +
+    'evaluating rules rather than present findings on a shape it does not ' +
+    'understand. Unsupported does NOT mean safe - it means no conclusion.';
+  section.appendChild(intro);
+
+  const codes = Array.isArray(coverage.blockingCodes) ? coverage.blockingCodes : [];
+  if (codes.length > 0) {
+    const ul = document.createElement('ul');
+    ul.className = 'coverage-codes';
+    for (const b of codes) {
+      const li = document.createElement('li');
+      const code = document.createElement('span');
+      code.className = 'coverage-code';
+      code.textContent = String(b.code || '');
+      li.appendChild(code);
+      if (b.path) {
+        const path = document.createElement('span');
+        path.className = 'coverage-path';
+        path.textContent = ` at ${String(b.path)}`;
+        li.appendChild(path);
+      }
+      if (b.message) {
+        const msg = document.createElement('span');
+        msg.className = 'coverage-message';
+        msg.textContent = ` - ${String(b.message)}`;
+        li.appendChild(msg);
+      }
+      ul.appendChild(li);
+    }
+    section.appendChild(ul);
+  }
+
+  return section;
+}
+
+// IAM-502: the zero-findings wording flips automatically when coverage is
+// incomplete. With unsupported semantic input present it reads "No findings in
+// the supported subset - unsupported elements prevent a complete conclusion",
+// so an empty result is never mistaken for a clean bill of health.
+function renderNoFindings(coverage) {
   clearChildren(els.findings);
   const p = document.createElement('p');
-  p.textContent =
-    'No blast-radius findings were produced from the supplied policy. ' +
-    'This is not proof the policy is safe - it means none of the current ' +
-    'rules matched the supplied context.';
+  p.textContent = noFindingsMessage(coverage);
   els.findings.appendChild(p);
+}
+
+// IAM-502: the COMPACT "Analysis coverage" panel, rendered above the findings in
+// visual + DOM order (its own <section> precedes the findings section in
+// index.html). It names the detected family, statements accepted/rejected,
+// unrecognized actions, unsupported conditions/elements, the AWS evaluation
+// layers this single document did NOT cover, graph complete/truncated, and the
+// build SHA + rule version + catalog version. When any unsupported semantic
+// input exists it takes a visually prominent warning state ("unsupported does
+// NOT mean safe"). Safe DOM only (createElement + textContent); every
+// policy-derived string (family tokens, JSON paths, action names) rides through
+// as inert text.
+function renderCoveragePanel(coverage) {
+  clearChildren(els.coverage);
+  const s = coverage && coverage.summary;
+  if (!s) return;
+
+  const section = document.createElement('section');
+  section.className = s.incomplete ? 'coverage-summary coverage-incomplete' : 'coverage-summary';
+  section.setAttribute('aria-labelledby', 'coverage-summary-h');
+
+  const heading = document.createElement('h3');
+  heading.id = 'coverage-summary-h';
+  heading.textContent = 'Coverage summary';
+  section.appendChild(heading);
+
+  const dl = document.createElement('dl');
+  dl.className = 'coverage-summary-meta';
+  const familyText = s.override
+    ? `${s.detectedFamilyLabel} (manual override: ${s.override})`
+    : s.detectedFamilyLabel;
+  appendProse(dl, 'Detected family', familyText);
+  appendProse(dl, 'Supported for rule evaluation', s.supported ? 'yes' : 'no');
+  appendProse(
+    dl,
+    'Statements',
+    `${s.statements.accepted} accepted, ${s.statements.rejected} rejected (of ${s.statements.total})`,
+  );
+  appendProse(dl, 'Unrecognized actions', coverageList(s.unrecognizedActions));
+  appendProse(dl, 'Unsupported conditions', coverageList(s.unsupportedConditions));
+  appendProse(dl, 'Attack-path graph', s.graph.truncated ? 'truncated (bounded)' : 'complete');
+  section.appendChild(dl);
+
+  // Evaluation layers this single document did not cover - the concrete form of
+  // "not effective permissions".
+  if (Array.isArray(s.missingLayers) && s.missingLayers.length > 0) {
+    const layers = document.createElement('p');
+    layers.className = 'coverage-layers';
+    const label = document.createElement('span');
+    label.className = 'coverage-layers-label';
+    label.textContent = 'Layers not supplied (each could further constrain, or grant cross-account): ';
+    const value = document.createElement('span');
+    value.textContent = s.missingLayers.map((l) => l.label).join(', ') + '.';
+    layers.appendChild(label);
+    layers.appendChild(value);
+    section.appendChild(layers);
+  }
+
+  // Prominent warning state whenever unsupported semantic input exists.
+  if (s.incomplete) {
+    const warn = document.createElement('p');
+    warn.className = 'coverage-warn';
+    warn.setAttribute('role', 'note');
+    warn.textContent =
+      'Unsupported input is present - this is not a complete conclusion. ' +
+      'Unsupported does NOT mean safe.';
+    section.appendChild(warn);
+
+    if (Array.isArray(s.unsupportedElements) && s.unsupportedElements.length > 0) {
+      const ul = document.createElement('ul');
+      ul.className = 'coverage-unsupported';
+      for (const e of s.unsupportedElements) {
+        const li = document.createElement('li');
+        const el = document.createElement('span');
+        el.className = 'coverage-code';
+        el.textContent = String(e.element || '');
+        li.appendChild(el);
+        if (e.path) {
+          const path = document.createElement('span');
+          path.className = 'coverage-path';
+          path.textContent = ` at ${String(e.path)}`;
+          li.appendChild(path);
+        }
+        ul.appendChild(li);
+      }
+      section.appendChild(ul);
+    }
+  }
+
+  // Version footer: build SHA + rule + catalog version, so a screenshot or copy
+  // is tied to a shipped revision.
+  const versions = document.createElement('p');
+  versions.className = 'coverage-versions';
+  versions.textContent =
+    `Build ${s.versions.buildSha} - rule catalog v${s.versions.ruleVersion} - ` +
+    `action catalog v${s.versions.catalogVersion}`;
+  section.appendChild(versions);
+
+  els.coverage.appendChild(section);
+}
+
+// Join a coverage string list for display, or the explicit "(none)" so an empty
+// slot is legible rather than a blank cell.
+function coverageList(values) {
+  if (Array.isArray(values) && values.length > 0) return values.join(', ');
+  return '(none)';
 }
 
 // IAM-106: a scannable risk-summary header rendered above the findings table.
@@ -162,11 +362,11 @@ function renderRiskSummary(findings) {
   return section;
 }
 
-function renderFindings(findings) {
+function renderFindings(findings, coverage) {
   clearChildren(els.findings);
 
   if (!Array.isArray(findings) || findings.length === 0) {
-    renderNoFindings();
+    renderNoFindings(coverage);
     return;
   }
 
@@ -297,6 +497,34 @@ function renderDetailRow(finding, columnCount, detailId) {
   }
   td.appendChild(dl);
 
+  // IAM-506: condition classification. Describes how each Condition entry READS
+  // (appears to narrow / select / broaden, or context-required) - never a
+  // runtime allow/deny claim. Hostile condition keys/values ride through as
+  // inert text (createElement + textContent only).
+  const cc = finding.conditionClassification;
+  if (cc && cc.present && Array.isArray(cc.entries) && cc.entries.length > 0) {
+    const heading = document.createElement('p');
+    heading.className = 'condition-class-heading';
+    heading.textContent = 'Condition classification (how the text reads, not a runtime verdict):';
+    td.appendChild(heading);
+
+    const ul = document.createElement('ul');
+    ul.className = 'condition-classes';
+    for (const e of cc.entries) {
+      const li = document.createElement('li');
+      li.className = `cc-${String(e.appears)}`;
+      const tag = document.createElement('span');
+      tag.className = 'cc-tag';
+      tag.textContent = `[${String(e.appears)}] `;
+      const body = document.createElement('span');
+      body.textContent = `${String(e.operator)} ${String(e.key)} - ${String(e.note)}`;
+      li.appendChild(tag);
+      li.appendChild(body);
+      ul.appendChild(li);
+    }
+    td.appendChild(ul);
+  }
+
   if (factors.length > 0) {
     const heading = document.createElement('p');
     heading.className = 'risk-factors-heading';
@@ -398,6 +626,7 @@ function handleResult(result) {
   state.lastAnalysis = result;
 
   if (!result || !result.ok) {
+    clearChildren(els.coverage);
     renderErrors(result ? result.errors : []);
     clearChildren(els.graph);
     resetEvidence();
@@ -406,7 +635,30 @@ function handleResult(result) {
     return;
   }
 
-  renderFindings(result.findings);
+  // IAM-502: the compact coverage summary panel precedes the findings in DOM +
+  // visual order (its own section is above the findings section). It renders for
+  // every successful analysis, blocked or not.
+  renderCoveragePanel(result.coverage);
+
+  // IAM-501: fail-closed coverage state. The pipeline ran (ok:true) but the
+  // shape is unmodeled, so there are no findings and no graph - show the
+  // blocking notice instead. Export stays enabled: the JSON/MD report records
+  // the detected family + the blocking coverage codes.
+  if (result.coverage && result.coverage.blocked) {
+    clearChildren(els.findings);
+    els.findings.appendChild(renderCoverageNotice(result.coverage));
+    clearChildren(els.graph);
+    resetEvidence();
+    setExportEnabled(true);
+    setStatus(
+      'Analysis stopped: the policy shape (' +
+      String(result.coverage.detected || 'unknown') +
+      ') is not supported for rule evaluation. No findings were produced.',
+    );
+    return;
+  }
+
+  renderFindings(result.findings, result.coverage);
   renderGraph(result.graph, result.counts, result.findings);
   setExportEnabled(true);
 
@@ -423,67 +675,218 @@ function workerSupported() {
   return typeof Worker !== 'undefined';
 }
 
-function runSync(text) {
-  // No-Worker fallback (architecture invariant 5). Same pure pipeline.
-  const result = analyze(text);
+function runSync(text, family) {
+  // No-Worker fallback (architecture invariant 5). This path is reached ONLY
+  // when a Web Worker cannot be constructed BEFORE analysis starts (Worker
+  // undefined, or `new Worker(...)` throws). It is NEVER used to recover from a
+  // worker that failed AFTER dispatch - that would re-run the engine on hostile
+  // input on the main thread, which IAM-503 forbids (see failClosed).
+  const result = analyze(text, family ? { family } : undefined);
   handleResult(result);
 }
 
-function runInWorker(text) {
+// IAM-503: terminate + invalidate whatever job is currently in flight (if any).
+// Used when a newer submission supersedes an older one, and by Clear / pagehide.
+// After this, any late message from the old worker is ignored because its id no
+// longer matches the current job.
+function invalidateCurrentJob() {
+  if (!currentJob) return;
+  if (currentJob.watchdog) clearTimeout(currentJob.watchdog);
+  if (currentJob.worker) {
+    try { currentJob.worker.terminate(); } catch (e) { /* ignore */ }
+  }
+  currentJob = null;
+}
+
+// IAM-503 fail-closed boundary. A worker crash / runtime error / malformed
+// message / watchdog expiry AFTER dispatch renders a bounded error and sets a
+// status message WITHOUT re-running analyze() (and the hostile policy text) on
+// the main thread. This is the whole point of the execution boundary: a broken
+// worker must degrade to a clear error, never to main-thread reprocessing.
+function failClosed(detailMessage, statusMessage) {
+  clearChildren(els.coverage);
+  clearChildren(els.graph);
+  resetEvidence();
+  setExportEnabled(false);
+  state.lastAnalysis = null;
+  renderErrors([{ code: 'WORKER_FAILED', message: detailMessage }]);
+  setStatus(statusMessage);
+}
+
+// IAM-503: clear all prior output (findings, coverage, graph, evidence, export)
+// and drop the retained analysis at the start of every new job, so a superseded
+// or failed run never leaves stale results on screen.
+function resetOutputForNewJob() {
+  state.lastAnalysis = null;
+  setExportEnabled(false);
+  clearChildren(els.coverage);
+  clearChildren(els.findings);
+  clearChildren(els.graph);
+  resetEvidence();
+}
+
+function runInWorker(text, family) {
+  // Newer submission wins: supersede any in-flight job first (terminates the
+  // prior worker so its result can never land after this one).
+  invalidateCurrentJob();
+
+  const id = ++jobSeq;
+
   let worker;
   try {
     worker = new Worker('worker.js', { type: 'module' });
   } catch (e) {
-    runSync(text);
+    // Worker construction unavailable BEFORE analysis started -> the ONLY
+    // permitted synchronous fallback (architecture invariant 5).
+    runSync(text, family);
     return;
   }
 
-  let settled = false;
-  const watchdog = setTimeout(() => {
-    if (settled) return;
-    settled = true;
+  const job = { id, worker, watchdog: null };
+  currentJob = job;
+
+  // A job is stale if it has been superseded (currentJob moved on) or is no
+  // longer the newest job id. Stale callbacks return without touching the UI.
+  const isStale = () => currentJob !== job || jobSeq !== id;
+
+  // Settle this job: stop the watchdog, terminate the worker, drop the busy
+  // state, and release it as the current job. Idempotent via the stale check in
+  // each caller.
+  const settle = () => {
+    if (job.watchdog) { clearTimeout(job.watchdog); job.watchdog = null; }
     try { worker.terminate(); } catch (e) { /* ignore */ }
-    setExportEnabled(false);
-    clearChildren(els.findings);
-    clearChildren(els.graph);
-    resetEvidence();
-    setStatus(
+    if (currentJob === job) currentJob = null;
+    setBusy(false);
+  };
+
+  job.watchdog = setTimeout(() => {
+    if (isStale()) return;
+    settle();
+    // Fail closed on timeout: bounded error, NOT a main-thread re-run.
+    failClosed(
+      'Analysis exceeded the time budget and was stopped before it finished. ' +
+      'To protect the page it was not re-run on the main thread. Try a smaller policy.',
       'Analysis exceeded the time budget and was stopped. Try a smaller policy.',
     );
   }, WATCHDOG_MS);
 
   worker.addEventListener('message', (event) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(watchdog);
-    try { worker.terminate(); } catch (e) { /* ignore */ }
+    if (isStale()) return; // a newer job supersedes this one; ignore stale result
     const payload = event && event.data;
-    handleResult(payload ? payload.result : null);
+    // Accept only a well-formed message that carries THIS job's id and a result
+    // object with a boolean ok. Anything else is a malformed message -> fail
+    // closed rather than reprocessing on the main thread.
+    if (!payload || payload.id !== job.id || !payload.result ||
+        typeof payload.result.ok !== 'boolean') {
+      settle();
+      failClosed(
+        'The analysis worker returned an unexpected message and was stopped. ' +
+        'The policy was not re-analyzed on the main thread.',
+        'Analysis failed: the worker returned an unexpected result.',
+      );
+      return;
+    }
+    settle();
+    handleResult(payload.result);
   });
 
   worker.addEventListener('error', () => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(watchdog);
-    try { worker.terminate(); } catch (e) { /* ignore */ }
-    // Fall back to the synchronous path rather than failing outright.
-    runSync(text);
+    if (isStale()) return;
+    settle();
+    // A worker runtime crash after dispatch. Fail closed - never re-run the
+    // engine on the hostile input on the main thread.
+    failClosed(
+      'The analysis worker stopped unexpectedly. To protect the page, the ' +
+      'policy was not re-analyzed on the main thread. Try again, or use a ' +
+      'smaller policy.',
+      'Analysis failed: the worker stopped unexpectedly.',
+    );
   });
 
-  worker.postMessage({ id: 1, text });
+  worker.addEventListener('messageerror', () => {
+    if (isStale()) return;
+    settle();
+    failClosed(
+      'The analysis worker sent a message that could not be read and was ' +
+      'stopped. The policy was not re-analyzed on the main thread.',
+      'Analysis failed: the worker returned an unreadable result.',
+    );
+  });
+
+  setBusy(true);
+  worker.postMessage({ id, text, family });
 }
 
 function analyzeText(text) {
   if (typeof text !== 'string' || text.trim().length === 0) {
-    setExportEnabled(false);
-    clearChildren(els.graph);
+    invalidateCurrentJob();
+    setBusy(false);
+    resetOutputForNewJob();
     renderErrors([{ code: 'EMPTY_INPUT', message: 'Paste or import a policy first.' }]);
     setStatus('Nothing to analyze.');
     return;
   }
+  // Clear prior output at job start (single-flight): a new run never shows the
+  // previous run's findings while it is in flight.
+  resetOutputForNewJob();
   setStatus('Analyzing locally in your browser...');
-  if (workerSupported()) runInWorker(text);
-  else runSync(text);
+  const family = selectedFamily();
+  if (workerSupported()) runInWorker(text, family);
+  else runSync(text, family);
+}
+
+// --- Built-in samples (IAM-505) ----------------------------------------------
+
+// Load a built-in sample: fill the input with the (pretty-printed) sample policy
+// and run the normal analysis flow (worker + coverage panel + findings + graph),
+// exactly as if the user had pasted it. The manual family override is reset to
+// Auto-detect so a sample always demonstrates its intended auto-detected
+// behavior (e.g. the NotPrincipal sample must auto-detect the resource family
+// and fail closed). File input is cleared so the two input sources never
+// disagree. The sample policy is our own static, fictional data, but it still
+// flows through the same safe path as any pasted text.
+function loadSample(sample) {
+  if (!sample || !sample.policy) return;
+  const text = JSON.stringify(sample.policy, null, 2);
+  if (els.input) els.input.value = text;
+  if (els.file) els.file.value = '';
+  if (els.family) els.family.value = '';
+  analyzeText(text);
+}
+
+// Render the sample loader controls (IAM-505). Each sample is a keyboard- and
+// pointer-operable <button> with a visible description associated via
+// aria-describedby, so the loaders are meaningful with assistive tech. Safe DOM
+// only (createElement + textContent); the sample labels/descriptions are static
+// strings from samples.js.
+function renderSamples() {
+  if (!els.samples) return;
+  clearChildren(els.samples);
+  let i = 0;
+  for (const sample of SAMPLES) {
+    const descId = `sample-desc-${i++}`;
+
+    const li = document.createElement('li');
+    li.className = 'sample-item';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = sample.kind === 'escalation'
+      ? 'sample-btn sample-escalation'
+      : 'sample-btn sample-neutralized';
+    btn.setAttribute('aria-describedby', descId);
+    btn.textContent = sample.label;
+    btn.addEventListener('click', () => loadSample(sample));
+    li.appendChild(btn);
+
+    const desc = document.createElement('span');
+    desc.className = 'sample-desc';
+    desc.id = descId;
+    desc.textContent = sample.description;
+    li.appendChild(desc);
+
+    els.samples.appendChild(li);
+  }
 }
 
 // --- File import -------------------------------------------------------------
@@ -546,9 +949,15 @@ function exportMd() {
 // --- Clear / lifecycle -------------------------------------------------------
 
 function clearAnalysis(announce) {
+  // IAM-503: cancel any in-flight job so a late worker result cannot repaint the
+  // UI after a Clear, and drop the busy state.
+  invalidateCurrentJob();
+  setBusy(false);
   state.lastAnalysis = null;
   if (els.input) els.input.value = '';
   if (els.file) els.file.value = '';
+  if (els.family) els.family.value = '';
+  clearChildren(els.coverage);
   clearChildren(els.findings);
   clearChildren(els.graph);
   resetEvidence();
@@ -562,8 +971,13 @@ function clearAnalysis(announce) {
 // Wipe in-memory state when the page is being hidden/unloaded (T4). No policy
 // content survives navigation; nothing was ever written to storage.
 function onPageHide() {
-  state.lastAnalysis = null;
-  if (els && els.input) els.input.value = '';
+  // IAM-503: terminate any in-flight worker on navigation so no analysis of the
+  // (now-cleared) policy text survives the page.
+  // IAM-504 (privacy gate): fully wipe the rendered analysis too, not just the
+  // in-memory state, so nothing policy-derived lingers in the DOM if the page is
+  // restored from the bfcache. Reuse the same teardown the Clear button runs
+  // (without the "cleared" announcement, since the page is going away).
+  clearAnalysis(false);
 }
 
 // --- Bootstrap ---------------------------------------------------------------
@@ -579,7 +993,9 @@ function init() {
 
   if (els.ruleVersion) els.ruleVersion.textContent = CATALOG_VERSION;
   setExportEnabled(false);
+  setBusy(false); // stable initial aria-busy state on the findings region
   resetEvidence();
+  renderSamples(); // IAM-505: build the built-in sample loader buttons
 
   if (els.analyzeBtn) {
     els.analyzeBtn.addEventListener('click', () => {

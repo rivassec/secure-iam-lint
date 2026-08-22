@@ -1,0 +1,25 @@
+{
+  "name": "Identity policy auto-detects as identity (paste-and-go preserved)",
+  "note": "IAM-501: no Principal/NotPrincipal anywhere -> auto-detect resolves to the identity family and the engine evaluates normally. Paste-and-go is preserved: no manual family selection is required.",
+  "phase": 5,
+  "story": "IAM-501",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadReports",
+        "Effect": "Allow",
+        "Action": ["s3:GetObject", "s3:ListBucket"],
+        "Resource": ["arn:aws:s3:::reports-bucket", "arn:aws:s3:::reports-bucket/*"]
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": [] },
+  "familyExpect": {
+    "detected": "identity",
+    "family": "identity",
+    "blocked": false,
+    "supported": true,
+    "blockingCodes": []
+  }
+}

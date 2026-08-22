@@ -138,15 +138,19 @@ function copyGuarded(value, errors, path) {
   return out;
 }
 
-// --- Principal normalization -------------------------------------------------
-// Principal may be the wildcard string "*" or an object keyed by type
-// (AWS/Service/Federated/CanonicalUser), each value a string or string array.
+// --- Principal / NotPrincipal normalization ----------------------------------
+// Principal (and its mutually-exclusive twin NotPrincipal) may be the wildcard
+// string "*" or an object keyed by type (AWS/Service/Federated/CanonicalUser),
+// each value a string or string array. Both share this normalizer; `element`
+// selects which one for error paths/messages so the two stay DISTINCT elements
+// (IAM-501: Principal and NotPrincipal are modeled separately, never merged).
 // Normalized shape:
 //   null                                        (absent)
 //   { anyPrincipal: true,  byType: {} }         ("*")
 //   { anyPrincipal: false, byType: { AWS: [...], Service: [...] } }
 
-function normalizePrincipal(value, errors, path) {
+function normalizePrincipal(value, errors, path, element) {
+  const name = element || 'Principal';
   if (value === undefined) return null;
   if (value === '*') {
     return { anyPrincipal: true, byType: {} };
@@ -154,9 +158,9 @@ function normalizePrincipal(value, errors, path) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     errors.push(
       err(
-        'INVALID_PRINCIPAL',
-        'Principal must be "*" or an object keyed by principal type.',
-        `${path}.Principal`,
+        element === 'NotPrincipal' ? 'INVALID_NOTPRINCIPAL' : 'INVALID_PRINCIPAL',
+        `${name} must be "*" or an object keyed by principal type.`,
+        `${path}.${name}`,
       ),
     );
     return null;
@@ -168,12 +172,12 @@ function normalizePrincipal(value, errors, path) {
         err(
           'DANGEROUS_KEY',
           `Rejected dangerous key "${key}" (prototype-pollution guard).`,
-          `${path}.Principal.${key}`,
+          `${path}.${name}.${key}`,
         ),
       );
       continue;
     }
-    const arr = toStringArray(value[key], key, `${path}.Principal`);
+    const arr = toStringArray(value[key], key, `${path}.${name}`);
     if (!arr.ok) {
       errors.push(arr.error);
       continue;
@@ -252,7 +256,27 @@ function normalizeStatement(stmt, index, errors) {
   );
 
   const condition = normalizeCondition(stmt['Condition'], errors, path);
-  const principal = normalizePrincipal(stmt['Principal'], errors, path);
+
+  // Principal / NotPrincipal: distinct, mutually-exclusive elements (IAM-501).
+  // AWS forbids both in one statement; that is a schema error here. Each is
+  // normalized on its own field so a family-aware evaluator can tell them apart
+  // (NotPrincipal is not "the absence of Principal" - it is an explicit,
+  // separately-modeled element). NotPrincipal is only ever a resource-policy
+  // element; the fail-closed coverage gate (family.js) rejects it until a
+  // family-aware evaluator exists, but the MODEL still records it faithfully.
+  const hasPrincipal = stmt['Principal'] !== undefined;
+  const hasNotPrincipal = stmt['NotPrincipal'] !== undefined;
+  if (hasPrincipal && hasNotPrincipal) {
+    errors.push(
+      err(
+        'PRINCIPAL_AND_NOTPRINCIPAL',
+        'A statement may not contain both Principal and NotPrincipal.',
+        path,
+      ),
+    );
+  }
+  const principal = normalizePrincipal(stmt['Principal'], errors, path, 'Principal');
+  const notPrincipal = normalizePrincipal(stmt['NotPrincipal'], errors, path, 'NotPrincipal');
 
   if (errors.length !== before) {
     // This statement had at least one schema error; do not emit a half-built
@@ -270,6 +294,7 @@ function normalizeStatement(stmt, index, errors) {
     notResources,
     condition,
     principal,
+    notPrincipal,
   };
 }
 

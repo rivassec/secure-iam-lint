@@ -1,0 +1,28 @@
+{
+  "name": "Resource-based policy fails closed (not evaluated with identity rules)",
+  "note": "IAM-501: every statement names a Principal -> detected as a resource-based policy. The engine models identity semantics only, so it STOPS before rule evaluation and returns a blocking coverage state. Critically, the identity WILDCARD-ACTION/WILDCARD-RESOURCE findings that would fire on this shape are NOT produced - firing them would overstate risk (a bucket policy grants access TO the named principal, it is not an identity holding s3:* on *).",
+  "phase": 5,
+  "story": "IAM-501",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PublicBucket",
+        "Effect": "Allow",
+        "Principal": { "AWS": "*" },
+        "Action": "s3:*",
+        "Resource": "arn:aws:s3:::open-bucket/*"
+      }
+    ]
+  },
+  "expect": { "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL"] },
+  "familyExpect": {
+    "detected": "resource",
+    "family": "resource",
+    "blocked": true,
+    "supported": false,
+    "blockingCodes": [
+      { "code": "UNSUPPORTED_POLICY_FAMILY", "path": "Statement[0].Principal" }
+    ]
+  }
+}

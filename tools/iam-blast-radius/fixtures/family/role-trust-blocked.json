@@ -1,0 +1,27 @@
+{
+  "name": "Role trust policy detected as role-trust and fails closed",
+  "note": "IAM-501: Principal + only sts:AssumeRole and no Resource is the role trust-policy shape. It declares WHO may assume the role, not what an identity may do, so identity-escalation rules must not run. Detected as role-trust; fails closed with a blocking coverage state.",
+  "phase": 5,
+  "story": "IAM-501",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TrustLambda",
+        "Effect": "Allow",
+        "Principal": { "Service": "lambda.amazonaws.com" },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "expect": { "notFindingIds": ["ASSUME-ROLE-EXPANSION", "TRUST-POLICY-MODIFY"] },
+  "familyExpect": {
+    "detected": "role-trust",
+    "family": "role-trust",
+    "blocked": true,
+    "supported": false,
+    "blockingCodes": [
+      { "code": "UNSUPPORTED_POLICY_FAMILY", "path": "Statement[0].Principal" }
+    ]
+  }
+}

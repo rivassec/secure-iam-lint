@@ -1,0 +1,28 @@
+{
+  "name": "NotPrincipal is rejected UNSUPPORTED_NOTPRINCIPAL (never silently ignored)",
+  "note": "IAM-501: NotPrincipal is a recognized resource-policy element the engine does not model. It is DISTINCT from an absent Principal (treating it as 'no principal' would invert the statement's meaning). The coverage gate rejects it with UNSUPPORTED_NOTPRINCIPAL and the exact JSON path, and no findings are produced.",
+  "phase": 5,
+  "story": "IAM-501",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyExceptTrustedOrg",
+        "Effect": "Deny",
+        "NotPrincipal": { "AWS": "arn:aws:iam::111122223333:root" },
+        "Action": "s3:*",
+        "Resource": "arn:aws:s3:::locked-bucket/*"
+      }
+    ]
+  },
+  "expect": { "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"] },
+  "familyExpect": {
+    "detected": "resource",
+    "family": "resource",
+    "blocked": true,
+    "supported": false,
+    "blockingCodes": [
+      { "code": "UNSUPPORTED_NOTPRINCIPAL", "path": "Statement[0].NotPrincipal" }
+    ]
+  }
+}

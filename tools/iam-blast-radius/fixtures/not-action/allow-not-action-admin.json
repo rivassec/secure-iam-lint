@@ -27,7 +27,8 @@
           "resources": ["*"],
           "notResources": [],
           "condition": null,
-          "principal": null
+          "principal": null,
+          "notPrincipal": null
         }
       ]
     },

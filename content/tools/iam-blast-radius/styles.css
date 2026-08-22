@@ -50,6 +50,11 @@ body {
 h1 { margin: 0 0 .25rem; font-size: 1.6rem; color: var(--heading); }
 h2 { margin: 1.75rem 0 .5rem; font-size: 1.2rem; color: var(--heading); }
 .tagline, .hint, .status { color: var(--muted); }
+/* IAM-503: single-flight busy state. The findings region carries aria-busy while
+   an analysis job is in flight; dim it slightly so the running state is visible
+   as well as announced. The analyze button shows a wait cursor. */
+.findings[aria-busy="true"] { opacity: .6; }
+#analyze-btn[aria-busy="true"] { cursor: progress; }
 .disclaimer { border-left: 4px solid var(--warn); background: var(--panel);
   padding: .75rem 1rem; border-radius: 4px; }
 .noscript { border-left: 4px solid var(--accent); background: var(--panel); padding: .75rem 1rem; }
@@ -62,6 +67,63 @@ button { font: inherit; padding: .45rem .9rem; border: 1px solid var(--accent);
 button:hover { filter: brightness(1.08); }
 button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 #clear-btn { background: transparent; color: var(--accent); }
+.family-label { color: var(--muted); }
+#policy-family { font: inherit; padding: .4rem .5rem; border: 1px solid var(--border);
+  border-radius: 4px; background: #14161a; color: var(--fg); }
+
+/* IAM-505: built-in sample loaders. Fictional policies loadable with one
+   click/keypress; each button has a visible description associated via
+   aria-describedby. Escalation vs neutralized samples are tinted differently so
+   the "obvious escalation" vs "scary-but-neutralized" intent reads at a glance,
+   but the text/marker carries the meaning too (never color alone). No inline
+   styles (CSP). */
+.samples { margin: .9rem 0 .25rem; }
+.samples-h { margin: 0 0 .35rem; font-size: 1rem; color: var(--heading); }
+.samples-list { list-style: none; margin: .5rem 0 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .6rem; }
+.sample-item { display: flex; flex-direction: column; gap: .25rem;
+  border: 1px solid var(--border); border-radius: 6px; padding: .6rem; background: var(--panel); }
+.sample-btn { text-align: left; width: 100%; }
+.sample-btn.sample-neutralized { background: transparent; color: var(--accent); }
+.sample-desc { color: var(--muted); font-size: .85rem; line-height: 1.35; }
+
+/* IAM-501: fail-closed coverage notice. Shown when the policy shape is one the
+   engine does not model (NotPrincipal / resource / role-trust / ambiguous /
+   unmodeled override); analysis stops before rule evaluation. Warning-styled so
+   an empty result is never mistaken for "safe". No inline styles (CSP). */
+.coverage-blocked { border-left: 4px solid var(--warn); background: var(--panel);
+  padding: .75rem 1rem; border-radius: 4px; margin: 0 0 .9rem; }
+.coverage-blocked h3 { margin: 0 0 .5rem; font-size: 1rem; color: var(--heading); }
+dl.coverage-meta { display: grid; grid-template-columns: auto 1fr; gap: .15rem .75rem;
+  margin: 0 0 .5rem; }
+dl.coverage-meta dt { color: var(--muted); }
+dl.coverage-meta dd { margin: 0; }
+ul.coverage-codes { margin: .5rem 0 0; padding-left: 1.1rem; }
+ul.coverage-codes li { margin: .25rem 0; }
+.coverage-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 700;
+  color: var(--crit); }
+.coverage-path { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); }
+
+/* IAM-502: compact "Analysis coverage" summary panel, rendered above the
+   findings in DOM + visual order. Names what the analysis did / did not cover.
+   Takes a prominent warning state (.coverage-incomplete) whenever unsupported
+   semantic input exists ("unsupported does NOT mean safe"). No inline styles. */
+.coverage-summary { background: var(--panel); border: 1px solid var(--border);
+  border-radius: 4px; padding: .6rem .9rem; margin: 0 0 .9rem; }
+.coverage-summary.coverage-incomplete { border-left: 4px solid var(--warn); }
+.coverage-summary h3 { margin: 0 0 .5rem; font-size: 1rem; color: var(--heading); }
+dl.coverage-summary-meta { display: grid; grid-template-columns: auto 1fr;
+  gap: .15rem .75rem; margin: 0; }
+dl.coverage-summary-meta dt { color: var(--muted); }
+dl.coverage-summary-meta dd { margin: 0; }
+.coverage-layers { margin: .5rem 0 0; font-size: .9rem; }
+.coverage-layers-label { color: var(--muted); }
+.coverage-warn { margin: .5rem 0 0; padding-top: .5rem; border-top: 1px solid var(--border);
+  color: var(--warn); font-weight: 600; }
+ul.coverage-unsupported { margin: .35rem 0 0; padding-left: 1.1rem; }
+ul.coverage-unsupported li { margin: .2rem 0; }
+.coverage-versions { margin: .6rem 0 0; padding-top: .5rem; border-top: 1px solid var(--border);
+  color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .82rem; }
 
 /* IAM-106: risk-summary header above the findings table. Scannable counts +
    the single highest-risk path in one line. No inline styles (CSP style-src). */
@@ -117,6 +179,18 @@ ul.risk-factors .rf-box { font-family: ui-monospace, "SF Mono", Menlo, monospace
 ul.risk-factors li.rf-present .rf-box { color: var(--crit); }
 ul.risk-factors li.rf-absent .rf-box { color: var(--ok); }
 ul.subsumed-findings li { color: var(--muted); }
+
+/* IAM-506: condition classification list in the finding detail. Colour encodes
+   how the text READS (narrows/selects/broadens/context-required); a textual
+   [tag] carries the meaning without relying on colour. */
+.condition-class-heading { margin: .5rem 0 .25rem; color: var(--muted); font-size: .85rem; font-weight: 600; }
+ul.condition-classes { margin: 0; padding-left: .5rem; list-style: none; }
+ul.condition-classes li { font-size: .88rem; }
+ul.condition-classes .cc-tag { font-family: ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; color: var(--muted); }
+ul.condition-classes li.cc-narrows .cc-tag { color: var(--ok); }
+ul.condition-classes li.cc-selects .cc-tag { color: var(--accent); }
+ul.condition-classes li.cc-broadens .cc-tag { color: var(--crit); }
+ul.condition-classes li.cc-context-required .cc-tag { color: var(--warn); }
 
 .graph { min-height: 8rem; border: 1px dashed var(--border); border-radius: 4px; padding: .5rem; overflow-x: auto; }
 .graph svg { max-width: 100%; height: auto; }
@@ -219,5 +293,16 @@ ol.evidence-list li dl.evidence-item { padding: .35rem .5rem; background: var(--
 .evidence-caveat { margin: .5rem 0 0; color: var(--warn); font-size: .82rem; }
 
 a { color: var(--accent); }
+
+/* IAM-509: crawlable "About this tool" docs section (staged launch content).
+   Plain prose, no inline styles (CSP). h3 sub-headings for each topic. */
+.docs { margin-top: 1.5rem; }
+.docs h3 { margin: 1.25rem 0 .35rem; font-size: 1.02rem; color: var(--heading); }
+.docs p, .docs li { color: var(--fg); }
+.docs ul { margin: .35rem 0; padding-left: 1.25rem; }
+.docs li { margin: .3rem 0; }
+.docs code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .88em;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 0 .25rem; }
+
 .site-footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--muted); font-size: .85rem; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

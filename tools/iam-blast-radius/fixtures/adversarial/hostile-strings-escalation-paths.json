@@ -1,0 +1,28 @@
+{
+  "name": "Hostile strings across escalation-path statements",
+  "note": "IAM-504 fixture matrix: hostile-string-rendering witness for the escalation-path rules. Each statement carries an HTML/JS payload in its Sid (and role/policy ARNs where present) while granting a genuine escalation primitive. Every escalation finding must carry the hostile string verbatim as inert DATA (statementSid / resources / evidence). Covers PASSROLE-LAMBDA, PASSROLE-EC2, PASSROLE-SERVICE, POLICY-VERSION, ATTACH-POLICY, PUT-INLINE-POLICY, TRUST-POLICY-MODIFY, CREDENTIAL-CREATION, ASSUME-ROLE-EXPANSION.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "<img src=x onerror=alert(1)>pl", "Effect": "Allow", "Action": ["iam:PassRole", "lambda:CreateFunction"], "Resource": "*" },
+      { "Sid": "<img src=x onerror=alert(1)>pe", "Effect": "Allow", "Action": ["iam:PassRole", "ec2:RunInstances"], "Resource": "*" },
+      { "Sid": "<img src=x onerror=alert(1)>ps", "Effect": "Allow", "Action": ["iam:PassRole", "ecs:RunTask"], "Resource": "*" },
+      { "Sid": "<img src=x onerror=alert(1)>pv", "Effect": "Allow", "Action": "iam:CreatePolicyVersion", "Resource": "arn:aws:iam::111122223333:policy/<script>alert(1)</script>" },
+      { "Sid": "<img src=x onerror=alert(1)>ap", "Effect": "Allow", "Action": "iam:AttachRolePolicy", "Resource": "arn:aws:iam::111122223333:role/<script>alert(1)</script>" },
+      { "Sid": "<img src=x onerror=alert(1)>pp", "Effect": "Allow", "Action": "iam:PutRolePolicy", "Resource": "arn:aws:iam::111122223333:role/<script>alert(1)</script>" },
+      { "Sid": "<img src=x onerror=alert(1)>tp", "Effect": "Allow", "Action": "iam:UpdateAssumeRolePolicy", "Resource": "arn:aws:iam::111122223333:role/<script>alert(1)</script>" },
+      { "Sid": "<img src=x onerror=alert(1)>cc", "Effect": "Allow", "Action": "iam:CreateAccessKey", "Resource": "*" },
+      { "Sid": "<img src=x onerror=alert(1)>ar", "Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "arn:aws:iam::*:role/*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "assertInertRendering": true,
+    "hostile": true,
+    "hostileFor": [
+      "PASSROLE-LAMBDA", "PASSROLE-EC2", "PASSROLE-SERVICE", "POLICY-VERSION",
+      "ATTACH-POLICY", "PUT-INLINE-POLICY", "TRUST-POLICY-MODIFY",
+      "CREDENTIAL-CREATION", "ASSUME-ROLE-EXPANSION"
+    ]
+  }
+}

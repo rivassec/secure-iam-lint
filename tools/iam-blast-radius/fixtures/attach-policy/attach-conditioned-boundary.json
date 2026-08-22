@@ -1,0 +1,21 @@
+{
+  "name": "AttachRolePolicy with a Condition (boundary)",
+  "note": "IAM-504 fixture matrix: ATTACH-POLICY Condition cell. Allow iam:AttachRolePolicy on a specific role with a region Condition. The attach-policy self-administration path still fires (a Condition narrows when/where; it does not remove the grant), with exploitability downgraded a notch. DIRECT-IAM-ADMIN also fires at the rule layer for the same iam: write action (not asserted here; escalation suite ignores rule ids).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AttachToApp",
+        "Effect": "Allow",
+        "Action": ["iam:AttachRolePolicy"],
+        "Resource": "arn:aws:iam::111122223333:role/app-role",
+        "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["ATTACH-POLICY"],
+    "notFindingIds": ["PUT-INLINE-POLICY", "POLICY-VERSION"]
+  }
+}

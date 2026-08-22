@@ -34,7 +34,8 @@
           "resources": ["arn:aws:s3:::reports-bucket/*"],
           "notResources": [],
           "condition": null,
-          "principal": null
+          "principal": null,
+          "notPrincipal": null
         },
         {
           "index": 1,
@@ -45,7 +46,8 @@
           "resources": ["*"],
           "notResources": [],
           "condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } },
-          "principal": null
+          "principal": null,
+          "notPrincipal": null
         }
       ]
     }

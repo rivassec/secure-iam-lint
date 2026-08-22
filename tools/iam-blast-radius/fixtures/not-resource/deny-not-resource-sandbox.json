@@ -33,7 +33,8 @@
             "arn:aws:s3:::sandbox-bucket/*"
           ],
           "condition": null,
-          "principal": null
+          "principal": null,
+          "notPrincipal": null
         }
       ]
     },

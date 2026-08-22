@@ -1,0 +1,27 @@
+{
+  "name": "Broad s3:GetObject on * gated by an UNKNOWN condition key (context-required, never credited)",
+  "note": "The condition key s3:x-amz-server-side-encryption is not modelled by the v1 classifier. It must be reported as an unsupported/context-required condition (marking coverage incomplete) and must NEVER be credited as protective: the DATA-EXFIL finding still fires and the analysis is not called 'safe'.",
+  "story": "IAM-506",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadIfEncryptedHeader",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "*",
+        "Condition": {
+          "StringEquals": { "s3:x-amz-server-side-encryption": "aws:kms" }
+        }
+      }
+    ]
+  },
+  "conditionClass": {
+    "coverageIncomplete": true,
+    "unsupportedConditions": ["s3:x-amz-server-side-encryption"],
+    "entries": [
+      { "key": "s3:x-amz-server-side-encryption", "class": "context-required", "appears": "context-required", "credited": false, "known": false }
+    ]
+  },
+  "expectFindingIds": ["DATA-EXFIL"]
+}

@@ -1,0 +1,6 @@
+{
+  "name": "iam-blast-radius",
+  "private": true,
+  "type": "module",
+  "//": "Module-format marker ONLY. The shipped tool is vanilla ES-module JS/CSS/HTML served verbatim by Pelican (no build step, no dependencies). This file exists so every ESM loader resolves engine/*.js + app.js + worker.js as ESM explicitly, instead of relying on Node's auto module-syntax detection (which Playwright's loader does not perform, breaking e2e collection). It declares no dependencies and no scripts."
+}

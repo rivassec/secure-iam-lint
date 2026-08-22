@@ -1,0 +1,21 @@
+{
+  "name": "Built-in sample: broad s3:GetObject on * suppressed by an explicit Deny (scary-but-neutralized)",
+  "note": "IAM-505 UI sample. Matches samples.js id 'neutralized-explicit-deny'. A dangerous-looking broad object-read Allow is fully suppressed by a conflicting explicit Deny on the same action/resource. Explicit Deny wins, so no DATA-EXFIL capability is reported. Reuses the negative-corpus intent from fixtures/negative/explicit-deny-suppresses-exfil.json.",
+  "phase": 5,
+  "story": "IAM-505",
+  "sampleId": "neutralized-explicit-deny",
+  "kind": "neutralized",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowRead", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" },
+      { "Sid": "DenyRead", "Effect": "Deny", "Action": "s3:GetObject", "Resource": "*" }
+    ]
+  },
+  "sampleExpect": {
+    "blocked": false,
+    "mustFind": [],
+    "mustNotFind": ["DATA-EXFIL"],
+    "severity": {}
+  }
+}

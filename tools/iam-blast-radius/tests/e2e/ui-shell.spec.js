@@ -89,6 +89,41 @@ test('compound escalation path shows a risk-factor checklist and no duplicate wi
   await expect(detail).toBeHidden();
 });
 
+test('IAM-506: finding detail carries the condition classification (how the text reads, not a runtime verdict)', async ({ page }) => {
+  // A broad s3:GetObject on * fenced by an IpAddress aws:SourceIp condition:
+  // DATA-EXFIL fires, and its detail explains the condition as "appears to
+  // narrow" without ever claiming a runtime allow/deny.
+  await page.fill('#policy-input', fixture('negative/condition-sourceip-narrows-exfil.json'));
+  await page.click('#analyze-btn');
+  await expect(page.locator('#findings table')).toBeVisible();
+
+  const toggle = page.locator('#findings .row-toggle').first();
+  await toggle.click();
+  const detail = page.locator('#findings tr.finding-detail').first();
+  await expect(detail).toBeVisible();
+  await expect(detail).toContainText('Condition classification (how the text reads, not a runtime verdict)');
+  await expect(detail.locator('ul.condition-classes li.cc-narrows')).not.toHaveCount(0);
+  await expect(detail).toContainText('aws:SourceIp');
+});
+
+test('IAM-506: an unmodelled condition key surfaces in the coverage panel as unsupported', async ({ page }) => {
+  await page.fill('#policy-input', JSON.stringify({
+    Statement: [{
+      Effect: 'Allow', Action: 's3:GetObject', Resource: '*',
+      Condition: { StringEquals: { 'unmodelled:key': 'x' } },
+    }],
+  }));
+  await page.click('#analyze-btn');
+  const panel = page.locator('#coverage .coverage-summary');
+  await expect(panel).toBeVisible();
+  // The coverage panel takes the incomplete/warning state and names the key.
+  await expect(panel).toHaveClass(/coverage-incomplete/);
+  await expect(panel).toContainText('unmodelled:key');
+  await expect(panel).toContainText('Unsupported does NOT mean safe');
+  // Unsupported does NOT mean safe: the broad read still fires.
+  await expect(page.locator('#findings table')).toBeVisible();
+});
+
 test('IAM-101: compact findings table - prose is out of the row and rows are short', async ({ page }) => {
   // admin-star yields several findings; each is one compact main row plus a
   // collapsed detail row.
@@ -257,6 +292,102 @@ test('Clear wipes the input and findings and retains nothing in storage', async 
   }));
   expect(storage.local).not.toContain('GodMode');
   expect(storage.session).not.toContain('GodMode');
+});
+
+// ---------------------------------------------------------------------------
+// IAM-501: policy-family auto-detect + fail-closed coverage in the UI.
+// ---------------------------------------------------------------------------
+
+test('an optional manual family override selector is present (auto-detect default)', async ({ page }) => {
+  const select = page.locator('#policy-family');
+  await expect(select).toBeVisible();
+  // Auto-detect is the default selection (paste-and-go preserved).
+  await expect(select).toHaveValue('');
+});
+
+test('a resource-based policy fails closed with a visible blocking coverage notice', async ({ page }) => {
+  await page.fill('#policy-input', fixture('family/resource-policy-blocked.json'));
+  await page.click('#analyze-btn');
+
+  // No findings table on a shape the engine does not model.
+  await expect(page.locator('#findings table')).toHaveCount(0);
+  // The blocking coverage notice is shown instead, with the machine-readable
+  // code and the "unsupported does NOT mean safe" wording.
+  const notice = page.locator('#findings .coverage-blocked');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('not supported');
+  await expect(notice).toContainText('does NOT mean safe');
+  await expect(notice).toContainText('UNSUPPORTED_POLICY_FAMILY');
+  await expect(page.locator('#status')).toContainText('Analysis stopped');
+});
+
+test('NotPrincipal is rejected in the UI with its code and exact JSON path', async ({ page }) => {
+  await page.fill('#policy-input', fixture('family/notprincipal-rejected.json'));
+  await page.click('#analyze-btn');
+
+  const notice = page.locator('#findings .coverage-blocked');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('UNSUPPORTED_NOTPRINCIPAL');
+  await expect(notice).toContainText('Statement[0].NotPrincipal');
+  await expect(page.locator('#findings table')).toHaveCount(0);
+});
+
+test('manual override to an unmodeled family blocks even a clean identity policy', async ({ page }) => {
+  await page.fill('#policy-input', fixture('family/identity-auto-detect.json'));
+  await page.selectOption('#policy-family', 'scp-rcp');
+  await page.click('#analyze-btn');
+
+  const notice = page.locator('#findings .coverage-blocked');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('UNSUPPORTED_POLICY_FAMILY');
+  await expect(page.locator('#findings table')).toHaveCount(0);
+
+  // Clearing resets the override back to auto-detect.
+  await page.click('#clear-btn');
+  await expect(page.locator('#policy-family')).toHaveValue('');
+});
+
+// ---------------------------------------------------------------------------
+// IAM-502: compact analysis-coverage summary above the findings, in DOM order.
+// ---------------------------------------------------------------------------
+
+test('coverage summary renders above the findings and names family + versions (IAM-502)', async ({ page }) => {
+  await page.fill('#policy-input', fixture('wildcard/admin-star.json'));
+  await page.click('#analyze-btn');
+
+  const panel = page.locator('#coverage .coverage-summary');
+  await expect(panel).toBeVisible();
+  await expect(panel.locator('h3')).toHaveText('Coverage summary');
+  await expect(panel).toContainText('Identity policy');
+  await expect(panel).toContainText('accepted');
+  await expect(panel).toContainText('Layers not supplied');
+  // The version footer ties a screenshot to a shipped revision.
+  await expect(panel.locator('.coverage-versions')).toContainText('rule catalog');
+
+  // Coverage precedes the findings in DOM order (its section is above findings).
+  const coverageFirst = await page.evaluate(() => {
+    const cov = document.getElementById('coverage');
+    const findings = document.getElementById('findings');
+    if (!cov || !findings) return false;
+    // eslint-disable-next-line no-bitwise
+    return !!(cov.compareDocumentPosition(findings) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(coverageFirst).toBe(true);
+});
+
+test('coverage summary takes a warning state on an unsupported shape (IAM-502)', async ({ page }) => {
+  await page.fill('#policy-input', fixture('family/resource-policy-blocked.json'));
+  await page.click('#analyze-btn');
+
+  const panel = page.locator('#coverage .coverage-summary');
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveClass(/coverage-incomplete/);
+  await expect(panel.locator('.coverage-warn')).toContainText('does NOT mean safe');
+  await expect(panel).toContainText('0 accepted');
+
+  // Clearing wipes the coverage panel too.
+  await page.click('#clear-btn');
+  await expect(page.locator('#coverage .coverage-summary')).toHaveCount(0);
 });
 
 test('findings table works with JavaScript and shows a no-JS message otherwise', async ({ page }) => {

@@ -1,0 +1,26 @@
+{
+  "name": "Built-in sample: permissions-boundary-shaped broad services with no iam:PassRole (scary-but-neutralized)",
+  "note": "IAM-505 UI sample. Matches samples.js id 'neutralized-permissions-boundary'. Broad service wildcards look alarming but there is deliberately no iam:PassRole and no IAM administration, so no privilege-escalation path exists. The wildcards are high, never critical. Reuses fixtures/negative/permissions-boundary-shaped-no-escalation.json intent.",
+  "phase": 5,
+  "story": "IAM-505",
+  "sampleId": "neutralized-permissions-boundary",
+  "kind": "neutralized",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "WorkloadServices",
+        "Effect": "Allow",
+        "Action": ["s3:*", "ec2:*", "lambda:*", "logs:*", "sqs:*", "dynamodb:*"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "sampleExpect": {
+    "blocked": false,
+    "mustFind": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
+    "mustNotFind": ["PASSROLE-LAMBDA", "PASSROLE-EC2", "PASSROLE-SERVICE", "DIRECT-IAM-ADMIN", "ASSUME-ROLE-EXPANSION"],
+    "maxSeverity": { "WILDCARD-ACTION": "high", "WILDCARD-RESOURCE": "high" },
+    "severity": {}
+  }
+}
