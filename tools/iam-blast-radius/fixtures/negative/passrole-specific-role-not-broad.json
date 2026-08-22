@@ -1,0 +1,30 @@
+{
+  "name": "iam:PassRole scoped to one specific role ARN plus lambda:CreateFunction (not flagged as broad)",
+  "note": "PassRole is confined to a single named role, not arn:...:role/*. A PassRole->Lambda path may still exist, but it is pass-ONE-role, not pass-ANY-role, and carries no broad-resource grant.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassOneRole",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::111122223333:role/app-worker-readonly"
+      },
+      {
+        "Sid": "CreateFunction",
+        "Effect": "Allow",
+        "Action": "lambda:CreateFunction",
+        "Resource": "arn:aws:lambda:us-east-1:111122223333:function:app-*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["WILDCARD-RESOURCE"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "The PassRole Resource is a single concrete role ARN (arn:aws:iam::111122223333:role/app-worker-readonly), not a wildcard such as role/* or arn:aws:iam::*:role/*. Passing one specific, known role is materially narrower than pass-any-role: the blast radius is bounded by that one role's permissions. The engine MUST NOT emit a broad-resource (WILDCARD-RESOURCE) finding for a specifically scoped ARN, nor describe it as passing 'any role'. (A narrow PassRole->Lambda observation is defensible, but it must be presented as pass-one-role, not broad.) Ref: AWS IAM resource ARNs; a fully-qualified ARN is not a wildcard scope."
+}

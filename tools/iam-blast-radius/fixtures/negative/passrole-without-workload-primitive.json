@@ -1,0 +1,24 @@
+{
+  "name": "iam:PassRole on * WITHOUT any workload-execution primitive - not escalation",
+  "note": "PassRole alone grants nothing exploitable: there is no service action here that would consume the passed role.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassRoleAlone",
+        "Effect": "Allow",
+        "Action": ["iam:PassRole", "s3:GetObject"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["PASSROLE-LAMBDA", "PASSROLE-EC2", "PASSROLE-SERVICE"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "iam:PassRole only matters when paired with a service action that consumes a role (ec2:RunInstances, lambda:CreateFunction, ecs:RunTask, etc.). To pass a role you must call an API that accepts one; on its own PassRole cannot launch or configure anything, so no privilege-boundary crossing occurs. This policy has iam:PassRole plus a non-consuming action (s3:GetObject) - no execution primitive - so no PASSROLE-* escalation path exists and none may be flagged. (This is the canonical 'do NOT flag PassRole alone' rule; a broad DATA-EXFIL observation on s3:GetObject * is a separate matter.) Ref: AWS docs, iam:PassRole is used in conjunction with the service action that receives the role."
+}

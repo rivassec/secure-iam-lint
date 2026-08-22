@@ -1,0 +1,30 @@
+{
+  "name": "Allow s3:GetObject on * with an explicit Deny on the same action/resource (deny suppresses)",
+  "note": "An Allow and a conflicting explicit Deny cover the same action and resource. AWS resolves this to Deny, so there is no effective object-read capability.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowRead",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "*"
+      },
+      {
+        "Sid": "DenyRead",
+        "Effect": "Deny",
+        "Action": "s3:GetObject",
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["DATA-EXFIL"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "IAM policy evaluation applies explicit-Deny precedence: an explicit Deny always overrides any Allow. Here s3:GetObject on * is both allowed and explicitly denied, so the effective result is deny. The broad object-read (DATA-EXFIL) capability the Allow would otherwise grant is fully suppressed and MUST NOT be reported as an exfiltration capability. Ref: AWS IAM policy evaluation logic, 'Determining whether a request is allowed or denied' (explicit Deny wins)."
+}

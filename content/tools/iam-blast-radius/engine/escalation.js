@@ -478,7 +478,7 @@ function passRolePermitsService(condition, principal) {
   return { permits: true, pinned: true, uncertain };
 }
 
-function hasNonEmptyCondition(stmt) {
+export function hasNonEmptyCondition(stmt) {
   return (
     stmt.condition !== null &&
     stmt.condition !== undefined &&
@@ -509,18 +509,24 @@ function resourceListIsBroadForAssume(stmt) {
 }
 
 // IAM-102 severity discriminator: does an AssumeRole grant reach "effectively
-// ALL roles"? True when the resource scope places NO constraint on which role
-// NAME may be assumed:
-//   - a NotResource inverse (all roles except a listed few),
-//   - an unspecified scope (no Resource/NotResource),
-//   - a bare "*" (everything, roles included), or
-//   - a role ARN whose role-name path segment is exactly "*"
-//     (arn:aws:iam::*:role/*, arn:aws:iam::123456789012:role/*), or the bare
-//     shorthand "role/*".
-// A PARTIAL role-name wildcard (arn:...:role/app-*, role/app-?) reaches many
-// roles but not all, so it is NOT all-roles -> the finding stays `high`. Only
-// the all-roles case earns `critical` (compound privilege-boundary crossing).
+// ALL roles" - i.e. all roles across ARBITRARY accounts? Critical is reserved
+// for that boundary-crossing scope. Two axes must BOTH be unconstrained:
+//   (1) account axis arbitrary   - the grant is not pinned to concrete
+//       account id(s): a NotResource inverse, an unspecified scope, a bare "*",
+//       a non-ARN pattern, or an ARN whose account field is wildcarded/empty
+//       (this is exactly assumeAccountReach().arbitrary).
+//   (2) role-name axis fully open - a NotResource inverse, an unspecified
+//       scope, a bare "*", the bare shorthand "role/*", or a role ARN whose
+//       role-name path segment is exactly "*".
+// A grant pinned to a CONCRETE account - even arn:aws:iam::111122223333:role/*
+// (all roles in ONE account) - is broad but BOUNDED to that account, so it is
+// NOT effectively-all-roles and stays `high`, never critical: asserting critical
+// would claim reach the account-pinned ARN does not support (threat-model T8,
+// IAM-301 negative corpus). A PARTIAL role-name wildcard (role/app-*, role/app-?)
+// reaches many roles but not all, so it too stays `high`.
 function assumeScopeIsAllRoles(stmt) {
+  // Account axis must be arbitrary first: a concrete-account grant is bounded.
+  if (!assumeAccountReach(stmt).arbitrary) return false;
   if (stmt.notResources.length > 0) return true; // inverse: ~all roles
   if (stmt.resources.length === 0) return true; // unspecified: unconstrained
   return stmt.resources.some((r) => {
@@ -574,7 +580,7 @@ function assumeAccountReach(stmt) {
 // Returns { applies, certain }. NotAction on a Deny denies everything EXCEPT the
 // listed actions. Variable-bearing patterns cannot be resolved from text -> the
 // match is possible but not certain.
-function denyActionApplies(stmt, action) {
+export function denyActionApplies(stmt, action) {
   if (stmt.notActions.length > 0) {
     let concreteExcluded = false;
     let hasVar = false;

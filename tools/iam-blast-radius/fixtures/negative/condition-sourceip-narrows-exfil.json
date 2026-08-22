@@ -1,0 +1,27 @@
+{
+  "name": "s3:GetObject on * narrowed by an IpAddress aws:SourceIp condition (acknowledged, lower exploitability)",
+  "note": "The broad read is real, but an IpAddress condition confines requests to a single network range. The finding should stand yet reflect reduced path-exploitability, not a maximal rating.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadFromCorpNetwork",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "*",
+        "Condition": {
+          "IpAddress": { "aws:SourceIp": "203.0.113.0/24" }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": [],
+    "maxSeverity": {},
+    "maxPathExploitability": { "DATA-EXFIL": "medium" }
+  },
+  "rationale": "An IpAddress aws:SourceIp condition genuinely constrains the holder of this identity policy: every request that exercises the broad read must originate from the 203.0.113.0/24 range, so a credential used from anywhere else is denied. The capability still exists (any request from that network reads any object), so the finding must remain - but its path-exploitability must be downgraded to reflect the network guardrail (not high). Contrast with aws:PrincipalOrgID, which would be a no-op here: in an identity policy the principal is fixed and already belongs to its own org, so aws:PrincipalOrgID narrows nothing for the holder and would not lower exploitability - it is a resource-policy / SCP / VPC-endpoint guardrail, not an identity-policy one. Silently dropping this finding would understate risk; rating it maximally exploitable would ignore the aws:SourceIp fence. Ref: AWS global condition keys aws:SourceIp; and the tool's confidence-splitting (policyEvidence vs pathExploitability, IAM-104)."
+}

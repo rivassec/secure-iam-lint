@@ -1,0 +1,24 @@
+{
+  "name": "lambda:UpdateFunctionCode WITHOUT iam:PassRole - not a PassRole escalation",
+  "note": "Updating an existing function's code runs under the function's already-attached role. Without iam:PassRole the principal cannot attach a more-privileged role.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "UpdateCode",
+        "Effect": "Allow",
+        "Action": ["lambda:UpdateFunctionCode", "lambda:GetFunction"],
+        "Resource": "arn:aws:lambda:us-east-1:111122223333:function:*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["PASSROLE-LAMBDA", "PASSROLE-SERVICE", "PASSROLE-EC2"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "lambda:UpdateFunctionCode changes the code of an EXISTING function, which executes under the execution role already attached to that function; it does not let the caller choose or attach a role. The PassRole family of escalations requires iam:PassRole (to assign a privileged role to a new/updated workload), which is absent here. Therefore this is not a PassRole privilege-escalation and the PASSROLE-* findings must not fire. (Whether editing an already-privileged function is risky depends on that function's existing role - unknown target privileges - and is a separate, lower-confidence concern, not a PassRole path.) Ref: AWS docs, 'iam:PassRole' requirement for assigning execution roles; Lambda execution-role model."
+}

@@ -1,0 +1,27 @@
+{
+  "name": "kms:Decrypt on * narrowed by a kms:ViaService condition (decryption capability acknowledged, lower exploitability)",
+  "note": "The decrypt grant is confined to requests made through one AWS service. The KMS-DECRYPT finding should stand but reflect reduced exploitability.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DecryptViaS3Only",
+        "Effect": "Allow",
+        "Action": "kms:Decrypt",
+        "Resource": "*",
+        "Condition": {
+          "StringEquals": { "kms:ViaService": "s3.us-east-1.amazonaws.com" }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["KMS-DECRYPT"],
+    "mustNotFind": ["DATA-EXFIL"],
+    "maxSeverity": { "KMS-DECRYPT": "high" },
+    "maxPathExploitability": { "KMS-DECRYPT": "medium" }
+  },
+  "rationale": "The kms:ViaService condition key restricts kms:Decrypt to requests that arrive through the named service endpoint (here S3 in us-east-1); the principal cannot call Decrypt directly with arbitrary ciphertext. The decryption capability is real but gated, so KMS-DECRYPT must remain with reduced path-exploitability rather than a maximal rating. Per IAM-103/2.1, kms:Decrypt is a distinct decryption capability and must NOT be lumped with Secrets Manager reads (DATA-EXFIL): it decrypts ciphertext for usable keys, it does not enumerate or retrieve secret material. Ref: AWS docs, condition key kms:ViaService; KMS Decrypt semantics."
+}

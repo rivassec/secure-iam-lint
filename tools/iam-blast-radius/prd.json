@@ -278,6 +278,35 @@
       ],
       "acceptance": ["pass-role transition edges are policy-supported (not confirmed-by-context)", "kms:Decrypt edge is can-decrypt", "graph injection fixtures still inert", "UX/a11y critic no serious/critical", "full node --test suite green"],
       "maximumIterations": 4
+    },
+    {
+      "id": "IAM-301",
+      "title": "Phase 3: author + validate the negative regression corpus (does-not-fire truth)",
+      "priority": 40,
+      "phase": 3,
+      "status": "pending",
+      "requirements": [
+        "Create fixtures under fixtures/negative/ - each a policy + expected outcome (findingIds it MUST produce, notFindingIds/severities it MUST NOT overstate) + a `rationale` field citing the AWS behavior that makes the expectation correct. These assert the engine knows when NOT to fire (or to lower severity).",
+        "Cover at least these cases: (1) same dangerous actions split across two statements -> compound STILL detected across statements; (2) iam:PassRole restricted by iam:PassedToService pinned to a service that does NOT match the exec action -> that escalation path NOT flagged; (3) iam:PassRole scoped to one specific harmless role ARN -> not flagged as broad; (4) explicit Deny conflicting with Allow on the same action -> deny suppresses; (5) NotAction semantics; (6) NotResource semantics; (7) Condition StringEquals/StringLike narrowing -> acknowledged / lower confidence; (8) permissions-boundary-shaped policy; (9) resource-based / trust policy -> NO identity-escalation finding; (10) read-only-admin wildcard (e.g. Get*/Describe*/List* on *) -> broad but NOT privileged-escalation/critical; (11) action where AWS REQUIRES Resource:* (e.g. ec2:DescribeInstances) -> not penalized as an avoidable wildcard; (12) cross-account AssumeRole constrained to ONE account id (arn:aws:iam::111122223333:role/*) -> lower than all-accounts *:role/*; (13) lambda:UpdateFunctionCode WITHOUT iam:PassRole -> not a PassRole escalation; (14) iam:PassRole WITHOUT any workload-execution primitive -> not escalation; (15) two escalation chains sharing one PassRole primitive.",
+        "This story authors DATA + rationale ONLY. Do NOT modify engine code. Do NOT wire the corpus into the blocking test suite yet (the engine may not satisfy all cases - that is IAM-302's job). Keep the existing suite green (fixtures added are inert until wired)."
+      ],
+      "acceptance": ["fixtures/negative/ has >=15 fixtures, each with policy + expect + rationale", "IAM-semantics critic 100: EVERY expected outcome is correct per real AWS semantics (an incorrect expectation is blocking - this is the integrity gate)", "no engine files changed", "existing full node --test suite still green"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-302",
+      "title": "Phase 3: wire the negative corpus + fix the engine to match the validated truth",
+      "priority": 39,
+      "phase": 3,
+      "status": "pending",
+      "requirements": [
+        "Add tests/negative.test.js that runs every fixtures/negative/ fixture through analyze() and asserts engine output matches the fixture's expected outcome (findingIds present, notFindingIds absent, severities not overstated).",
+        "For each failing case, FIX THE ENGINE (rules.js / escalation.js / correlate.js) so it produces the correct result. The negative fixtures + their rationale are FROZEN TRUTH from IAM-301: do NOT weaken or edit an expectation to make a test pass. If a fixture expectation is genuinely wrong, STOP and flag it (do not silently bend it).",
+        "Likely engine fixes: cross-statement compound detection; honor iam:PassedToService service-match before flagging a PassRole path; do not flag PassRole scoped to a specific role or PassRole-without-exec; explicit-Deny suppression; NotAction/NotResource; single-account vs all-accounts AssumeRole severity; treat AWS-required Resource:* actions as not-an-avoidable-wildcard where determinable; read-only wildcards not escalation.",
+        "Preserve all Phase-1/2/2.1 behavior; keep determinism, safe DOM, zero egress."
+      ],
+      "acceptance": ["tests/negative.test.js green: engine matches every validated negative fixture", "no negative-fixture expectation was weakened (diff shows engine changes, not expectation changes)", "IAM-semantics critic 100 (no false allow/deny, no overstated severity)", "reliability critic >=95", "full node --test suite green (existing + negative)"],
+      "maximumIterations": 6
     }
   ]
 }

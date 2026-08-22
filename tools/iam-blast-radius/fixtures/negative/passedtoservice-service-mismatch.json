@@ -1,0 +1,33 @@
+{
+  "name": "iam:PassRole pinned to EC2 via iam:PassedToService, exec action is lambda:CreateFunction (Lambda path NOT flagged)",
+  "note": "The PassRole grant is restricted so the role may only be handed to ec2.amazonaws.com, but the only workload primitive present is lambda:CreateFunction. Lambda can never receive this role.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassOnlyToEc2",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::111122223333:role/*",
+        "Condition": {
+          "StringEquals": { "iam:PassedToService": "ec2.amazonaws.com" }
+        }
+      },
+      {
+        "Sid": "CreateFunction",
+        "Effect": "Allow",
+        "Action": "lambda:CreateFunction",
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["PASSROLE-LAMBDA"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "The iam:PassedToService condition key restricts which AWS service principal a role may be passed to. StringEquals iam:PassedToService = ec2.amazonaws.com means IAM will only permit PassRole calls where the receiving service is EC2; a lambda:CreateFunction call (which passes the role to lambda.amazonaws.com) fails the condition and is denied. Because the role cannot reach Lambda, the PassRole->Lambda escalation is not available and MUST NOT be flagged. (There is also no ec2:RunInstances here, so no EC2 path exists either.) Ref: AWS docs, 'iam:PassedToService' condition key."
+}

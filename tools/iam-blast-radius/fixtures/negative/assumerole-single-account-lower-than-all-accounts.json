@@ -1,0 +1,24 @@
+{
+  "name": "sts:AssumeRole scoped to one account's roles (arn:aws:iam::111122223333:role/*) - lower than all-accounts *:role/*",
+  "note": "Broad within ONE account, but not across all accounts. Must rank below the all-accounts arn:aws:iam::*:role/* case, which is critical.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AssumeAnyRoleInOneAccount",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::111122223333:role/*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["ASSUME-ROLE-EXPANSION"],
+    "mustNotFind": [],
+    "maxSeverity": { "ASSUME-ROLE-EXPANSION": "high" },
+    "maxPathExploitability": {}
+  },
+  "rationale": "The resource arn:aws:iam::111122223333:role/* matches every role in a single, specific account (111122223333). That is broad within one account but does NOT span all accounts the way arn:aws:iam::*:role/* (or the bare shorthand role/*) does. Per the severity model, critical is reserved for effectively-all-roles scope; a single-account role wildcard is serious but bounded and must cap at high, never critical. Overstating it as all-accounts critical would assert more than the ARN supports. Ref: AWS IAM ARN structure (account-id segment); the tool's severity model (IAM-102, critical reserved for all-roles AssumeRole)."
+}

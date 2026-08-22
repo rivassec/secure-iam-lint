@@ -1,0 +1,24 @@
+{
+  "name": "Allow with NotAction iam:* on * (broad, but grants NO IAM administration)",
+  "note": "NotAction Allow grants every action EXCEPT the listed ones. Excluding iam:* means this statement does not grant any IAM action, even though it is otherwise extremely broad.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowAllExceptIam",
+        "Effect": "Allow",
+        "NotAction": "iam:*",
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["NOTACTION-ALLOW"],
+    "mustNotFind": ["DIRECT-IAM-ADMIN"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "An Allow statement with NotAction lists the actions the Allow does NOT apply to; it grants everything else. With NotAction iam:*, every IAM action is excluded, so this statement grants zero IAM permissions - a DIRECT-IAM-ADMIN finding would be a false positive. The statement is still dangerously broad (it allows nearly all non-IAM actions on all resources), which is exactly what NOTACTION-ALLOW should capture. The engine must flag the breadth WITHOUT fabricating an IAM-administration capability that the exclusion removes. Ref: AWS docs, 'IAM JSON policy elements: NotAction' (NotAction with Allow grants all actions except those listed)."
+}

@@ -816,13 +816,20 @@ test('ASSUME-ROLE-EXPANSION over all roles (arn:...:*:role/*) is critical', () =
   assert.equal(f.pathExploitability, 'medium');
 });
 
-test('ASSUME-ROLE-EXPANSION over all roles in ONE account (role/*) is still critical', () => {
+test('ASSUME-ROLE-EXPANSION over all roles in ONE account (role/*) stays high, not critical', () => {
+  // IAM-302 severity remodel (IAM-301 frozen corpus:
+  // assumerole-single-account-lower-than-all-accounts): critical is reserved for
+  // effectively-all-roles across ARBITRARY accounts. arn:aws:iam::111122223333:role/*
+  // opens the role-name axis but pins a CONCRETE account, so its reach is broad
+  // WITHIN one account, not across all accounts - serious but bounded. It must
+  // cap at high; asserting critical would claim cross-account reach the
+  // account-pinned ARN does not support (threat-model T8).
   const r = analyzeEscalationsFromText(JSON.stringify({
     Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::111122223333:role/*' }],
   }));
   const f = r.findings.find((x) => x.id === 'ASSUME-ROLE-EXPANSION');
   assert.ok(f);
-  assert.equal(f.severity, 'critical'); // role-name axis fully open -> all roles
+  assert.equal(f.severity, 'high'); // account axis pinned -> bounded -> not all-roles-critical
 });
 
 test('ASSUME-ROLE-EXPANSION on a bare "*" resource is critical', () => {

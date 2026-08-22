@@ -1,0 +1,31 @@
+{
+  "name": "Read-only wildcard admin (Get*/List*/Describe* on *) - broad, but NOT privileged escalation / critical",
+  "note": "The ReadOnlyAccess shape: enumeration across services on all resources. Broad visibility is not the same as the power to change state or cross a privilege boundary.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadOnlyEverywhere",
+        "Effect": "Allow",
+        "Action": [
+          "ec2:Describe*",
+          "s3:List*",
+          "iam:Get*",
+          "iam:List*",
+          "cloudtrail:Describe*",
+          "cloudwatch:Get*"
+        ],
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["PASSROLE-LAMBDA", "PASSROLE-EC2", "PASSROLE-SERVICE", "ASSUME-ROLE-EXPANSION", "DIRECT-IAM-ADMIN", "DESTRUCTIVE-ACTION", "DATA-EXFIL"],
+    "maxSeverity": { "WILDCARD-RESOURCE": "high", "WILDCARD-ACTION": "high" },
+    "maxPathExploitability": {}
+  },
+  "rationale": "Get*/List*/Describe* are read-only actions: they enumerate metadata and configuration but do not modify state, create credentials, or pass/assume roles. iam:Get*/iam:List* is IAM READ, not IAM administration, so DIRECT-IAM-ADMIN is a false positive here. None of these actions read object DATA payloads (s3:List* lists keys, not object bodies), so DATA-EXFIL should not fire. There is no privilege-boundary crossing, hence no escalation and nothing critical. Broad enumeration on * is legitimately a broad-resource observation (WILDCARD-RESOURCE / WILDCARD-ACTION at most high). Ref: AWS managed policy 'ReadOnlyAccess' semantics; read actions are not privilege escalation."
+}

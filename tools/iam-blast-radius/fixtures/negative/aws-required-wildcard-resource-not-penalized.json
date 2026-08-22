@@ -1,0 +1,24 @@
+{
+  "name": "ec2:DescribeInstances requires Resource:* - not penalized as an avoidable wildcard",
+  "note": "Some AWS actions do not support resource-level permissions and REQUIRE Resource:*. Flagging the mandatory wildcard as an over-grant would be a false positive.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DescribeInstances",
+        "Effect": "Allow",
+        "Action": ["ec2:DescribeInstances", "ec2:DescribeSecurityGroups"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["WILDCARD-RESOURCE"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "The EC2 Describe* actions (e.g. ec2:DescribeInstances, ec2:DescribeSecurityGroups) do not support resource-level permissions - their resource type is '*' only - so AWS REQUIRES Resource:*. The wildcard is mandated by the service, not an avoidable over-scope the author could have tightened, so it must not be penalized as a broad-resource finding where the action is known to require '*'. This is read-only enumeration regardless, carrying no escalation. Ref: AWS docs, 'Actions, resources, and condition keys for Amazon EC2' (Describe* actions list resource type '*', no resource-level permissions)."
+}

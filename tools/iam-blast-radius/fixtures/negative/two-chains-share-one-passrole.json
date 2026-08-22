@@ -1,0 +1,30 @@
+{
+  "name": "One iam:PassRole feeding both lambda:CreateFunction and ec2:RunInstances (two chains, both detected)",
+  "note": "A single PassRole primitive is shared by two independent execution primitives. Each is its own escalation path; both must be reported, not collapsed into one.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassAny",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::111122223333:role/*"
+      },
+      {
+        "Sid": "Exec",
+        "Effect": "Allow",
+        "Action": ["lambda:CreateFunction", "ec2:RunInstances"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["PASSROLE-LAMBDA", "PASSROLE-EC2"],
+    "mustNotFind": [],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "The same iam:PassRole grant can feed either execution primitive: with lambda:CreateFunction the principal launches code under a passed role via Lambda; with ec2:RunInstances it does so via an EC2 instance profile. These are two distinct, independently exploitable paths that happen to reuse one PassRole primitive. Reporting only one would hide a real alternative route, so BOTH PASSROLE-LAMBDA and PASSROLE-EC2 must be detected. Ref: AWS docs, iam:PassRole with ec2:RunInstances and with lambda:CreateFunction (each service consumes the passed role independently)."
+}

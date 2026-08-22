@@ -1,0 +1,30 @@
+{
+  "name": "Allow s3:GetObject on * fenced by a Deny with NotResource to one approved bucket (not broad exfil)",
+  "note": "A data-perimeter guardrail: read is allowed broadly, but an explicit Deny with NotResource excludes everything except the approved bucket, confining the effective read to that one bucket.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowReadBroad",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "*"
+      },
+      {
+        "Sid": "DenyEverythingButApproved",
+        "Effect": "Deny",
+        "Action": "s3:GetObject",
+        "NotResource": "arn:aws:s3:::approved-data/*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["DATA-EXFIL"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "NotResource in a Deny statement applies the Deny to every resource EXCEPT those listed. Here s3:GetObject is denied on all resources except arn:aws:s3:::approved-data/*, so the broad Allow is fenced down to a single bucket. Because explicit Deny wins and the Deny covers everything outside approved-data/*, there is no broad object-read (DATA-EXFIL) capability - the effective reach is one approved bucket. Flagging broad exfil here would overstate the risk. Ref: AWS docs, 'IAM JSON policy elements: NotResource' + explicit-Deny precedence."
+}

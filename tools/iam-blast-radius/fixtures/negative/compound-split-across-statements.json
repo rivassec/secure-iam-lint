@@ -1,0 +1,30 @@
+{
+  "name": "PassRole and lambda:CreateFunction split across two statements (compound STILL detected)",
+  "note": "The two halves of a PassRole->Lambda escalation live in separate statements of the same policy. A principal holds the UNION of its statements, so the path is real.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassRoleOnly",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::111122223333:role/*"
+      },
+      {
+        "Sid": "CreateFunctionOnly",
+        "Effect": "Allow",
+        "Action": "lambda:CreateFunction",
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["PASSROLE-LAMBDA"],
+    "mustNotFind": [],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "AWS authorization evaluates the union of all statements attached to a principal; permissions are additive across statements within a policy (and across policies). iam:PassRole in one statement and lambda:CreateFunction in another together grant the same capability as if they shared a statement. Splitting a dangerous action pair across statements is a common obfuscation and MUST NOT defeat compound detection. Ref: AWS IAM policy evaluation logic (permissions are cumulative across statements)."
+}

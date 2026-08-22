@@ -12,7 +12,7 @@
 // structured { ok:false, errors[] } result.
 
 import { modelFromText } from './model.js';
-import { analyzeRules } from './rules.js';
+import { analyzeRules, ruleFindingDenySuppressed } from './rules.js';
 import { analyzeEscalations } from './escalation.js';
 import { correlateFindings } from './correlate.js';
 import { buildGraph, GRAPH_LIMITS } from './graph.js';
@@ -305,16 +305,30 @@ export function analyze(text) {
     if (errors.length) return fail(errors);
 
     const combined = [...rules.findings, ...esc.findings];
+
+    // IAM-302: same-policy explicit-Deny precedence for the AUTHORITATIVE TABLE.
+    // rules.js is deliberately Deny-UNAWARE when it emits findings so the graph
+    // can still draw the `blocked-by-deny` edge for a granted-but-denied
+    // capability (a Phase-2 invariant). Here we drop from the TABLE only those
+    // rule findings whose capability a same-policy Deny fully removes (fully
+    // blocked, or a broad bulk-read fenced to a narrow set). Escalation findings
+    // already have Deny folded in by escalation.js. The graph below still
+    // receives the FULL `combined` set, so blocked-by-deny edges are preserved.
+    const tableFindings = combined.filter(
+      (f) => !ruleFindingDenySuppressed(f, m.model),
+    );
+
     // IAM-105: fold subordinate wildcard/broad-resource rows into the compound
     // escalation path that already accounts for them, so the table shows one
     // primary path finding with a risk-factor checklist instead of duplicate
     // subordinate rows. Independent wildcard findings are untouched.
-    const correlated = correlateFindings(combined);
+    const correlated = correlateFindings(tableFindings);
     const findings = Object.freeze(sortFindings(correlated));
 
-    // The graph is built from the full (pre-correlation) finding set: a
-    // subsumed wildcard grant is still a real edge in the attack-path model.
-    // The findings table stays the authoritative, de-duplicated view.
+    // The graph is built from the full (pre-correlation, pre-Deny-suppression)
+    // finding set: a subsumed wildcard grant is still a real edge, and a
+    // Deny-blocked capability is still shown as a blocked-by-deny edge. The
+    // findings table stays the authoritative, de-duplicated, live-capability view.
     const g = buildGraph(m.model, combined);
     const graph = g.ok ? g.graph : emptyGraph();
 

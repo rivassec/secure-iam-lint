@@ -52,6 +52,17 @@
 // same model -> same findings, same order, every run (no Date/Math.random).
 
 import { modelFromText } from './model.js';
+// Same-policy explicit-Deny precedence (IAM-302). AWS resolves access with
+// explicit Deny overriding Allow; the rule catalog must honor that just as the
+// escalation engine does. We reuse escalation.js's already-tested primitives so
+// the two engines apply IDENTICAL deny semantics (no drift): applyDenyToActions
+// removes definitively-blocked actions, denyActionApplies/hasNonEmptyCondition
+// let us detect a NotResource "fence" that narrows a broad grant to a small set.
+import {
+  applyDenyToActions,
+  denyActionApplies,
+  hasNonEmptyCondition,
+} from './escalation.js';
 
 // --- Shared capability caveat (mirrors evaluator.js wording) -----------------
 // Kept as one constant so every finding's `limit` field carries identical,
@@ -359,6 +370,97 @@ function grantsNonReadAction(stmt) {
     if (!READ_VERB.test(verb)) return true;
   }
   return false;
+}
+
+// --- Same-policy explicit-Deny precedence (IAM-302) --------------------------
+// AWS resolves access with explicit Deny overriding Allow, so a rule finding -
+// a CAPABILITY of the analyzed identity - is not real when a same-policy Deny
+// removes the whole granted capability. rules.js deliberately stays Deny-UNAWARE
+// when it EMITS findings: the graph (graph.js) needs the un-suppressed finding to
+// draw the `blocked-by-deny` edge that shows the user the grant exists but is
+// blocked (a Phase-2 invariant). Instead, this module exposes
+// ruleFindingDenySuppressed() so the pipeline (analyze.js) can drop a
+// fully-denied rule finding from the AUTHORITATIVE TABLE while the graph still
+// receives the full finding set. Escalation findings already have Deny folded in
+// by escalation.js, so this only concerns rule findings.
+
+// Does a same-policy Deny "fence" a broad Allow of `action` down to a NARROW,
+// specific set - so the effective resource scope is no longer broad? A Deny with
+// NotResource denies the action on EVERY resource EXCEPT the listed ones, so an
+// unconditional, certainly-applicable NotResource Deny confines the broad Allow
+// to exactly those spared resources. When that spared set is itself narrow (no
+// bare "*"), the action is no longer broadly resource-scoped and a broad-scope
+// finding (e.g. DATA-EXFIL bulk read) must not fire (IAM-301 negative corpus:
+// notresource-deny-fences-exfil). A conditional Deny is not treated as a
+// definitive fence (it may not apply at runtime).
+function denyFencesToNarrow(denies, action, allowStmt) {
+  if (!denies || denies.length === 0) return false;
+  for (const deny of denies) {
+    if (hasNonEmptyCondition(deny)) continue;
+    if (deny.notResources.length === 0) continue; // only a NotResource Deny fences
+    if (deny.notResources.includes('*')) continue; // spared set is everything -> no narrowing
+    const a = denyActionApplies(deny, action);
+    if (a.applies && a.certain) return true;
+  }
+  return false;
+}
+
+// A bulk object-read action (s3:GetObject family): its exfil risk is only
+// flagged when the resource scope is BROAD, so a NotResource Deny that fences the
+// broad Allow to a narrow set removes the risk entirely. Secret-read actions
+// (Secrets Manager / SSM), by contrast, fire regardless of scope, so a resource
+// fence does not neutralize them.
+function isBulkReadAction(action) {
+  return BULK_READ_ACTIONS.some((concrete) => actionGrants(action, concrete));
+}
+
+/**
+ * Does same-policy explicit-Deny precedence fully remove the capability a RULE
+ * finding reports, so it must not appear in the authoritative findings TABLE
+ * (IAM-302)? True only when EVERY action the finding rests on is either
+ * definitively blocked by an unconditional in-scope Deny, or (for a broad
+ * bulk-read DATA-EXFIL) fenced down to a narrow resource set by a NotResource
+ * Deny. A finding with any surviving action stays. Escalation findings (which
+ * carry `escalation` enrichment) already have Deny folded in by escalation.js
+ * and are never suppressed here. Deterministic; never throws.
+ *
+ * @param {object} finding a rule/escalation finding (canonical shape)
+ * @param {object} model normalized, frozen model from buildModel()
+ * @returns {boolean}
+ */
+export function ruleFindingDenySuppressed(finding, model) {
+  if (!finding || typeof finding !== 'object') return false;
+  // Only rule-catalog findings are Deny-unaware here; escalation findings arrive
+  // pre-resolved. Guard on the rule catalog + absence of escalation enrichment.
+  if (finding.escalation) return false;
+  if (!Object.prototype.hasOwnProperty.call(RULES, finding.id)) return false;
+  if (!model || !Array.isArray(model.statements)) return false;
+  if (typeof finding.statementIndex !== 'number') return false;
+
+  const allowStmt = model.statements.find((s) => s && s.index === finding.statementIndex);
+  if (!allowStmt) return false;
+  // Same identity-statement Deny set the escalation engine uses (a Deny that
+  // names a Principal is a resource/trust-policy statement, not an identity
+  // constraint on the analyzed subject).
+  const denies = model.statements.filter((s) => s.effect === 'Deny' && s.principal == null);
+  if (denies.length === 0) return false;
+
+  const actions = Array.isArray(finding.actions) ? finding.actions : [];
+  if (actions.length === 0) return false;
+
+  // Drop the actions an unconditional, in-scope Deny definitively blocks.
+  const survivors = applyDenyToActions(denies, actions, allowStmt).actions;
+
+  // A broad bulk-read whose scope a NotResource Deny fences to a narrow set no
+  // longer holds as a broad-exfil capability (secret reads are unaffected).
+  const stillReal = survivors.filter((a) => {
+    if (finding.id === 'DATA-EXFIL' && isBulkReadAction(a)) {
+      return !denyFencesToNarrow(denies, a, allowStmt);
+    }
+    return true;
+  });
+
+  return stillReal.length === 0;
 }
 
 // --- Per-rule evaluation of a single Allow statement -------------------------

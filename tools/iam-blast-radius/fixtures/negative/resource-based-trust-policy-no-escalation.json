@@ -1,0 +1,27 @@
+{
+  "name": "Resource-based trust policy (Principal + sts:AssumeRole) - not an identity escalation",
+  "note": "A role trust policy declares WHO may assume a role. It is a resource-based policy attached to the role, not an identity policy granting the analyzed principal new powers.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TrustCiAccount",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::444455556666:root" },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": { "sts:ExternalId": "shared-external-id" }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["ASSUME-ROLE-EXPANSION", "TRUST-POLICY-MODIFY", "PASSROLE-LAMBDA", "PASSROLE-EC2", "PASSROLE-SERVICE", "DIRECT-IAM-ADMIN", "CREDENTIAL-CREATION"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "The presence of a Principal element makes this a resource-based (role trust) policy, not an identity policy. It grants the named external principal (account 444455556666, gated by an ExternalId) the ability to assume THIS role; it grants the analyzed subject nothing. sts:AssumeRole appearing here is the assumed-by direction, not an assume-expansion capability held by an identity, so identity-escalation findings (ASSUME-ROLE-EXPANSION, PASSROLE-*, DIRECT-IAM-ADMIN, CREDENTIAL-CREATION) MUST NOT fire. Ref: AWS docs, 'Identity-based policies and resource-based policies' + 'How IAM roles differ from resource-based policies' (trust policy defines who can assume the role)."
+}

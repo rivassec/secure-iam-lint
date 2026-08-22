@@ -1,0 +1,24 @@
+{
+  "name": "Permissions-boundary-shaped policy: broad service access but no iam:PassRole / iam:* (no identity escalation)",
+  "note": "A typical permissions-boundary body: broad workload services, deliberately no iam:PassRole and no IAM administration. Even read as an identity policy, it enables no privilege-boundary crossing.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "WorkloadServices",
+        "Effect": "Allow",
+        "Action": ["s3:*", "ec2:*", "lambda:*", "logs:*", "sqs:*", "dynamodb:*"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["PASSROLE-LAMBDA", "PASSROLE-EC2", "PASSROLE-SERVICE", "DIRECT-IAM-ADMIN", "ASSUME-ROLE-EXPANSION"],
+    "maxSeverity": { "WILDCARD-ACTION": "high", "WILDCARD-RESOURCE": "high" },
+    "maxPathExploitability": {}
+  },
+  "rationale": "A permissions boundary is an IAM policy that only CAPS the maximum permissions of an identity - it never grants on its own; effective permissions require an overlapping identity policy. Independent of that: this body contains no iam:PassRole and no iam:* action, so even evaluated as an identity policy it cannot pass a role to a workload (ec2:RunInstances / lambda:CreateFunction inside ec2:*/lambda:* are inert without iam:PassRole) and cannot administer IAM. Therefore no privilege-escalation and no DIRECT-IAM-ADMIN finding is warranted. The service wildcards are legitimately broad (WILDCARD-ACTION/WILDCARD-RESOURCE, high) but not critical escalation. Ref: AWS docs, 'Permissions boundaries for IAM entities'; and the requirement that PassRole-based escalation needs iam:PassRole present."
+}
