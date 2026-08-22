@@ -1,0 +1,11 @@
+{
+  "name": "Deny with NotAction (boundary, negative-by-effect)",
+  "note": "NOTACTION-ALLOW is an over-grant rule and must fire only on Allow statements. A Deny + NotAction (deny everything except iam:*) is a restriction, not a grant, even on Resource \"*\", so no rule fires. Boundary between Allow+NotAction (flagged) and Deny+NotAction (not).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "DenyAllButIam", "Effect": "Deny", "NotAction": "iam:*", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["NOTACTION-ALLOW", "WILDCARD-RESOURCE", "WILDCARD-ACTION", "DIRECT-IAM-ADMIN"] }
+}

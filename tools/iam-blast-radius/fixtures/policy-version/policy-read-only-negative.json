@@ -1,0 +1,16 @@
+{
+  "name": "Read-only policy inspection (NOT an escalation)",
+  "note": "Getting and listing policy versions is read-only and does not change access.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "InspectPolicies",
+        "Effect": "Allow",
+        "Action": ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["POLICY-VERSION", "ATTACH-POLICY", "PUT-INLINE-POLICY"] }
+}

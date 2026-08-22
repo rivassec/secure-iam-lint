@@ -1,0 +1,15 @@
+{
+  "name": "Safe read-only policy -> empty graph (no edges)",
+  "note": "A scoped read-only policy produces no findings and no Deny statements, so the graph is just the Principal root with zero edges.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadOne", "Effect": "Allow", "Action": ["s3:GetObject"], "Resource": "arn:aws:s3:::app-data/reports/*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "exactGraphEdges": []
+  }
+}

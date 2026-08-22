@@ -1,0 +1,16 @@
+{
+  "name": "sts:AssumeRole scoped by NotResource (broad inverse scope)",
+  "note": "A NotResource scope on an Allow grants sts:AssumeRole on EVERY role EXCEPT the listed one - an inverted, broad scope that reaches many roles. resourceListIsBroadForAssume treats NotResource as broad, so this must be flagged as ASSUME-ROLE-EXPANSION. Complements the partial-wildcard boundary fixture.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AssumeAllButOne",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "NotResource": "arn:aws:iam::111122223333:role/break-glass"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["ASSUME-ROLE-EXPANSION"], "notFindingIds": ["TRUST-POLICY-MODIFY"] }
+}

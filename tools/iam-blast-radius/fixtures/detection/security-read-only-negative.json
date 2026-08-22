@@ -1,0 +1,16 @@
+{
+  "name": "Security-service read-only (negative)",
+  "note": "cloudtrail:LookupEvents + guardduty:ListDetectors + config:DescribeConfigurationRecorders are read-only and must NOT fire DETECTION-IMPAIRMENT (they neither stop nor delete telemetry).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SecurityReadOnly",
+        "Effect": "Allow",
+        "Action": ["cloudtrail:LookupEvents", "guardduty:ListDetectors", "config:DescribeConfigurationRecorders"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["DETECTION-IMPAIRMENT", "WILDCARD-RESOURCE", "DESTRUCTIVE-ACTION"] }
+}

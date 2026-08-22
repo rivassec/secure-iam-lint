@@ -1,0 +1,11 @@
+{
+  "name": "Allow with NotAction on Resource \"*\" (boundary, multi-finding)",
+  "note": "Allow NotAction iam:* on Resource \"*\" is both an inverse over-grant and a wildcard-resource write grant, so NOTACTION-ALLOW and WILDCARD-RESOURCE both fire and compose. Boundary showing the two rules stack when the scoped-resource isolation of the positive fixture is removed.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllButIamOnStar", "Effect": "Allow", "NotAction": "iam:*", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": ["NOTACTION-ALLOW", "WILDCARD-RESOURCE"], "findingIds": ["NOTACTION-ALLOW", "WILDCARD-RESOURCE"], "notFindingIds": ["WILDCARD-ACTION", "DIRECT-IAM-ADMIN"] }
+}

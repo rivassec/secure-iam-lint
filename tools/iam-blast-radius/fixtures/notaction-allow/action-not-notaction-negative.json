@@ -1,0 +1,11 @@
+{
+  "name": "Ordinary Allow Action (negative)",
+  "note": "A normal scoped Allow with Action (not NotAction) must NOT fire NOTACTION-ALLOW.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "NormalGrant", "Effect": "Allow", "Action": ["s3:GetObject", "s3:ListBucket"], "Resource": ["arn:aws:s3:::app-data", "arn:aws:s3:::app-data/*"] }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["NOTACTION-ALLOW"] }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "CreateAccessKey for any user (credential-creation escalation)",
+  "note": "Minting an access key for another (more privileged) user lets the principal authenticate as that user.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "MintKeys",
+        "Effect": "Allow",
+        "Action": ["iam:CreateAccessKey"],
+        "Resource": "arn:aws:iam::111122223333:user/*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["CREDENTIAL-CREATION"], "notFindingIds": ["ATTACH-POLICY"] }
+}

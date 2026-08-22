@@ -1,0 +1,26 @@
+{
+  "name": "PassRole + Lambda create (escalation)",
+  "note": "iam:PassRole scoped to lambda plus lambda:CreateFunction = escalation path.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowLambdaDeployment",
+        "Effect": "Allow",
+        "Action": ["iam:PassRole"],
+        "Resource": ["arn:aws:iam::111122223333:role/app-*"],
+        "Condition": { "StringEquals": { "iam:PassedToService": "lambda.amazonaws.com" } }
+      },
+      { "Sid": "CreateFn", "Effect": "Allow", "Action": ["lambda:CreateFunction", "lambda:UpdateFunctionCode"], "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-LAMBDA"],
+    "notFindingIds": [],
+    "graphEdges": [
+      { "from": "principal", "to": "service:lambda", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "service:lambda", "type": "can-execute-as", "certainty": "confirmed-by-context" }
+    ]
+  }
+}

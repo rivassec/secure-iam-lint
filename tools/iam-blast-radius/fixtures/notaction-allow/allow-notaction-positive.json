@@ -1,0 +1,11 @@
+{
+  "name": "Allow with NotAction (positive)",
+  "note": "Allow NotAction iam:* grants every action except iam:* - a broad inverse grant. Scoped resource isolates NOTACTION-ALLOW from WILDCARD-RESOURCE. The positive-Action sub-rules see an empty Action list, so only NOTACTION-ALLOW fires.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllButIam", "Effect": "Allow", "NotAction": "iam:*", "Resource": "arn:aws:s3:::app-data/*" }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": ["NOTACTION-ALLOW"], "findingIds": ["NOTACTION-ALLOW"], "notFindingIds": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DIRECT-IAM-ADMIN"] }
+}

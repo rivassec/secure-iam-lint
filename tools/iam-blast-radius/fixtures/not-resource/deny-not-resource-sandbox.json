@@ -1,0 +1,47 @@
+{
+  "name": "Deny NotResource (everything outside the sandbox)",
+  "note": "Deny s3:* on every resource EXCEPT the sandbox bucket. Parser must place the ARNs in notResources and leave resources empty.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyOutsideSandbox",
+        "Effect": "Deny",
+        "Action": ["s3:*"],
+        "NotResource": [
+          "arn:aws:s3:::sandbox-bucket",
+          "arn:aws:s3:::sandbox-bucket/*"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "model": {
+      "version": "2012-10-17",
+      "id": null,
+      "statements": [
+        {
+          "index": 0,
+          "sid": "DenyOutsideSandbox",
+          "effect": "Deny",
+          "actions": ["s3:*"],
+          "notActions": [],
+          "resources": [],
+          "notResources": [
+            "arn:aws:s3:::sandbox-bucket",
+            "arn:aws:s3:::sandbox-bucket/*"
+          ],
+          "condition": null,
+          "principal": null
+        }
+      ]
+    },
+    "decide": [
+      { "action": "s3:DeleteObject", "resource": "arn:aws:s3:::prod-bucket/secret", "decision": "explicit-deny" },
+      { "action": "s3:PutObject", "resource": "arn:aws:s3:::another-bucket/x", "decision": "explicit-deny" },
+      { "action": "s3:DeleteObject", "resource": "arn:aws:s3:::sandbox-bucket/x", "decision": "not-granted-by-policy" },
+      { "action": "s3:GetObject", "resource": "arn:aws:s3:::sandbox-bucket", "decision": "not-granted-by-policy" }
+    ]
+  }
+}

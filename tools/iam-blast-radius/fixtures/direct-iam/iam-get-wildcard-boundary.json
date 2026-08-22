@@ -1,0 +1,11 @@
+{
+  "name": "iam:Get* partial wildcard (boundary)",
+  "note": "A partial read wildcard iam:Get* must not glob-match any IAM admin write action, so DIRECT-IAM-ADMIN must not fire. Read verb means no WILDCARD-RESOURCE despite Resource \"*\". Boundary next to iam:* (which does fire).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "IamGetStar", "Effect": "Allow", "Action": "iam:Get*", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["DIRECT-IAM-ADMIN", "WILDCARD-RESOURCE", "WILDCARD-ACTION"] }
+}

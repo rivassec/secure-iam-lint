@@ -1,0 +1,11 @@
+{
+  "name": "s3:GetObject on * (positive)",
+  "note": "The requirement's canonical exfil case: s3:GetObject on Resource \"*\" bulk-reads every object in the account. GetObject is a read verb, so WILDCARD-RESOURCE does not fire; DATA-EXFIL does because the resource scope is broad.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadAllObjects", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": ["DATA-EXFIL"], "findingIds": ["DATA-EXFIL"], "notFindingIds": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION"] }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "Narrow Deny of a broad wildcard grant does NOT downgrade the wildcard edge",
+  "note": "Allow s3:* on * with a same-policy Deny of only s3:DeleteBucket. The wildcard-action grant (s3:*) is still confirmed by this policy text - a single denied action does not cover the wildcard - so the allows(actiongroup:s3:*) edge stays confirmed-by-context, and the Deny is surfaced on its own separate denies edge. Guards against a false downgrade in the other direction.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowAllS3", "Effect": "Allow", "Action": "s3:*", "Resource": "*" },
+      { "Sid": "DenyBucketDelete", "Effect": "Deny", "Action": "s3:DeleteBucket", "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
+    "graphEdges": [
+      { "from": "principal", "to": "actiongroup:s3:*", "type": "allows", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "resource:*", "type": "can-write", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "actiongroup:deny#1", "type": "denies", "certainty": "blocked-by-deny" }
+    ]
+  }
+}

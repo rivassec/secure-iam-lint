@@ -1,0 +1,24 @@
+{
+  "name": "Variable-scoped shadowing Deny (false-allow guard)",
+  "note": "Canonical home-directory pattern: Allow s3:* on *, then Deny s3:* on the caller's own private prefix via ${aws:username}. The Deny's applicability is only knowable after runtime substitution. A literal glob would fail to match the '${...}' text, skip the Deny, and report the request ALLOWED_BY_POLICY - a false allow. Correct behavior: the variable Deny keeps the request CONDITIONAL, never a definitive allow.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowAllS3", "Effect": "Allow", "Action": "s3:*", "Resource": "*" },
+      {
+        "Sid": "DenyOthersPrivate",
+        "Effect": "Deny",
+        "Action": "s3:*",
+        "Resource": "arn:aws:s3:::${aws:username}-private/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "decide": [
+      { "action": "s3:GetObject", "resource": "arn:aws:s3:::alice-private/secret", "decision": "conditional" },
+      { "action": "s3:PutObject", "resource": "arn:aws:s3:::public-data/x", "decision": "conditional" },
+      { "action": "ec2:RunInstances", "resource": "*", "decision": "not-granted-by-policy" }
+    ]
+  }
+}

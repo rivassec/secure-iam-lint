@@ -1,0 +1,24 @@
+{
+  "name": "Wildcard resource on a non-read (write) action",
+  "note": "s3:PutObject (a write) on Resource \"*\" isolates WILDCARD-RESOURCE: no wildcard action, and PutObject is neither destructive nor a sensitive read, so only WILDCARD-RESOURCE fires.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "WriteAnywhere",
+        "Effect": "Allow",
+        "Action": ["s3:PutObject"],
+        "Resource": ["*"]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["WILDCARD-RESOURCE"],
+    "findingIds": ["WILDCARD-RESOURCE"],
+    "notFindingIds": ["WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-EXFIL"],
+    "exactGraphEdges": [
+      { "from": "principal", "to": "resource:*", "type": "can-write", "certainty": "confirmed-by-context" }
+    ]
+  }
+}

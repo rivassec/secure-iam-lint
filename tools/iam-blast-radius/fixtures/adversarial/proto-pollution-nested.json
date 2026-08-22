@@ -1,0 +1,6 @@
+{
+  "name": "Nested prototype-pollution key",
+  "note": "__proto__ buried inside a statement's Condition; must be rejected at depth without polluting Object.prototype.",
+  "policyRaw": "{ \"Version\": \"2012-10-17\", \"Statement\": [ { \"Effect\": \"Allow\", \"Action\": \"s3:GetObject\", \"Resource\": \"*\", \"Condition\": { \"StringEquals\": { \"__proto__\": { \"polluted\": true } } } } ] }",
+  "expect": { "valid": false, "assertNoPrototypePollution": true, "errorCodes": ["DANGEROUS_KEY"] }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "SVG/HTML injection in Sid + Resource must render inert in the graph",
+  "note": "A destructive-action grant whose Sid and Resource ARN carry SVG/HTML/JS payloads. rules.js raises DESTRUCTIVE-ACTION and the payload strings flow into the graph node label + edge evidence. The SVG renderer must place them via textContent on SVG <text> nodes only - never build <script>/<img>/<svg> elements from the input, never set event/href/src/style attributes from input. Proves threat-model T1 for the IAM-008 graph.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "<svg/onload=alert(1)><img src=x onerror=alert(2)>",
+        "Effect": "Allow",
+        "Action": ["ec2:TerminateInstances"],
+        "Resource": ["arn:aws:ec2:us-east-1:111122223333:instance/\"><script>alert(document.domain)</script>"]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["DESTRUCTIVE-ACTION"],
+    "assertInertRendering": true,
+    "graphEdges": [
+      { "from": "principal", "to": "resource:arn:aws:ec2:us-east-1:111122223333:instance/\"><script>alert(document.domain)</script>", "type": "can-destroy", "certainty": "confirmed-by-context" }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "UpdateAssumeRolePolicy gated by a Condition (boundary)",
+  "note": "The trust-modification path is still present but gated by a Condition, so it is flagged with reduced confidence rather than suppressed.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "RewriteTrustMfa",
+        "Effect": "Allow",
+        "Action": ["iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::111122223333:role/deploy-*",
+        "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "true" } }
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["TRUST-POLICY-MODIFY"], "notFindingIds": [] }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Deny * on * (negative)",
+  "note": "A Deny statement restricts access and is never a blast-radius grant. Even with Action \"*\" and Resource \"*\", the risk catalog must produce zero findings for a Deny.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "DenyEverything", "Effect": "Deny", "Action": "*", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"] }
+}

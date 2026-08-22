@@ -1,0 +1,16 @@
+{
+  "name": "Non-destructive read (negative)",
+  "note": "ec2:DescribeInstances + s3:ListBucket are reads with no delete/terminate verb; DESTRUCTIVE-ACTION must not fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "JustLooking",
+        "Effect": "Allow",
+        "Action": ["ec2:DescribeInstances", "s3:ListBucket"],
+        "Resource": ["arn:aws:s3:::app-data"]
+      }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["DESTRUCTIVE-ACTION"] }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "cloudtrail:StopLogging on * (boundary, multi-finding)",
+  "note": "StopLogging on Resource \"*\" is both a detection-impairment grant and a non-read wildcard-resource grant, so DETECTION-IMPAIRMENT and WILDCARD-RESOURCE both fire. Boundary showing the two rules compose.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "StopAllLogging", "Effect": "Allow", "Action": "cloudtrail:StopLogging", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": ["WILDCARD-RESOURCE", "DETECTION-IMPAIRMENT"], "findingIds": ["WILDCARD-RESOURCE", "DETECTION-IMPAIRMENT"], "notFindingIds": ["WILDCARD-ACTION", "DESTRUCTIVE-ACTION"] }
+}

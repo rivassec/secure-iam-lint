@@ -1,0 +1,16 @@
+{
+  "name": "Destructive actions (positive)",
+  "note": "ec2:TerminateInstances + rds:DeleteDBInstance are delete/terminate-family actions. Scoped resources isolate DESTRUCTIVE-ACTION (no WILDCARD-RESOURCE, no wildcard action).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TearDown",
+        "Effect": "Allow",
+        "Action": ["ec2:TerminateInstances", "rds:DeleteDBInstance"],
+        "Resource": ["arn:aws:ec2:us-east-1:111122223333:instance/*", "arn:aws:rds:us-east-1:111122223333:db:app-*"]
+      }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": ["DESTRUCTIVE-ACTION"], "findingIds": ["DESTRUCTIVE-ACTION"], "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DETECTION-IMPAIRMENT"] }
+}

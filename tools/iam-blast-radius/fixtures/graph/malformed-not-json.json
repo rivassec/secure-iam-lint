@@ -1,0 +1,9 @@
+{
+  "name": "Malformed input -> no graph, no throw",
+  "note": "Invalid JSON must be rejected by the pipeline: buildGraphFromText returns ok=false with an empty graph and never throws.",
+  "policyRaw": "{ this is not valid JSON ]",
+  "expect": {
+    "valid": false,
+    "exactGraphEdges": []
+  }
+}

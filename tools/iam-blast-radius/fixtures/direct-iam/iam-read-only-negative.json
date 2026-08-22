@@ -1,0 +1,16 @@
+{
+  "name": "IAM read-only (negative)",
+  "note": "iam:GetRole / iam:ListRoles / iam:GetPolicy are read-only introspection and must NOT trip DIRECT-IAM-ADMIN. Even on Resource \"*\" they are reads, so WILDCARD-RESOURCE must not fire either.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "IamReadOnly",
+        "Effect": "Allow",
+        "Action": ["iam:GetRole", "iam:ListRoles", "iam:GetPolicy"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["DIRECT-IAM-ADMIN", "WILDCARD-RESOURCE", "WILDCARD-ACTION"] }
+}

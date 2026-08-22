@@ -1,0 +1,17 @@
+{
+  "name": "Explicit unconditional Deny -> blocked-by-deny edge",
+  "note": "A pure Deny statement grants no blast radius (no Allow findings) but must still surface as a `denies` edge with the blocked-by-deny certainty class.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "NoDeletes", "Effect": "Deny", "Action": ["ec2:TerminateInstances"], "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "exactGraphEdges": [
+      { "from": "principal", "to": "actiongroup:deny#0", "type": "denies", "certainty": "blocked-by-deny" }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "UpdateAssumeRolePolicy (trust-policy modification escalation)",
+  "note": "iam:UpdateAssumeRolePolicy lets the principal rewrite a role's trust policy to trust itself, then assume the role.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "RewriteTrust",
+        "Effect": "Allow",
+        "Action": ["iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::111122223333:role/*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["TRUST-POLICY-MODIFY"], "notFindingIds": ["ASSUME-ROLE-EXPANSION"] }
+}

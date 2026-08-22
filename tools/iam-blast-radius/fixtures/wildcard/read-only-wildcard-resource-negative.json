@@ -1,0 +1,16 @@
+{
+  "name": "Read-only actions on Resource * (negative)",
+  "note": "ec2:Describe* reads on Resource \"*\" are routine and must NOT be flagged: a wildcard resource is only a finding when combined with a non-read grant. Guards against a false positive on describe/list-style policies that legitimately require \"*\".",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DescribeEverything",
+        "Effect": "Allow",
+        "Action": ["ec2:DescribeInstances", "ec2:DescribeTags", "ec2:DescribeRegions"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["WILDCARD-RESOURCE", "WILDCARD-ACTION"] }
+}

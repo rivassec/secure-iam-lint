@@ -1,0 +1,17 @@
+{
+  "name": "Broad AssumeRole -> potentially-reachable can-assume edge",
+  "note": "sts:AssumeRole over a wildcard role scope reaches unknown roles: the can-assume edge is potentially-reachable, never confirmed, because the reachable roles (and their power) are not knowable from this policy.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AssumeAny", "Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["ASSUME-ROLE-EXPANSION"],
+    "graphEdges": [
+      { "from": "principal", "to": "role:*", "type": "can-assume", "certainty": "potentially-reachable" }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Deeply nested JSON (DoS)",
+  "note": "Nesting depth beyond MAX_DEPTH; validator must reject with TOO_DEEP before parse, never overflow the stack.",
+  "policyRaw": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+  "expect": {
+    "valid": false,
+    "errorCodes": [
+      "TOO_DEEP"
+    ]
+  }
+}

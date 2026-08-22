@@ -1,0 +1,16 @@
+{
+  "name": "CreatePolicyVersion + SetDefaultPolicyVersion (escalation)",
+  "note": "Publishing a new managed-policy version and making it the default lets an attached principal escalate its own access.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "RewritePolicyVersion",
+        "Effect": "Allow",
+        "Action": ["iam:CreatePolicyVersion", "iam:SetDefaultPolicyVersion"],
+        "Resource": "arn:aws:iam::111122223333:policy/team-*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["POLICY-VERSION"], "notFindingIds": ["ATTACH-POLICY", "PUT-INLINE-POLICY"] }
+}

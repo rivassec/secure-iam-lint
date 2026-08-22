@@ -1,0 +1,85 @@
+/* IAM Blast Radius - all styling lives here (no inline styles; CSP style-src 'self'). */
+:root {
+  --bg: #ffffff; --fg: #1a1a1a; --muted: #555; --border: #d0d0d0;
+  --accent: #0b5fff; --warn: #b26a00; --crit: #b00020; --ok: #0a7d33;
+  --panel: #f6f7f9;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#14161a; --fg:#e8e8e8; --muted:#a8a8a8; --border:#333;
+    --accent:#6ea8ff; --warn:#e0a44a; --crit:#ff6b81; --ok:#57c98a; --panel:#1c1f25; }
+}
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 60rem; padding: 1.25rem;
+  font: 16px/1.55 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+h1 { margin: 0 0 .25rem; font-size: 1.6rem; }
+h2 { margin: 1.75rem 0 .5rem; font-size: 1.2rem; }
+.tagline, .hint, .status { color: var(--muted); }
+.disclaimer { border-left: 4px solid var(--warn); background: var(--panel);
+  padding: .75rem 1rem; border-radius: 4px; }
+.noscript { border-left: 4px solid var(--accent); background: var(--panel); padding: .75rem 1rem; }
+textarea { width: 100%; font-family: ui-monospace, monospace; font-size: .9rem;
+  padding: .5rem; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); color: var(--fg); }
+.controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0; }
+button { font: inherit; padding: .45rem .9rem; border: 1px solid var(--accent);
+  background: var(--accent); color: #fff; border-radius: 4px; cursor: pointer; }
+button:hover { filter: brightness(1.06); }
+button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+#clear-btn { background: transparent; color: var(--accent); }
+.findings { overflow-x: auto; }
+.findings table { width: 100%; border-collapse: collapse; }
+.findings caption { text-align: left; color: var(--muted); padding: .25rem 0 .5rem; }
+.findings th, .findings td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.errors { border-left: 4px solid var(--crit); background: var(--panel); padding: .5rem 1rem; border-radius: 4px; }
+.errors ul { margin: .25rem 0 0; padding-left: 1.25rem; }
+button:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+.sev-critical { color: var(--crit); font-weight: 700; }
+.sev-high { color: var(--crit); }
+.sev-medium { color: var(--warn); }
+.sev-low, .sev-info { color: var(--muted); }
+.graph { min-height: 8rem; border: 1px dashed var(--border); border-radius: 4px; padding: .5rem; overflow-x: auto; }
+.graph svg { max-width: 100%; height: auto; }
+.graph-summary { color: var(--muted); margin: 0 0 .5rem; }
+
+/* --- SVG attack-path graph (IAM-008) --------------------------------------- */
+.node-box { fill: var(--panel); stroke: var(--border); stroke-width: 1; }
+.node-type { fill: var(--muted); font: 600 11px system-ui, sans-serif; text-transform: uppercase; letter-spacing: .04em; }
+.node-label { fill: var(--fg); font: 13px ui-monospace, monospace; }
+.iam-arrowhead { fill: var(--muted); }
+
+/* Interactive edge group: keyboard focusable, pointer target. */
+.graph-edge { cursor: pointer; }
+.graph-edge:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.edge-hit { fill: none; stroke: transparent; stroke-width: 14; }
+.edge-path { fill: none; stroke-width: 2; }
+.edge-label { fill: var(--muted); font: 11px system-ui, sans-serif; }
+.graph-edge:hover .edge-path, .graph-edge:focus-visible .edge-path { stroke-width: 3.5; }
+.edge-empty-note, .graph-truncated { fill: var(--muted); font: 12px system-ui, sans-serif; }
+.graph-truncated { fill: var(--warn); }
+
+/* Distinct visual style PER certainty class (never blended into one score). */
+.cert-confirmed .edge-path { stroke: var(--crit); stroke-dasharray: none; }
+.cert-conditional .edge-path { stroke: var(--warn); stroke-dasharray: 8 4; }
+.cert-potential .edge-path { stroke: var(--accent); stroke-dasharray: 2 4; }
+.cert-blocked .edge-path { stroke: var(--ok); stroke-dasharray: 1 5; stroke-linecap: round; }
+.cert-unknown .edge-path { stroke: var(--muted); stroke-dasharray: 4 4; opacity: .8; }
+
+/* Entrance animation only when reduced-motion is NOT requested. The renderer
+   omits .iam-graph-animate when the user prefers reduced motion, and the media
+   query below is a belt-and-braces guard. */
+.iam-graph-animate .edge-path { animation: iam-edge-in .4s ease-out both; }
+@keyframes iam-edge-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* --- Evidence inspect panel ------------------------------------------------ */
+.evidence { margin-top: .75rem; padding: .75rem 1rem; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--panel); }
+.evidence-empty { color: var(--muted); margin: 0; }
+.evidence-title { margin: 0 0 .5rem; font-size: 1rem; }
+.evidence-summary, .evidence-item { margin: 0 0 .5rem; }
+.evidence dt { font-weight: 600; color: var(--muted); }
+.evidence dd { margin: 0 0 .35rem; font-family: ui-monospace, monospace; word-break: break-word; }
+.evidence-list { margin: .25rem 0 0; padding-left: 1.25rem; }
+.evidence-caveat { color: var(--warn); font-size: .85rem; margin: .5rem 0 0; }
+
+.site-footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--muted); font-size: .85rem; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

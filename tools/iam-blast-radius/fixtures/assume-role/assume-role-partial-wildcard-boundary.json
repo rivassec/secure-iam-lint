@@ -1,0 +1,16 @@
+{
+  "name": "sts:AssumeRole over a partial-wildcard role path (broad/scoped threshold)",
+  "note": "The role ARN wildcards the role-name portion (role/app-*), so it reaches MANY roles, not one - this is the true boundary of resourceListIsBroadForAssume (a partial wildcard is broad, a single concrete role ARN is not). Must be flagged as ASSUME-ROLE-EXPANSION. Pins the broad-vs-scoped discriminator so treating role/app-* as scoped would regress.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AssumeAppRoles",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::111122223333:role/app-*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["ASSUME-ROLE-EXPANSION"], "notFindingIds": ["TRUST-POLICY-MODIFY"] }
+}

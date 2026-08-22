@@ -1,0 +1,11 @@
+{
+  "name": "Identity policy: broad AssumeRole IS escalation",
+  "note": "Guard must not over-suppress: an identity statement (no Principal) granting sts:AssumeRole over a wildcard role scope still flags ASSUME-ROLE-EXPANSION.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "arn:aws:iam::111122223333:role/*" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["ASSUME-ROLE-EXPANSION"], "notFindingIds": [] }
+}

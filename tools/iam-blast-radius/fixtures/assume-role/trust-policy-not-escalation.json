@@ -1,0 +1,11 @@
+{
+  "name": "Trust policy is not identity escalation",
+  "note": "A role trust policy (Principal + sts:AssumeRole, no Resource) must NOT be flagged ASSUME-ROLE-EXPANSION. Escalation rules are identity-policy semantics; a Principal-bearing statement grants TO that principal. Regression from real-policy corpus QA 2026-08-21.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["ASSUME-ROLE-EXPANSION"] }
+}

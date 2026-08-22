@@ -1,0 +1,12 @@
+{
+  "name": "Explicit Deny overrides Allow",
+  "note": "Allow s3:* but explicit Deny on the same action; deny must win in the supplied context.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowAllS3", "Effect": "Allow", "Action": "s3:*", "Resource": "*" },
+      { "Sid": "DenyDelete", "Effect": "Deny", "Action": ["s3:DeleteObject", "s3:DeleteBucket"], "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"], "notFindingIds": [], "denyWinsFor": ["s3:DeleteObject", "s3:DeleteBucket"] }
+}

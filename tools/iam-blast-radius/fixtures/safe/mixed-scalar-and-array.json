@@ -1,0 +1,53 @@
+{
+  "name": "Mixed scalar and array types normalized",
+  "note": "Statement 0 uses scalar-string Action/Resource; statement 1 uses arrays plus a Condition. Parser must normalize both to string arrays and preserve order/index.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ScalarForms",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::reports-bucket/*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["ec2:DescribeInstances", "ec2:DescribeTags"],
+        "Resource": ["*"],
+        "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "model": {
+      "version": "2012-10-17",
+      "id": null,
+      "statements": [
+        {
+          "index": 0,
+          "sid": "ScalarForms",
+          "effect": "Allow",
+          "actions": ["s3:GetObject"],
+          "notActions": [],
+          "resources": ["arn:aws:s3:::reports-bucket/*"],
+          "notResources": [],
+          "condition": null,
+          "principal": null
+        },
+        {
+          "index": 1,
+          "sid": null,
+          "effect": "Allow",
+          "actions": ["ec2:DescribeInstances", "ec2:DescribeTags"],
+          "notActions": [],
+          "resources": ["*"],
+          "notResources": [],
+          "condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } },
+          "principal": null
+        }
+      ]
+    }
+  }
+}

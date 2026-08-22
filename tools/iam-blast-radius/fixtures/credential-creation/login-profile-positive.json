@@ -1,0 +1,16 @@
+{
+  "name": "Create/UpdateLoginProfile (console-password escalation)",
+  "note": "Setting or resetting a console password for a controlled user enables sign-in as that user.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SetPasswords",
+        "Effect": "Allow",
+        "Action": ["iam:CreateLoginProfile", "iam:UpdateLoginProfile"],
+        "Resource": "arn:aws:iam::111122223333:user/*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["CREDENTIAL-CREATION"], "notFindingIds": [] }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "Rule grant fully overridden by same-policy Deny -> blocked-by-deny edge",
+  "note": "Allow ec2:TerminateInstances on a concrete instance, with an unconditional same-policy Deny of the same action on the same resource. rules.js still emits the DESTRUCTIVE-ACTION capability finding (it is not Deny-aware), but graph.js applies AWS explicit-Deny precedence: the can-destroy edge is blocked-by-deny, not confirmed-by-context. Overstating it as confirmed would be a truthfulness harm (threat-model T8).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowTerminate", "Effect": "Allow", "Action": "ec2:TerminateInstances", "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/i-abc" },
+      { "Sid": "DenyTerminate", "Effect": "Deny", "Action": "ec2:TerminateInstances", "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/i-abc" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["DESTRUCTIVE-ACTION"],
+    "graphEdges": [
+      { "from": "principal", "to": "resource:arn:aws:ec2:us-east-1:111122223333:instance/i-abc", "type": "can-destroy", "certainty": "blocked-by-deny" },
+      { "from": "principal", "to": "actiongroup:deny#1", "type": "denies", "certainty": "blocked-by-deny" }
+    ]
+  }
+}

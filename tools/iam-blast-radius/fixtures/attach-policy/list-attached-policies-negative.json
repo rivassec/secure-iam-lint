@@ -1,0 +1,16 @@
+{
+  "name": "Read-only policy listing (NOT an escalation)",
+  "note": "Listing attached policies is read-only and grants no ability to change access.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ListAttached",
+        "Effect": "Allow",
+        "Action": ["iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:GetRolePolicy"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["ATTACH-POLICY", "PUT-INLINE-POLICY"] }
+}

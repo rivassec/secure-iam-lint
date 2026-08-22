@@ -1,0 +1,6 @@
+{
+  "name": "Prototype-pollution keys",
+  "note": "Input contains __proto__/constructor keys; validator must reject them and not pollute Object.prototype.",
+  "policyRaw": "{ \"Version\": \"2012-10-17\", \"__proto__\": { \"polluted\": true }, \"Statement\": [ { \"Effect\": \"Allow\", \"Action\": \"s3:GetObject\", \"Resource\": \"*\", \"constructor\": { \"x\": 1 } } ] }",
+  "expect": { "valid": false, "assertNoPrototypePollution": true }
+}

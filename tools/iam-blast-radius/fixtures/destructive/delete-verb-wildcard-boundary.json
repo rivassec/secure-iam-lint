@@ -1,0 +1,11 @@
+{
+  "name": "Verb wildcard ec2:Terminate* (boundary)",
+  "note": "A partial wildcard on a destructive verb (ec2:Terminate*) must still trip DESTRUCTIVE-ACTION via the leading-verb match, while remaining below the WILDCARD-ACTION threshold (not a full \"service:*\").",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "TerminateFamily", "Effect": "Allow", "Action": "ec2:Terminate*", "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/*" }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": ["DESTRUCTIVE-ACTION"], "findingIds": ["DESTRUCTIVE-ACTION"], "notFindingIds": ["WILDCARD-ACTION"] }
+}

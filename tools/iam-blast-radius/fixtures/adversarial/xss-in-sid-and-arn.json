@@ -1,0 +1,16 @@
+{
+  "name": "XSS payloads in Sid and Resource",
+  "note": "Statement fields contain HTML/JS/SVG payloads; must render as inert text, never execute.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "<img src=x onerror=alert(1)>",
+        "Effect": "Allow",
+        "Action": ["s3:GetObject"],
+        "Resource": ["arn:aws:s3:::<script>alert(document.domain)</script>/*", "arn:aws:s3:::\"><svg/onload=alert(1)>"]
+      }
+    ]
+  },
+  "expect": { "valid": true, "assertInertRendering": true, "findingIds": [], "notFindingIds": [] }
+}

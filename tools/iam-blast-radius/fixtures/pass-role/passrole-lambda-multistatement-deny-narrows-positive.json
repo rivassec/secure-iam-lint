@@ -1,0 +1,24 @@
+{
+  "name": "PassRole + Lambda across multiple statements, Deny covers only the first exec statement (path survives)",
+  "note": "S0 grants iam:PassRole pinned to lambda; S1 grants lambda:CreateFunction on function/foo; S2 grants lambda:UpdateFunctionCode on function/bar; S3 unconditionally Denies lambda:CreateFunction on function/foo (full coverage of S1 only). The Deny fully removes S1, but S0+S2 remains a live, un-denied Lambda escalation path. Suppressing on the first-selected exec statement alone would be a false-safe / false negative (threat-model T8). PASSROLE-LAMBDA MUST still be reported, anchored on the surviving S2.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassToLambda",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "*",
+        "Condition": { "StringEquals": { "iam:PassedToService": "lambda.amazonaws.com" } }
+      },
+      { "Sid": "CreateFn", "Effect": "Allow", "Action": "lambda:CreateFunction", "Resource": "arn:aws:lambda:us-east-1:111122223333:function:foo" },
+      { "Sid": "UpdateFn", "Effect": "Allow", "Action": "lambda:UpdateFunctionCode", "Resource": "arn:aws:lambda:us-east-1:111122223333:function:bar" },
+      { "Sid": "DenyCreateFoo", "Effect": "Deny", "Action": "lambda:CreateFunction", "Resource": "arn:aws:lambda:us-east-1:111122223333:function:foo" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-LAMBDA"],
+    "notFindingIds": []
+  }
+}

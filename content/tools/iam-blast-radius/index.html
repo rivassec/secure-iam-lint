@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
+  <title>IAM Blast Radius - client-side policy analyzer</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1>IAM Blast Radius</h1>
+    <p class="tagline">Paste an AWS IAM policy. Everything is analyzed in your browser - nothing is uploaded.</p>
+  </header>
+
+  <p class="disclaimer" role="note">
+    This tool shows the <strong>potential blast radius based on the supplied policy context</strong>.
+    It does <strong>not</strong> compute a principal's effective permissions: AWS evaluates identity,
+    resource, and trust policies, permission boundaries, SCPs, and session policies together, and a
+    single policy cannot show that. Findings are graded by certainty.
+  </p>
+
+  <noscript>
+    <p class="noscript">This analyzer runs entirely in your browser with JavaScript. With JavaScript
+    disabled it does nothing - which also means your policy is never sent anywhere. Enable JavaScript
+    to analyze a policy locally.</p>
+  </noscript>
+
+  <main>
+    <section aria-labelledby="input-h">
+      <h2 id="input-h">Policy input</h2>
+      <label for="policy-input">Paste IAM policy JSON</label>
+      <textarea id="policy-input" rows="14" spellcheck="false" autocomplete="off"></textarea>
+      <div class="controls">
+        <label for="policy-file" class="file-label">or import a .json file</label>
+        <input id="policy-file" type="file" accept="application/json,.json">
+        <button id="analyze-btn" type="button">Analyze locally</button>
+        <button id="clear-btn" type="button">Clear analysis</button>
+      </div>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section aria-labelledby="findings-h">
+      <h2 id="findings-h">Findings</h2>
+      <p class="hint">The findings table is the authoritative view and works without the graph.</p>
+      <div id="findings" class="findings"></div>
+    </section>
+
+    <section aria-labelledby="graph-h">
+      <h2 id="graph-h">Attack-path graph</h2>
+      <p class="hint">Visual aid only. Every edge also appears in the findings table above.
+      Select an edge to inspect the evidence behind it.</p>
+      <div id="graph" class="graph" aria-label="Attack-path graph; equivalent data is in the findings table"></div>
+      <div id="evidence" class="evidence" role="region" aria-label="Selected edge evidence"></div>
+    </section>
+
+    <section aria-labelledby="export-h">
+      <h2 id="export-h">Export</h2>
+      <button id="export-json" type="button">Download JSON</button>
+      <button id="export-md" type="button">Download Markdown</button>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>Rule catalog version <span id="rule-version">-</span>. Analysis is local and stateless;
+    no policy content is stored or transmitted.</p>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

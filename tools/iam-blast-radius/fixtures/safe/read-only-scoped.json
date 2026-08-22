@@ -1,0 +1,16 @@
+{
+  "name": "Scoped read-only S3",
+  "note": "Least-privilege read on one bucket; should produce no risk findings.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadOneBucket",
+        "Effect": "Allow",
+        "Action": ["s3:GetObject", "s3:ListBucket"],
+        "Resource": ["arn:aws:s3:::example-bucket", "arn:aws:s3:::example-bucket/*"]
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DIRECT-IAM-ADMIN", "PASSROLE-SERVICE"] }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "Rule grant partially narrowed by same-policy Deny -> downgraded to conditionally-reachable",
+  "note": "Allow ec2:TerminateInstances + ec2:DeleteVolume on one instance; a same-policy Deny removes only ec2:TerminateInstances. The DESTRUCTIVE-ACTION grant is not fully blocked (DeleteVolume survives) but is narrowed, so graph.js downgrades the can-destroy edge from confirmed-by-context to conditionally-reachable rather than overstating a clean grant.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowDestroy", "Effect": "Allow", "Action": ["ec2:TerminateInstances", "ec2:DeleteVolume"], "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/i-abc" },
+      { "Sid": "DenyTerminate", "Effect": "Deny", "Action": "ec2:TerminateInstances", "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/i-abc" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["DESTRUCTIVE-ACTION"],
+    "graphEdges": [
+      { "from": "principal", "to": "resource:arn:aws:ec2:us-east-1:111122223333:instance/i-abc", "type": "can-destroy", "certainty": "conditionally-reachable" }
+    ]
+  }
+}

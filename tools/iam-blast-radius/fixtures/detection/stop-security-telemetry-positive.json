@@ -1,0 +1,16 @@
+{
+  "name": "Stop/delete security telemetry (positive)",
+  "note": "cloudtrail:StopLogging + guardduty:DeleteDetector + config:StopConfigurationRecorder blind detection. Scoped resources isolate DETECTION-IMPAIRMENT; the delete/stop verbs on these security services are reported here, not by DESTRUCTIVE-ACTION.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GoDark",
+        "Effect": "Allow",
+        "Action": ["cloudtrail:StopLogging", "guardduty:DeleteDetector", "config:StopConfigurationRecorder"],
+        "Resource": ["arn:aws:cloudtrail:us-east-1:111122223333:trail/org-trail"]
+      }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": ["DETECTION-IMPAIRMENT"], "findingIds": ["DETECTION-IMPAIRMENT"], "notFindingIds": ["DESTRUCTIVE-ACTION", "WILDCARD-ACTION", "WILDCARD-RESOURCE"] }
+}

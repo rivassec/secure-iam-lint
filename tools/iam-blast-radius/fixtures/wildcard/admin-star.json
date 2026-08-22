@@ -1,0 +1,17 @@
+{
+  "name": "Full admin wildcard",
+  "note": "Action * on Resource * - classic over-permission.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [ { "Sid": "GodMode", "Effect": "Allow", "Action": "*", "Resource": "*" } ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
+    "notFindingIds": [],
+    "exactGraphEdges": [
+      { "from": "principal", "to": "actiongroup:*", "type": "allows", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "resource:*", "type": "can-write", "certainty": "confirmed-by-context" }
+    ]
+  }
+}

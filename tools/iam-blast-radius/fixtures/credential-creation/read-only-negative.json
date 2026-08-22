@@ -1,0 +1,16 @@
+{
+  "name": "Read-only credential inspection (NOT an escalation)",
+  "note": "Getting a login profile and listing access keys are read-only and mint no credentials.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "InspectCreds",
+        "Effect": "Allow",
+        "Action": ["iam:GetLoginProfile", "iam:ListAccessKeys"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["CREDENTIAL-CREATION"] }
+}

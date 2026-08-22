@@ -1,0 +1,23 @@
+{
+  "name": "Variable-scoped Allow Resource (positive + negative)",
+  "note": "Allow s3:GetObject on the caller's own bucket via ${aws:username}. The concrete-ARN match cannot be confirmed from the policy text, so a matching action degrades to CONDITIONAL rather than a definitive ALLOWED_BY_POLICY. An action outside the grant (s3:DeleteObject) is still certainly not-granted because the action pattern is concrete and does not match.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowOwnBucket",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::${aws:username}-bucket/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "decide": [
+      { "action": "s3:GetObject", "resource": "arn:aws:s3:::alice-bucket/file", "decision": "conditional" },
+      { "action": "s3:GetObject", "resource": "arn:aws:s3:::other/file", "decision": "conditional" },
+      { "action": "s3:DeleteObject", "resource": "arn:aws:s3:::alice-bucket/file", "decision": "not-granted-by-policy" }
+    ]
+  }
+}

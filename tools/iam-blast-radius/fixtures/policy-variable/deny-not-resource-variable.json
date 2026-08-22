@@ -1,0 +1,22 @@
+{
+  "name": "Variable-scoped NotResource on Deny (false-deny guard)",
+  "note": "Deny s3:* on every resource EXCEPT the caller's own home prefix (${aws:username}). A literal glob fails to match the '${...}' text against a concrete ARN, so the resource looks NOT excluded and the request is reported EXPLICIT_DENY - a false deny (real AWS spares alice's own arn:aws:s3:::alice/* after substitution). Correct behavior: whether the Deny fires depends on the runtime value, so the outcome is CONDITIONAL, never a definitive deny.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyOutsideHome",
+        "Effect": "Deny",
+        "Action": ["s3:*"],
+        "NotResource": ["arn:aws:s3:::${aws:username}/*"]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "decide": [
+      { "action": "s3:GetObject", "resource": "arn:aws:s3:::alice/report", "decision": "conditional" },
+      { "action": "s3:DeleteObject", "resource": "arn:aws:s3:::bob/data", "decision": "conditional" }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Broad sts:AssumeRole over a wildcard role scope (escalation)",
+  "note": "sts:AssumeRole on Resource '*' lets the principal assume many roles; target-role permissions are unknown and never inferred.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AssumeAnything",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["ASSUME-ROLE-EXPANSION"], "notFindingIds": ["TRUST-POLICY-MODIFY"] }
+}

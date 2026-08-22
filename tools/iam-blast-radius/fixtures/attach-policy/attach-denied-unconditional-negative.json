@@ -1,0 +1,22 @@
+{
+  "name": "AttachRolePolicy Allowed but unconditionally Denied in the same policy (NOT a path)",
+  "note": "An unconditional, in-scope explicit Deny of iam:AttachRolePolicy overrides the Allow (AWS explicit-Deny precedence). The principal cannot attach any policy, so the ATTACH-POLICY escalation does not exist as a capability of this policy and must not be flagged. Verifies same-policy explicit-Deny precedence in the escalation engine.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowAttach",
+        "Effect": "Allow",
+        "Action": ["iam:AttachRolePolicy"],
+        "Resource": "*"
+      },
+      {
+        "Sid": "DenyAttach",
+        "Effect": "Deny",
+        "Action": ["iam:AttachRolePolicy"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["ATTACH-POLICY"] }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "Deny is scoped and does not over-trigger (boundary)",
+  "note": "Allow s3:* on *; explicit Deny only on s3:DeleteBucket. The Deny must win for s3:DeleteBucket but must NOT bleed onto s3:DeleteObject, which stays allowed-by-policy. Guards against an over-broad false deny.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowAllS3", "Effect": "Allow", "Action": "s3:*", "Resource": "*" },
+      { "Sid": "DenyBucketDeletion", "Effect": "Deny", "Action": "s3:DeleteBucket", "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "denyWinsFor": ["s3:DeleteBucket"],
+    "decide": [
+      { "action": "s3:DeleteBucket", "resource": "*", "decision": "explicit-deny" },
+      { "action": "s3:DeleteObject", "resource": "*", "decision": "allowed-by-policy" },
+      { "action": "s3:GetObject", "resource": "*", "decision": "allowed-by-policy" }
+    ]
+  }
+}

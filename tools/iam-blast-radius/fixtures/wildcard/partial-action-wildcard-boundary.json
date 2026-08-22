@@ -1,0 +1,16 @@
+{
+  "name": "Partial action wildcard (s3:Get*) scoped (boundary)",
+  "note": "A partial wildcard like s3:Get* is NOT a full \"*\" nor a \"service:*\", so it must NOT trip WILDCARD-ACTION. Scoped resource and read-only verb mean no other rule fires either. Boundary between full/service wildcards (flagged) and partial wildcards (not).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GetPrefix",
+        "Effect": "Allow",
+        "Action": "s3:Get*",
+        "Resource": "arn:aws:s3:::reports/*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL"] }
+}

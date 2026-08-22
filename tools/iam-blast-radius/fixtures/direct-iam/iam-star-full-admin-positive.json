@@ -1,0 +1,11 @@
+{
+  "name": "iam:* on Resource * (positive, multi-finding)",
+  "note": "iam:* is a service wildcard (WILDCARD-ACTION, high), a direct-IAM-admin grant (DIRECT-IAM-ADMIN, critical), and non-read on Resource \"*\" (WILDCARD-RESOURCE). Exercises the intended triple.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "IamAdmin", "Effect": "Allow", "Action": "iam:*", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "exactFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DIRECT-IAM-ADMIN"], "findingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DIRECT-IAM-ADMIN"], "notFindingIds": [] }
+}

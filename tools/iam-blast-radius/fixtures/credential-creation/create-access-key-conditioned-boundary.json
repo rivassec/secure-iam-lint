@@ -1,0 +1,17 @@
+{
+  "name": "CreateAccessKey gated by a Condition (boundary)",
+  "note": "Path still present but Condition-gated, so it is flagged with reduced confidence, not suppressed.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "MintKeysGated",
+        "Effect": "Allow",
+        "Action": "iam:CreateAccessKey",
+        "Resource": "arn:aws:iam::111122223333:user/service-*",
+        "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "true" } }
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["CREDENTIAL-CREATION"], "notFindingIds": [] }
+}

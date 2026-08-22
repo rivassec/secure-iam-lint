@@ -1,0 +1,24 @@
+{
+  "name": "Conditional Deny does NOT definitively win (boundary)",
+  "note": "Allow s3:* but the Deny on s3:DeleteObject is gated by a Condition (MFA absent). A conditional Deny must NOT be reported as a definitive block; the outcome is CONDITIONAL. Reporting it as a hard deny would be a false deny.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowAllS3", "Effect": "Allow", "Action": "s3:*", "Resource": "*" },
+      {
+        "Sid": "DenyDeleteWithoutMfa",
+        "Effect": "Deny",
+        "Action": "s3:DeleteObject",
+        "Resource": "*",
+        "Condition": { "BoolIfExists": { "aws:MultiFactorAuthPresent": "false" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "decide": [
+      { "action": "s3:DeleteObject", "resource": "*", "decision": "conditional" },
+      { "action": "s3:GetObject", "resource": "*", "decision": "allowed-by-policy" }
+    ]
+  }
+}

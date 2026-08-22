@@ -1,0 +1,41 @@
+{
+  "name": "Allow NotAction (everything except IAM)",
+  "note": "Classic NotAction pattern: grants all actions except iam:*. Parser must place the value in notActions and leave actions empty.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowAllExceptIam",
+        "Effect": "Allow",
+        "NotAction": "iam:*",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "model": {
+      "version": "2012-10-17",
+      "id": null,
+      "statements": [
+        {
+          "index": 0,
+          "sid": "AllowAllExceptIam",
+          "effect": "Allow",
+          "actions": [],
+          "notActions": ["iam:*"],
+          "resources": ["*"],
+          "notResources": [],
+          "condition": null,
+          "principal": null
+        }
+      ]
+    },
+    "decide": [
+      { "action": "s3:GetObject", "resource": "*", "decision": "allowed-by-policy" },
+      { "action": "ec2:RunInstances", "resource": "*", "decision": "allowed-by-policy" },
+      { "action": "iam:CreateUser", "resource": "*", "decision": "not-granted-by-policy" },
+      { "action": "iam:PassRole", "resource": "*", "decision": "not-granted-by-policy" }
+    ]
+  }
+}

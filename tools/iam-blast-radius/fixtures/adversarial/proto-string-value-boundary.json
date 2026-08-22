@@ -1,0 +1,16 @@
+{
+  "name": "Dangerous words as string VALUES (boundary)",
+  "note": "__proto__/constructor appear as string values, not keys; validator must NOT reject them - only object keys are dangerous.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "constructor",
+        "Effect": "Allow",
+        "Action": ["s3:GetObject"],
+        "Resource": ["arn:aws:s3:::__proto__/prototype/*", "arn:aws:s3:::constructor-bucket"]
+      }
+    ]
+  },
+  "expect": { "valid": true, "errorCodes": [] }
+}

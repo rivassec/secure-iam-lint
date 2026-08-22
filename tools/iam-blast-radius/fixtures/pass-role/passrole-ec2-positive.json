@@ -1,0 +1,30 @@
+{
+  "name": "PassRole + EC2 RunInstances (escalation)",
+  "note": "iam:PassRole (unpinned) plus ec2:RunInstances lets the principal launch an instance with a passed instance-profile role and run code as it.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassAny",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::111122223333:role/*"
+      },
+      {
+        "Sid": "RunEc2",
+        "Effect": "Allow",
+        "Action": ["ec2:RunInstances"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-EC2"],
+    "notFindingIds": ["PASSROLE-LAMBDA"],
+    "graphEdges": [
+      { "from": "principal", "to": "service:ec2", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "service:ec2", "type": "can-execute-as", "certainty": "confirmed-by-context" }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "name": "Allow NotResource (everything EXCEPT the locked prefix)",
+  "note": "The tool's own self-identified most-dangerous over-grant: an Allow scoped with NotResource grants the action(s) on EVERY resource EXCEPT the listed ones - typically far broader than intended. decide() must report allowed-by-policy for a resource OUTSIDE the excluded set and not-granted-by-policy for one INSIDE it. Mirrors deny-not-resource-sandbox for the opposite effect.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowEverythingExceptLocked",
+        "Effect": "Allow",
+        "Action": ["s3:*"],
+        "NotResource": [
+          "arn:aws:s3:::locked-bucket",
+          "arn:aws:s3:::locked-bucket/*"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "model": {
+      "version": "2012-10-17",
+      "id": null,
+      "statements": [
+        {
+          "index": 0,
+          "sid": "AllowEverythingExceptLocked",
+          "effect": "Allow",
+          "actions": ["s3:*"],
+          "notActions": [],
+          "resources": [],
+          "notResources": [
+            "arn:aws:s3:::locked-bucket",
+            "arn:aws:s3:::locked-bucket/*"
+          ],
+          "condition": null,
+          "principal": null
+        }
+      ]
+    },
+    "decide": [
+      { "action": "s3:GetObject", "resource": "arn:aws:s3:::open-bucket/report.csv", "decision": "allowed-by-policy" },
+      { "action": "s3:DeleteObject", "resource": "arn:aws:s3:::another-bucket/x", "decision": "allowed-by-policy" },
+      { "action": "s3:GetObject", "resource": "arn:aws:s3:::locked-bucket/secret", "decision": "not-granted-by-policy" },
+      { "action": "s3:DeleteObject", "resource": "arn:aws:s3:::locked-bucket", "decision": "not-granted-by-policy" }
+    ]
+  }
+}

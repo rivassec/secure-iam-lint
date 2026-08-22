@@ -1,0 +1,16 @@
+{
+  "name": "AttachRolePolicy (attach managed policy escalation)",
+  "note": "Attaching an arbitrary managed policy (e.g. AdministratorAccess) to a controlled principal is a direct escalation.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AttachAny",
+        "Effect": "Allow",
+        "Action": ["iam:AttachRolePolicy"],
+        "Resource": "arn:aws:iam::111122223333:role/*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["ATTACH-POLICY"], "notFindingIds": ["PUT-INLINE-POLICY", "POLICY-VERSION"] }
+}

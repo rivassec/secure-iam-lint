@@ -1,0 +1,6 @@
+{
+  "name": "Non-JSON input",
+  "note": "Garbage that is not valid JSON; validator must reject with INVALID_JSON and never throw.",
+  "policyRaw": "this is not json { oops",
+  "expect": { "valid": false, "errorCodes": ["INVALID_JSON"] }
+}

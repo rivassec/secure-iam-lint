@@ -1,0 +1,16 @@
+{
+  "name": "sts:AssumeRole scoped to one concrete role (NOT an escalation)",
+  "note": "Assuming a single, specific named role is the intended, routine use of AssumeRole - not an expansion path.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AssumeOneRole",
+        "Effect": "Allow",
+        "Action": ["sts:AssumeRole"],
+        "Resource": "arn:aws:iam::111122223333:role/app-runtime"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["ASSUME-ROLE-EXPANSION", "TRUST-POLICY-MODIFY"] }
+}

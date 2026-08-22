@@ -1,0 +1,14 @@
+{
+  "name": "iam:* narrowed by a NotAction-Deny still yields CREDENTIAL-CREATION (path survives, downgraded)",
+  "note": "Allow iam:* on * with a same-policy Deny that uses NotAction:iam:CreateAccessKey. That Deny denies everything EXCEPT iam:CreateAccessKey, so iam:CreateAccessKey - a credential-creation escalation primitive - SURVIVES and must still be reported. A NotAction-Deny can never fully cover the broad iam:* grant token (the preserved action stays allowed), so the path must NOT be suppressed; it is kept with confidence downgraded (denyNarrowed) and the limit noting the Deny. Treating the NotAction-Deny as fully covering iam:* would drop the real can-mint-credentials path entirely - a false-safe / false negative (threat-model T8). Regression fixture for the NotAction-Deny-vs-wildcard silent path-suppression defect.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowAllIam", "Effect": "Allow", "Action": "iam:*", "Resource": "*" },
+      { "Sid": "DenyAllButCreateKey", "Effect": "Deny", "NotAction": "iam:CreateAccessKey", "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "findingIds": ["CREDENTIAL-CREATION"]
+  }
+}

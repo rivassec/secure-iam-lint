@@ -1,0 +1,16 @@
+{
+  "name": "PassRole + ECS RunTask (generic service escalation)",
+  "note": "iam:PassRole together with ecs:RunTask/RegisterTaskDefinition maps to the generic PASSROLE-SERVICE path (ecs).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassAndRunTask",
+        "Effect": "Allow",
+        "Action": ["iam:PassRole", "ecs:RunTask", "ecs:RegisterTaskDefinition"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["PASSROLE-SERVICE"], "notFindingIds": ["PASSROLE-LAMBDA", "PASSROLE-EC2"] }
+}

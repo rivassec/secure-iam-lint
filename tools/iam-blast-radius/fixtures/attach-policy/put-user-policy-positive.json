@@ -1,0 +1,16 @@
+{
+  "name": "PutUserPolicy (inline-policy write escalation)",
+  "note": "Writing an inline policy on a controlled user lets the principal grant itself any permission.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "WriteInline",
+        "Effect": "Allow",
+        "Action": "iam:PutUserPolicy",
+        "Resource": "arn:aws:iam::111122223333:user/${aws:username}"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["PUT-INLINE-POLICY"], "notFindingIds": ["ATTACH-POLICY"] }
+}

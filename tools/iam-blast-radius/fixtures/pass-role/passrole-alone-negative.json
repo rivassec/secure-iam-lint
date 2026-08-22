@@ -1,0 +1,9 @@
+{
+  "name": "PassRole alone (NOT an escalation)",
+  "note": "iam:PassRole with no service-execution action must NOT be flagged as escalation.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [ { "Sid": "PassOnly", "Effect": "Allow", "Action": ["iam:PassRole"], "Resource": ["arn:aws:iam::111122223333:role/app-*"] } ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["PASSROLE-LAMBDA", "PASSROLE-SERVICE"] }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "Service wildcard action (s3:*) scoped resource",
+  "note": "A service wildcard grants every action in the service. Flagged as WILDCARD-ACTION (high). Resource is scoped, so no WILDCARD-RESOURCE; the service wildcard is reported once by WILDCARD-ACTION rather than re-flagged by the destructive/exfil sub-rules.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllOfS3",
+        "Effect": "Allow",
+        "Action": "s3:*",
+        "Resource": ["arn:aws:s3:::app-data", "arn:aws:s3:::app-data/*"]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["WILDCARD-ACTION"],
+    "findingIds": ["WILDCARD-ACTION"],
+    "notFindingIds": ["WILDCARD-RESOURCE", "DESTRUCTIVE-ACTION", "DATA-EXFIL"],
+    "exactGraphEdges": [
+      { "from": "principal", "to": "actiongroup:s3:*", "type": "allows", "certainty": "confirmed-by-context" }
+    ]
+  }
+}

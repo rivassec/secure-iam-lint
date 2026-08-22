@@ -1,0 +1,134 @@
+{
+  "product": "IAM Blast Radius",
+  "mvpScope": "Phase 1 JSON analyzer + 5-10 escalation paths + findings table + basic graph + JSON/MD export + strict CSP + zero egress",
+  "immutableContracts": ["docs/architecture.md", "docs/threat-model.md"],
+  "globalAcceptance": [
+    "No inline style/script/on-handler in any shipped HTML (csp_audit clean)",
+    "No network API in any shipped JS (grep gate: fetch/XHR/WebSocket/EventSource/sendBeacon/import() remote)",
+    "No innerHTML/outerHTML/insertAdjacentHTML/eval/Function from input",
+    "All positive fixtures detected; all negative fixtures NOT detected",
+    "Engine is deterministic (same input -> same output)",
+    "node --test passes; new code has unit tests + fixtures"
+  ],
+  "stories": [
+    {
+      "id": "IAM-001",
+      "title": "Input validation + hostile-input guards",
+      "priority": 100,
+      "status": "pending",
+      "requirements": [
+        "Reject inputs over max bytes, max JSON nesting depth, max statement/action/resource counts",
+        "Reject __proto__/prototype/constructor keys; parse into null-proto maps",
+        "Reject circular / non-JSON input with a clear error, never throw uncaught",
+        "Expose validate(text) -> {ok, errors[], raw} with structured errors"
+      ],
+      "acceptance": ["malformed/ + adversarial/ fixtures handled with zero uncaught exceptions", "prototype-pollution keys rejected", "security critic: no high/critical", "reliability critic >=95"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-002",
+      "title": "IAM JSON parser + normalized model",
+      "priority": 95,
+      "status": "pending",
+      "requirements": [
+        "Parse single + multi-statement policies; Statement may be object or array",
+        "Action/Resource may be string or array; normalize to arrays",
+        "Support Effect, Action, NotAction, Resource, NotResource, Condition, Sid, Principal",
+        "Produce a normalized, frozen model object; preserve statement order and index"
+      ],
+      "acceptance": ["safe/ + not-action/ + not-resource/ fixtures parse to expected model", "mixed string/array types normalized", "reliability critic >=95"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-003",
+      "title": "Evaluator: Allow/Deny/NotAction/NotResource semantics",
+      "priority": 90,
+      "status": "pending",
+      "requirements": [
+        "Explain what each statement grants/denies (single-policy capability view)",
+        "Explicit Deny precedence over Allow within supplied context",
+        "Correct NotAction (everything except listed) and NotResource semantics with explicit caveat text",
+        "NEVER claim effective permissions from a single policy; label capability vs effective"
+      ],
+      "acceptance": ["explicit-deny/ fixtures: deny wins", "not-action/ + not-resource/ semantics correct", "IAM critic score 100 (no false allow/deny)", "reliability critic >=95"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-004",
+      "title": "Risk-rule catalog: wildcard, destructive, exfil, direct-IAM admin",
+      "priority": 85,
+      "status": "pending",
+      "requirements": [
+        "Flag wildcard actions (*, service:*) and wildcard resources with severity",
+        "Flag direct IAM administration (iam:*, iam:PutUserPolicy, iam:AttachRolePolicy, iam:CreatePolicyVersion)",
+        "Flag destructive perms (delete*/terminate* families) and data exfil (s3:GetObject on *, secrets/KMS decrypt)",
+        "Flag detection impairment (cloudtrail/guardduty/config stop/delete)",
+        "Each finding carries confidence, why, limit, remediation, ruleVersion, docRef"
+      ],
+      "acceptance": ["wildcard/ fixtures produce expected findings; safe/ produce none", "every finding has all required fields", "IAM critic 100", "reliability critic >=95"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-005",
+      "title": "Escalation engine: 5-10 privilege-escalation paths",
+      "priority": 80,
+      "status": "pending",
+      "requirements": [
+        "PassRole + service-execution (lambda:CreateFunction, ec2:RunInstances, etc.); respect Resource/NotResource and iam:PassedToService; do NOT flag PassRole alone",
+        "Policy-version manipulation (iam:CreatePolicyVersion/SetDefaultPolicyVersion)",
+        "Attach/put policy to self (iam:AttachUserPolicy/PutUserPolicy/AttachRolePolicy)",
+        "AssumeRole expansion + trust-policy modification (iam:UpdateAssumeRolePolicy)",
+        "Credential creation (iam:CreateAccessKey/CreateLoginProfile/UpdateLoginProfile)",
+        "At least 5, up to 10, each with required action combo, resource relationship, conditions, confidence, severity, explanation, remediation, ruleVersion, docRef",
+        "Represent missing target-role permissions as 'unknown', never inferred"
+      ],
+      "acceptance": ["pass-role/ + assume-role/ positive fixtures detected; negatives (PassRole alone) NOT flagged", "IAM critic 100 on escalation semantics", "reliability critic >=95", "security critic no high/critical"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-006",
+      "title": "Graph model builder (data only)",
+      "priority": 70,
+      "status": "pending",
+      "requirements": [
+        "Build nodes/edges from model+findings using the architecture node/edge types",
+        "Every edge carries evidence + a certainty class (confirmed/conditional/potential/blocked/unknown)",
+        "Deterministic ordering; enforce max graph node count",
+        "Pure data structure, no DOM/SVG here"
+      ],
+      "acceptance": ["graph edges match expected fixtures for pass-role + wildcard cases", "certainty classes correct", "reliability critic >=95"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-007",
+      "title": "UI shell: input, findings table, Clear, worker wiring (CSP-clean, safe DOM)",
+      "priority": 65,
+      "status": "pending",
+      "requirements": [
+        "Paste textarea + .json file input via FileReader; run analysis in a Web Worker with sync fallback",
+        "Render findings as an accessible table built with createElement+textContent ONLY",
+        "Prominent 'potential blast radius / not effective permissions' disclaimer",
+        "Clear-analysis button; clear in-memory state on pagehide; no storage of policy content",
+        "Zero inline style/script/on-handlers; all events via addEventListener",
+        "Keyboard-accessible; findings table usable with no graph and no-JS message"
+      ],
+      "acceptance": ["csp_audit clean on built HTML", "no network API in shipped JS (grep gate)", "HTML-injection fixtures render as inert text (no XSS)", "security + privacy critics no high/critical", "UX/a11y critic no serious/critical"],
+      "maximumIterations": 5
+    },
+    {
+      "id": "IAM-008",
+      "title": "SVG graph render (progressive enhancement) + JSON/MD export",
+      "priority": 60,
+      "status": "pending",
+      "requirements": [
+        "Render graph as SVG behind a rendering interface; distinct edge styles per certainty class; reduced-motion respected",
+        "SVG text via textContent, numeric attrs only, never markup from input",
+        "Click/inspect an edge -> evidence panel (statement/action/resource/condition/confidence/limit)",
+        "Export findings + model as JSON and Markdown via Blob download; HTML export (if any) fully escaped",
+        "Graph is never the only representation; findings table remains authoritative"
+      ],
+      "acceptance": ["csp_audit clean", "no network API (grep gate)", "SVG injection fixtures inert", "reduced-motion honored", "UX/a11y critic no serious/critical", "security critic no high/critical"],
+      "maximumIterations": 5
+    }
+  ]
+}
