@@ -1,0 +1,25 @@
+{
+  "name": "PassRole path is encoded as a privilege transition through an unknown-privileges pivot (IAM-107)",
+  "note": "iam:PassRole scoped to lambda plus lambda:CreateFunction is a compound escalation path. The graph must show the actual privilege transition, not a direct principal->service shortcut: principal --can-pass (iam:PassRole)--> a Passable role whose privileges are UNKNOWN to this analysis --can-execute-as (lambda:CreateFunction)--> the lambda service execution (the potential privilege-boundary crossing). The intermediate ROLE node is the crux - the analyzer KNOWS both grants are present but does NOT know the passed role's actual permissions, so it never overclaims a boundary crossing (threat-model T8). Edges keep evidence + certainty; the findings table remains the authoritative equivalent.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassToLambda",
+        "Effect": "Allow",
+        "Action": ["iam:PassRole"],
+        "Resource": ["arn:aws:iam::111122223333:role/app-*"],
+        "Condition": { "StringEquals": { "iam:PassedToService": "lambda.amazonaws.com" } }
+      },
+      { "Sid": "CreateFn", "Effect": "Allow", "Action": ["lambda:CreateFunction"], "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-LAMBDA"],
+    "graphEdges": [
+      { "from": "principal", "to": "role:passable:lambda", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "role:passable:lambda", "to": "service:lambda", "type": "can-execute-as", "certainty": "confirmed-by-context" }
+    ]
+  }
+}

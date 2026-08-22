@@ -90,13 +90,31 @@ export function toMarkdown(analysis) {
     out.push('');
     out.push(line(['- Rule: ', String(f.id || '')]));
     out.push(line(['- Statement: ', String(f.statementSid || '')]));
-    out.push(line(['- Confidence: ', String(f.confidence || '')]));
+    out.push(line(['- Policy evidence: ', String(f.policyEvidence || '')]));
+    out.push(line(['- Path exploitability: ', String(f.pathExploitability || '')]));
     out.push(line(['- Actions: ', list(f.actions)]));
     out.push(line(['- Resources: ', list(f.resources)]));
     if (f.why) out.push(line(['- Why it matters: ', String(f.why)]));
     if (f.limit) out.push(line(['- What this does NOT prove: ', String(f.limit)]));
     if (f.remediation) out.push(line(['- Remediation: ', String(f.remediation)]));
     if (f.docRef) out.push(line(['- Reference: ', String(f.docRef)]));
+    // IAM-105: a compound path's present/absent risk-factor checklist, and any
+    // subordinate wildcard/broad-resource findings folded into it.
+    if (Array.isArray(f.riskFactors) && f.riskFactors.length > 0) {
+      out.push('- Risk factors:');
+      for (const rf of f.riskFactors) {
+        out.push(line(['  - [', rf.present ? 'x' : ' ', '] ', String(rf.label || rf.key || '')]));
+      }
+    }
+    if (Array.isArray(f.subsumed) && f.subsumed.length > 0) {
+      out.push('- Subsumed findings (risk factors of this path, not separate rows):');
+      for (const s of f.subsumed) {
+        out.push(line([
+          '  - ', String(s.id || ''), ' on ', String(s.statementSid || ''),
+          ' (', list(s.actions), ' -> ', list(s.resources), ')',
+        ]));
+      }
+    }
     out.push('');
   }
   return out.join('\n');

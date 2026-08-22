@@ -118,14 +118,55 @@ export function computeLayout(graph) {
   const targets = rawNodes.filter((n) => n && n.id !== PRINCIPAL_ID);
 
   const { NODE_W, NODE_H, COL_GAP, ROW_GAP, PAD } = LAYOUT;
-  const leftX = PAD;
-  const rightX = PAD + NODE_W + COL_GAP;
 
-  const stackH = targets.length > 0
-    ? targets.length * NODE_H + (targets.length - 1) * ROW_GAP
-    : NODE_H;
+  // --- Layered columns by hop-distance from the principal (IAM-107) ----------
+  // Most target nodes are direct spokes (column 1). Escalation-path transitions
+  // chain THROUGH an intermediate node (principal -> passable role -> service),
+  // so those deeper nodes belong in later columns and the path reads left to
+  // right. Depth = shortest hop count from the principal along edges; a node not
+  // reachable from the principal (should not happen for a rooted graph) defaults
+  // to column 1 so it is still laid out. Pure BFS, deterministic.
+  const adjacency = new Map();
+  for (const e of rawEdges) {
+    if (!e || typeof e !== 'object') continue;
+    if (!adjacency.has(e.from)) adjacency.set(e.from, []);
+    adjacency.get(e.from).push(e.to);
+  }
+  const nodeById = new Map();
+  for (const n of rawNodes) if (n && typeof n.id === 'string') nodeById.set(n.id, n);
+  const depth = new Map([[PRINCIPAL_ID, 0]]);
+  const queue = [PRINCIPAL_ID];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    const d = depth.get(cur);
+    for (const next of adjacency.get(cur) || []) {
+      if (!nodeById.has(next) && next !== PRINCIPAL_ID) continue; // absent target
+      if (!depth.has(next)) {
+        depth.set(next, d + 1);
+        queue.push(next);
+      }
+    }
+  }
+  const depthOf = (id) => (depth.has(id) ? depth.get(id) : 1);
+
+  // Bucket target nodes by column, preserving the graph's deterministic order.
+  const columns = new Map(); // colIndex -> node[]
+  let maxCol = 0;
+  for (const n of targets) {
+    const col = Math.max(1, depthOf(n.id));
+    if (col > maxCol) maxCol = col;
+    if (!columns.has(col)) columns.set(col, []);
+    columns.get(col).push(n);
+  }
+
+  const colX = (col) => PAD + col * (NODE_W + COL_GAP);
+
+  // Height is driven by the tallest column (or the single principal row).
+  let tallest = 1;
+  for (const arr of columns.values()) if (arr.length > tallest) tallest = arr.length;
+  const stackH = tallest * NODE_H + (tallest - 1) * ROW_GAP;
   const height = round(2 * PAD + Math.max(NODE_H, stackH));
-  const width = round(rightX + NODE_W + PAD);
+  const width = round(colX(Math.max(1, maxCol)) + NODE_W + PAD);
 
   const positioned = new Map();
 
@@ -134,32 +175,41 @@ export function computeLayout(graph) {
     id: principal.id,
     type: principal.type || 'Principal',
     label: typeof principal.label === 'string' ? principal.label : String(principal.id),
-    x: leftX,
+    x: PAD,
     y: principalY,
     w: NODE_W,
     h: NODE_H,
-    cx: leftX + NODE_W,           // right edge (edges leave from here)
+    cx: round(PAD + NODE_W / 2),
     cy: round(principalY + NODE_H / 2),
   };
   positioned.set(principal.id, principalNode);
 
   const layoutNodes = [principalNode];
-  for (let i = 0; i < targets.length; i++) {
-    const n = targets[i];
-    const y = round(PAD + i * (NODE_H + ROW_GAP));
-    const node = {
-      id: n.id,
-      type: n.type || 'Resource',
-      label: typeof n.label === 'string' ? n.label : String(n.id),
-      x: rightX,
-      y,
-      w: NODE_W,
-      h: NODE_H,
-      cx: rightX,                 // left edge (edges arrive here)
-      cy: round(y + NODE_H / 2),
-    };
-    positioned.set(n.id, node);
-    layoutNodes.push(node);
+  for (let col = 1; col <= maxCol; col++) {
+    const arr = columns.get(col) || [];
+    const x = colX(col);
+    for (let i = 0; i < arr.length; i++) {
+      const n = arr[i];
+      const y = round(PAD + i * (NODE_H + ROW_GAP));
+      const node = {
+        id: n.id,
+        type: n.type || 'Resource',
+        label: typeof n.label === 'string' ? n.label : String(n.id),
+        // Fixed internal markers (IAM-107) carried through for the renderer to
+        // distinguish KNOWN grants from UNKNOWN target-role privileges. Never
+        // sourced from analyzed input.
+        unknownPrivileges: !!n.unknownPrivileges,
+        boundaryCrossing: !!n.boundaryCrossing,
+        x,
+        y,
+        w: NODE_W,
+        h: NODE_H,
+        cx: round(x + NODE_W / 2),
+        cy: round(y + NODE_H / 2),
+      };
+      positioned.set(n.id, node);
+      layoutNodes.push(node);
+    }
   }
 
   // Group parallel edges (same source/target pair) so they can be fanned apart.
@@ -185,9 +235,12 @@ export function computeLayout(graph) {
     // Symmetric fan offset: -k..0..+k across the group.
     const offset = round((idx - (total - 1) / 2) * LAYOUT.PARALLEL_SPREAD);
 
-    const x1 = from.cx;
+    // Endpoints leave the source's right edge and arrive at the target's left
+    // edge, so layered columns connect left-to-right. A same-column edge (rare)
+    // still yields finite geometry.
+    const x1 = round(from.x + from.w);
     const y1 = from.cy;
-    const x2 = to.cx;
+    const x2 = to.x;
     const y2 = to.cy + offset;
     const midX = round((x1 + x2) / 2);
     // Cubic bezier control points bowed toward the fan offset.
@@ -277,7 +330,16 @@ export function createGraphRenderer(doc) {
   }
 
   function buildNode(node) {
-    const g = svgEl('g', { class: 'graph-node' });
+    // Fixed marker classes (IAM-107) let styles.css visually separate what the
+    // analysis KNOWS from what it does NOT: the passable-role pivot
+    // (`node-unknown-priv`) whose real privileges are unknown, and the
+    // service-execution node (`node-boundary`) that is the potential
+    // privilege-boundary crossing. Class strings are our own vocabulary, never
+    // derived from analyzed input.
+    let cls = 'graph-node';
+    if (node.unknownPrivileges) cls += ' node-unknown-priv';
+    if (node.boundaryCrossing) cls += ' node-boundary';
+    const g = svgEl('g', { class: cls });
     const rect = svgEl('rect', {
       x: node.x,
       y: node.y,
@@ -294,7 +356,11 @@ export function createGraphRenderer(doc) {
       y: node.y + 18,
       class: 'node-type',
     });
-    typeText.textContent = String(node.type); // node type is our vocabulary
+    // Node type is our vocabulary; annotate the unknown-privileges pivot so the
+    // KNOWN/UNKNOWN split is legible in text (not only by color/border).
+    typeText.textContent = node.unknownPrivileges
+      ? `${String(node.type)} - privileges unknown`
+      : String(node.type);
     g.appendChild(typeText);
 
     const labelText = svgEl('text', {
@@ -418,7 +484,7 @@ export function createGraphRenderer(doc) {
         y: round(layout.height - 6),
         class: 'graph-truncated',
       });
-      warn.textContent = 'Graph truncated: node cap reached (see findings table for all findings).';
+      warn.textContent = 'Graph truncated: size cap reached (see findings table for all findings).';
       svg.appendChild(warn);
     }
 
@@ -460,7 +526,8 @@ export function createGraphRenderer(doc) {
    * @param {object} edge original graph edge (with evidence[])
    * @param {Element} panelEl container to render into (replaced)
    * @param {{findings?:Array<object>}} [opts] findings, to enrich each evidence
-   *        row with its confidence + limit by matching findingId
+   *        row with its policyEvidence + pathExploitability + limit by matching
+   *        findingId
    */
   function renderEvidence(edge, panelEl, opts) {
     if (!panelEl) return;
@@ -504,7 +571,16 @@ export function createGraphRenderer(doc) {
       appendField(dl, 'Condition', conditionText(ev.condition));
       const finding = ev.findingId ? findingsById.get(ev.findingId) : null;
       if (finding) {
-        if (finding.confidence) appendField(dl, 'Confidence', String(finding.confidence));
+        // IAM-104: split certainty - render both signals, never a single blended
+        // "confidence". Policy evidence = how strongly this policy text shows the
+        // grant; path exploitability = how likely it actually elevates given
+        // unknowns (target-role permissions, other controls).
+        if (finding.policyEvidence) {
+          appendField(dl, 'Policy evidence', String(finding.policyEvidence));
+        }
+        if (finding.pathExploitability) {
+          appendField(dl, 'Path exploitability', String(finding.pathExploitability));
+        }
         if (finding.limit) appendField(dl, 'What this does NOT prove', String(finding.limit));
       }
       li.appendChild(dl);

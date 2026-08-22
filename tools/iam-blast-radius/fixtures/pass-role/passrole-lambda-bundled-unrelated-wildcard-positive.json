@@ -1,0 +1,40 @@
+{
+  "name": "PassRole + Lambda bundled with an unrelated broad wildcard (s3:*)",
+  "note": "A single realistic statement bundles the PassRole->Lambda compound path (iam:PassRole + lambda:CreateFunction, PassedToService pinned to lambda) with an UNRELATED broad grant s3:* on Resource \"*\". The PASSROLE-LAMBDA path must NOT subsume the WILDCARD-ACTION[s3:*] finding, nor the WILDCARD-RESOURCE finding whose action list also covers s3:* - neither is a scope factor of the PassRole->Lambda path (s3:* is an independent broad capability). Both must remain independent top-level rows and keep counting in the IAM-106 broad-resource summary (adversarial-iam-semantics: only same-service breadth is subordinate; unrelated-service breadth is a genuinely independent finding that must never be dropped - threat-model T8).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassRunAndS3",
+        "Effect": "Allow",
+        "Action": ["iam:PassRole", "lambda:CreateFunction", "s3:*"],
+        "Resource": "*",
+        "Condition": { "StringEquals": { "iam:PassedToService": "lambda.amazonaws.com" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-LAMBDA", "WILDCARD-ACTION", "WILDCARD-RESOURCE"],
+    "notFindingIds": [],
+    "compound": {
+      "primaryId": "PASSROLE-LAMBDA",
+      "subsumes": [],
+      "independentFindings": [
+        { "id": "WILDCARD-ACTION", "statementIndex": 0 },
+        { "id": "WILDCARD-RESOURCE", "statementIndex": 0 }
+      ],
+      "note": "s3:* is unrelated to the PassRole->Lambda path. WILDCARD-ACTION[s3:*] covers only s3, a service the path does not use, so it stays independent. WILDCARD-RESOURCE covers iam:PassRole + lambda:CreateFunction + s3:*; because it ALSO covers the unrelated s3 service it is not a pure scope factor of the path and likewise stays independent.",
+      "riskFactors": [
+        { "key": "pass-role", "present": true },
+        { "key": "lambda:CreateFunction", "present": true },
+        { "key": "exec-resource-wildcard", "present": true },
+        { "key": "passed-to-service-restriction", "present": true }
+      ]
+    },
+    "summary": {
+      "counts": { "privEscPaths": 1, "roleAssumption": 0, "sensitiveData": 0, "broadResource": 1 },
+      "highestRisk": { "id": "PASSROLE-LAMBDA", "severity": "critical", "path": "Principal -> iam:PassRole -> Lambda -> passed role (unknown privileges)" }
+    }
+  }
+}

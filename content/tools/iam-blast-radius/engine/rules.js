@@ -23,6 +23,16 @@
 // exploitable - only that this policy, on its own, would grant it. Overstating
 // certainty is itself a blocking security harm.
 //
+// SEVERITY MODEL (IAM-102). `critical` is RESERVED for compound escalation
+// paths that plausibly cross a privilege boundary (see escalation.js:
+// PassRole+service-execution, and AssumeRole whose scope is effectively all
+// roles). No rule in THIS module emits a compound path, so nothing here is
+// critical. A standalone wildcard-action grant ("*" / "service:*"), direct-IAM
+// single-action administration, broad kms:Decrypt, and secrets access are all
+// serious but standalone capabilities, so they cap at `high`. Asserting
+// critical for a standalone grant would claim more than the evidence supports
+// (threat-model T8).
+//
 // Findings are emitted ONLY for Allow statements: a Deny reduces access and is
 // never a blast-radius grant. Conditions lower confidence (the grant may be
 // gated) but never suppress a finding (the condition may not constrain it).
@@ -160,14 +170,24 @@ const IAM_ADMIN_ACTIONS = Object.freeze([
 ]);
 
 // Sensitive READ actions (data / secret exfiltration). These fire regardless of
-// resource breadth because reading a secret or decrypting is the exfil act
-// itself; severity scales with how broad the resource scope is.
+// resource breadth because reading a secret is the exfil act itself; severity
+// scales with how broad the resource scope is. NOTE: kms:Decrypt is deliberately
+// NOT here - it does not enumerate or retrieve secrets, it decrypts ciphertext
+// the caller already holds, and is reported by its own KMS-DECRYPT rule
+// (IAM-103) so the two capabilities are not conflated.
 const SECRET_READ_ACTIONS = Object.freeze([
   'secretsmanager:GetSecretValue',
-  'kms:Decrypt',
   'ssm:GetParameter',
   'ssm:GetParameters',
   'ssm:GetParametersByPath',
+]);
+
+// KMS decryption capability. Distinct from secret-retrieval (SECRET_READ_ACTIONS):
+// kms:Decrypt turns ciphertext the principal can supply into plaintext for keys
+// it is allowed to use; it neither lists nor retrieves stored secrets. Reported as
+// its own Decryption-capability finding (IAM-103).
+const KMS_DECRYPT_ACTIONS = Object.freeze([
+  'kms:Decrypt',
 ]);
 
 // Bulk object reads. These are only flagged as exfil when the resource scope is
@@ -227,9 +247,17 @@ export const RULES = Object.freeze({
     docRef:
       'https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html',
   }),
+  'KMS-DECRYPT': Object.freeze({
+    id: 'KMS-DECRYPT',
+    order: 4,
+    title: 'KMS decryption capability',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/kms/latest/APIReference/API_Decrypt.html',
+  }),
   'DESTRUCTIVE-ACTION': Object.freeze({
     id: 'DESTRUCTIVE-ACTION',
-    order: 4,
+    order: 5,
     title: 'Destructive action grant',
     ruleVersion: '1',
     docRef:
@@ -237,7 +265,7 @@ export const RULES = Object.freeze({
   }),
   'DETECTION-IMPAIRMENT': Object.freeze({
     id: 'DETECTION-IMPAIRMENT',
-    order: 5,
+    order: 6,
     title: 'Detection / logging impairment',
     ruleVersion: '1',
     docRef:
@@ -245,7 +273,7 @@ export const RULES = Object.freeze({
   }),
   'NOTACTION-ALLOW': Object.freeze({
     id: 'NOTACTION-ALLOW',
-    order: 6,
+    order: 7,
     title: 'Allow with NotAction (broad inverse grant)',
     ruleVersion: '1',
     docRef:
@@ -258,7 +286,8 @@ export const RULE_IDS = Object.freeze(Object.keys(RULES));
 // --- Finding factory ---------------------------------------------------------
 // Guarantees every finding carries the full canonical shape (architecture.md):
 // id, severity, title, statementSid, actions, resources, conditions,
-// confidence, why, limit, remediation, ruleVersion, docRef.
+// policyEvidence, pathExploitability, why, limit, remediation, ruleVersion,
+// docRef.
 
 function statementSid(stmt) {
   return typeof stmt.sid === 'string' && stmt.sid.length > 0
@@ -269,6 +298,20 @@ function statementSid(stmt) {
 function makeFinding(ruleId, stmt, fields) {
   const meta = RULES[ruleId];
   const conditioned = stmt.condition !== null && stmt.condition !== undefined;
+  // Split certainty (IAM-104), replacing the single `confidence` field:
+  //   policyEvidence     - how strongly this policy text establishes the grant.
+  //                        Drives graph edge certainty (see graph.js).
+  //   pathExploitability - how likely the grant actually yields the flagged
+  //                        impact. These rule findings are DIRECT capabilities
+  //                        (a wildcard scope, a broad data read, direct IAM
+  //                        admin): the grant itself IS the risk, with no unknown
+  //                        target role gating it, so exploitability defaults to
+  //                        the same base as the evidence. A Condition on the
+  //                        statement is a runtime gate that weakens BOTH a notch
+  //                        (rules.js models Conditions; graph.js layers on
+  //                        same-policy Deny precedence for the edge certainty).
+  const evidenceBase = fields.policyEvidence;
+  const exploitBase = fields.pathExploitability || fields.policyEvidence;
   return {
     id: meta.id,
     severity: fields.severity,
@@ -278,7 +321,8 @@ function makeFinding(ruleId, stmt, fields) {
     actions: fields.actions.slice(),
     resources: (fields.resources || []).slice(),
     conditions: stmt.condition, // null when absent; inert data otherwise
-    confidence: conditioned ? 'medium' : fields.confidence,
+    policyEvidence: conditioned ? 'medium' : evidenceBase,
+    pathExploitability: conditioned ? 'medium' : exploitBase,
     why: fields.why,
     limit: CAPABILITY_LIMIT + (conditioned ? CONDITION_LIMIT : ''),
     remediation: fields.remediation,
@@ -319,7 +363,10 @@ function grantsNonReadAction(stmt) {
 
 // --- Per-rule evaluation of a single Allow statement -------------------------
 
-// 1. Wildcard action. "*" is critical (all services); "service:*" is high.
+// 1. Wildcard action. Both "*" (all services) and "service:*" are HIGH: a
+// standalone wildcard-action grant is a broad capability, but critical is
+// reserved for compound escalation paths (IAM-102 severity model), so the
+// widest standalone grant does not by itself earn critical.
 function ruleWildcardAction(stmt, out) {
   const full = stmt.actions.filter(isFullWildcard);
   const service = stmt.actions.filter((p) => !isFullWildcard(p) && isServiceWildcard(p));
@@ -327,8 +374,8 @@ function ruleWildcardAction(stmt, out) {
   if (full.length > 0) {
     out.push(
       makeFinding('WILDCARD-ACTION', stmt, {
-        severity: 'critical',
-        confidence: 'high',
+        severity: 'high',
+        policyEvidence: 'high',
         actions: full,
         resources: resourceScope(stmt),
         why:
@@ -345,7 +392,7 @@ function ruleWildcardAction(stmt, out) {
   out.push(
     makeFinding('WILDCARD-ACTION', stmt, {
       severity: 'high',
-      confidence: 'high',
+      policyEvidence: 'high',
       actions: service,
       resources: resourceScope(stmt),
       why:
@@ -367,14 +414,15 @@ function ruleWildcardResource(stmt, out) {
   out.push(
     makeFinding('WILDCARD-RESOURCE', stmt, {
       severity: broadStar ? 'high' : 'medium',
-      confidence: 'high',
+      policyEvidence: 'high',
       actions: stmt.notActions.length > 0 ? stmt.notActions : stmt.actions,
       resources: resourceScope(stmt),
       why: broadStar
-        ? 'Resource "*" applies the granted (non-read) action(s) to every ' +
-          'resource in the account, so the grant is unscoped.'
-        : 'NotResource makes the granted (non-read) action(s) apply to every ' +
-          'resource EXCEPT the few listed - typically far broader than intended.',
+        ? 'Resource "*" leaves the granted action(s) broadly resource-scoped: ' +
+          'they apply to every resource in the account rather than a specific ARN.'
+        : 'NotResource leaves the granted action(s) broadly resource-scoped: ' +
+          'they apply to every resource EXCEPT the few listed - typically far ' +
+          'broader than intended.',
       remediation:
         'Scope Resource to the specific ARNs (or ARN prefixes) the principal ' +
         'must act on; avoid "*" and prefer Resource over NotResource.',
@@ -403,8 +451,11 @@ function ruleDirectIamAdmin(stmt, out) {
   if (matched.length === 0) return;
   out.push(
     makeFinding('DIRECT-IAM-ADMIN', stmt, {
-      severity: 'critical',
-      confidence: 'high',
+      // High, not critical: direct-IAM single-action administration is a
+      // standalone escalation primitive, but critical is reserved for compound
+      // privilege-boundary-crossing paths (IAM-102 severity model).
+      severity: 'high',
+      policyEvidence: 'high',
       actions: matched,
       resources: resourceScope(stmt),
       why:
@@ -431,7 +482,7 @@ function ruleDataExfil(stmt, out) {
   const whyParts = [];
   if (secret.length > 0) {
     whyParts.push(
-      'reads secret material (Secrets Manager / KMS decrypt / SSM parameters)',
+      'reads secret material (Secrets Manager / SSM parameters)',
     );
   }
   if (bulk.length > 0) {
@@ -440,7 +491,7 @@ function ruleDataExfil(stmt, out) {
   out.push(
     makeFinding('DATA-EXFIL', stmt, {
       severity: highSeverity ? 'high' : 'medium',
-      confidence: 'high',
+      policyEvidence: 'high',
       actions: matched,
       resources: resourceScope(stmt),
       why:
@@ -449,6 +500,35 @@ function ruleDataExfil(stmt, out) {
       remediation:
         'Scope the read to the specific secrets/keys/objects required and gate ' +
         'with conditions (e.g. source VPC/identity); avoid granting on "*".',
+    }),
+  );
+}
+
+// 4a-bis. KMS decryption capability. Kept SEPARATE from DATA-EXFIL (IAM-103):
+// kms:Decrypt does not enumerate or retrieve secrets - it decrypts ciphertext
+// the principal can supply, for KMS keys it is permitted to use. Fires whether
+// or not the resource scope is broad (the capability exists either way);
+// severity is higher when the key scope is broad.
+function ruleKmsDecrypt(stmt, out) {
+  const matched = matchPatterns(stmt, KMS_DECRYPT_ACTIONS, false);
+  if (matched.length === 0) return;
+  const broad = resourceIsBroad(stmt);
+  out.push(
+    makeFinding('KMS-DECRYPT', stmt, {
+      severity: broad ? 'high' : 'medium',
+      policyEvidence: 'high',
+      actions: matched,
+      resources: resourceScope(stmt),
+      why:
+        'Grants kms:Decrypt, a decryption capability: it turns ciphertext the ' +
+        'principal can supply into plaintext for KMS keys the principal is ' +
+        'permitted to use. This does not by itself enumerate or retrieve stored ' +
+        'secrets; its impact depends on which keys are in scope and what ' +
+        'ciphertext the principal can reach.',
+      remediation:
+        'Scope kms:Decrypt to the specific key ARNs required and gate it with ' +
+        'condition keys (e.g. kms:ViaService, kms:EncryptionContext) so the key ' +
+        'is only usable in the intended context.',
     }),
   );
 }
@@ -467,7 +547,7 @@ function ruleDestructive(stmt, out) {
   out.push(
     makeFinding('DESTRUCTIVE-ACTION', stmt, {
       severity: 'high',
-      confidence: 'high',
+      policyEvidence: 'high',
       actions: matched,
       resources: resourceScope(stmt),
       why:
@@ -489,7 +569,7 @@ function ruleDetectionImpairment(stmt, out) {
   out.push(
     makeFinding('DETECTION-IMPAIRMENT', stmt, {
       severity: 'high',
-      confidence: 'high',
+      policyEvidence: 'high',
       actions: matched,
       resources: resourceScope(stmt),
       why:
@@ -510,7 +590,7 @@ function ruleNotActionAllow(stmt, out) {
   out.push(
     makeFinding('NOTACTION-ALLOW', stmt, {
       severity: 'high',
-      confidence: 'high',
+      policyEvidence: 'high',
       actions: stmt.notActions,
       resources: resourceScope(stmt),
       why:
@@ -529,6 +609,7 @@ const RULE_FUNCTIONS = [
   ruleWildcardResource,
   ruleDirectIamAdmin,
   ruleDataExfil,
+  ruleKmsDecrypt,
   ruleDestructive,
   ruleDetectionImpairment,
   ruleNotActionAllow,

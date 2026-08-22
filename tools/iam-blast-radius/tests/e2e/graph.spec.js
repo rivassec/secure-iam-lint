@@ -44,6 +44,61 @@ test('renders the attack path as an inline SVG with styled edges', async ({ page
   await expect(edge).toHaveAttribute('tabindex', '0');
   const cls = await edge.getAttribute('class');
   expect(cls).toMatch(/cert-(confirmed|conditional|potential|blocked|unknown)/);
+
+  // The visible edge-path must actually be painted by styles.css - the earlier
+  // defect was that NO graph rules existed, so SVG defaulted to fill:black /
+  // no stroke and the edges rendered as black blobs / invisible lines on the
+  // dark theme. Assert a real, non-default stroke and fill:none.
+  const painted = await edge.locator('.edge-path').evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { stroke: s.stroke, fill: s.fill, width: parseFloat(s.strokeWidth) };
+  });
+  expect(painted.fill).toBe('none'); // a filled bezier would be a black blob
+  expect(painted.stroke).not.toBe('none');
+  expect(painted.stroke).not.toBe('rgb(0, 0, 0)'); // not the invisible default
+  expect(painted.width).toBeGreaterThan(0);
+
+  // Node boxes must be painted too (were previously black-on-near-black).
+  const nodeFill = await page
+    .locator('#graph .node-box')
+    .first()
+    .evaluate((el) => getComputedStyle(el).fill);
+  expect(nodeFill).not.toBe('rgb(0, 0, 0)');
+
+  // IAM-107: the PassRole path renders the privilege transition through an
+  // unknown-privileges pivot, not a direct principal->service spoke. The pivot
+  // node is present, visually distinguished (dashed border), and names its
+  // unknown privileges as text (not color-only).
+  const pivot = page.locator('#graph .node-unknown-priv').first();
+  await expect(pivot).toBeVisible();
+  await expect(pivot).toContainText(/unknown/i);
+  const pivotDash = await pivot
+    .locator('.node-box')
+    .evaluate((el) => getComputedStyle(el).strokeDasharray);
+  expect(pivotDash).not.toBe('none'); // dashed = the UNKNOWN pivot, distinct from solid known nodes
+  // The service-execution node is flagged as the potential boundary crossing.
+  await expect(page.locator('#graph .node-boundary').first()).toBeVisible();
+});
+
+test('each edge-certainty class resolves to a visually distinct stroke', async ({ page }) => {
+  // admin-star yields edges of several certainties. Distinct certainty classes
+  // must map to distinct stroke colors so blocked-by-deny never looks like
+  // confirmed-by-context (threat-model T8: certainty must be truthful).
+  await page.fill('#policy-input', fixture('wildcard/admin-star.json'));
+  await page.click('#analyze-btn');
+  await expect(page.locator('#graph svg')).toBeVisible();
+
+  const strokeFor = async (cls) => {
+    const loc = page.locator(`#graph .graph-edge.${cls} .edge-path`).first();
+    if ((await loc.count()) === 0) return null;
+    return loc.evaluate((el) => getComputedStyle(el).stroke);
+  };
+  const confirmed = await strokeFor('cert-confirmed');
+  const potential = await strokeFor('cert-potential');
+  // admin-star produces both confirmed and potentially-reachable edges.
+  expect(confirmed).toBeTruthy();
+  expect(potential).toBeTruthy();
+  expect(confirmed).not.toBe(potential);
 });
 
 test('clicking an edge opens the evidence panel with statement + certainty', async ({ page }) => {

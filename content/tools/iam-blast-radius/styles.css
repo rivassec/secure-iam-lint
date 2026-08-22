@@ -13,6 +13,25 @@
   --warn: #e0a44a;
   --crit: #ff6b81;
   --ok: #57c98a;
+  /* Graph / SVG palette. SVG text and shapes default to fill:black, which is
+     invisible on the dark body, so every graph class is painted explicitly
+     below. Node fill/stroke and the certainty edge colors are chosen for >=3:1
+     non-text contrast against the body background (WCAG AA graphical objects);
+     each certainty also carries a distinct dash pattern so the five states stay
+     distinguishable without relying on color (T8: blocked must never look like
+     confirmed). */
+  --graph-node-fill: #22252b;
+  --graph-node-stroke: #565c66;
+  /* Passable-role pivot (IAM-107): unknown privileges. Dashed warn-tinted box,
+     distinct from the solid known-grant nodes. */
+  --graph-unknown-fill: #2b2620;
+  --graph-unknown-stroke: #e0a44a;
+  --graph-arrow: #c9ccd1;
+  --cert-confirmed: #ff6b81; /* confirmed by context (highest concern) */
+  --cert-conditional: #e0a44a; /* conditionally reachable */
+  --cert-potential: #6ea8ff; /* potentially reachable */
+  --cert-blocked: #57c98a; /* blocked by an explicit Deny (safe) */
+  --cert-unknown: #9aa0a8; /* unknown - incomplete context */
 }
 * { box-sizing: border-box; }
 body {
@@ -36,6 +55,20 @@ button:hover { filter: brightness(1.08); }
 button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 #clear-btn { background: transparent; color: var(--accent); }
 
+/* IAM-106: risk-summary header above the findings table. Scannable counts +
+   the single highest-risk path in one line. No inline styles (CSP style-src). */
+.risk-summary { background: var(--panel); border: 1px solid var(--border);
+  border-radius: 4px; padding: .6rem .9rem; margin: 0 0 .9rem; }
+.risk-summary h3 { margin: 0 0 .5rem; font-size: 1rem; color: var(--heading); }
+dl.risk-summary-counts { display: grid; grid-template-columns: 1fr auto;
+  gap: .15rem .75rem; margin: 0; }
+dl.risk-summary-counts dt { color: var(--muted); }
+dl.risk-summary-counts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+dl.risk-summary-counts dd.rs-count-nonzero { color: var(--crit); font-weight: 700; }
+.risk-summary-top { margin: .6rem 0 0; padding-top: .5rem; border-top: 1px solid var(--border);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .88rem; }
+.risk-summary-top .rs-top-label { font-family: "Source Sans Pro", sans-serif; color: var(--muted); }
+
 /* Findings table: compact rows (line-height and padding kept tight so rows
    don't sprawl vertically). */
 .findings { overflow-x: auto; }
@@ -47,8 +80,118 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px
 .sev-high { color: var(--crit); }
 .sev-medium { color: var(--warn); }
 .sev-low, .sev-info { color: var(--muted); }
+/* IAM-101: the Finding cell is a disclosure toggle that expands the per-row
+   detail. Styled as inline text (not the big accent button) so the table stays
+   scannable; the [+]/[-] marker keeps the state legible without color. */
+.findings .row-toggle {
+  font: inherit; text-align: left; padding: 0; margin: 0;
+  background: transparent; border: 0; color: var(--fg); cursor: pointer;
+}
+.findings .row-toggle:hover { color: var(--accent); }
+.findings .row-toggle[aria-expanded="true"] { color: var(--accent); font-weight: 600; }
+.findings .row-toggle-marker { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); white-space: pre; }
+
+/* IAM-101 / IAM-105: per-finding detail row. Holds the why/limit/remediation
+   prose moved out of the table columns, plus (for compound paths) the
+   risk-factor checklist + subsumed findings. Collapsed via [hidden] by default
+   so rows stay compact. */
+.findings tr.finding-detail[hidden] { display: none; }
+.findings tr.finding-detail td { background: var(--panel); padding: .5rem .6rem .7rem; }
+dl.finding-detail-prose { margin: 0 0 .3rem; }
+dl.finding-detail-prose dt { color: var(--muted); font-size: .82rem; font-weight: 600; margin-top: .4rem; }
+dl.finding-detail-prose dt:first-child { margin-top: 0; }
+dl.finding-detail-prose dd { margin: .1rem 0 0; }
+.risk-factors-heading, .subsumed-heading { margin: .1rem 0 .25rem; color: var(--muted); font-size: .85rem; font-weight: 600; }
+.subsumed-heading { margin-top: .5rem; }
+ul.risk-factors, ul.subsumed-findings { margin: 0; padding-left: .5rem; list-style: none; }
+ul.risk-factors li, ul.subsumed-findings li { font-size: .88rem; }
+ul.risk-factors .rf-box { font-family: ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; }
+ul.risk-factors li.rf-present .rf-box { color: var(--crit); }
+ul.risk-factors li.rf-absent .rf-box { color: var(--ok); }
+ul.subsumed-findings li { color: var(--muted); }
+
 .graph { min-height: 8rem; border: 1px dashed var(--border); border-radius: 4px; padding: .5rem; overflow-x: auto; }
 .graph svg { max-width: 100%; height: auto; }
+.graph-summary { margin: 0 0 .5rem; color: var(--muted); font-size: .9rem; }
+
+/* IAM-008 attack-path SVG. The renderer (engine/render-graph.js) emits a fixed
+   vocabulary of classes; style every one explicitly because SVG text/shapes
+   otherwise fall back to fill:black (invisible on the dark theme). */
+svg.iam-graph { color: var(--fg); }
+svg.iam-graph text { fill: var(--fg); font-family: "Source Sans Pro", -apple-system, system-ui, sans-serif; }
+
+/* Nodes: a lifted box with a light border and light labels. */
+.iam-graph .node-box { fill: var(--graph-node-fill); stroke: var(--graph-node-stroke); stroke-width: 1.5; }
+.iam-graph .node-type { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.iam-graph .node-label { fill: var(--fg); font-size: 13px; }
+/* IAM-107 privilege-transition markers. The passable-role pivot has UNKNOWN
+   privileges - drawn with a dashed border + warn tint so it visibly differs
+   from the solid, KNOWN-grant nodes (the two edges into/out of it are what the
+   policy actually proves). The service-execution node is the potential
+   privilege-boundary crossing, flagged with an accent border. Non-text contrast
+   only; the label/type text already spells out the distinction. */
+.iam-graph .node-unknown-priv .node-box {
+  fill: var(--graph-unknown-fill); stroke: var(--graph-unknown-stroke);
+  stroke-width: 1.5; stroke-dasharray: 5 3;
+}
+.iam-graph .node-unknown-priv .node-type { fill: var(--warn); }
+.iam-graph .node-boundary .node-box { stroke: var(--accent); stroke-width: 2; }
+
+/* Edges. The wide transparent hit path is for pointer/focus targeting only; the
+   visible edge-path carries the per-certainty stroke + dash. fill:none is
+   essential - a filled bezier renders as a black blob instead of a line. */
+.iam-graph .graph-edge { cursor: pointer; }
+.iam-graph .edge-hit { fill: none; stroke: transparent; stroke-width: 18; }
+.iam-graph .edge-path { fill: none; stroke: var(--cert-unknown); stroke-width: 2; }
+.iam-graph .edge-label {
+  fill: var(--fg); font-size: 12px;
+  /* Paint a background-colored halo behind the text so labels stay legible
+     where they cross an edge or node. */
+  stroke: var(--bg); stroke-width: 3px; paint-order: stroke; stroke-linejoin: round;
+}
+
+/* Per-certainty edge encoding: distinct COLOR and distinct DASH (non-color cue).
+   Applied to the visible edge-path within each certainty-tagged edge group. */
+.iam-graph .graph-edge.cert-confirmed .edge-path { stroke: var(--cert-confirmed); stroke-width: 2.6; }
+.iam-graph .graph-edge.cert-conditional .edge-path { stroke: var(--cert-conditional); stroke-dasharray: 7 4; }
+.iam-graph .graph-edge.cert-potential .edge-path { stroke: var(--cert-potential); stroke-dasharray: 2 4; stroke-linecap: round; }
+.iam-graph .graph-edge.cert-blocked .edge-path { stroke: var(--cert-blocked); stroke-dasharray: 9 3 2 3; }
+.iam-graph .graph-edge.cert-unknown .edge-path { stroke: var(--cert-unknown); stroke-dasharray: 4 6; }
+
+/* Shared arrowhead marker. A neutral light fill guarantees it is visible on the
+   dark theme; where supported, context-stroke tints it to match the edge color
+   so the direction cue reads with the certainty color. */
+.iam-graph .iam-arrowhead { fill: var(--graph-arrow); stroke: none; }
+@supports (fill: context-stroke) {
+  .iam-graph .iam-arrowhead { fill: context-stroke; }
+}
+
+/* Keyboard/pointer affordance on an edge (role=button, tabindex=0). */
+.iam-graph .graph-edge:hover .edge-path { stroke-width: 3.4; }
+.iam-graph .graph-edge:focus { outline: none; }
+.iam-graph .graph-edge:focus-visible .edge-hit { stroke: var(--accent); stroke-opacity: .35; }
+.iam-graph .graph-edge:focus-visible .edge-path { stroke-width: 4; }
+.iam-graph .graph-edge:focus-visible .edge-label { fill: var(--accent); }
+
+/* Status text drawn inside the SVG when there is nothing / too much to show. */
+.iam-graph .edge-empty-note { fill: var(--muted); font-size: 13px; }
+.iam-graph .graph-truncated { fill: var(--warn); font-size: 12px; font-weight: 600; }
+
+/* Evidence inspect panel (HTML built by render-graph.js renderEvidence). */
+.evidence { margin-top: .6rem; }
+.evidence-empty { color: var(--muted); font-size: .9rem; margin: .25rem 0; }
+.evidence-title { margin: .2rem 0 .4rem; font-size: 1rem; color: var(--heading);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; word-break: break-word; }
+dl.evidence-summary, dl.evidence-item { margin: 0; display: grid;
+  grid-template-columns: max-content 1fr; gap: .1rem .6rem; }
+dl.evidence-summary dt, dl.evidence-item dt { color: var(--muted); font-size: .82rem; font-weight: 600; }
+dl.evidence-summary dd, dl.evidence-item dd { margin: 0; word-break: break-word; }
+ol.evidence-list { margin: .5rem 0 0; padding-left: 1.2rem; }
+ol.evidence-list li { margin-bottom: .5rem; }
+ol.evidence-list li dl.evidence-item { padding: .35rem .5rem; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 4px; }
+.evidence-caveat { margin: .5rem 0 0; color: var(--warn); font-size: .82rem; }
+
 a { color: var(--accent); }
 .site-footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--muted); font-size: .85rem; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

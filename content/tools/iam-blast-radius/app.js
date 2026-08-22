@@ -10,7 +10,7 @@
 //     Clear button and on pagehide (threat-model T4).
 //   - CSP-clean: no inline styles/scripts; all events via addEventListener.
 
-import { analyze, findingToRow, FINDING_COLUMNS, CATALOG_VERSION } from './engine/analyze.js';
+import { analyze, findingToRow, FINDING_COLUMNS, FINDING_DETAIL_FIELDS, CATALOG_VERSION, summarize } from './engine/analyze.js';
 import { LIMITS } from './engine/validate.js';
 import { toJSON, toMarkdown } from './engine/report.js';
 import { createGraphRenderer } from './engine/render-graph.js';
@@ -112,6 +112,56 @@ function renderNoFindings() {
   els.findings.appendChild(p);
 }
 
+// IAM-106: a scannable risk-summary header rendered above the findings table.
+// Counts of the four highlighted capability families plus the single
+// highest-risk escalation path in one line. Safe DOM only (createElement +
+// textContent); the path line's service label rides through as inert text.
+// Accessible: labelled region with its own heading, counts as a definition list
+// so each label/value pair is programmatically associated.
+function renderRiskSummary(findings) {
+  const summary = summarize(findings);
+
+  const section = document.createElement('section');
+  section.className = 'risk-summary';
+  section.setAttribute('aria-labelledby', 'risk-summary-h');
+
+  const heading = document.createElement('h3');
+  heading.id = 'risk-summary-h';
+  heading.textContent = 'Risk summary';
+  section.appendChild(heading);
+
+  const dl = document.createElement('dl');
+  dl.className = 'risk-summary-counts';
+  for (const cat of summary.categories) {
+    const dt = document.createElement('dt');
+    dt.textContent = cat.label;
+    const dd = document.createElement('dd');
+    dd.textContent = String(cat.count);
+    if (cat.count > 0) dd.className = 'rs-count-nonzero';
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  }
+  section.appendChild(dl);
+
+  const top = document.createElement('p');
+  top.className = 'risk-summary-top';
+  if (summary.highestRisk) {
+    const label = document.createElement('span');
+    label.className = 'rs-top-label';
+    label.textContent = 'Highest-risk path: ';
+    const value = document.createElement('span');
+    value.textContent = summary.highestRisk.path;
+    top.appendChild(label);
+    top.appendChild(value);
+  } else {
+    top.textContent =
+      'Highest-risk path: none - no privilege-escalation path was detected in the supplied context.';
+  }
+  section.appendChild(top);
+
+  return section;
+}
+
 function renderFindings(findings) {
   clearChildren(els.findings);
 
@@ -119,6 +169,8 @@ function renderFindings(findings) {
     renderNoFindings();
     return;
   }
+
+  els.findings.appendChild(renderRiskSummary(findings));
 
   const table = document.createElement('table');
 
@@ -141,22 +193,157 @@ function renderFindings(findings) {
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
+  let detailSeq = 0;
   for (const finding of findings) {
-    const row = document.createElement('tr');
+    const detailId = `finding-detail-${detailSeq++}`;
     const cells = findingToRow(finding);
+
+    const row = document.createElement('tr');
+    row.className = 'finding-row';
+
+    // IAM-101: the Finding cell carries the disclosure toggle. Activating it
+    // (mouse or keyboard) expands the per-row detail that now holds the
+    // why/limit/remediation prose (plus any risk-factor checklist / subsumed
+    // rows). A textual [+]/[-] marker means the state is legible without color.
+    let toggleBtn = null;
+    let toggleMarker = null;
     for (const cell of cells) {
       const td = document.createElement('td');
-      td.textContent = cell.text;
       if (cell.key === 'severity') {
         td.className = `sev-${String(finding.severity || 'info')}`;
+        td.textContent = cell.text;
+      } else if (cell.key === 'title') {
+        toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.className = 'row-toggle';
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.setAttribute('aria-controls', detailId);
+        toggleMarker = document.createElement('span');
+        toggleMarker.className = 'row-toggle-marker';
+        toggleMarker.setAttribute('aria-hidden', 'true');
+        toggleMarker.textContent = '[+] ';
+        const label = document.createElement('span');
+        label.textContent = cell.text;
+        toggleBtn.appendChild(toggleMarker);
+        toggleBtn.appendChild(label);
+        td.appendChild(toggleBtn);
+      } else {
+        td.textContent = cell.text;
       }
       row.appendChild(td);
     }
     tbody.appendChild(row);
+
+    // Every finding now has a detail row (its prose lives there). IAM-105's
+    // compound risk-factor checklist + subsumed findings are appended to the
+    // same detail when present. Safe DOM only; hostile labels ride through as
+    // inert textContent.
+    const detail = renderDetailRow(finding, cells.length, detailId);
+    tbody.appendChild(detail);
+    if (toggleBtn) wireDisclosure(toggleBtn, toggleMarker, detail);
   }
   table.appendChild(tbody);
 
   els.findings.appendChild(table);
+}
+
+// Wire a finding row's disclosure toggle to its detail row. Collapsed by
+// default so rows stay compact (IAM-101); toggling flips aria-expanded, the
+// row's hidden state, and the textual marker together.
+function wireDisclosure(button, marker, detailRow) {
+  button.addEventListener('click', () => {
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    const next = !expanded;
+    button.setAttribute('aria-expanded', String(next));
+    detailRow.hidden = !next;
+    if (marker) marker.textContent = next ? '[-] ' : '[+] ';
+  });
+}
+
+// Append one labelled prose block (dt/dd) to a definition list. Empty values
+// are still rendered (as an empty dd) so the label set is stable and no field
+// silently disappears. textContent only - hostile strings stay inert.
+function appendProse(dl, label, value) {
+  const dt = document.createElement('dt');
+  dt.textContent = label;
+  const dd = document.createElement('dd');
+  dd.textContent = value === null || value === undefined ? '' : String(value);
+  dl.appendChild(dt);
+  dl.appendChild(dd);
+}
+
+// Build the per-finding detail row (IAM-101). Always present: it carries the
+// why / limit / remediation prose that used to sprawl across three table
+// columns. For compound escalation paths (IAM-105) it also carries the
+// present/absent risk-factor checklist and any subsumed subordinate findings.
+// Collapsed (hidden) by default. createElement + textContent only; no markup is
+// ever built from policy-derived strings.
+function renderDetailRow(finding, columnCount, detailId) {
+  const factors = Array.isArray(finding.riskFactors) ? finding.riskFactors : [];
+  const subsumed = Array.isArray(finding.subsumed) ? finding.subsumed : [];
+
+  const tr = document.createElement('tr');
+  tr.className = 'finding-detail';
+  tr.id = detailId;
+  tr.hidden = true;
+  const td = document.createElement('td');
+  td.colSpan = columnCount;
+
+  // Prose (moved out of the table columns): why / limit / remediation.
+  const dl = document.createElement('dl');
+  dl.className = 'finding-detail-prose';
+  for (const field of FINDING_DETAIL_FIELDS) {
+    appendProse(dl, field.label, finding[field.key]);
+  }
+  td.appendChild(dl);
+
+  if (factors.length > 0) {
+    const heading = document.createElement('p');
+    heading.className = 'risk-factors-heading';
+    heading.textContent = 'Risk factors for this escalation path:';
+    td.appendChild(heading);
+
+    const ul = document.createElement('ul');
+    ul.className = 'risk-factors';
+    for (const rf of factors) {
+      const li = document.createElement('li');
+      li.className = rf.present ? 'rf-present' : 'rf-absent';
+      // Textual [x]/[ ] marker so the checklist is meaningful without color.
+      const box = document.createElement('span');
+      box.className = 'rf-box';
+      box.textContent = rf.present ? '[x] ' : '[ ] ';
+      const label = document.createElement('span');
+      label.textContent = String(rf.label || rf.key || '');
+      li.appendChild(box);
+      li.appendChild(label);
+      ul.appendChild(li);
+    }
+    td.appendChild(ul);
+  }
+
+  if (subsumed.length > 0) {
+    const heading = document.createElement('p');
+    heading.className = 'subsumed-heading';
+    heading.textContent =
+      'Subordinate findings folded into this path (not shown as separate rows):';
+    td.appendChild(heading);
+
+    const ul = document.createElement('ul');
+    ul.className = 'subsumed-findings';
+    for (const s of subsumed) {
+      const li = document.createElement('li');
+      const actions = Array.isArray(s.actions) ? s.actions.join(', ') : '';
+      const resources = Array.isArray(s.resources) ? s.resources.join(', ') : '';
+      li.textContent =
+        `${String(s.id || '')} on ${String(s.statementSid || '')} ` +
+        `(${actions} -> ${resources})`;
+      ul.appendChild(li);
+    }
+    td.appendChild(ul);
+  }
+
+  tr.appendChild(td);
+  return tr;
 }
 
 // Reset the evidence panel to its idle prompt.

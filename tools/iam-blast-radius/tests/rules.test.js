@@ -56,7 +56,8 @@ function idsOf(findings) {
 function assertFindingShape(f, ctx) {
   for (const field of [
     'id', 'severity', 'title', 'statementSid', 'actions', 'resources',
-    'confidence', 'why', 'limit', 'remediation', 'ruleVersion', 'docRef',
+    'policyEvidence', 'pathExploitability', 'why', 'limit', 'remediation',
+    'ruleVersion', 'docRef',
   ]) {
     assert.ok(
       Object.prototype.hasOwnProperty.call(f, field),
@@ -65,7 +66,10 @@ function assertFindingShape(f, ctx) {
   }
   assert.ok(RULE_ID_SET.has(f.id), `${ctx}: unknown rule id ${f.id}`);
   assert.ok(SEVERITIES.has(f.severity), `${ctx}: bad severity ${f.severity}`);
-  assert.ok(CONFIDENCES.has(f.confidence), `${ctx}: bad confidence ${f.confidence}`);
+  // IAM-104: the single confidence field is replaced by two orthogonal signals.
+  assert.ok(!('confidence' in f), `${ctx}: legacy confidence field must be gone`);
+  assert.ok(CONFIDENCES.has(f.policyEvidence), `${ctx}: bad policyEvidence ${f.policyEvidence}`);
+  assert.ok(CONFIDENCES.has(f.pathExploitability), `${ctx}: bad pathExploitability ${f.pathExploitability}`);
   assert.ok(typeof f.title === 'string' && f.title.length > 0, `${ctx}: empty title`);
   assert.ok(typeof f.statementSid === 'string' && f.statementSid.length > 0, `${ctx}: empty statementSid`);
   assert.ok(Array.isArray(f.actions) && f.actions.length > 0, `${ctx}: actions must be a non-empty array`);
@@ -173,6 +177,7 @@ test('every rule family has at least one positive and one negative fixture', () 
     'WILDCARD-RESOURCE': ['wildcard', 'direct-iam', 'detection'],
     'DIRECT-IAM-ADMIN': ['direct-iam'],
     'DATA-EXFIL': ['exfil'],
+    'KMS-DECRYPT': ['exfil'],
     'DESTRUCTIVE-ACTION': ['destructive'],
     'DETECTION-IMPAIRMENT': ['detection'],
     'NOTACTION-ALLOW': ['notaction-allow'],
@@ -194,12 +199,14 @@ test('every rule family has at least one positive and one negative fixture', () 
 // Wildcard rule direct assertions.
 // ---------------------------------------------------------------------------
 
-test('Action "*" is a critical WILDCARD-ACTION; Resource "*" adds WILDCARD-RESOURCE', () => {
+// IAM-102 severity model: a standalone wildcard-action grant is HIGH, not
+// critical - critical is reserved for compound escalation paths.
+test('Action "*" is a high WILDCARD-ACTION; Resource "*" adds WILDCARD-RESOURCE', () => {
   const r = analyzeRulesFromText('{"Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}');
   const ids = idsOf(r.findings);
   assert.deepEqual([...new Set(ids)].sort(), ['WILDCARD-ACTION', 'WILDCARD-RESOURCE']);
   const wa = r.findings.find((f) => f.id === 'WILDCARD-ACTION');
-  assert.equal(wa.severity, 'critical');
+  assert.equal(wa.severity, 'high');
   // "*" must not additionally trip the concrete sub-rules (noise / double count).
   assert.ok(!ids.includes('DIRECT-IAM-ADMIN'));
   assert.ok(!ids.includes('DESTRUCTIVE-ACTION'));
@@ -232,12 +239,14 @@ test('WILDCARD-RESOURCE fires (medium) on Allow+NotResource with a write', () =>
 // Direct IAM admin.
 // ---------------------------------------------------------------------------
 
-test('iam:* trips DIRECT-IAM-ADMIN (critical) as well as WILDCARD-ACTION', () => {
+// IAM-102 severity model: direct-IAM single-action administration is HIGH, not
+// critical - critical is reserved for compound escalation paths.
+test('iam:* trips DIRECT-IAM-ADMIN (high) as well as WILDCARD-ACTION', () => {
   const r = analyzeRulesFromText('{"Statement":[{"Effect":"Allow","Action":"iam:*","Resource":"arn:aws:iam::1:role/x"}]}');
   const ids = idsOf(r.findings);
   assert.ok(ids.includes('DIRECT-IAM-ADMIN'));
   assert.ok(ids.includes('WILDCARD-ACTION'));
-  assert.equal(r.findings.find((f) => f.id === 'DIRECT-IAM-ADMIN').severity, 'critical');
+  assert.equal(r.findings.find((f) => f.id === 'DIRECT-IAM-ADMIN').severity, 'high');
 });
 
 test('iam:PutUserPolicy / iam:AttachRolePolicy / iam:CreatePolicyVersion each trip DIRECT-IAM-ADMIN', () => {
@@ -286,7 +295,51 @@ test('DATA-EXFIL: s3:GetObject fires only with a broad resource; secrets fire al
 });
 
 // ---------------------------------------------------------------------------
-// Condition lowers confidence but never suppresses a finding.
+// IAM-103: kms:Decrypt is a DISTINCT decryption capability, not a secret read.
+// ---------------------------------------------------------------------------
+
+test('kms:Decrypt fires KMS-DECRYPT, NOT DATA-EXFIL, and is not called a secret read', () => {
+  const r = analyzeRulesFromText(
+    '{"Statement":[{"Effect":"Allow","Action":"kms:Decrypt","Resource":"arn:aws:kms:us-east-1:1:key/abcd"}]}',
+  );
+  const ids = idsOf(r.findings);
+  assert.ok(ids.includes('KMS-DECRYPT'), 'kms:Decrypt must produce KMS-DECRYPT');
+  assert.ok(!ids.includes('DATA-EXFIL'), 'kms:Decrypt must NOT be lumped into DATA-EXFIL');
+  const kms = r.findings.find((f) => f.id === 'KMS-DECRYPT');
+  // Must NOT claim it reads/retrieves secret material.
+  assert.ok(!/reads?\s+secret material/i.test(kms.why), 'KMS-DECRYPT must not claim it reads secret material');
+  assert.ok(/decrypt/i.test(kms.why), 'KMS-DECRYPT why must describe decryption');
+  assert.ok(/not\b.*(enumerate|retrieve)/i.test(kms.why), 'KMS-DECRYPT why must state it does not enumerate/retrieve secrets');
+});
+
+test('secretsmanager + kms:Decrypt in one statement split into DATA-EXFIL and KMS-DECRYPT', () => {
+  const r = analyzeRulesFromText(
+    '{"Statement":[{"Effect":"Allow","Action":["secretsmanager:GetSecretValue","kms:Decrypt"],"Resource":["arn:aws:secretsmanager:us-east-1:1:secret:x","arn:aws:kms:us-east-1:1:key/abcd"]}]}',
+  );
+  const ids = new Set(idsOf(r.findings));
+  assert.ok(ids.has('DATA-EXFIL'), 'secretsmanager read -> DATA-EXFIL');
+  assert.ok(ids.has('KMS-DECRYPT'), 'kms:Decrypt -> KMS-DECRYPT');
+  // DATA-EXFIL's why must no longer mention KMS.
+  const exfil = r.findings.find((f) => f.id === 'DATA-EXFIL');
+  assert.ok(!/kms/i.test(exfil.why), 'DATA-EXFIL why must no longer mention KMS');
+});
+
+// ---------------------------------------------------------------------------
+// IAM-103: wildcard-resource wording is neutral (no non-read classification).
+// ---------------------------------------------------------------------------
+
+test('WILDCARD-RESOURCE why is neutral: broadly resource-scoped, no non-read claim', () => {
+  const r = analyzeRulesFromText(
+    '{"Statement":[{"Effect":"Allow","Action":"s3:PutObject","Resource":"*"}]}',
+  );
+  const wr = r.findings.find((f) => f.id === 'WILDCARD-RESOURCE');
+  assert.ok(wr, 'expected a WILDCARD-RESOURCE finding');
+  assert.ok(/broadly resource-scoped/i.test(wr.why), 'why must use neutral broadly-resource-scoped wording');
+  assert.ok(!/non-read/i.test(wr.why), 'why must not classify the action as non-read');
+});
+
+// ---------------------------------------------------------------------------
+// A Condition lowers BOTH certainty signals but never suppresses a finding.
 // ---------------------------------------------------------------------------
 
 test('a Condition drops finding confidence to medium and annotates the limit', () => {
@@ -304,7 +357,10 @@ test('a Condition drops finding confidence to medium and annotates the limit', (
   );
   const wa = r.findings.find((f) => f.id === 'WILDCARD-ACTION');
   assert.ok(wa);
-  assert.equal(wa.confidence, 'medium');
+  // A Condition is a runtime gate: a direct-capability rule finding starts at
+  // evidence high / exploitability high, so both drop to medium.
+  assert.equal(wa.policyEvidence, 'medium');
+  assert.equal(wa.pathExploitability, 'medium');
   assert.ok(/Condition/.test(wa.limit));
   assert.notEqual(wa.conditions, null);
 });

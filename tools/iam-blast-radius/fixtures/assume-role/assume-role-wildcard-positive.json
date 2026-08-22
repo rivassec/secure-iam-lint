@@ -12,5 +12,13 @@
       }
     ]
   },
-  "expect": { "valid": true, "findingIds": ["ASSUME-ROLE-EXPANSION"], "notFindingIds": ["TRUST-POLICY-MODIFY"] }
+  "expect": {
+    "valid": true,
+    "findingIds": ["ASSUME-ROLE-EXPANSION"],
+    "notFindingIds": ["TRUST-POLICY-MODIFY"],
+    "summary": {
+      "counts": { "privEscPaths": 0, "roleAssumption": 1, "sensitiveData": 0, "broadResource": 1 },
+      "highestRisk": { "id": "ASSUME-ROLE-EXPANSION", "severity": "critical", "path": "Principal -> sts:AssumeRole -> assumed role (unknown privileges)" }
+    }
+  }
 }

@@ -229,6 +229,49 @@ test('each edge group carries the distinct css class for its certainty', () => {
   }
 });
 
+test('IAM-107: the passable-role pivot renders as a distinguished unknown-privileges node', () => {
+  const doc = fakeDocument();
+  const r = createGraphRenderer(doc);
+  const el = mount(doc);
+  const result = analyzeFixture('pass-role/passrole-lambda-positive.json');
+  const svg = r.render(result.graph, el, { reducedMotion: true });
+
+  // The pivot node group carries the fixed unknown-privileges marker class so
+  // the renderer visually separates KNOWN grants from the UNKNOWN target-role
+  // privileges (IAM-107 req 2). Its text spells the distinction out too, so the
+  // signal is not color-only (a11y).
+  const pivot = svg.find(
+    (n) => n.tag === 'g' && (n.getAttribute('class') || '').includes('node-unknown-priv'),
+  );
+  assert.ok(pivot, 'expected a node group flagged node-unknown-priv');
+  assert.match(pivot.textContent, /unknown/i, 'pivot node text names the unknown privileges');
+
+  // The service-execution node is flagged as the potential privilege-boundary
+  // crossing.
+  const boundary = svg.find(
+    (n) => n.tag === 'g' && (n.getAttribute('class') || '').includes('node-boundary'),
+  );
+  assert.ok(boundary, 'expected a node group flagged node-boundary (service execution)');
+
+  // Still no non-whitelisted tags were synthesized building these nodes.
+  for (const created of doc.created) {
+    assert.ok(ALLOWED_TAGS.has(created.tag), `unexpected element tag created: ${created.tag}`);
+  }
+});
+
+test('IAM-107: the transition lays out left-to-right across columns (pivot between principal and service)', () => {
+  const result = analyzeFixture('pass-role/passrole-lambda-positive.json');
+  const layout = computeLayout(result.graph);
+  const principal = layout.nodes.find((n) => n.id === 'principal');
+  const pivot = layout.nodes.find((n) => n.id === 'role:passable:lambda');
+  const service = layout.nodes.find((n) => n.id === 'service:lambda');
+  assert.ok(principal && pivot && service, 'principal, pivot, and service all laid out');
+  // The pivot sits in a column strictly between the principal and the service,
+  // so the privilege transition reads as a path rather than parallel spokes.
+  assert.ok(principal.x < pivot.x, 'pivot is right of the principal');
+  assert.ok(pivot.x < service.x, 'service is right of the pivot');
+});
+
 test('EDGE_STYLE_ORDER lists every certainty class exactly once', () => {
   const keys = Object.keys(CERTAINTY_CLASSES).sort();
   assert.deepEqual([...EDGE_STYLE_ORDER].sort(), keys);
@@ -297,7 +340,7 @@ test('Enter and Space activate an edge from the keyboard', () => {
 
 // --- Evidence panel ----------------------------------------------------------
 
-test('renderEvidence shows statement/actions/resources/condition + confidence/limit', () => {
+test('renderEvidence shows statement/actions/resources/condition + evidence/exploitability/limit', () => {
   const doc = fakeDocument();
   const r = createGraphRenderer(doc);
   const result = analyzeFixture('pass-role/passrole-lambda-positive.json');
@@ -312,8 +355,9 @@ test('renderEvidence shows statement/actions/resources/condition + confidence/li
   assert.match(text, /Resources/);
   assert.match(text, /Condition/);
   assert.match(text, /Certainty/);
-  // Confidence + limit are enriched from the matching finding.
-  assert.match(text, /Confidence/);
+  // IAM-104: both split certainty signals + limit are enriched from the finding.
+  assert.match(text, /Policy evidence/);
+  assert.match(text, /Path exploitability/);
   assert.match(text, /NOT prove/);
   // Truthfulness caveat present (threat-model T8).
   assert.match(text, /not effective permissions/);

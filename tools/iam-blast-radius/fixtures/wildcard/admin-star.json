@@ -1,16 +1,65 @@
 {
   "name": "Full admin wildcard",
-  "note": "Action * on Resource * - classic over-permission.",
+  "note": "Action * on Resource * - classic over-permission. Action \"*\" grants EVERY action, so it is de-facto AdministratorAccess and necessarily contains every privilege-escalation path the engine models: iam:PassRole + each service-execution action (critical compound paths), sts:AssumeRole over all roles (critical), and every direct-IAM self-administration primitive (high). The escalation engine must surface these rather than report zero escalation paths for full admin (threat-model T8: understating blast radius is as harmful as overstating it). The WILDCARD-ACTION \"*\" row grants strictly more than any single path, so it stays an independent top-level finding and is never folded into a compound path; the WILDCARD-RESOURCE \"*\" grant on the same statement is a scope risk factor of the compound paths and is subsumed (IAM-105).",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [ { "Sid": "GodMode", "Effect": "Allow", "Action": "*", "Resource": "*" } ]
   },
   "expect": {
     "valid": true,
-    "findingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
+    "exactFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
+    "findingIds": [
+      "WILDCARD-ACTION",
+      "PASSROLE-LAMBDA",
+      "PASSROLE-EC2",
+      "PASSROLE-SERVICE",
+      "ASSUME-ROLE-EXPANSION",
+      "ATTACH-POLICY",
+      "PUT-INLINE-POLICY",
+      "POLICY-VERSION",
+      "TRUST-POLICY-MODIFY",
+      "CREDENTIAL-CREATION"
+    ],
     "notFindingIds": [],
+    "compound": {
+      "primaryId": "PASSROLE-LAMBDA",
+      "subsumes": [{ "id": "WILDCARD-RESOURCE", "statementIndex": 0 }],
+      "independentFindings": [{ "id": "WILDCARD-ACTION", "statementIndex": 0 }],
+      "note": "Action \"*\" grants iam:PassRole + lambda:CreateFunction (among everything else), so PASSROLE-LAMBDA is a compound path anchored on statement 0. The WILDCARD-RESOURCE \"*\" grant on the same statement is a scope risk factor of that path and is subsumed. The WILDCARD-ACTION \"*\" grant is strictly broader than the path (it grants every action, not just the path's) and must remain an independent top-level row.",
+      "riskFactors": [
+        { "key": "pass-role", "present": true },
+        { "key": "pass-role-resource-wildcard", "present": true },
+        { "key": "exec-resource-wildcard", "present": true },
+        { "key": "passed-to-service-restriction", "present": false }
+      ]
+    },
+    "summary": {
+      "counts": { "privEscPaths": 13, "roleAssumption": 1, "sensitiveData": 0, "broadResource": 0 },
+      "highestRisk": { "id": "ASSUME-ROLE-EXPANSION", "severity": "critical", "path": "Principal -> sts:AssumeRole -> assumed role (unknown privileges)" }
+    },
+    "graphNote": "IAM-107: each PassRole compound path is encoded as a transition through an unknown-privileges pivot - principal --can-pass--> role:passable:{svc} --can-execute-as--> service:{svc} - not a direct principal->service spoke. The pivot node carries the analyzer's KNOWN/UNKNOWN split (the two grants are known; the passed role's privileges are not).",
     "exactGraphEdges": [
       { "from": "principal", "to": "actiongroup:*", "type": "allows", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "role:*", "type": "can-assume", "certainty": "potentially-reachable" },
+      { "from": "principal", "to": "role:passable:cloudformation", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "role:passable:codebuild", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "role:passable:datapipeline", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "role:passable:ec2", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "role:passable:ecs", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "role:passable:glue", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "role:passable:lambda", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "role:passable:sagemaker", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "policy:self", "type": "can-modify", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "principal:credential-target", "type": "can-modify", "certainty": "confirmed-by-context" },
+      { "from": "principal", "to": "role:*", "type": "can-modify", "certainty": "confirmed-by-context" },
+      { "from": "role:passable:cloudformation", "to": "service:cloudformation", "type": "can-execute-as", "certainty": "confirmed-by-context" },
+      { "from": "role:passable:codebuild", "to": "service:codebuild", "type": "can-execute-as", "certainty": "confirmed-by-context" },
+      { "from": "role:passable:datapipeline", "to": "service:datapipeline", "type": "can-execute-as", "certainty": "confirmed-by-context" },
+      { "from": "role:passable:ec2", "to": "service:ec2", "type": "can-execute-as", "certainty": "confirmed-by-context" },
+      { "from": "role:passable:ecs", "to": "service:ecs", "type": "can-execute-as", "certainty": "confirmed-by-context" },
+      { "from": "role:passable:glue", "to": "service:glue", "type": "can-execute-as", "certainty": "confirmed-by-context" },
+      { "from": "role:passable:lambda", "to": "service:lambda", "type": "can-execute-as", "certainty": "confirmed-by-context" },
+      { "from": "role:passable:sagemaker", "to": "service:sagemaker", "type": "can-execute-as", "certainty": "confirmed-by-context" },
       { "from": "principal", "to": "resource:*", "type": "can-write", "certainty": "confirmed-by-context" }
     ]
   }

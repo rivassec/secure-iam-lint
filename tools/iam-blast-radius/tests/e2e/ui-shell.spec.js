@@ -51,6 +51,150 @@ test('analyzes a policy and renders an accessible findings table', async ({ page
   await expect(page.locator('#findings')).toContainText('Wildcard');
 });
 
+test('compound escalation path shows a risk-factor checklist and no duplicate wildcard row (IAM-105)', async ({ page }) => {
+  await page.fill('#policy-input', fixture('pass-role/passrole-lambda-positive.json'));
+  await page.click('#analyze-btn');
+  await expect(page.locator('#findings table')).toBeVisible();
+
+  // One primary compound row.
+  await expect(page.locator('#findings')).toContainText('PassRole');
+  // No standalone WILDCARD-RESOURCE main row (it was subsumed into the path).
+  await expect(page.locator('#findings tbody tr:not(.finding-detail)')).toHaveCount(1);
+
+  // IAM-101: the detail row is collapsed by default; expand it via the row's
+  // disclosure toggle (keyboard/mouse operable).
+  const detail = page.locator('#findings tr.finding-detail');
+  await expect(detail).toHaveCount(1);
+  await expect(detail).toBeHidden();
+
+  const toggle = page.locator('#findings .row-toggle').first();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(detail).toBeVisible();
+
+  // The expanded detail carries the present/absent checklist...
+  await expect(detail).toContainText('Risk factors for this escalation path');
+  await expect(detail.locator('ul.risk-factors li')).not.toHaveCount(0);
+  // ...the subordinate wildcard grant folded in (not a separate row)...
+  await expect(detail).toContainText('WILDCARD-RESOURCE');
+  // ...and the prose that was moved out of the table columns.
+  await expect(detail).toContainText('Why it matters');
+  await expect(detail).toContainText('What this does NOT prove');
+  await expect(detail).toContainText('Remediation');
+
+  // Toggling again collapses it.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(detail).toBeHidden();
+});
+
+test('IAM-101: compact findings table - prose is out of the row and rows are short', async ({ page }) => {
+  // admin-star yields several findings; each is one compact main row plus a
+  // collapsed detail row.
+  await page.fill('#policy-input', fixture('wildcard/admin-star.json'));
+  await page.click('#analyze-btn');
+  await expect(page.locator('#findings table')).toBeVisible();
+
+  // The main table header no longer carries the prose columns.
+  const headers = await page.locator('#findings thead th').allInnerTexts();
+  const headerText = headers.join(' | ');
+  expect(headerText).toContain('Severity');
+  expect(headerText).toContain('Finding');
+  expect(headerText).toContain('Policy evidence');
+  expect(headerText).toContain('Path exploitability');
+  expect(headerText).not.toContain('Why it matters');
+  expect(headerText).not.toContain('What this does NOT prove');
+  expect(headerText).not.toContain('Remediation');
+
+  // Every visible main row is short (prose lives in the collapsed detail).
+  // Acceptance target: average row height well under 120px.
+  const mainRows = page.locator('#findings tbody tr.finding-row');
+  const count = await mainRows.count();
+  expect(count).toBeGreaterThan(0);
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    const box = await mainRows.nth(i).boundingBox();
+    total += box ? box.height : 0;
+  }
+  expect(total / count).toBeLessThan(120);
+
+  // Detail rows are collapsed by default (compactness relies on this).
+  await expect(page.locator('#findings tr.finding-detail').first()).toBeHidden();
+
+  // No prose lost: expand the first finding and confirm all three prose blocks
+  // are reachable in the detail.
+  const firstToggle = page.locator('#findings .row-toggle').first();
+  await firstToggle.click();
+  const firstDetail = page.locator('#findings tr.finding-detail').first();
+  await expect(firstDetail).toBeVisible();
+  await expect(firstDetail).toContainText('Why it matters');
+  await expect(firstDetail).toContainText('What this does NOT prove');
+  await expect(firstDetail).toContainText('Remediation');
+});
+
+test('IAM-101: per-row detail is keyboard operable', async ({ page }) => {
+  await page.fill('#policy-input', fixture('wildcard/admin-star.json'));
+  await page.click('#analyze-btn');
+  await expect(page.locator('#findings table')).toBeVisible();
+
+  const toggle = page.locator('#findings .row-toggle').first();
+  const detail = page.locator('#findings tr.finding-detail').first();
+  await expect(detail).toBeHidden();
+
+  // Focus the toggle and activate it with the keyboard.
+  await toggle.focus();
+  await expect(toggle).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(detail).toBeVisible();
+
+  await page.keyboard.press('Space');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(detail).toBeHidden();
+});
+
+test('risk-summary header renders above the table with counts and the highest-risk path (IAM-106)', async ({ page }) => {
+  await page.fill('#policy-input', fixture('pass-role/passrole-lambda-positive.json'));
+  await page.click('#analyze-btn');
+
+  const summary = page.locator('#findings .risk-summary');
+  await expect(summary).toBeVisible();
+  await expect(summary.locator('h3')).toHaveText('Risk summary');
+  // Four capability-family labels are present.
+  await expect(summary).toContainText('Privilege-escalation paths');
+  await expect(summary).toContainText('Role-assumption capabilities');
+  await expect(summary).toContainText('Sensitive-data access capabilities');
+  await expect(summary).toContainText('Broad-resource grants');
+  // The single highest-risk path is shown in one line.
+  await expect(summary.locator('.risk-summary-top')).toContainText(
+    'Principal -> iam:PassRole -> Lambda -> passed role (unknown privileges)',
+  );
+
+  // The summary is rendered BEFORE the findings table (source-order = above it).
+  const summaryFirst = await page.evaluate(() => {
+    const root = document.getElementById('findings');
+    const rs = root.querySelector('.risk-summary');
+    const table = root.querySelector('table');
+    if (!rs || !table) return false;
+    // eslint-disable-next-line no-bitwise
+    return !!(rs.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(summaryFirst).toBe(true);
+});
+
+test('risk-summary shows no highest-risk path when there is no escalation path (IAM-106)', async ({ page }) => {
+  // A broad-resource grant with no PassRole/AssumeRole/direct-IAM action has
+  // findings but NO escalation path, so the summary's highest-risk line reads
+  // "none". (admin-star is NOT such a case: Action:"*" is de-facto admin and
+  // necessarily contains escalation paths - see the wildcard/admin-star fixture.)
+  await page.fill('#policy-input', fixture('wildcard/wildcard-resource-with-write.json'));
+  await page.click('#analyze-btn');
+  const summary = page.locator('#findings .risk-summary');
+  await expect(summary).toBeVisible();
+  await expect(summary.locator('.risk-summary-top')).toContainText('none');
+});
+
 test('HTML/JS/SVG payloads in policy fields do not execute or inject (no XSS)', async ({ page }) => {
   // Gold-standard XSS check: any executed payload would open a dialog.
   let dialogFired = false;

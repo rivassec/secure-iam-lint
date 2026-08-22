@@ -100,6 +100,16 @@ export const GRAPH_LIMITS = Object.freeze({
   // exceed this, the node (and any edge that needs it) is dropped and the
   // graph is marked `truncated`.
   MAX_NODES: 500,
+  // Hard cap on graph edges (IAM-108, threat-model T5). A node can carry
+  // several distinct edges (e.g. a PassRole path adds both can-pass and
+  // can-execute-as to one Service node), so the edge count can outgrow the
+  // node count; it needs its own bound. Real policies produce a handful of
+  // edges; 900 is far above any legitimate result yet bounds a pathological
+  // policy that would otherwise emit thousands of multi-edges. When adding a
+  // NEW edge would exceed this, the edge (and any node it alone would have
+  // created) is dropped and the graph is marked `truncated`. Merging evidence
+  // into an existing edge never counts against this cap.
+  MAX_EDGES: 900,
 });
 
 // Deterministic sort orders for node/edge types.
@@ -173,7 +183,12 @@ function firstResource(finding) {
   return '(unspecified)';
 }
 
-// Map a finding's confidence to a BASE edge certainty class:
+// Map a finding's policyEvidence (IAM-104: the strength of the POLICY-TEXT
+// evidence for the grant, formerly the single `confidence` field) to a BASE edge
+// certainty class. Edge certainty is about whether THIS policy grants the edge,
+// so it keys off policyEvidence, NOT pathExploitability (how likely the grant is
+// actually exploitable is a separate signal that never strengthens/weakens what
+// the policy text demonstrably says):
 //   high   -> confirmed-by-context   (granted by this policy text, unconditional)
 //   medium -> conditionally-reachable (a Condition may gate it at runtime)
 //   low    -> potentially-reachable   (multiple unknowns stack up)
@@ -181,9 +196,9 @@ function firstResource(finding) {
 // DENY-AWARENESS (see ruleCertainty / ESCALATION vs RULE findings below).
 // escalation.js findings arrive with gating Conditions, unresolved PassedToService
 // operators, AND possibly-blocking same-policy Denies ALREADY folded into
-// `confidence` (fully-blocked paths are suppressed there entirely), so for those
+// `policyEvidence` (fully-blocked paths are suppressed there entirely), so for those
 // findings this base mapping is authoritative. rules.js findings, by contrast,
-// fold ONLY Conditions into confidence - they are deliberately NOT Deny-aware (a
+// fold ONLY Conditions into policyEvidence - they are deliberately NOT Deny-aware (a
 // Deny is never itself a blast-radius grant, so rules.js does not model it). That
 // left rule edges overstating certainty: a wildcard/destructive/IAM-admin grant
 // whose action a same-policy explicit Deny overrides would still read as
@@ -192,9 +207,9 @@ function firstResource(finding) {
 // rule findings here, mirroring what escalation.js already does for its own
 // findings: see ruleCertainty(). A confirming Condition (e.g. an
 // iam:PassedToService that PROVES a path) is not a gate, so it never lowers
-// confidence in those engines and is correctly read as confirmed.
-function certaintyFromConfidence(confidence) {
-  switch (confidence) {
+// policyEvidence in those engines and is correctly read as confirmed.
+function certaintyFromEvidence(policyEvidence) {
+  switch (policyEvidence) {
     case 'high':
       return CERTAINTY.CONFIRMED_BY_CONTEXT;
     case 'medium':
@@ -260,7 +275,7 @@ function denyNarrowsNotAction(denies, allowStmt) {
 //   downgraded base  - a Deny may block / partially narrows the grant.
 //   base             - no same-policy Deny touches the grant.
 function ruleCertainty(finding, denies, model) {
-  const base = certaintyFromConfidence(finding.confidence);
+  const base = certaintyFromEvidence(finding.policyEvidence);
   if (!denies || denies.length === 0) return base;
   const allowStmt = findStatement(model, finding.statementIndex);
   if (!allowStmt) return base;
@@ -310,23 +325,62 @@ function createBuilder() {
   const root = principalNode();
   nodes.set(root.id, root);
 
-  function ensureNode(id, type, label) {
+  function ensureNode(id, type, label, extra) {
     if (nodes.has(id)) return true;
     if (nodes.size >= GRAPH_LIMITS.MAX_NODES) {
       truncated = true;
       return false;
     }
-    nodes.set(id, { id, type, label });
+    const node = { id, type, label };
+    // Optional flags that carry the analyzer's KNOWN/UNKNOWN distinction to the
+    // renderer (IAM-107): e.g. `unknownPrivileges` on a passable-role pivot,
+    // `boundaryCrossing` on the service-execution node. These are our own fixed
+    // boolean markers, never values from analyzed input, and they do NOT change
+    // the node's `type` (which stays within the architecture vocabulary).
+    if (extra && typeof extra === 'object') {
+      for (const k of Object.keys(extra)) node[k] = extra[k];
+    }
+    nodes.set(id, node);
     return true;
   }
 
-  // Add (or merge into) an edge from PRINCIPAL_ID to `toId`.
-  function addEdge({ toId, toType, toLabel, type, certainty, finding, statementIndex, label }) {
-    // The target node must exist; if the cap blocked it, drop the edge too.
-    if (!ensureNode(toId, toType, toLabel)) return;
-    const edgeId = `${PRINCIPAL_ID}|${type}|${toId}`;
-    const evidence = finding ? evidenceFromFinding(finding) : null;
+  // Add (or merge into) an edge from `fromId` (default: the Principal root) to
+  // `toId`. Most edges are principal-rooted spokes; escalation-path edges
+  // (IAM-107) chain THROUGH an intermediate node (e.g. principal -> passable
+  // role -> service execution), so a non-principal `fromId` is supported. A
+  // transition edge's source node must ALREADY exist - it is created as the
+  // `to` of the preceding principal-rooted edge - which keeps every edge rooted
+  // at the principal and prevents a stranded source node at the size cap.
+  function addEdge({
+    fromId,
+    toId,
+    toType,
+    toLabel,
+    toExtra,
+    type,
+    certainty,
+    finding,
+    statementIndex,
+    label,
+  }) {
+    const sourceId = fromId || PRINCIPAL_ID;
+    const edgeId = `${sourceId}|${type}|${toId}`;
     const existing = edges.get(edgeId);
+    // Edge cap (IAM-108): a genuinely NEW edge that would push us past the cap
+    // is dropped BEFORE its target node is created, so no dangling node is
+    // left behind. Merging evidence into an already-present edge is always
+    // allowed (it does not grow the edge count).
+    if (!existing && edges.size >= GRAPH_LIMITS.MAX_EDGES) {
+      truncated = true;
+      return;
+    }
+    // A transition edge whose source node is not present (its rooting edge was
+    // dropped, e.g. by the cap) is itself dropped: the graph must stay rooted at
+    // the principal, never grow a floating subgraph.
+    if (sourceId !== PRINCIPAL_ID && !nodes.has(sourceId)) return;
+    // The target node must exist; if the node cap blocked it, drop the edge too.
+    if (!ensureNode(toId, toType, toLabel, toExtra)) return;
+    const evidence = finding ? evidenceFromFinding(finding) : null;
     if (existing) {
       // Merge: keep the strongest certainty, append evidence, keep the lowest
       // statementIndex as the primary anchor (deterministic).
@@ -344,7 +398,7 @@ function createBuilder() {
     }
     edges.set(edgeId, {
       id: edgeId,
-      from: PRINCIPAL_ID,
+      from: sourceId,
       to: toId,
       type,
       certainty,
@@ -368,7 +422,7 @@ function createBuilder() {
 
 // Risk-rule (rules.js) mappings. Each receives the finding, the builder, and the
 // deny-aware `certainty` computed by ruleCertainty() (rules.js is not Deny-aware,
-// so the certainty is decided here rather than from f.confidence directly).
+// so the certainty is decided here rather than from f.policyEvidence directly).
 const RULE_MAP = {
   'WILDCARD-ACTION': (f, b, certainty) => {
     const key = f.actions.length ? String(f.actions[0]) : '*';
@@ -415,12 +469,26 @@ const RULE_MAP = {
     b.addEdge({
       toId: 'datastore:sensitive-data',
       toType: NODE_TYPES.DATA_STORE,
-      toLabel: 'Sensitive data (secrets / KMS / objects)',
+      toLabel: 'Sensitive data (secrets / objects)',
       type: EDGE_TYPES.CAN_READ,
       certainty,
       finding: f,
       statementIndex: f.statementIndex,
       label: 'reads sensitive data',
+    });
+  },
+  'KMS-DECRYPT': (f, b, certainty) => {
+    b.addEdge({
+      toId: 'datastore:kms-decrypt',
+      toType: NODE_TYPES.DATA_STORE,
+      toLabel: 'KMS-decryptable ciphertext',
+      // Decryption of caller-supplied ciphertext for usable keys: a read-style
+      // reach over that ciphertext, NOT secret enumeration/retrieval (IAM-103).
+      type: EDGE_TYPES.CAN_READ,
+      certainty,
+      finding: f,
+      statementIndex: f.statementIndex,
+      label: 'can decrypt ciphertext',
     });
   },
   'DESTRUCTIVE-ACTION': (f, b, certainty) => {
@@ -456,14 +524,14 @@ const ESCALATION_MAP = {
   'PASSROLE-EC2': (f, b) => passRoleEdges(f, b),
   'PASSROLE-SERVICE': (f, b) => passRoleEdges(f, b),
   // Escalation findings arrive with same-policy Deny already folded into
-  // confidence by escalation.js (fully-blocked paths are suppressed there), so
-  // their edge certainty comes straight from confidence.
+  // policyEvidence by escalation.js (fully-blocked paths are suppressed there), so
+  // their edge certainty comes straight from policyEvidence.
   'POLICY-VERSION': (f, b) =>
-    selfIamModify(f, b, 'managed-policy version manipulation', certaintyFromConfidence(f.confidence)),
+    selfIamModify(f, b, 'managed-policy version manipulation', certaintyFromEvidence(f.policyEvidence)),
   'ATTACH-POLICY': (f, b) =>
-    selfIamModify(f, b, 'attach managed policy', certaintyFromConfidence(f.confidence)),
+    selfIamModify(f, b, 'attach managed policy', certaintyFromEvidence(f.policyEvidence)),
   'PUT-INLINE-POLICY': (f, b) =>
-    selfIamModify(f, b, 'write inline policy', certaintyFromConfidence(f.confidence)),
+    selfIamModify(f, b, 'write inline policy', certaintyFromEvidence(f.policyEvidence)),
   'TRUST-POLICY-MODIFY': (f, b) => {
     const key = firstResource(f);
     b.addEdge({
@@ -471,7 +539,7 @@ const ESCALATION_MAP = {
       toType: NODE_TYPES.ROLE,
       toLabel: `Role: ${key}`,
       type: EDGE_TYPES.CAN_MODIFY,
-      certainty: certaintyFromConfidence(f.confidence),
+      certainty: certaintyFromEvidence(f.policyEvidence),
       finding: f,
       statementIndex: f.statementIndex,
       label: 'can rewrite trust policy',
@@ -483,7 +551,7 @@ const ESCALATION_MAP = {
       toType: NODE_TYPES.PRINCIPAL,
       toLabel: 'Target principal (credential recipient)',
       type: EDGE_TYPES.CAN_MODIFY,
-      certainty: certaintyFromConfidence(f.confidence),
+      certainty: certaintyFromEvidence(f.policyEvidence),
       finding: f,
       statementIndex: f.statementIndex,
       label: 'can mint credentials for',
@@ -522,34 +590,54 @@ function selfIamModify(f, b, label, certainty) {
   });
 }
 
-// PassRole escalations produce two edges to the target Service node: the ability
-// to PASS a role to the service, and the ability to make the service EXECUTE AS
-// that role (the two halves of the primitive). The passed-role ARN(s) live in
-// the edge evidence (`resources`).
+// PassRole escalations encode the PRIVILEGE TRANSITION, not just the service
+// sequence (IAM-107). The graph walks the actual pivot:
+//
+//   Principal --can-pass (iam:PassRole)--> Passable role [unknown privileges]
+//            --can-execute-as (service action)--> Service execution
+//                                                 (potential privilege-boundary crossing)
+//
+// The intermediate ROLE node is the crux: the analyzer KNOWS the principal can
+// pass a role to the service and make the service run as it (both grants are in
+// the policy text), but it does NOT know that role's actual permissions - so
+// whether this crosses a privilege boundary is genuinely unknown from this
+// policy alone (threat-model T8: never overclaim). `unknownPrivileges` marks
+// that node so the renderer can visually separate what is known (the two edges)
+// from what is not (the role's power); `boundaryCrossing` marks the service node
+// as the potential crossing point. The passed-role ARN(s) ride in the edge
+// evidence (`resources`). Both edges take the finding's policyEvidence-derived
+// certainty (escalation.js already folded any gating Condition / Deny in).
 function passRoleEdges(f, b) {
   const svc = f.escalation && f.escalation.service ? String(f.escalation.service) : 'service';
-  const certainty = certaintyFromConfidence(f.confidence);
-  const toId = `service:${svc}`;
-  const toLabel = `Service: ${svc}`;
+  const certainty = certaintyFromEvidence(f.policyEvidence);
+  const roleId = `role:passable:${svc}`;
+  const svcId = `service:${svc}`;
+  // Hop 1 (KNOWN): the principal can pass a role to the service.
   b.addEdge({
-    toId,
-    toType: NODE_TYPES.SERVICE,
-    toLabel,
+    toId: roleId,
+    toType: NODE_TYPES.ROLE,
+    toLabel: 'Passable role [unknown privileges]',
+    toExtra: { unknownPrivileges: true },
     type: EDGE_TYPES.CAN_PASS,
     certainty,
     finding: f,
     statementIndex: f.statementIndex,
     label: `can pass a role to ${svc}`,
   });
+  // Hop 2 (KNOWN grant, UNKNOWN reach): the service executes as that passed
+  // role - a potential privilege-boundary crossing whose blast radius depends on
+  // the role's (unknown) privileges. Source is the passable-role pivot from hop 1.
   b.addEdge({
-    toId,
+    fromId: roleId,
+    toId: svcId,
     toType: NODE_TYPES.SERVICE,
-    toLabel,
+    toLabel: `Service: ${svc} execution`,
+    toExtra: { boundaryCrossing: true },
     type: EDGE_TYPES.CAN_EXECUTE_AS,
     certainty,
     finding: f,
     statementIndex: f.statementIndex,
-    label: `can run code as the passed role via ${svc}`,
+    label: `executes as the passed role (potential privilege-boundary crossing)`,
   });
 }
 
@@ -611,7 +699,7 @@ function addDenyEdges(model, b) {
  * @param {Array<object>} findings rule + escalation findings (canonical shape)
  * @returns {{ok:boolean, errors:Array<{code:string,message:string,path:?string}>,
  *            graph:{nodes:Array, edges:Array, truncated:boolean,
- *                   limits:{maxNodes:number}}}}
+ *                   limits:{maxNodes:number, maxEdges:number}}}}
  */
 export function buildGraph(model, findings) {
   const errors = [];
@@ -664,7 +752,7 @@ export function buildGraph(model, findings) {
       nodes: nodeArr,
       edges: edgeArr,
       truncated,
-      limits: { maxNodes: GRAPH_LIMITS.MAX_NODES },
+      limits: { maxNodes: GRAPH_LIMITS.MAX_NODES, maxEdges: GRAPH_LIMITS.MAX_EDGES },
     };
     return frozenResult(true, errors, graph);
   } catch (e) {
@@ -715,7 +803,12 @@ function compareEdges(a, c) {
 }
 
 function emptyGraph() {
-  return { nodes: [], edges: [], truncated: false, limits: { maxNodes: GRAPH_LIMITS.MAX_NODES } };
+  return {
+    nodes: [],
+    edges: [],
+    truncated: false,
+    limits: { maxNodes: GRAPH_LIMITS.MAX_NODES, maxEdges: GRAPH_LIMITS.MAX_EDGES },
+  };
 }
 
 function frozenResult(ok, errors, graph) {

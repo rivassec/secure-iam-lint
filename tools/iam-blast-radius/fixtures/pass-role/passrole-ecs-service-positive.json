@@ -12,5 +12,20 @@
       }
     ]
   },
-  "expect": { "valid": true, "findingIds": ["PASSROLE-SERVICE"], "notFindingIds": ["PASSROLE-LAMBDA", "PASSROLE-EC2"] }
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-SERVICE"],
+    "notFindingIds": ["PASSROLE-LAMBDA", "PASSROLE-EC2"],
+    "compound": {
+      "primaryId": "PASSROLE-SERVICE",
+      "subsumes": [{ "id": "WILDCARD-RESOURCE", "statementIndex": 0 }],
+      "independentFindings": [],
+      "riskFactors": [
+        { "key": "pass-role", "present": true },
+        { "key": "ecs:RunTask", "present": true },
+        { "key": "exec-resource-wildcard", "present": true },
+        { "key": "passed-to-service-restriction", "present": false }
+      ]
+    }
+  }
 }

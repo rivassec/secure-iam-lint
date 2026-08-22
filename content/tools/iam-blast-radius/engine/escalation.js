@@ -24,6 +24,26 @@
 //   8. CREDENTIAL-CREATION iam:CreateAccessKey / Create|UpdateLoginProfile.
 //   9. ASSUME-ROLE-EXPANSION sts:AssumeRole over a wildcard / broad role scope.
 //
+// SEVERITY MODEL (IAM-102). `critical` is RESERVED for compound escalation
+// paths that plausibly cross a privilege boundary:
+//   - PASSROLE-LAMBDA / PASSROLE-EC2 / PASSROLE-SERVICE: iam:PassRole combined
+//     with a service action that runs code as the passed role - the principal
+//     reaches execution under a DIFFERENT role's credentials (boundary crossing).
+//   - ASSUME-ROLE-EXPANSION when, and ONLY when, the resource scope is
+//     effectively ALL roles (a bare "*", or a role ARN whose role-name segment
+//     is exactly "*" such as arn:aws:iam::*:role/* or arn:aws:iam::123:role/*,
+//     or a NotResource inverse, or an unspecified scope). A PARTIAL role-name
+//     wildcard (role/app-*) reaches many roles but not all -> stays `high`.
+// Every other escalation here is a standalone single-action self-administration
+// primitive (policy-version manipulation, attach/put policy, trust-policy
+// modification, credential creation) or a scoped AssumeRole expansion. These are
+// serious but standalone, so they cap at `high`. Asserting critical for a
+// standalone primitive would claim more than the evidence supports
+// (threat-model T8: overstated severity is itself a security harm). Severity
+// (potential blast-radius magnitude) is orthogonal to confidence (evidence
+// certainty): a broad AssumeRole is critical by scope yet only medium
+// confidence because the target roles' permissions are unknown.
+//
 // TRUTHFULNESS INVARIANTS (docs/architecture.md #6, threat-model T8):
 //   - A single policy CANNOT establish effective permissions. Every finding's
 //     `limit` says so, and every escalation carries `targetPermissions:
@@ -138,12 +158,19 @@ export function actionGrants(pattern, concreteAction) {
   return globMatch(String(pattern).toLowerCase(), String(concreteAction).toLowerCase());
 }
 
-// The full wildcard: owned by rules.js WILDCARD-ACTION. Escalation deliberately
-// skips a bare "*" so an admin policy is not re-flagged as every named path
-// (noise); "*" is already the widest possible critical finding on its own.
-function isFullWildcard(pattern) {
-  return pattern === '*';
-}
+// A bare "*" action grant (Action:"*") grants EVERY action in every service,
+// which necessarily includes iam:PassRole, sts:AssumeRole, and every direct-IAM
+// self-administration action. It is therefore a superset of every escalation
+// trigger this module recognizes, and MUST surface the paths it contains: an
+// Action:"*" policy is de-facto AdministratorAccess. (Earlier this module
+// skipped a bare "*" on the assumption that WILDCARD-ACTION "*" was already the
+// single widest CRITICAL finding, so re-listing the named paths would be noise.
+// IAM-102 removed that compensating critical - WILDCARD-ACTION is now `high` -
+// so skipping "*" here left the risk summary affirmatively reporting
+// "privilege-escalation paths: 0" for full admin, a strictly narrower iam:*
+// policy yielding more paths than "*". That is an inaccurate security claim
+// (threat-model T8: understating blast radius is as harmful as overstating it),
+// so a bare "*" is now matched like any other pattern via actionGrants().)
 
 // IAM policy variables (${...}) resolve only at runtime. A variable-bearing
 // pattern cannot be matched from the policy text; treat it as uncertain so we
@@ -153,12 +180,13 @@ export function hasPolicyVariable(pattern) {
 }
 
 // Does statement `stmt` (an Allow) grant at least one action matching any of the
-// concrete actions in `catalog`? Returns the matching statement patterns.
-// Skips a bare "*" (owned by WILDCARD-ACTION) so escalation stays specific.
+// concrete actions in `catalog`? Returns the matching statement patterns. A bare
+// "*" glob-matches every catalog action (Action:"*" grants all of them), so it
+// is reported like any other matching pattern - see the note above on why a
+// full wildcard is no longer skipped here.
 function grantedPatternsFor(stmt, catalog) {
   const matched = [];
   for (const p of stmt.actions) {
-    if (isFullWildcard(p)) continue;
     if (hasPolicyVariable(p)) continue; // cannot resolve from text -> skip
     if (catalog.some((concrete) => actionGrants(p, concrete))) matched.push(p);
   }
@@ -480,6 +508,60 @@ function resourceListIsBroadForAssume(stmt) {
   });
 }
 
+// IAM-102 severity discriminator: does an AssumeRole grant reach "effectively
+// ALL roles"? True when the resource scope places NO constraint on which role
+// NAME may be assumed:
+//   - a NotResource inverse (all roles except a listed few),
+//   - an unspecified scope (no Resource/NotResource),
+//   - a bare "*" (everything, roles included), or
+//   - a role ARN whose role-name path segment is exactly "*"
+//     (arn:aws:iam::*:role/*, arn:aws:iam::123456789012:role/*), or the bare
+//     shorthand "role/*".
+// A PARTIAL role-name wildcard (arn:...:role/app-*, role/app-?) reaches many
+// roles but not all, so it is NOT all-roles -> the finding stays `high`. Only
+// the all-roles case earns `critical` (compound privilege-boundary crossing).
+function assumeScopeIsAllRoles(stmt) {
+  if (stmt.notResources.length > 0) return true; // inverse: ~all roles
+  if (stmt.resources.length === 0) return true; // unspecified: unconstrained
+  return stmt.resources.some((r) => {
+    if (r === '*') return true;
+    if (r === 'role/*') return true; // bare shorthand
+    const marker = ':role/';
+    const idx = r.lastIndexOf(marker);
+    if (idx === -1) return false;
+    return r.slice(idx + marker.length) === '*'; // role-name segment is exactly "*"
+  });
+}
+
+// A broad-for-assume grant is not necessarily cross-account. Determine whether
+// the resource set can reach roles in accounts OTHER than ones it names.
+// Returns { arbitrary, accounts }:
+//   arbitrary=true  -> a NotResource inverse, an unspecified scope, a bare "*",
+//                      a non-ARN pattern, or an ARN whose account field is
+//                      wildcarded/empty is present -> reach is not confined to
+//                      named accounts (may span arbitrary AWS accounts).
+//   arbitrary=false -> every resource pins a concrete account; `accounts` lists
+//                      the distinct account IDs the grant is confined to.
+// Only the arbitrary case may carry the "arbitrary AWS accounts" claim; a grant
+// like arn:aws:iam::111122223333:role/* is broad within ONE account, not across.
+function assumeAccountReach(stmt) {
+  if (stmt.notResources.length > 0) return { arbitrary: true, accounts: [] };
+  if (stmt.resources.length === 0) return { arbitrary: true, accounts: [] };
+  const accounts = new Set();
+  for (const r of stmt.resources) {
+    if (r === '*') return { arbitrary: true, accounts: [] };
+    // ARN layout: arn:partition:service:region:account:resource
+    const parts = r.split(':');
+    if (parts.length < 6) return { arbitrary: true, accounts: [] }; // not a full ARN
+    const account = parts[4];
+    if (account === '' || account.includes('*') || account.includes('?')) {
+      return { arbitrary: true, accounts: [] };
+    }
+    accounts.add(account);
+  }
+  return { arbitrary: false, accounts: [...accounts] };
+}
+
 // --- Explicit-Deny analysis (same-policy precedence) -------------------------
 // AWS resolves access with explicit-Deny precedence: an in-scope, applicable
 // Deny overrides every Allow. The escalation engine builds paths from Allow
@@ -639,21 +721,39 @@ function statementSid(stmt) {
 // permitted alongside the canonical shape.
 function makeEscalation(id, anchor, fields) {
   const meta = ESCALATIONS[id];
-  // Confidence: caller supplies a base; a Condition beyond the confirming one
-  // reduces it a notch (never below low). A same-policy Deny that may block the
-  // path reduces it a further notch. Never auto-upgrade.
-  let confidence = fields.confidence;
+  // Split certainty (IAM-104): every finding carries TWO orthogonal signals in
+  // place of the old single `confidence`.
+  //   policyEvidence     - how strongly THIS policy text establishes that the
+  //                        required grants are present (both/all actions granted,
+  //                        in scope, not overridden). Drives graph edge certainty.
+  //   pathExploitability - how likely the path actually yields elevated privilege
+  //                        given what is NOT in scope here: the target role's
+  //                        (passed / assumed / re-trusted) unknown permissions,
+  //                        service/instance-profile runtime behavior, and other
+  //                        controls. A compound PassRole->service path has strong
+  //                        policy evidence yet only MEDIUM exploitability because
+  //                        the passable role's power is unknown.
+  // Each caller supplies a base for both. A Condition beyond the confirming one,
+  // a possibly-blocking same-policy Deny, and an unresolved iam:PassedToService
+  // operator are runtime gates: each reduces BOTH signals a notch (never below
+  // low, never auto-upgrade), since a gate weakens both the evidence that the
+  // grant holds and the likelihood the path is reachable.
+  let policyEvidence = fields.policyEvidence;
+  let pathExploitability = fields.pathExploitability;
   let extraLimit = '';
   if (fields.conditioned) {
-    confidence = downgrade(confidence);
+    policyEvidence = downgrade(policyEvidence);
+    pathExploitability = downgrade(pathExploitability);
     extraLimit += CONDITION_LIMIT;
   }
   if (fields.denyNarrowed) {
-    confidence = downgrade(confidence);
+    policyEvidence = downgrade(policyEvidence);
+    pathExploitability = downgrade(pathExploitability);
     extraLimit += DENY_NARROW_LIMIT;
   }
   if (fields.passUncertain) {
-    confidence = downgrade(confidence);
+    policyEvidence = downgrade(policyEvidence);
+    pathExploitability = downgrade(pathExploitability);
     extraLimit += PASSED_TO_SERVICE_UNCERTAIN_LIMIT;
   }
   return {
@@ -665,7 +765,8 @@ function makeEscalation(id, anchor, fields) {
     actions: fields.actions.slice(),
     resources: (fields.resources || []).slice(),
     conditions: anchor.condition, // null when absent; inert data otherwise
-    confidence,
+    policyEvidence,
+    pathExploitability,
     why: fields.why,
     limit: CAPABILITY_LIMIT + TARGET_UNKNOWN_LIMIT + extraLimit,
     remediation: fields.remediation,
@@ -679,6 +780,16 @@ function makeEscalation(id, anchor, fields) {
       targetPermissions: 'unknown',
     },
     evidence: fields.evidence.slice(),
+    // IAM-105: compound escalation paths expose a present/absent risk-factor
+    // checklist (the grants + scope conditions that constitute the path). null
+    // for single-action primitives, which are not compound paths.
+    riskFactors: Array.isArray(fields.riskFactors)
+      ? fields.riskFactors.map((rf) => ({
+          key: rf.key,
+          label: rf.label,
+          present: !!rf.present,
+        }))
+      : null,
   };
 }
 
@@ -786,6 +897,37 @@ function detectPassRolePaths(allows, out, denies) {
     const execConditioned = hasNonEmptyCondition(execStmt);
     const anchor = passStmt.index <= execStmt.index ? passStmt : execStmt;
     const combinedActions = [PASS_ROLE_ACTION].concat(effectiveExecActions);
+
+    // IAM-105 risk-factor checklist: the present/absent grants + scope
+    // conditions that make up THIS compound path. Deterministic order. A
+    // subordinate wildcard/broad-resource rule finding on the pass or exec
+    // statement is a risk FACTOR of this path (see correlate.js), so its
+    // signal is captured here rather than as a duplicate top-level row.
+    const riskFactors = [
+      { key: 'pass-role', label: 'iam:PassRole granted', present: true },
+    ];
+    for (const execAction of effectiveExecActions) {
+      riskFactors.push({
+        key: execAction,
+        label: `${svc.service} execution action granted (${execAction})`,
+        present: true,
+      });
+    }
+    riskFactors.push({
+      key: 'pass-role-resource-wildcard',
+      label: 'iam:PassRole resource is wildcard-scoped (reaches many roles)',
+      present: resourceListIsBroadForAssume(passStmt),
+    });
+    riskFactors.push({
+      key: 'exec-resource-wildcard',
+      label: `${svc.service} action resource is "*" (unscoped)`,
+      present: execStmt.resources.includes('*'),
+    });
+    riskFactors.push({
+      key: 'passed-to-service-restriction',
+      label: 'iam:PassedToService restriction present',
+      present: pinned,
+    });
     const evidence = [
       evidenceOf(
         passStmt,
@@ -799,8 +941,17 @@ function detectPassRolePaths(allows, out, denies) {
     ];
     out.push(
       makeEscalation(svc.id, anchor, {
-        severity: 'high',
-        confidence: 'high',
+        // Critical (IAM-102): a compound PassRole + service-execution path lets
+        // the principal reach execution under a DIFFERENT role's credentials -
+        // a plausible privilege-boundary crossing, not a standalone capability.
+        severity: 'critical',
+        // Both iam:PassRole and the service-execution action are present in the
+        // policy -> strong policy evidence. But whether launching under the
+        // passed role actually elevates depends on that role's UNKNOWN
+        // permissions (and instance-profile / service runtime behavior), so
+        // exploitability is medium, not high. (IAM-104 canonical example.)
+        policyEvidence: 'high',
+        pathExploitability: 'medium',
         conditioned: execConditioned,
         denyNarrowed,
         passUncertain,
@@ -810,17 +961,20 @@ function detectPassRolePaths(allows, out, denies) {
         actions: combinedActions,
         resources: resourceScope(passStmt),
         evidence,
+        riskFactors,
         why:
           `Grants iam:PassRole together with ${svc.service} action(s) ` +
           `(${effectiveExecActions.join(', ')}) that run code as the passed role. A ` +
           `principal can create/update a ${svc.service} workload with a role it ` +
-          'is allowed to pass and execute as that role, gaining the role\'s ' +
-          'permissions. ' +
+          'is allowed to pass, potentially obtaining execution under the passed ' +
+          'role\'s credentials (whether execution is actually obtained still ' +
+          'depends on instance-profile / service behavior). ' +
           (pinned
             ? `The PassRole grant\'s iam:PassedToService condition permits passing ` +
               `a role to ${svc.principal}, so it can feed this service.`
-            : 'The PassRole grant is not restricted with iam:PassedToService, so ' +
-              'it can pass a role to this service.'),
+            : 'The PassRole grant does not use iam:PassedToService to restrict ' +
+              'which supported AWS services may receive the role (AWS still ' +
+              'enforces which services a role can be passed to).'),
         remediation:
           'Scope iam:PassRole to the specific role ARNs that must be passed and ' +
           `pin iam:PassedToService to ${svc.principal}; separate role-passing ` +
@@ -843,7 +997,11 @@ function detectPolicyVersion(allows, out, denies) {
     out.push(
       makeEscalation('POLICY-VERSION', stmt, {
         severity: 'high',
-        confidence: 'high',
+        // Direct self-administration: the grant is present (evidence high) and
+        // the principal can directly set a policy version it controls, so the
+        // capability is exploitable without any unknown target role gating it.
+        policyEvidence: 'high',
+        pathExploitability: 'high',
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'policy-version-manipulation',
@@ -875,8 +1033,15 @@ function detectAttachPolicy(allows, out, denies) {
     const actions = deny.actions;
     out.push(
       makeEscalation('ATTACH-POLICY', stmt, {
-        severity: 'critical',
-        confidence: 'high',
+        // High, not critical (IAM-102): attaching a managed policy to self is a
+        // standalone direct-IAM primitive, not a compound privilege-boundary
+        // crossing. Critical is reserved for compound escalation paths.
+        severity: 'high',
+        // Direct self-administration: grant present (evidence high); attaching a
+        // managed policy (e.g. AdministratorAccess) directly grants permissions,
+        // no unknown target role gates it -> exploitability high.
+        policyEvidence: 'high',
+        pathExploitability: 'high',
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'attach-policy',
@@ -907,8 +1072,15 @@ function detectPutInlinePolicy(allows, out, denies) {
     const actions = deny.actions;
     out.push(
       makeEscalation('PUT-INLINE-POLICY', stmt, {
-        severity: 'critical',
-        confidence: 'high',
+        // High, not critical (IAM-102): writing an inline policy on self is a
+        // standalone direct-IAM primitive, not a compound privilege-boundary
+        // crossing. Critical is reserved for compound escalation paths.
+        severity: 'high',
+        // Direct self-administration: grant present (evidence high); writing an
+        // arbitrary inline Allow policy directly grants permissions with no
+        // unknown target role in the way -> exploitability high.
+        policyEvidence: 'high',
+        pathExploitability: 'high',
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'put-inline-policy',
@@ -940,7 +1112,11 @@ function detectTrustModify(allows, out, denies) {
     out.push(
       makeEscalation('TRUST-POLICY-MODIFY', stmt, {
         severity: 'high',
-        confidence: 'high',
+        // Grant present (evidence high). Rewriting a role's trust policy lets the
+        // principal make itself assumable, but reaching elevated privilege then
+        // depends on that role's UNKNOWN permissions -> exploitability medium.
+        policyEvidence: 'high',
+        pathExploitability: 'medium',
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'trust-policy-modification',
@@ -972,7 +1148,15 @@ function detectCredentialCreation(allows, out, denies) {
     out.push(
       makeEscalation('CREDENTIAL-CREATION', stmt, {
         severity: 'high',
-        confidence: 'high',
+        // Grant present (evidence high). Minting an access key / login profile
+        // yields working credentials, but ELEVATION requires that the target
+        // principal be MORE privileged than the caller - a target whose power is
+        // not in scope here (the ${aws:username} self-scoped case yields no
+        // elevation at all). This is the same unknown that caps
+        // TRUST-POLICY-MODIFY and ASSUME-ROLE-EXPANSION at medium, so the
+        // credential-minting path is likewise -> exploitability medium.
+        policyEvidence: 'high',
+        pathExploitability: 'medium',
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'credential-creation',
@@ -1005,11 +1189,51 @@ function detectAssumeRoleExpansion(allows, out, denies) {
     const deny = applyDenyToActions(denies, matched, stmt);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
     const actions = deny.actions;
+    const reach = assumeAccountReach(stmt);
+    // Scope the cross-account claim to the evidence: only an account-wildcarded /
+    // NotResource / unspecified / bare-"*" grant can reach arbitrary accounts. A
+    // grant that pins a concrete account (e.g. arn:aws:iam::111122223333:role/*)
+    // is broad WITHIN that account, so we must not assert cross-account reach.
+    let why;
+    if (reach.arbitrary) {
+      why =
+        'Grants sts:AssumeRole over a wildcard / broad role scope. A principal ' +
+        'can assume roles across arbitrary AWS accounts whose trust policies ' +
+        'permit this principal, and operate with their permissions - a role ARN ' +
+        'such as arn:aws:iam::*:role/* spans every account, not just this one. ' +
+        'Which roles are reachable (and how privileged they are) depends on ' +
+        'those roles\' trust policies, which are not in scope here.';
+    } else {
+      const scope =
+        reach.accounts.length === 1
+          ? 'account ' + reach.accounts[0]
+          : 'accounts ' + reach.accounts.join(', ');
+      why =
+        'Grants sts:AssumeRole over a wildcard / broad role scope within ' +
+        scope + '. A principal can assume many roles within ' +
+        (reach.accounts.length === 1 ? 'that account' : 'those accounts') +
+        ' whose trust policies permit this principal, and operate with their ' +
+        'permissions - the role path is wildcarded, so it reaches many roles, ' +
+        'not one. Which roles are reachable (and how privileged they are) ' +
+        'depends on those roles\' trust policies, which are not in scope here.';
+    }
     out.push(
       makeEscalation('ASSUME-ROLE-EXPANSION', stmt, {
-        severity: 'high',
-        // Target roles are unknown, so this is a POTENTIAL expansion: medium.
-        confidence: 'medium',
+        // Critical (IAM-102) ONLY when the scope is effectively all roles (an
+        // unconstrained role-name axis crosses into arbitrary target roles - a
+        // privilege-boundary crossing); a partial role-name wildcard reaches
+        // many-but-not-all roles and stays high. Severity (blast-radius scope)
+        // is orthogonal to both certainty signals below.
+        severity: assumeScopeIsAllRoles(stmt) ? 'critical' : 'high',
+        // IAM-104 split: the sts:AssumeRole grant and its wildcard role scope are
+        // plainly present in the policy text -> policy evidence HIGH. But which
+        // roles are reachable and how privileged they are is unknown (their trust
+        // policies are not in scope), so this is a POTENTIAL expansion, not a
+        // confirmed elevation -> path exploitability MEDIUM. This is exactly the
+        // "target roles' permissions are unknown" reasoning the old single
+        // confidence folded in; the split now names it as exploitability.
+        policyEvidence: 'high',
+        pathExploitability: 'medium',
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'assume-role-expansion',
@@ -1017,11 +1241,7 @@ function detectAssumeRoleExpansion(allows, out, denies) {
         actions,
         resources: resourceScope(stmt),
         evidence: [evidenceOf(stmt, 'primitive', actions.join(', '), 'broad role scope')],
-        why:
-          'Grants sts:AssumeRole over a wildcard / broad role scope. A principal ' +
-          'can assume many roles in the account and operate with their ' +
-          'permissions. Which roles are reachable (and how privileged they are) ' +
-          'depends on those roles\' trust policies, which are not in scope here.',
+        why,
         remediation:
           'Scope sts:AssumeRole to the specific role ARNs the principal must ' +
           'assume; avoid wildcards in the role path, and ensure target roles\' ' +

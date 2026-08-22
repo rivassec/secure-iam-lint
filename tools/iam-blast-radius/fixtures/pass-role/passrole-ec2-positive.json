@@ -22,9 +22,21 @@
     "valid": true,
     "findingIds": ["PASSROLE-EC2"],
     "notFindingIds": ["PASSROLE-LAMBDA"],
+    "compound": {
+      "primaryId": "PASSROLE-EC2",
+      "subsumes": [{ "id": "WILDCARD-RESOURCE", "statementIndex": 1 }],
+      "independentFindings": [],
+      "riskFactors": [
+        { "key": "pass-role", "present": true },
+        { "key": "ec2:RunInstances", "present": true },
+        { "key": "pass-role-resource-wildcard", "present": true },
+        { "key": "exec-resource-wildcard", "present": true },
+        { "key": "passed-to-service-restriction", "present": false }
+      ]
+    },
     "graphEdges": [
-      { "from": "principal", "to": "service:ec2", "type": "can-pass", "certainty": "confirmed-by-context" },
-      { "from": "principal", "to": "service:ec2", "type": "can-execute-as", "certainty": "confirmed-by-context" }
+      { "from": "principal", "to": "role:passable:ec2", "type": "can-pass", "certainty": "confirmed-by-context" },
+      { "from": "role:passable:ec2", "to": "service:ec2", "type": "can-execute-as", "certainty": "confirmed-by-context" }
     ]
   }
 }

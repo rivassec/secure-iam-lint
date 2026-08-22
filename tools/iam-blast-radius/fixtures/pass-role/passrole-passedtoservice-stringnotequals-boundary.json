@@ -25,5 +25,18 @@
       }
     ]
   },
-  "expect": { "valid": true, "findingIds": ["PASSROLE-EC2"], "notFindingIds": ["PASSROLE-LAMBDA"] }
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-EC2", "WILDCARD-RESOURCE"],
+    "notFindingIds": ["PASSROLE-LAMBDA"],
+    "compound": {
+      "primaryId": "PASSROLE-EC2",
+      "subsumes": [
+        { "id": "WILDCARD-RESOURCE", "statementIndex": 0 },
+        { "id": "WILDCARD-RESOURCE", "statementIndex": 2 }
+      ],
+      "independentFindings": [{ "id": "WILDCARD-RESOURCE", "statementIndex": 1 }],
+      "note": "The Lambda path is blocked by StringNotEquals, so the wildcard-resource grant on the CreateLambda statement (index 1) participates in NO compound path and must remain an independent top-level finding. The two wildcard-resource grants on the EC2 path's statements (0 and 2) are subsumed."
+    }
+  }
 }

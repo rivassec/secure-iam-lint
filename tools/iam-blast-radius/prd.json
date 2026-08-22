@@ -129,6 +129,126 @@
       ],
       "acceptance": ["csp_audit clean", "no network API (grep gate)", "SVG injection fixtures inert", "reduced-motion honored", "UX/a11y critic no serious/critical", "security critic no high/critical"],
       "maximumIterations": 5
+    },
+    {
+      "id": "IAM-108",
+      "title": "Phase 2: input caps (DoS) - reject oversized policies instead of hanging",
+      "priority": 55,
+      "phase": 2,
+      "status": "pending",
+      "requirements": [
+        "validate(): enforce a max statement count (e.g. 1000) and reject with a clear error code (TOO_MANY_STATEMENTS) rather than processing",
+        "graph builder: enforce a max node/edge count; when exceeded, return a bounded graph plus a visible 'graph truncated' note (findings table stays authoritative)",
+        "A 20000-statement policy must resolve (reject or bounded) in-browser well under 5s, never hang the tab",
+        "Limits are documented constants; error messages are user-clear"
+      ],
+      "acceptance": ["a >max-statements fixture yields validate() error, analyze() ok:false, no hang", "existing safe/wildcard fixtures unaffected", "reliability critic >=95", "full node --test suite still green"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-103",
+      "title": "Phase 2: wording precision fixes (correctness of security claims)",
+      "priority": 54,
+      "phase": 2,
+      "status": "pending",
+      "requirements": [
+        "ASSUME-ROLE-EXPANSION: replace 'many roles in the account' with cross-account-accurate wording ('roles across arbitrary AWS accounts whose trust policies permit this principal'); arn:aws:iam::*:role/* spans all accounts",
+        "PassRole family: replace 'not restricted with iam:PassedToService, so it can pass a role to this service' with 'does not use iam:PassedToService to restrict which supported AWS services may receive the role' (AWS still enforces service support)",
+        "PassRole+EC2/service: replace definitive 'gaining the role permissions' with 'potentially obtaining execution under the passed role credentials' (instance-profile/service behavior still matters)",
+        "KMS: separate kms:Decrypt into a distinct Decryption capability finding; do NOT call it 'reads secret material' and do NOT lump it with Secrets Manager. kms:Decrypt decrypts ciphertext for usable keys; it does not enumerate/retrieve secrets",
+        "Wildcard rule: drop the 'non-read action' classification; use neutral 'Resource * leaves this action broadly resource-scoped'"
+      ],
+      "acceptance": ["IAM-semantics critic 100 (every claim technically accurate vs AWS docs)", "affected fixtures' expected text/ids updated", "full node --test suite green"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-102",
+      "title": "Phase 2: severity remodel (reserve critical for compound escalation)",
+      "priority": 53,
+      "phase": 2,
+      "status": "pending",
+      "requirements": [
+        "critical ONLY for compound escalation paths that plausibly cross a privilege boundary: PassRole+lambda:CreateFunction, PassRole+ec2:RunInstances (and peers), and AssumeRole whose resource scope is effectively all roles (*:role/* or role/*)",
+        "Standalone wildcard scope, broad kms:Decrypt, secrets access, direct-IAM single actions remain high",
+        "Deterministic, documented severity rules; update every fixture's expected severity to match"
+      ],
+      "acceptance": ["compound-path fixtures now critical; standalone stay high", "no severity is asserted higher than the evidence supports", "IAM-semantics critic 100", "full node --test suite green"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-104",
+      "title": "Phase 2: split confidence into policy-evidence vs path-exploitability",
+      "priority": 52,
+      "phase": 2,
+      "status": "pending",
+      "requirements": [
+        "Each finding carries policyEvidence (high|medium|low) AND pathExploitability (high|medium|low), replacing the single confidence field",
+        "Example: PassRole+CreateFunction -> policyEvidence high (both perms present), pathExploitability medium (privileged passable role + other controls unknown)",
+        "Findings table + evidence panel render both; JSON/MD export includes both",
+        "Keep the capability-not-effective limit text on every finding"
+      ],
+      "acceptance": ["both fields present on all findings", "compound paths show evidence>=exploitability where appropriate", "full node --test suite green", "reliability critic >=95"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-105",
+      "title": "Phase 2: compound-finding correlation + risk-factor checklist (dedup noise)",
+      "priority": 51,
+      "phase": 2,
+      "status": "pending",
+      "requirements": [
+        "When a standalone wildcard/broad-resource finding is subordinate to a compound escalation path (e.g. PassAnyRole wildcard + LambdaManagement wildcard subsumed by a PassRole->Lambda path), attach it as a risk-factor sub-property of the primary finding, not a separate top-level row",
+        "Primary compound finding exposes a risk-factor checklist (present/absent), e.g. [x] iam:PassRole [x] lambda:CreateFunction [x] PassRole Resource:* [ ] iam:PassedToService restriction",
+        "Retain standalone wildcard findings ONLY where they do not participate in a compound path",
+        "Deterministic subsumption; never drop a genuinely independent finding"
+      ],
+      "acceptance": ["pass-role compound fixture: one primary path finding with risk factors, no duplicate subordinate wildcard rows", "independent wildcard (no compound path) still stands alone", "IAM-semantics critic 100", "full node --test suite green"],
+      "maximumIterations": 5
+    },
+    {
+      "id": "IAM-106",
+      "title": "Phase 2: risk-summary header above the findings table",
+      "priority": 50,
+      "phase": 2,
+      "status": "pending",
+      "requirements": [
+        "Render a summary block above the table: counts of privilege-escalation paths, role-assumption capabilities, sensitive-data access capabilities, broad-resource grants",
+        "Show the single highest-risk path in one line (e.g. Principal -> PassRole -> Lambda -> Passed Role)",
+        "Built with safe DOM (createElement+textContent); no inline style/script; accessible",
+        "Deterministic ordering and counts"
+      ],
+      "acceptance": ["summary counts match the findings for fixtures", "csp_audit clean", "UX/a11y critic no serious/critical", "full node --test suite green"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-101",
+      "title": "Phase 2: compact findings table (move prose to the evidence detail)",
+      "priority": 49,
+      "phase": 2,
+      "status": "pending",
+      "requirements": [
+        "Main table columns limited to scannable fields: Severity, Finding, Statement, Actions, Resources, plus the split confidence (policy-evidence / path-exploitability)",
+        "Move why / limit / remediation prose OUT of the table row into a click-and-keyboard expandable per-row detail (reuse/extend the #evidence panel pattern); a finding row's detail shows the full why/limit/remediation + risk-factor checklist",
+        "Row height must drop substantially (current rows are ~650px because 3 prose columns wrap); table stays the authoritative view and remains fully usable/accessible without the graph",
+        "Safe DOM only; csp_audit clean; keyboard operable; no prose lost (all still reachable in the detail)"
+      ],
+      "acceptance": ["avg finding row height well under 120px for a typical multi-finding policy", "all prose still present in the expandable detail", "csp_audit clean", "no network API", "UX/a11y critic no serious/critical", "full node --test suite green (e2e updated for the new layout)"],
+      "maximumIterations": 5
+    },
+    {
+      "id": "IAM-107",
+      "title": "Phase 2: graph encodes the privilege transition (unknown-privileges node)",
+      "priority": 48,
+      "phase": 2,
+      "status": "pending",
+      "requirements": [
+        "For escalation paths, the graph must show the privilege transition, not only the service sequence: Principal -> (iam:PassRole) -> 'Passable Role [unknown privileges]' -> (service action) -> service execution -> 'potential privilege-boundary crossing'",
+        "The unknown-privileges node visually distinguishes what the analyzer KNOWS (the grants) from what it does NOT (the target role's actual permissions)",
+        "Edges keep evidence + certainty class; SVG text via textContent, numeric attrs only; no markup from input",
+        "Deterministic; findings table remains the authoritative equivalent"
+      ],
+      "acceptance": ["pass-role fixtures render the unknown-privileges transition node", "graph injection fixtures still inert", "reduced-motion honored", "UX/a11y critic no serious/critical", "full node --test suite green"],
+      "maximumIterations": 5
     }
   ]
 }

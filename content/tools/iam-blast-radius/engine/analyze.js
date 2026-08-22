@@ -14,6 +14,7 @@
 import { modelFromText } from './model.js';
 import { analyzeRules } from './rules.js';
 import { analyzeEscalations } from './escalation.js';
+import { correlateFindings } from './correlate.js';
 import { buildGraph, GRAPH_LIMITS } from './graph.js';
 
 // The catalog version reported in the UI footer + export. Rule + escalation
@@ -68,13 +69,27 @@ export function sortFindings(findings) {
 // Fixed column contract for the accessible findings table. The renderer
 // (app.js) walks these keys in order; keeping the contract here means the
 // column set is unit-testable without a DOM.
+//
+// IAM-101: the main table is limited to scannable fields only. The three prose
+// columns (why / limit / remediation) that used to sit in the row - and made
+// rows ~650px tall by wrapping - are moved OUT into a per-row expandable detail
+// (see renderDetailRow in app.js). They stay on the finding object (export +
+// detail still carry them); they are simply no longer table COLUMNS.
 export const FINDING_COLUMNS = Object.freeze([
   { key: 'severity', label: 'Severity' },
   { key: 'title', label: 'Finding' },
   { key: 'statement', label: 'Statement' },
   { key: 'actions', label: 'Actions' },
   { key: 'resources', label: 'Resources' },
-  { key: 'confidence', label: 'Confidence' },
+  // IAM-104: the single 'Confidence' column is split into two orthogonal signals.
+  { key: 'policyEvidence', label: 'Policy evidence' },
+  { key: 'pathExploitability', label: 'Path exploitability' },
+]);
+
+// IAM-101: the prose fields that were table columns are now rendered in each
+// finding's expandable detail. Kept as a documented, ordered contract so the
+// detail renderer (app.js) and any future export stay in sync.
+export const FINDING_DETAIL_FIELDS = Object.freeze([
   { key: 'why', label: 'Why it matters' },
   { key: 'limit', label: 'What this does NOT prove' },
   { key: 'remediation', label: 'Remediation' },
@@ -118,12 +133,134 @@ export function findingToRow(finding) {
   });
 }
 
+// --- Risk summary (IAM-106) --------------------------------------------------
+// A scannable header rendered above the authoritative findings table: counts of
+// the four highlighted capability families plus the single highest-risk
+// escalation path in one line. Pure and deterministic (like findingToRow); the
+// app.js renderer walks this structure with createElement+textContent only.
+
+// Ordered category contract for the summary header. The renderer walks these in
+// order, so display order is fixed here (highest-leverage family first).
+export const SUMMARY_CATEGORIES = Object.freeze([
+  { key: 'privEscPaths', label: 'Privilege-escalation paths' },
+  { key: 'roleAssumption', label: 'Role-assumption capabilities' },
+  { key: 'sensitiveData', label: 'Sensitive-data access capabilities' },
+  { key: 'broadResource', label: 'Broad-resource grants' },
+]);
+
+// Documented, deterministic mapping from finding id -> summary category. Findings
+// whose id is absent here (DIRECT-IAM-ADMIN, WILDCARD-ACTION, NOTACTION-ALLOW,
+// DESTRUCTIVE-ACTION, DETECTION-IMPAIRMENT) remain in the authoritative table but
+// are not part of these four highlighted families - the summary is a curated
+// risk overview, not a total. WILDCARD-ACTION is action breadth, not resource
+// breadth, so it is intentionally NOT counted under Broad-resource grants.
+const SUMMARY_CATEGORY_BY_ID = Object.freeze({
+  'PASSROLE-LAMBDA': 'privEscPaths',
+  'PASSROLE-EC2': 'privEscPaths',
+  'PASSROLE-SERVICE': 'privEscPaths',
+  'POLICY-VERSION': 'privEscPaths',
+  'ATTACH-POLICY': 'privEscPaths',
+  'PUT-INLINE-POLICY': 'privEscPaths',
+  'TRUST-POLICY-MODIFY': 'privEscPaths',
+  'CREDENTIAL-CREATION': 'privEscPaths',
+  'ASSUME-ROLE-EXPANSION': 'roleAssumption',
+  'DATA-EXFIL': 'sensitiveData',
+  'KMS-DECRYPT': 'sensitiveData',
+  'WILDCARD-RESOURCE': 'broadResource',
+});
+
+// Human labels for the services a PassRole path can execute code under. Falls
+// back to the raw service token (inert data) so an unmapped service is still
+// rendered truthfully.
+const SERVICE_LABELS = Object.freeze({
+  lambda: 'Lambda',
+  ec2: 'EC2',
+  ecs: 'ECS',
+  glue: 'Glue',
+  cloudformation: 'CloudFormation',
+  sagemaker: 'SageMaker',
+  codebuild: 'CodeBuild',
+  datapipeline: 'Data Pipeline',
+});
+
+function serviceLabel(service) {
+  if (!service) return 'the target service';
+  return Object.prototype.hasOwnProperty.call(SERVICE_LABELS, service)
+    ? SERVICE_LABELS[service]
+    : String(service);
+}
+
+// A one-line "Principal -> ... -> ..." path for an escalation finding, or null
+// when the finding is not an escalation path. Wording stays capability-accurate
+// (target role privileges are "unknown"), consistent with IAM-103.
+function pathLineFor(finding) {
+  const esc = finding && finding.escalation;
+  if (!esc || typeof esc.technique !== 'string') return null;
+  switch (esc.technique) {
+    case 'passrole-service-execution':
+      return `Principal -> iam:PassRole -> ${serviceLabel(esc.service)} ` +
+        '-> passed role (unknown privileges)';
+    case 'assume-role-expansion':
+      return 'Principal -> sts:AssumeRole -> assumed role (unknown privileges)';
+    case 'policy-version-manipulation':
+      return 'Principal -> iam:CreatePolicyVersion -> attacker-selected policy version';
+    case 'attach-policy':
+      return 'Principal -> iam:Attach*Policy -> attacker-chosen managed policy';
+    case 'put-inline-policy':
+      return 'Principal -> iam:Put*Policy -> attacker-authored inline policy';
+    case 'trust-policy-modification':
+      return 'Principal -> iam:UpdateAssumeRolePolicy -> re-trusted role (unknown privileges)';
+    case 'credential-creation':
+      return 'Principal -> iam:Create*/Update* credential -> new usable principal credentials';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Build the deterministic risk summary for a (already display-sorted) finding
+ * list. Counts are taken over the supplied findings as displayed - subsumed
+ * subordinate findings (IAM-105) are already folded out, so they never inflate a
+ * count. The highest-risk path is the first finding, in display order, that is an
+ * escalation path (has an `escalation` enrichment); since findings are sorted
+ * most-severe-first, that is the highest-severity path. null when none exists.
+ *
+ * @param {Array<object>} findings display-ordered findings
+ * @returns {{categories:Array<{key:string,label:string,count:number}>,
+ *            highestRisk:({id:string,severity:string,path:string}|null),
+ *            total:number}}
+ */
+export function summarize(findings) {
+  const list = Array.isArray(findings) ? findings : [];
+  const counts = { privEscPaths: 0, roleAssumption: 0, sensitiveData: 0, broadResource: 0 };
+  for (const f of list) {
+    const cat = f && SUMMARY_CATEGORY_BY_ID[f.id];
+    if (cat) counts[cat] += 1;
+  }
+  const categories = SUMMARY_CATEGORIES.map((c) => ({
+    key: c.key,
+    label: c.label,
+    count: counts[c.key],
+  }));
+
+  let highestRisk = null;
+  for (const f of list) {
+    const path = pathLineFor(f);
+    if (path) {
+      highestRisk = { id: String(f.id || ''), severity: String(f.severity || 'info'), path };
+      break;
+    }
+  }
+
+  return { categories, highestRisk, total: list.length };
+}
+
 function emptyGraph() {
   return {
     nodes: [],
     edges: [],
     truncated: false,
-    limits: { maxNodes: GRAPH_LIMITS.MAX_NODES },
+    limits: { maxNodes: GRAPH_LIMITS.MAX_NODES, maxEdges: GRAPH_LIMITS.MAX_EDGES },
   };
 }
 
@@ -164,8 +301,16 @@ export function analyze(text) {
     if (errors.length) return fail(errors);
 
     const combined = [...rules.findings, ...esc.findings];
-    const findings = Object.freeze(sortFindings(combined));
+    // IAM-105: fold subordinate wildcard/broad-resource rows into the compound
+    // escalation path that already accounts for them, so the table shows one
+    // primary path finding with a risk-factor checklist instead of duplicate
+    // subordinate rows. Independent wildcard findings are untouched.
+    const correlated = correlateFindings(combined);
+    const findings = Object.freeze(sortFindings(correlated));
 
+    // The graph is built from the full (pre-correlation) finding set: a
+    // subsumed wildcard grant is still a real edge in the attack-path model.
+    // The findings table stays the authoritative, de-duplicated view.
     const g = buildGraph(m.model, combined);
     const graph = g.ok ? g.graph : emptyGraph();
 

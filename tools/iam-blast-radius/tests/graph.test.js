@@ -98,12 +98,24 @@ function assertGraphInvariants(graph, ctx) {
     assert.ok(nodeIds.has('principal'), `${ctx}: edges present without principal root`);
   }
 
+  // Edges are rooted at the principal, but IAM-107 lets an escalation PATH chain
+  // through an intermediate node (principal -> passable role -> service
+  // execution), so not EVERY edge starts at the principal. The graph must still
+  // be rooted: any non-principal edge source must itself be the target of some
+  // other edge (transitively reachable from the principal), never a floating
+  // subgraph.
   const edgeIds = new Set();
+  const targetIds = new Set(graph.edges.map((e) => e.to));
   for (const e of graph.edges) {
     assert.ok(typeof e.id === 'string' && e.id.length > 0, `${ctx}: edge missing id`);
     assert.ok(!edgeIds.has(e.id), `${ctx}: duplicate edge id ${e.id}`);
     edgeIds.add(e.id);
-    assert.equal(e.from, 'principal', `${ctx}: every edge originates at the principal`);
+    if (e.from !== 'principal') {
+      assert.ok(
+        targetIds.has(e.from),
+        `${ctx}: transition edge source ${e.from} is not reachable from the principal`,
+      );
+    }
     assert.ok(EDGE_TYPE_SET.has(e.type), `${ctx}: bad edge type ${e.type}`);
     assert.ok(CERTAINTY_SET.has(e.certainty), `${ctx}: bad certainty ${e.certainty}`);
     // Endpoints must reference real nodes (no dangling edges after truncation).
@@ -173,7 +185,7 @@ for (const category of ALL_CATEGORIES) {
 // Acceptance: pass-role case edges + certainty.
 // ---------------------------------------------------------------------------
 
-test('acceptance: PassRole+Lambda -> can-pass and can-execute-as edges to Service:lambda (confirmed)', () => {
+test('acceptance (IAM-107): PassRole+Lambda encodes the privilege transition through an unknown-privileges pivot', () => {
   const r = buildGraphFromText(JSON.stringify({
     Statement: [
       { Sid: 'pass', Effect: 'Allow', Action: 'iam:PassRole', Resource: 'arn:aws:iam::1:role/app-*', Condition: { StringEquals: { 'iam:PassedToService': 'lambda.amazonaws.com' } } },
@@ -181,29 +193,45 @@ test('acceptance: PassRole+Lambda -> can-pass and can-execute-as edges to Servic
     ],
   }));
   assert.equal(r.ok, true);
-  const pass = findEdge(r.graph, { from: 'principal', to: 'service:lambda', type: 'can-pass' });
-  const exec = findEdge(r.graph, { from: 'principal', to: 'service:lambda', type: 'can-execute-as' });
-  assert.ok(pass, 'expected a can-pass edge to service:lambda');
-  assert.ok(exec, 'expected a can-execute-as edge to service:lambda');
+  // Hop 1: principal --can-pass--> the passable-role pivot (NOT straight to the
+  // service). Hop 2: that pivot --can-execute-as--> the service execution node.
+  const pass = findEdge(r.graph, { from: 'principal', to: 'role:passable:lambda', type: 'can-pass' });
+  const exec = findEdge(r.graph, { from: 'role:passable:lambda', to: 'service:lambda', type: 'can-execute-as' });
+  assert.ok(pass, 'expected a can-pass edge from principal to the passable-role pivot');
+  assert.ok(exec, 'expected a can-execute-as edge from the pivot to service:lambda');
   assert.equal(pass.certainty, CERTAINTY.CONFIRMED_BY_CONTEXT);
   assert.equal(exec.certainty, CERTAINTY.CONFIRMED_BY_CONTEXT);
-  // The Service node exists and is typed correctly.
+  // The old shortcut edge (principal straight to the service) must NOT exist:
+  // the transition must go through the pivot.
+  assert.ok(!findEdge(r.graph, { from: 'principal', to: 'service:lambda', type: 'can-pass' }),
+    'principal must not shortcut straight to the service');
+  // The unknown-privileges pivot node: a ROLE, flagged so the renderer can
+  // distinguish KNOWN grants from the UNKNOWN target-role permissions (IAM-107).
+  const pivot = r.graph.nodes.find((n) => n.id === 'role:passable:lambda');
+  assert.ok(pivot && pivot.type === NODE_TYPES.ROLE, 'passable-role pivot present and typed Role');
+  assert.equal(pivot.unknownPrivileges, true, 'pivot marked unknownPrivileges');
+  // The service-execution node exists, is typed Service, and is flagged as the
+  // potential privilege-boundary crossing.
   const svc = r.graph.nodes.find((n) => n.id === 'service:lambda');
   assert.ok(svc && svc.type === NODE_TYPES.SERVICE);
-  // Evidence names both the pass ARN and the execution action.
+  assert.equal(svc.boundaryCrossing, true, 'service node marked as boundary crossing');
+  // Evidence still names the pass ARN and the execution action on the edges.
   assert.ok(pass.evidence.some((ev) => ev.resources.includes('arn:aws:iam::1:role/app-*')));
 });
 
-test('acceptance: a conditioned execution statement downgrades PassRole edges to conditionally-reachable', () => {
+test('acceptance: a conditioned execution statement downgrades the PassRole transition to conditionally-reachable', () => {
   const r = buildGraphFromText(JSON.stringify({
     Statement: [
       { Effect: 'Allow', Action: 'iam:PassRole', Resource: '*' },
       { Effect: 'Allow', Action: 'ec2:RunInstances', Resource: '*', Condition: { StringEquals: { 'aws:RequestedRegion': 'us-east-1' } } },
     ],
   }));
-  const pass = findEdge(r.graph, { from: 'principal', to: 'service:ec2', type: 'can-pass' });
+  const pass = findEdge(r.graph, { from: 'principal', to: 'role:passable:ec2', type: 'can-pass' });
+  const exec = findEdge(r.graph, { from: 'role:passable:ec2', to: 'service:ec2', type: 'can-execute-as' });
   assert.ok(pass);
+  assert.ok(exec);
   assert.equal(pass.certainty, CERTAINTY.CONDITIONALLY_REACHABLE);
+  assert.equal(exec.certainty, CERTAINTY.CONDITIONALLY_REACHABLE);
 });
 
 // ---------------------------------------------------------------------------
@@ -214,12 +242,18 @@ test('acceptance: Action "*" on Resource "*" -> allows(actiongroup:*) + can-writ
   const r = buildGraphFromText(JSON.stringify({
     Statement: [{ Sid: 'god', Effect: 'Allow', Action: '*', Resource: '*' }],
   }));
-  const keys = r.graph.edges.map(edgeKey).sort();
-  assert.deepEqual(keys, [
-    'principal|allows|actiongroup:*',
-    'principal|can-write|resource:*',
-  ]);
-  for (const e of r.graph.edges) assert.equal(e.certainty, CERTAINTY.CONFIRMED_BY_CONTEXT);
+  const keys = new Set(r.graph.edges.map(edgeKey));
+  // The two rule-derived edges: the wildcard-action group and the wildcard
+  // resource, both confirmed-by-context. Action:"*" is de-facto admin, so the
+  // graph ALSO carries the escalation-path edges (can-pass / can-execute-as /
+  // can-assume / can-modify) it necessarily grants; those are pinned exactly by
+  // the admin-star fixture's exactGraphEdges. Here we assert the two rule edges
+  // specifically, with their node types and confirmed certainty.
+  for (const key of ['principal|allows|actiongroup:*', 'principal|can-write|resource:*']) {
+    assert.ok(keys.has(key), `expected rule edge ${key}; got ${JSON.stringify([...keys])}`);
+    const e = r.graph.edges.find((x) => edgeKey(x) === key);
+    assert.equal(e.certainty, CERTAINTY.CONFIRMED_BY_CONTEXT, `${key} confirmed-by-context`);
+  }
   assert.equal(r.graph.nodes.find((n) => n.id === 'actiongroup:*').type, NODE_TYPES.ACTION_GROUP);
   assert.equal(r.graph.nodes.find((n) => n.id === 'resource:*').type, NODE_TYPES.RESOURCE);
 });
@@ -410,7 +444,7 @@ test('NotAction-Allow rule edge is narrowed (never fully blocked) by a same-poli
   assert.equal(e.certainty, CERTAINTY.CONDITIONALLY_REACHABLE);
 });
 
-test('escalation edges remain driven by escalation.js confidence, not re-folded here', () => {
+test('escalation edges remain driven by escalation.js policyEvidence, not re-folded here', () => {
   // escalation.js already suppresses a fully-blocked PUT-INLINE-POLICY path, so
   // graph.js must not also try to block it: with the Allow fully denied, the
   // only surviving edge is the DIRECT-IAM-ADMIN rule edge (blocked-by-deny), and
@@ -507,7 +541,7 @@ test('node count is capped at GRAPH_LIMITS.MAX_NODES; excess is truncated, not t
   for (let i = 0; i < n; i++) {
     findings.push({
       id: 'DESTRUCTIVE-ACTION',
-      confidence: 'high',
+      policyEvidence: 'high',
       statementIndex: i,
       statementSid: `s${i}`,
       actions: ['ec2:TerminateInstances'],
@@ -523,6 +557,44 @@ test('node count is capped at GRAPH_LIMITS.MAX_NODES; excess is truncated, not t
   assert.ok(r.graph.nodes.length <= GRAPH_LIMITS.MAX_NODES, 'node cap must hold');
   assert.equal(r.graph.truncated, true, 'graph must report truncation');
   assertGraphInvariants(r.graph, 'bounded');
+});
+
+// ---------------------------------------------------------------------------
+// Bounded graph (IAM-108, threat-model T5): both the node and edge caps hold
+// under a pathological finding set, truncation is reported, nothing throws, and
+// no dangling/floating nodes survive. Since IAM-107 each PASSROLE-* path to a
+// distinct service contributes a passable-role pivot + a service node (2 nodes)
+// and a can-pass + can-execute-as pair (2 edges), so the node cap bounds first;
+// the assertions below still guard BOTH caps and the rooted-graph invariant.
+// ---------------------------------------------------------------------------
+
+test('a pathological PassRole finding set stays within both caps; excess is truncated, not thrown', () => {
+  const findings = [];
+  const n = Math.ceil(GRAPH_LIMITS.MAX_EDGES / 2) + 50; // enough to overflow the edge cap
+  for (let i = 0; i < n; i++) {
+    findings.push({
+      id: 'PASSROLE-LAMBDA',
+      policyEvidence: 'high',
+      statementIndex: i,
+      statementSid: `s${i}`,
+      actions: ['iam:PassRole', 'lambda:CreateFunction'],
+      resources: ['*'],
+      conditions: null,
+      escalation: { service: `svc-${i}` },
+    });
+  }
+  let r;
+  assert.doesNotThrow(() => {
+    r = buildGraph({ statements: [] }, findings);
+  });
+  assert.equal(r.ok, true);
+  assert.ok(r.graph.edges.length <= GRAPH_LIMITS.MAX_EDGES, 'edge cap must hold');
+  assert.ok(r.graph.nodes.length <= GRAPH_LIMITS.MAX_NODES, 'node cap must still hold');
+  assert.equal(r.graph.truncated, true, 'graph must report truncation');
+  assert.equal(r.graph.limits.maxEdges, GRAPH_LIMITS.MAX_EDGES, 'limits expose maxEdges');
+  // No dangling nodes: every edge references a real node, and the edge cap
+  // dropped edges BEFORE creating their target nodes (invariants check both).
+  assertGraphInvariants(r.graph, 'edge-bounded');
 });
 
 // ---------------------------------------------------------------------------

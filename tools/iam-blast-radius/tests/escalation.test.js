@@ -35,6 +35,7 @@ const fixturesDir = join(here, '..', 'fixtures');
 
 const SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'info']);
 const CONFIDENCES = new Set(['high', 'medium', 'low']);
+const CONFIDENCE_RANK = { low: 0, medium: 1, high: 2 };
 const ESCALATION_ID_SET = new Set(ESCALATION_IDS);
 
 // Escalation categories whose fixtures carry escalation-id expectations.
@@ -68,7 +69,8 @@ function idsOf(findings) {
 function assertEscalationShape(f, ctx) {
   for (const field of [
     'id', 'severity', 'title', 'statementSid', 'actions', 'resources',
-    'confidence', 'why', 'limit', 'remediation', 'ruleVersion', 'docRef',
+    'policyEvidence', 'pathExploitability', 'why', 'limit', 'remediation',
+    'ruleVersion', 'docRef',
   ]) {
     assert.ok(
       Object.prototype.hasOwnProperty.call(f, field),
@@ -77,7 +79,16 @@ function assertEscalationShape(f, ctx) {
   }
   assert.ok(ESCALATION_ID_SET.has(f.id), `${ctx}: unknown escalation id ${f.id}`);
   assert.ok(SEVERITIES.has(f.severity), `${ctx}: bad severity ${f.severity}`);
-  assert.ok(CONFIDENCES.has(f.confidence), `${ctx}: bad confidence ${f.confidence}`);
+  // IAM-104: single confidence replaced by two orthogonal signals.
+  assert.ok(!('confidence' in f), `${ctx}: legacy confidence field must be gone`);
+  assert.ok(CONFIDENCES.has(f.policyEvidence), `${ctx}: bad policyEvidence ${f.policyEvidence}`);
+  assert.ok(CONFIDENCES.has(f.pathExploitability), `${ctx}: bad pathExploitability ${f.pathExploitability}`);
+  // Compound/target-unknown escalation paths never assert exploitability above
+  // the strength of the policy evidence (evidence >= exploitability).
+  assert.ok(
+    CONFIDENCE_RANK[f.policyEvidence] >= CONFIDENCE_RANK[f.pathExploitability],
+    `${ctx}: ${f.id} pathExploitability (${f.pathExploitability}) must not exceed policyEvidence (${f.policyEvidence})`,
+  );
   assert.ok(typeof f.title === 'string' && f.title.length > 0, `${ctx}: empty title`);
   assert.ok(typeof f.statementSid === 'string' && f.statementSid.length > 0, `${ctx}: empty statementSid`);
   assert.ok(Array.isArray(f.actions) && f.actions.length > 0, `${ctx}: actions must be a non-empty array`);
@@ -201,7 +212,11 @@ test('story: at least 5 escalation families each have a positive fixture produci
 // PassRole family direct assertions.
 // ---------------------------------------------------------------------------
 
-test('PassRole (pinned to lambda) + lambda:CreateFunction -> PASSROLE-LAMBDA (high, confirmed)', () => {
+// IAM-102: a compound PassRole + service-execution path crosses a privilege
+// boundary, so it is CRITICAL. IAM-104: both perms are present in the policy ->
+// policyEvidence high; the passed role's power is unknown -> pathExploitability
+// medium (never above the evidence).
+test('PassRole (pinned to lambda) + lambda:CreateFunction -> PASSROLE-LAMBDA (critical, confirmed)', () => {
   const r = analyzeEscalationsFromText(JSON.stringify({
     Statement: [
       { Sid: 'pass', Effect: 'Allow', Action: 'iam:PassRole', Resource: 'arn:aws:iam::1:role/app-*', Condition: { StringEquals: { 'iam:PassedToService': 'lambda.amazonaws.com' } } },
@@ -210,12 +225,59 @@ test('PassRole (pinned to lambda) + lambda:CreateFunction -> PASSROLE-LAMBDA (hi
   }));
   const f = r.findings.find((x) => x.id === 'PASSROLE-LAMBDA');
   assert.ok(f, 'expected PASSROLE-LAMBDA');
-  assert.equal(f.severity, 'high');
-  assert.equal(f.confidence, 'high');
+  assert.equal(f.severity, 'critical');
+  assert.equal(f.policyEvidence, 'high');
+  assert.equal(f.pathExploitability, 'medium');
   assert.equal(f.escalation.service, 'lambda');
   // Evidence spans both the pass and the execute statements.
   const roles = f.evidence.map((e) => e.role).sort();
   assert.deepEqual(roles, ['execute', 'pass']);
+});
+
+// IAM-105: a compound PassRole->service path exposes a present/absent
+// risk-factor checklist reflecting the grants + scope conditions that make it
+// up. Single-action primitives carry null riskFactors.
+test('PASSROLE-LAMBDA exposes a risk-factor checklist (IAM-105)', () => {
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [
+      { Sid: 'pass', Effect: 'Allow', Action: 'iam:PassRole', Resource: 'arn:aws:iam::1:role/app-*', Condition: { StringEquals: { 'iam:PassedToService': 'lambda.amazonaws.com' } } },
+      { Sid: 'run', Effect: 'Allow', Action: 'lambda:CreateFunction', Resource: '*' },
+    ],
+  }));
+  const f = r.findings.find((x) => x.id === 'PASSROLE-LAMBDA');
+  assert.ok(Array.isArray(f.riskFactors) && f.riskFactors.length > 0, 'checklist present');
+  const by = (k) => f.riskFactors.find((rf) => rf.key === k);
+  assert.equal(by('pass-role').present, true, 'iam:PassRole granted');
+  assert.equal(by('lambda:CreateFunction').present, true, 'exec action granted');
+  assert.equal(by('exec-resource-wildcard').present, true, 'exec Resource is "*"');
+  // Pinned to lambda via iam:PassedToService -> the restriction IS present.
+  assert.equal(by('passed-to-service-restriction').present, true, 'PassedToService restriction present');
+  for (const rf of f.riskFactors) {
+    assert.equal(typeof rf.label, 'string');
+    assert.equal(typeof rf.present, 'boolean');
+  }
+});
+
+test('unpinned PassRole path marks the PassedToService restriction ABSENT (IAM-105)', () => {
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [
+      { Effect: 'Allow', Action: 'iam:PassRole', Resource: 'arn:aws:iam::1:role/*' },
+      { Effect: 'Allow', Action: 'ec2:RunInstances', Resource: '*' },
+    ],
+  }));
+  const f = r.findings.find((x) => x.id === 'PASSROLE-EC2');
+  const by = (k) => f.riskFactors.find((rf) => rf.key === k);
+  assert.equal(by('passed-to-service-restriction').present, false, 'no PassedToService -> absent');
+  assert.equal(by('pass-role-resource-wildcard').present, true, 'PassRole scoped to role/* is broad');
+});
+
+test('single-action escalation primitives carry null riskFactors (IAM-105)', () => {
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [{ Effect: 'Allow', Action: 'iam:CreatePolicyVersion', Resource: '*' }],
+  }));
+  const f = r.findings.find((x) => x.id === 'POLICY-VERSION');
+  assert.ok(f, 'expected POLICY-VERSION');
+  assert.equal(f.riskFactors, null, 'primitive has no compound checklist');
 });
 
 test('PassRole ALONE (no service-execution action) -> no finding', () => {
@@ -232,14 +294,70 @@ test('service-execution action ALONE (no PassRole) -> no finding', () => {
   assert.ok(!idsOf(r.findings).includes('PASSROLE-LAMBDA'));
 });
 
-test('unpinned PassRole (no PassedToService) + ec2:RunInstances -> PASSROLE-EC2', () => {
+test('unpinned PassRole (no PassedToService) + ec2:RunInstances -> PASSROLE-EC2 (critical)', () => {
   const r = analyzeEscalationsFromText(JSON.stringify({
     Statement: [
       { Effect: 'Allow', Action: 'iam:PassRole', Resource: '*' },
       { Effect: 'Allow', Action: 'ec2:RunInstances', Resource: '*' },
     ],
   }));
-  assert.ok(idsOf(r.findings).includes('PASSROLE-EC2'));
+  const f = r.findings.find((x) => x.id === 'PASSROLE-EC2');
+  assert.ok(f, 'expected PASSROLE-EC2');
+  assert.equal(f.severity, 'critical'); // IAM-102: compound path is critical
+});
+
+// IAM-103 wording precision on the PassRole family.
+test('PassRole+service why is precise: potential execution + PassedToService phrasing', () => {
+  const unpinned = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [
+      { Effect: 'Allow', Action: 'iam:PassRole', Resource: '*' },
+      { Effect: 'Allow', Action: 'ec2:RunInstances', Resource: '*' },
+    ],
+  }));
+  const f = unpinned.findings.find((x) => x.id === 'PASSROLE-EC2');
+  assert.ok(f, 'expected PASSROLE-EC2');
+  // Definitive "gaining the role's permissions" claim must be gone.
+  assert.ok(!/gaining the role/i.test(f.why), 'must not definitively claim gaining the role permissions');
+  assert.ok(/potentially obtaining execution/i.test(f.why), 'must use potential-execution wording');
+  // Unpinned PassRole wording is about restricting supported services, not
+  // "can pass a role to this service".
+  assert.ok(/does not use iam:PassedToService to restrict/i.test(f.why), 'must use precise PassedToService wording');
+  assert.ok(!/it can pass a role to this service/i.test(f.why), 'old overstated PassedToService phrasing must be gone');
+});
+
+test('ASSUME-ROLE-EXPANSION why is cross-account accurate (not "many roles in the account")', () => {
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::*:role/*' }],
+  }));
+  const f = r.findings.find((x) => x.id === 'ASSUME-ROLE-EXPANSION');
+  assert.ok(f, 'expected ASSUME-ROLE-EXPANSION');
+  assert.ok(!/many roles in the account/i.test(f.why), 'must drop the single-account "many roles in the account" claim');
+  assert.ok(/arbitrary AWS accounts/i.test(f.why), 'must state roles can span arbitrary accounts');
+  assert.ok(/trust policies/i.test(f.why), 'must condition reachability on trust policies');
+});
+
+test('ASSUME-ROLE-EXPANSION why does NOT claim cross-account reach for a single-account role-name wildcard', () => {
+  // arn:aws:iam::111122223333:role/* is broad WITHIN one account, not across.
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::111122223333:role/*' }],
+  }));
+  const f = r.findings.find((x) => x.id === 'ASSUME-ROLE-EXPANSION');
+  assert.ok(f, 'expected ASSUME-ROLE-EXPANSION');
+  assert.ok(!/arbitrary AWS accounts/i.test(f.why), 'must NOT claim arbitrary AWS accounts for a concrete-account grant');
+  assert.ok(!/spans every account/i.test(f.why), 'must NOT claim it spans every account');
+  assert.ok(/account 111122223333/i.test(f.why), 'must confine the scope to the named account');
+  assert.ok(/within that account/i.test(f.why), 'must scope the reach to that one account');
+  assert.ok(/trust policies/i.test(f.why), 'must condition reachability on trust policies');
+});
+
+test('ASSUME-ROLE-EXPANSION why confines a partial role-name wildcard (role/app-*) to its account', () => {
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::111122223333:role/app-*' }],
+  }));
+  const f = r.findings.find((x) => x.id === 'ASSUME-ROLE-EXPANSION');
+  assert.ok(f, 'expected ASSUME-ROLE-EXPANSION');
+  assert.ok(!/arbitrary AWS accounts/i.test(f.why), 'must NOT claim cross-account reach');
+  assert.ok(/account 111122223333/i.test(f.why), 'must confine the scope to the named account');
 });
 
 test('PassRole pinned to a different service does not open a path for the granted action', () => {
@@ -261,13 +379,30 @@ test('iam:* + lambda:* is recognized as PASSROLE-LAMBDA (service wildcards grant
   assert.ok(idsOf(r.findings).includes('PASSROLE-LAMBDA'));
 });
 
-test('a bare "*" action does NOT explode into every named escalation path', () => {
+test('a bare "*" action surfaces every escalation path it contains (de-facto admin)', () => {
   const r = analyzeEscalationsFromText(JSON.stringify({
     Statement: [{ Effect: 'Allow', Action: '*', Resource: '*' }],
   }));
-  // "*" is owned by WILDCARD-ACTION (rules.js); escalation stays silent to
-  // avoid drowning the report in every path.
-  assert.deepEqual(idsOf(r.findings), []);
+  // Action:"*" grants EVERY action, so it necessarily grants iam:PassRole +
+  // every service-execution action, sts:AssumeRole over all roles, and every
+  // direct-IAM self-administration primitive. Reporting zero escalation paths
+  // for full admin (while a strictly narrower iam:* yields several) understates
+  // the blast radius - a truthfulness harm (threat-model T8), so "*" must
+  // surface the paths it contains rather than stay silent.
+  const ids = new Set(idsOf(r.findings));
+  for (const want of [
+    'PASSROLE-LAMBDA', 'PASSROLE-EC2', 'PASSROLE-SERVICE',
+    'POLICY-VERSION', 'ATTACH-POLICY', 'PUT-INLINE-POLICY',
+    'TRUST-POLICY-MODIFY', 'CREDENTIAL-CREATION', 'ASSUME-ROLE-EXPANSION',
+  ]) {
+    assert.ok(ids.has(want), `"*" must surface ${want}; got [${[...ids].join(', ')}]`);
+  }
+  // The compound PassRole paths and the all-roles AssumeRole are critical; the
+  // standalone direct-IAM primitives are high. None is understated.
+  const bySeverity = (id) => r.findings.filter((f) => f.id === id).map((f) => f.severity);
+  assert.ok(bySeverity('PASSROLE-LAMBDA').every((s) => s === 'critical'), 'PassRole path critical');
+  assert.ok(bySeverity('ASSUME-ROLE-EXPANSION').every((s) => s === 'critical'), 'all-roles AssumeRole critical');
+  assert.ok(bySeverity('ATTACH-POLICY').every((s) => s === 'high'), 'attach-policy primitive high');
 });
 
 // ---------------------------------------------------------------------------
@@ -281,20 +416,22 @@ test('iam:CreatePolicyVersion -> POLICY-VERSION', () => {
   assert.ok(idsOf(r.findings).includes('POLICY-VERSION'));
 });
 
-test('iam:AttachRolePolicy -> ATTACH-POLICY (critical); iam:PutRolePolicy -> PUT-INLINE-POLICY (critical)', () => {
+// IAM-102: attach/put-policy-to-self are standalone direct-IAM primitives, so
+// they are HIGH, not critical (critical is reserved for compound paths).
+test('iam:AttachRolePolicy -> ATTACH-POLICY (high); iam:PutRolePolicy -> PUT-INLINE-POLICY (high)', () => {
   const attach = analyzeEscalationsFromText(JSON.stringify({
     Statement: [{ Effect: 'Allow', Action: 'iam:AttachRolePolicy', Resource: '*' }],
   }));
   const af = attach.findings.find((f) => f.id === 'ATTACH-POLICY');
   assert.ok(af);
-  assert.equal(af.severity, 'critical');
+  assert.equal(af.severity, 'high');
 
   const put = analyzeEscalationsFromText(JSON.stringify({
     Statement: [{ Effect: 'Allow', Action: 'iam:PutRolePolicy', Resource: '*' }],
   }));
   const pf = put.findings.find((f) => f.id === 'PUT-INLINE-POLICY');
   assert.ok(pf);
-  assert.equal(pf.severity, 'critical');
+  assert.equal(pf.severity, 'high');
 });
 
 test('iam:UpdateAssumeRolePolicy -> TRUST-POLICY-MODIFY', () => {
@@ -311,13 +448,17 @@ test('iam:CreateAccessKey -> CREDENTIAL-CREATION', () => {
   assert.ok(idsOf(r.findings).includes('CREDENTIAL-CREATION'));
 });
 
-test('sts:AssumeRole on "*" -> ASSUME-ROLE-EXPANSION (medium: target unknown); scoped single role -> none', () => {
+test('sts:AssumeRole on "*" -> ASSUME-ROLE-EXPANSION (evidence high, exploitability medium: target unknown); scoped single role -> none', () => {
   const broad = analyzeEscalationsFromText(JSON.stringify({
     Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: '*' }],
   }));
   const bf = broad.findings.find((f) => f.id === 'ASSUME-ROLE-EXPANSION');
   assert.ok(bf);
-  assert.equal(bf.confidence, 'medium');
+  // IAM-104: the grant + wildcard scope are plainly in the policy (evidence
+  // high); which roles are reachable and how privileged is unknown, so the
+  // expansion is only POTENTIAL (exploitability medium).
+  assert.equal(bf.policyEvidence, 'high');
+  assert.equal(bf.pathExploitability, 'medium');
 
   const scoped = analyzeEscalationsFromText(JSON.stringify({
     Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::1:role/one' }],
@@ -349,7 +490,10 @@ test('a non-confirming Condition drops escalation confidence and annotates the l
   }));
   const f = r.findings.find((x) => x.id === 'TRUST-POLICY-MODIFY');
   assert.ok(f);
-  assert.equal(f.confidence, 'medium'); // downgraded from high
+  // A gating Condition weakens BOTH signals one notch: evidence high->medium,
+  // exploitability medium->low.
+  assert.equal(f.policyEvidence, 'medium');
+  assert.equal(f.pathExploitability, 'low');
   assert.ok(/Condition/.test(f.limit));
   assert.notEqual(f.conditions, null);
 });
@@ -392,7 +536,10 @@ test('a CONDITIONAL Deny does not suppress but reduces confidence and annotates 
   }));
   const f = r.findings.find((x) => x.id === 'ATTACH-POLICY');
   assert.ok(f, 'conditional Deny must NOT suppress the path (would be a false deny)');
-  assert.equal(f.confidence, 'medium'); // downgraded from high
+  // A possibly-blocking Deny weakens BOTH signals one notch: attach-policy is
+  // evidence high / exploitability high, so both drop to medium.
+  assert.equal(f.policyEvidence, 'medium');
+  assert.equal(f.pathExploitability, 'medium');
   assert.ok(/Deny/.test(f.limit), 'limit must note the possibly-blocking Deny');
 });
 
@@ -405,7 +552,8 @@ test('a Deny of a DIFFERENT action leaves the path intact', () => {
   }));
   const f = r.findings.find((x) => x.id === 'ATTACH-POLICY');
   assert.ok(f);
-  assert.equal(f.confidence, 'high'); // unrelated Deny -> no downgrade
+  assert.equal(f.policyEvidence, 'high'); // unrelated Deny -> no downgrade
+  assert.equal(f.pathExploitability, 'high');
 });
 
 test('an unconditional Deny of iam:PassRole removes the whole PassRole path', () => {
@@ -452,8 +600,10 @@ test('a Deny covering ONE exec statement does not hide a path granted by ANOTHER
   assert.ok(!f.actions.includes('lambda:CreateFunction'), 'denied exec action must not be claimed as granted');
   assert.ok(f.actions.includes('lambda:UpdateFunctionCode'), 'the surviving exec action must anchor the path');
   // The surviving path (S0 pass + S2 exec) is un-denied on both legs, so it is
-  // reported at full confidence - the Deny only removed the S1 branch.
-  assert.equal(f.confidence, 'high', 'the surviving path is un-denied on both legs -> not downgraded');
+  // reported at full evidence - the Deny only removed the S1 branch. Path
+  // exploitability stays medium (the passed role's power is still unknown).
+  assert.equal(f.policyEvidence, 'high', 'the surviving path is un-denied on both legs -> not downgraded');
+  assert.equal(f.pathExploitability, 'medium');
 });
 
 test('a Deny covering ONE PassRole grant does not hide a path via ANOTHER permitting PassRole grant', () => {
@@ -500,8 +650,12 @@ test('a NotAction-Deny does NOT suppress a broad iam:* escalation grant (path su
   }));
   const f = r.findings.find((x) => x.id === 'CREDENTIAL-CREATION');
   assert.ok(f, 'CREDENTIAL-CREATION must survive a NotAction-Deny that preserves iam:CreateAccessKey');
-  // Narrowed, not blocked: confidence downgraded from high and the Deny noted.
-  assert.equal(f.confidence, 'medium', 'a possibly-blocking Deny narrows -> confidence downgraded');
+  // Narrowed, not blocked: both signals downgraded one notch and the Deny noted.
+  // CREDENTIAL-CREATION bases evidence high / exploitability medium (target
+  // principal's privileges unknown, IAM-104 F1), so the narrow drops them to
+  // medium / low respectively.
+  assert.equal(f.policyEvidence, 'medium', 'a possibly-blocking Deny narrows -> evidence downgraded');
+  assert.equal(f.pathExploitability, 'low');
   assert.ok(/Deny/.test(f.limit), 'limit must note the possibly-blocking Deny');
 });
 
@@ -532,7 +686,8 @@ test('a Deny of ONE of several attach actions keeps the path via the others', ()
   // The definitively-denied action must be dropped from the asserted grants.
   assert.ok(!f.actions.includes('iam:AttachRolePolicy'), 'denied action must not be claimed as granted');
   assert.ok(f.actions.includes('iam:AttachUserPolicy'));
-  assert.equal(f.confidence, 'medium'); // narrowed -> downgraded
+  assert.equal(f.policyEvidence, 'medium'); // narrowed -> downgraded
+  assert.equal(f.pathExploitability, 'medium');
 });
 
 // ---------------------------------------------------------------------------
@@ -588,7 +743,11 @@ test('Null iam:PassedToService is UNCERTAIN: path kept but confidence reduced an
   }));
   const f = r.findings.find((x) => x.id === 'PASSROLE-LAMBDA');
   assert.ok(f, 'unresolved operator must not silently drop the path (false negative)');
-  assert.notEqual(f.confidence, 'high', 'unresolved operator must not be asserted at high confidence');
+  // An unresolved PassedToService operator is a gate: evidence high->medium and
+  // exploitability medium->low. Evidence must not stay at high.
+  assert.notEqual(f.policyEvidence, 'high', 'unresolved operator must not be asserted at high policy evidence');
+  assert.equal(f.policyEvidence, 'medium');
+  assert.equal(f.pathExploitability, 'low');
   assert.ok(/uncertain/i.test(f.limit), 'limit must flag the unresolved PassedToService operator');
 });
 
@@ -635,6 +794,76 @@ test('AssumeRole with no Resource/NotResource is unspecified/broad -> ASSUME-ROL
     Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole' }],
   }));
   assert.ok(idsOf(r.findings).includes('ASSUME-ROLE-EXPANSION'));
+});
+
+// ---------------------------------------------------------------------------
+// IAM-102 severity model: critical is reserved for compound privilege-boundary
+// crossings. Broad AssumeRole (effectively all roles) is critical; a partial
+// role-name wildcard stays high; standalone single-action primitives stay high.
+// ---------------------------------------------------------------------------
+
+test('ASSUME-ROLE-EXPANSION over all roles (arn:...:*:role/*) is critical', () => {
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::*:role/*' }],
+  }));
+  const f = r.findings.find((x) => x.id === 'ASSUME-ROLE-EXPANSION');
+  assert.ok(f, 'expected ASSUME-ROLE-EXPANSION');
+  assert.equal(f.severity, 'critical');
+  // Severity is orthogonal to both certainty signals. Evidence is high (the
+  // grant + all-roles scope are in the policy); exploitability is medium (which
+  // roles are reachable and how privileged they are is unknown).
+  assert.equal(f.policyEvidence, 'high');
+  assert.equal(f.pathExploitability, 'medium');
+});
+
+test('ASSUME-ROLE-EXPANSION over all roles in ONE account (role/*) is still critical', () => {
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::111122223333:role/*' }],
+  }));
+  const f = r.findings.find((x) => x.id === 'ASSUME-ROLE-EXPANSION');
+  assert.ok(f);
+  assert.equal(f.severity, 'critical'); // role-name axis fully open -> all roles
+});
+
+test('ASSUME-ROLE-EXPANSION on a bare "*" resource is critical', () => {
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: '*' }],
+  }));
+  const f = r.findings.find((x) => x.id === 'ASSUME-ROLE-EXPANSION');
+  assert.ok(f);
+  assert.equal(f.severity, 'critical');
+});
+
+test('ASSUME-ROLE-EXPANSION with a PARTIAL role-name wildcard (role/app-*) stays high', () => {
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::111122223333:role/app-*' }],
+  }));
+  const f = r.findings.find((x) => x.id === 'ASSUME-ROLE-EXPANSION');
+  assert.ok(f, 'a wildcarded role path is still flagged');
+  assert.equal(f.severity, 'high'); // many roles, but not ALL -> not critical
+});
+
+test('ASSUME-ROLE-EXPANSION with NotResource (inverse, ~all roles) is critical', () => {
+  const r = analyzeEscalationsFromText(JSON.stringify({
+    Statement: [{ Effect: 'Allow', Action: 'sts:AssumeRole', NotResource: 'arn:aws:iam::1:role/break-glass' }],
+  }));
+  const f = r.findings.find((x) => x.id === 'ASSUME-ROLE-EXPANSION');
+  assert.ok(f);
+  assert.equal(f.severity, 'critical');
+});
+
+test('standalone single-action escalation primitives stay high (not critical)', () => {
+  const cases = [
+    ['POLICY-VERSION', { Effect: 'Allow', Action: 'iam:CreatePolicyVersion', Resource: 'arn:aws:iam::1:policy/p' }],
+    ['TRUST-POLICY-MODIFY', { Effect: 'Allow', Action: 'iam:UpdateAssumeRolePolicy', Resource: '*' }],
+    ['CREDENTIAL-CREATION', { Effect: 'Allow', Action: 'iam:CreateAccessKey', Resource: 'arn:aws:iam::1:user/*' }],
+  ];
+  for (const [id, stmt] of cases) {
+    const r = analyzeEscalationsFromText(JSON.stringify({ Statement: [stmt] }));
+    const f = r.findings.find((x) => x.id === id);
+    assert.ok(f, `expected ${id}`);
+    assert.equal(f.severity, 'high', `${id} must stay high (standalone primitive)`);
+  }
 });
 
 // ---------------------------------------------------------------------------
