@@ -307,6 +307,22 @@
       ],
       "acceptance": ["tests/negative.test.js green: engine matches every validated negative fixture", "no negative-fixture expectation was weakened (diff shows engine changes, not expectation changes)", "IAM-semantics critic 100 (no false allow/deny, no overstated severity)", "reliability critic >=95", "full node --test suite green (existing + negative)"],
       "maximumIterations": 6
+    },
+    {
+      "id": "IAM-401",
+      "title": "Phase 4: path-focused, lane-grouped attack-path graph",
+      "priority": 30,
+      "phase": 4,
+      "status": "pending",
+      "requirements": [
+        "Group graph paths into labeled semantic lanes instead of a flat radial layout where every node competes: PRIVILEGE ESCALATION (PassRole -> Passable Role [unknown privileges] -> service execution -> potential boundary crossing), IDENTITY EXPANSION (AssumeRole -> role scope), DATA ACCESS (secrets retrieval, KMS decryption, bulk object read - each its own path from Principal), SCOPE (standalone broad-resource / Resource:*).",
+        "The graph model (graph.js) assigns each edge/path to a lane; render-graph.js draws labeled lane sections (a heading per non-empty lane) with the paths inside, so escalation paths read top-to-bottom and don't visually compete with data-access or scope nodes.",
+        "Preserve everything from earlier phases: the 'Passable Role [unknown privileges]' transition node, certainty styles (policy-supported/potentially-reachable/etc.), can-decrypt vs can-read edge types, per-edge evidence on select, reduced-motion, and SVG text via textContent (injection-inert).",
+        "The findings table remains the authoritative view; the graph is still a progressive-enhancement aid and must stay keyboard-accessible with an equivalent accessible representation. Empty lanes are omitted (no empty headings).",
+        "Deterministic layout/ordering; enforce the existing max-node cap."
+      ],
+      "acceptance": ["a multi-category policy renders distinct PRIVILEGE ESCALATION / IDENTITY EXPANSION / DATA ACCESS / SCOPE lane sections", "escalation paths show the unknown-privileges transition node within their lane", "graph injection fixtures still inert; reduced-motion honored", "UX/a11y critic no serious/critical", "security critic no high/critical", "full node --test suite green (graph fixtures/e2e updated)"],
+      "maximumIterations": 5
     }
   ]
 }

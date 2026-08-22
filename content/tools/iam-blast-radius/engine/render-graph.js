@@ -91,6 +91,44 @@ function edgeTypeClass(type) {
     : null;
 }
 
+// Semantic lane vocabulary (IAM-401). The graph model (graph.js) assigns every
+// edge a `lane`; the renderer groups edges/nodes into labeled lane sections so
+// escalation paths read within their own band and do not visually compete with
+// data-access or scope nodes. Labels are our own FIXED display strings (never
+// derived from analyzed input) and mirror graph.js LANES; the local copy keeps
+// the renderer free of a data-module dependency (same pattern as
+// CERTAINTY_CLASSES). LANE_ORDER is the deterministic top-to-bottom draw order;
+// empty lanes are omitted (no empty headings).
+export const LANE_LABELS = Object.freeze({
+  'privilege-escalation': 'PRIVILEGE ESCALATION',
+  'identity-expansion': 'IDENTITY EXPANSION',
+  'data-access': 'DATA ACCESS',
+  scope: 'SCOPE',
+  'explicit-deny': 'EXPLICIT DENY',
+});
+
+export const LANE_ORDER = Object.freeze([
+  'privilege-escalation',
+  'identity-expansion',
+  'data-access',
+  'scope',
+  'explicit-deny',
+]);
+
+const LANE_INDEX = new Map(LANE_ORDER.map((id, i) => [id, i]));
+
+function laneLabel(id) {
+  return Object.prototype.hasOwnProperty.call(LANE_LABELS, id) ? LANE_LABELS[id] : String(id);
+}
+
+// Fallback lane for any edge whose lane is missing/unknown, so the layout always
+// has a valid band to place it in (mirrors graph.js's SCOPE fallback).
+const DEFAULT_LANE = 'scope';
+
+function laneOf(id) {
+  return LANE_INDEX.has(id) ? id : DEFAULT_LANE;
+}
+
 function certaintyClass(certainty) {
   const entry = CERTAINTY_CLASSES[certainty];
   return entry ? entry.cssClass : 'cert-unknown';
@@ -112,6 +150,10 @@ const LAYOUT = Object.freeze({
   ROW_GAP: 26,
   PAD: 24,
   PARALLEL_SPREAD: 26, // vertical separation for parallel edges to one target
+  // IAM-401 lane bands: vertical space reserved above each lane's nodes for its
+  // heading, and the gap between consecutive lane bands.
+  LANE_HEADING_H: 30,
+  LANE_GAP: 34,
 });
 
 const PRINCIPAL_ID = 'principal';
@@ -122,13 +164,23 @@ function round(n) {
 }
 
 /**
- * Compute a deterministic 2-column layout for a graph data structure.
- * Pure: no DOM, no measurement, no randomness. Safe on hostile/empty input.
+ * Compute a deterministic lane-grouped layout for a graph data structure
+ * (IAM-401). Pure: no DOM, no measurement, no randomness. Safe on hostile/empty
+ * input.
+ *
+ * The principal sits on the left; the rest of the graph is split into labeled
+ * semantic lanes (PRIVILEGE ESCALATION / IDENTITY EXPANSION / DATA ACCESS /
+ * SCOPE / EXPLICIT DENY) stacked top-to-bottom. Within a lane, nodes are placed
+ * in columns by hop-distance from the principal (so an escalation path reads
+ * left-to-right: principal -> passable role -> service), and rows stack parallel
+ * nodes. Empty lanes are omitted (no empty band, no heading). The layout stays
+ * deterministic: lane order is fixed and nodes keep the graph's own order.
  *
  * @param {{nodes:Array,edges:Array}} graph graph.js output (or export payload)
  * @returns {{width:number,height:number,
- *            nodes:Array<{id,type,label,x,y,w,h,cx,cy}>,
- *            edges:Array<object>}}
+ *            nodes:Array<{id,type,label,lane,x,y,w,h,cx,cy}>,
+ *            edges:Array<object>,
+ *            lanes:Array<{id,label,x,y,width,height,headingX,headingY}>}}
  */
 export function computeLayout(graph) {
   const g = graph && typeof graph === 'object' ? graph : {};
@@ -142,23 +194,22 @@ export function computeLayout(graph) {
   };
   const targets = rawNodes.filter((n) => n && n.id !== PRINCIPAL_ID);
 
-  const { NODE_W, NODE_H, COL_GAP, ROW_GAP, PAD } = LAYOUT;
+  const { NODE_W, NODE_H, COL_GAP, ROW_GAP, PAD, LANE_HEADING_H, LANE_GAP } = LAYOUT;
+
+  const nodeById = new Map();
+  for (const n of rawNodes) if (n && typeof n.id === 'string') nodeById.set(n.id, n);
 
   // --- Layered columns by hop-distance from the principal (IAM-107) ----------
-  // Most target nodes are direct spokes (column 1). Escalation-path transitions
-  // chain THROUGH an intermediate node (principal -> passable role -> service),
-  // so those deeper nodes belong in later columns and the path reads left to
-  // right. Depth = shortest hop count from the principal along edges; a node not
-  // reachable from the principal (should not happen for a rooted graph) defaults
-  // to column 1 so it is still laid out. Pure BFS, deterministic.
+  // Escalation-path transitions chain THROUGH an intermediate node (principal ->
+  // passable role -> service), so deeper nodes belong in later columns and the
+  // path reads left to right. Depth = shortest hop count from the principal;
+  // an unreachable node defaults to column 1. Pure BFS, deterministic.
   const adjacency = new Map();
   for (const e of rawEdges) {
     if (!e || typeof e !== 'object') continue;
     if (!adjacency.has(e.from)) adjacency.set(e.from, []);
     adjacency.get(e.from).push(e.to);
   }
-  const nodeById = new Map();
-  for (const n of rawNodes) if (n && typeof n.id === 'string') nodeById.set(n.id, n);
   const depth = new Map([[PRINCIPAL_ID, 0]]);
   const queue = [PRINCIPAL_ID];
   while (queue.length > 0) {
@@ -174,32 +225,116 @@ export function computeLayout(graph) {
   }
   const depthOf = (id) => (depth.has(id) ? depth.get(id) : 1);
 
-  // Bucket target nodes by column, preserving the graph's deterministic order.
-  const columns = new Map(); // colIndex -> node[]
-  let maxCol = 0;
-  for (const n of targets) {
-    const col = Math.max(1, depthOf(n.id));
-    if (col > maxCol) maxCol = col;
-    if (!columns.has(col)) columns.set(col, []);
-    columns.get(col).push(n);
+  // --- Assign every non-principal node to a lane (IAM-401) -------------------
+  // A node's lane is the lane of the edge(s) touching it (as target, or as the
+  // source of a transition hop like the passable-role pivot). The principal is
+  // lane-less (a shared root). If a node is touched by edges of several lanes,
+  // the earliest lane in LANE_ORDER wins - deterministic, and it keeps the crux
+  // of a path (e.g. the passable-role pivot) in the escalation lane.
+  const nodeLane = new Map();
+  const considerLane = (id, lane) => {
+    if (id === PRINCIPAL_ID) return;
+    const laneId = laneOf(lane);
+    const prev = nodeLane.get(id);
+    if (prev === undefined || LANE_INDEX.get(laneId) < LANE_INDEX.get(prev)) {
+      nodeLane.set(id, laneId);
+    }
+  };
+  for (const e of rawEdges) {
+    if (!e || typeof e !== 'object') continue;
+    considerLane(e.to, e.lane);
+    considerLane(e.from, e.lane);
   }
+  const laneForNode = (id) => nodeLane.get(id) || DEFAULT_LANE;
 
   const colX = (col) => PAD + col * (NODE_W + COL_GAP);
 
-  // Height is driven by the tallest column (or the single principal row).
-  let tallest = 1;
-  for (const arr of columns.values()) if (arr.length > tallest) tallest = arr.length;
-  const stackH = tallest * NODE_H + (tallest - 1) * ROW_GAP;
-  const height = round(2 * PAD + Math.max(NODE_H, stackH));
-  const width = round(colX(Math.max(1, maxCol)) + NODE_W + PAD);
+  // --- Bucket target nodes into lane -> column -> node[] ----------------------
+  const laneBuckets = new Map(); // laneId -> Map(col -> node[])
+  let maxCol = 1;
+  for (const n of targets) {
+    const laneId = laneForNode(n.id);
+    const col = Math.max(1, depthOf(n.id));
+    if (col > maxCol) maxCol = col;
+    if (!laneBuckets.has(laneId)) laneBuckets.set(laneId, new Map());
+    const cols = laneBuckets.get(laneId);
+    if (!cols.has(col)) cols.set(col, []);
+    cols.get(col).push(n);
+  }
+
+  // Non-empty lanes in the fixed deterministic order.
+  const activeLanes = LANE_ORDER.filter((id) => laneBuckets.has(id));
 
   const positioned = new Map();
+  const layoutNodes = [];
+  const lanes = [];
 
+  const width = round(colX(maxCol) + NODE_W + PAD);
+  const laneContentX = colX(1);
+  const laneWidth = round(width - laneContentX - PAD);
+
+  // --- Stack lane bands top-to-bottom ----------------------------------------
+  let laneTop = PAD;
+  for (const laneId of activeLanes) {
+    const cols = laneBuckets.get(laneId);
+    let tallest = 1;
+    for (const arr of cols.values()) if (arr.length > tallest) tallest = arr.length;
+    const contentH = tallest * NODE_H + (tallest - 1) * ROW_GAP;
+    const contentTop = laneTop + LANE_HEADING_H;
+
+    for (const [col, arr] of cols) {
+      const x = colX(col);
+      for (let i = 0; i < arr.length; i++) {
+        const n = arr[i];
+        const y = round(contentTop + i * (NODE_H + ROW_GAP));
+        const node = {
+          id: n.id,
+          type: n.type || 'Resource',
+          label: typeof n.label === 'string' ? n.label : String(n.id),
+          lane: laneId,
+          // Fixed internal markers (IAM-107) carried through for the renderer to
+          // distinguish KNOWN grants from UNKNOWN target-role privileges. Never
+          // sourced from analyzed input.
+          unknownPrivileges: !!n.unknownPrivileges,
+          boundaryCrossing: !!n.boundaryCrossing,
+          x,
+          y,
+          w: NODE_W,
+          h: NODE_H,
+          cx: round(x + NODE_W / 2),
+          cy: round(y + NODE_H / 2),
+        };
+        positioned.set(n.id, node);
+        layoutNodes.push(node);
+      }
+    }
+
+    const bandH = LANE_HEADING_H + contentH;
+    lanes.push({
+      id: laneId,
+      label: laneLabel(laneId),
+      x: laneContentX,
+      y: laneTop,
+      width: laneWidth,
+      height: round(bandH),
+      headingX: laneContentX,
+      headingY: round(laneTop + LANE_HEADING_H - 12),
+    });
+    laneTop = round(laneTop + bandH + LANE_GAP);
+  }
+
+  // Total height: the stacked lanes, or a single principal row when there are no
+  // target nodes.
+  const stackBottom = activeLanes.length > 0 ? laneTop - LANE_GAP : PAD + NODE_H;
+  const height = round(Math.max(stackBottom + PAD, 2 * PAD + NODE_H));
+
+  // Principal on the left, vertically centered across the whole band stack.
   const principalY = round((height - NODE_H) / 2);
   const principalNode = {
     id: principal.id,
     type: principal.type || 'Principal',
     label: typeof principal.label === 'string' ? principal.label : String(principal.id),
+    lane: null,
     x: PAD,
     y: principalY,
     w: NODE_W,
@@ -208,34 +343,7 @@ export function computeLayout(graph) {
     cy: round(principalY + NODE_H / 2),
   };
   positioned.set(principal.id, principalNode);
-
-  const layoutNodes = [principalNode];
-  for (let col = 1; col <= maxCol; col++) {
-    const arr = columns.get(col) || [];
-    const x = colX(col);
-    for (let i = 0; i < arr.length; i++) {
-      const n = arr[i];
-      const y = round(PAD + i * (NODE_H + ROW_GAP));
-      const node = {
-        id: n.id,
-        type: n.type || 'Resource',
-        label: typeof n.label === 'string' ? n.label : String(n.id),
-        // Fixed internal markers (IAM-107) carried through for the renderer to
-        // distinguish KNOWN grants from UNKNOWN target-role privileges. Never
-        // sourced from analyzed input.
-        unknownPrivileges: !!n.unknownPrivileges,
-        boundaryCrossing: !!n.boundaryCrossing,
-        x,
-        y,
-        w: NODE_W,
-        h: NODE_H,
-        cx: round(x + NODE_W / 2),
-        cy: round(y + NODE_H / 2),
-      };
-      positioned.set(n.id, node);
-      layoutNodes.push(node);
-    }
-  }
+  layoutNodes.unshift(principalNode);
 
   // Group parallel edges (same source/target pair) so they can be fanned apart.
   const groupCount = new Map();
@@ -279,6 +387,7 @@ export function computeLayout(graph) {
       id: e.id,
       type: e.type,
       certainty: e.certainty,
+      lane: laneOf(e.lane),
       label: typeof e.label === 'string' ? e.label : String(e.type || 'edge'),
       from: e.from,
       to: e.to,
@@ -293,7 +402,7 @@ export function computeLayout(graph) {
     });
   }
 
-  return { width, height, nodes: layoutNodes, edges: layoutEdges };
+  return { width, height, nodes: layoutNodes, edges: layoutEdges, lanes };
 }
 
 // --- Rendering interface -----------------------------------------------------
@@ -415,10 +524,13 @@ export function createGraphRenderer(doc) {
       tabindex: 0,
       role: 'button',
     });
-    // Accessible name describes the relationship + certainty, as inert text.
+    // Accessible name names the lane, the relationship, and the certainty, as
+    // inert text (IAM-401: the lane grouping is exposed to assistive tech, not
+    // only visually). The lane label is our own fixed vocabulary.
     g.setAttribute(
       'aria-label',
-      `${le.label}. ${certaintyLabel(le.certainty)}. Activate to inspect evidence.`,
+      `${laneLabel(laneOf(le.lane))}. ${le.label}. ${certaintyLabel(le.certainty)}. ` +
+        'Activate to inspect evidence.',
     );
 
     // Wide transparent hit path for easy click/focus targeting.
@@ -459,6 +571,38 @@ export function createGraphRenderer(doc) {
     return g;
   }
 
+  // Build one lane section: a labeled band grouping the paths inside it
+  // (IAM-401). The heading text and aria-label are our own FIXED lane
+  // vocabulary, never derived from analyzed input. `role="group"` + aria-label
+  // expose the lane grouping to assistive tech; the authoritative equivalent
+  // stays the findings table.
+  function buildLane(lane) {
+    const g = svgEl('g', {
+      class: `graph-lane lane-${lane.id}`,
+      role: 'group',
+      'aria-label': `${lane.label} lane`,
+    });
+    // A subtle band rect behind the lane's nodes (geometry is our own numbers).
+    const band = svgEl('rect', {
+      x: lane.x - 12,
+      y: lane.y,
+      width: lane.width + 24,
+      height: lane.height,
+      rx: 6,
+      ry: 6,
+      class: 'lane-band',
+    });
+    g.appendChild(band);
+    const heading = svgEl('text', {
+      x: lane.headingX,
+      y: lane.headingY,
+      class: 'lane-heading',
+    });
+    heading.textContent = lane.label; // fixed vocabulary, inert
+    g.appendChild(heading);
+    return g;
+  }
+
   /**
    * Render the graph as an SVG into mountEl.
    *
@@ -487,7 +631,17 @@ export function createGraphRenderer(doc) {
 
     svg.appendChild(buildDefs());
 
-    // Edges first so nodes paint on top of the lines.
+    // Lane bands + headings first, behind everything (IAM-401): the semantic
+    // sections a viewer reads before the paths inside them. Omitted entirely
+    // when there are no lanes (empty graph), so no empty heading is drawn.
+    const laneList = Array.isArray(layout.lanes) ? layout.lanes : [];
+    if (laneList.length > 0) {
+      const laneLayer = svgEl('g', { class: 'lane-layer' });
+      for (const lane of laneList) laneLayer.appendChild(buildLane(lane));
+      svg.appendChild(laneLayer);
+    }
+
+    // Edges next so nodes paint on top of the lines.
     const edgeLayer = svgEl('g', { class: 'edge-layer' });
     for (const le of layout.edges) edgeLayer.appendChild(buildEdge(le, options.onEdgeSelect));
     svg.appendChild(edgeLayer);

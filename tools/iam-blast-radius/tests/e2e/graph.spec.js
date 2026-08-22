@@ -83,6 +83,33 @@ test('renders the attack path as an inline SVG with styled edges', async ({ page
   await expect(page.locator('#graph .node-boundary').first()).toBeVisible();
 });
 
+test('IAM-401: a multi-category policy renders distinct labeled lane sections', async ({ page }) => {
+  await page.fill('#policy-input', fixture('graph/lane-grouped-multi-category.json'));
+  await page.click('#analyze-btn');
+  await expect(page.locator('#graph svg')).toBeVisible();
+
+  // One labeled heading per non-empty lane, from the fixed vocabulary. The four
+  // primary lanes are all present and read top-to-bottom.
+  for (const label of ['PRIVILEGE ESCALATION', 'IDENTITY EXPANSION', 'DATA ACCESS', 'SCOPE']) {
+    await expect(page.locator('#graph .lane-heading', { hasText: label })).toBeVisible();
+  }
+  // The lanes are exposed as accessible groups.
+  await expect(page.locator('#graph .graph-lane[role="group"]').first()).toBeVisible();
+
+  // The escalation path still renders its unknown-privileges transition node
+  // (IAM-107) within its lane.
+  await expect(page.locator('#graph .node-unknown-priv').first()).toBeVisible();
+  await expect(page.locator('#graph .node-boundary').first()).toBeVisible();
+
+  // Lanes stack top-to-bottom: the PRIVILEGE ESCALATION heading sits above the
+  // DATA ACCESS heading.
+  const escY = await page.locator('#graph .lane-heading', { hasText: 'PRIVILEGE ESCALATION' })
+    .evaluate((el) => el.getBoundingClientRect().top);
+  const dataY = await page.locator('#graph .lane-heading', { hasText: 'DATA ACCESS' })
+    .evaluate((el) => el.getBoundingClientRect().top);
+  expect(escY).toBeLessThan(dataY);
+});
+
 test('each edge-certainty class resolves to a visually distinct stroke', async ({ page }) => {
   // admin-star yields edges of several certainties. Distinct certainty classes
   // must map to distinct stroke colors so blocked-by-deny never looks like

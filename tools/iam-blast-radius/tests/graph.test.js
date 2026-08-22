@@ -27,6 +27,8 @@ import {
   EDGE_TYPES,
   CERTAINTY,
   GRAPH_LIMITS,
+  LANES,
+  LANE_ORDER,
 } from '../../../content/tools/iam-blast-radius/engine/graph.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -35,6 +37,7 @@ const fixturesDir = join(here, '..', 'fixtures');
 const NODE_TYPE_SET = new Set(Object.values(NODE_TYPES));
 const EDGE_TYPE_SET = new Set(Object.values(EDGE_TYPES));
 const CERTAINTY_SET = new Set(Object.values(CERTAINTY));
+const LANE_SET = new Set(Object.values(LANES));
 
 // Every fixture directory in the repo (graph invariants must hold on ALL of
 // them, not only the graph-specific ones).
@@ -118,6 +121,8 @@ function assertGraphInvariants(graph, ctx) {
     }
     assert.ok(EDGE_TYPE_SET.has(e.type), `${ctx}: bad edge type ${e.type}`);
     assert.ok(CERTAINTY_SET.has(e.certainty), `${ctx}: bad certainty ${e.certainty}`);
+    // IAM-401: every edge is assigned to a valid semantic lane.
+    assert.ok(LANE_SET.has(e.lane), `${ctx}: bad lane ${e.lane}`);
     // Endpoints must reference real nodes (no dangling edges after truncation).
     assert.ok(nodeIds.has(e.from), `${ctx}: edge from missing node ${e.from}`);
     assert.ok(nodeIds.has(e.to), `${ctx}: edge to missing node ${e.to}`);
@@ -164,6 +169,19 @@ for (const category of ALL_CATEGORIES) {
             const e = findEdge(r.graph, want);
             assert.equal(e.certainty, want.certainty, `${file}: wrong certainty on ${edgeKey(want)}`);
           }
+          // IAM-401: a fixture may pin the semantic lane of an edge.
+          if (want.lane) {
+            const e = findEdge(r.graph, want);
+            assert.equal(e.lane, want.lane, `${file}: wrong lane on ${edgeKey(want)}`);
+          }
+        }
+      }
+
+      // IAM-401: a fixture may assert which distinct lanes the graph produces.
+      if (Array.isArray(exp.graphLanes)) {
+        const lanes = new Set(r.graph.edges.map((e) => e.lane));
+        for (const lane of exp.graphLanes) {
+          assert.ok(lanes.has(lane), `${file}: expected lane ${lane}; got ${JSON.stringify([...lanes])}`);
         }
       }
 
@@ -342,6 +360,72 @@ test('IAM-202: a data-exfil read stays can-read, distinct from kms:Decrypt can-d
   const read = findEdge(r.graph, { from: 'principal', to: 'datastore:sensitive-data', type: EDGE_TYPES.CAN_READ });
   assert.ok(read, 'DATA-EXFIL still produces a can-read edge');
   assert.notEqual(read.type, EDGE_TYPES.CAN_DECRYPT);
+});
+
+// ---------------------------------------------------------------------------
+// IAM-401: every edge is assigned to a semantic lane, so the renderer can group
+// paths into labeled sections instead of a flat radial layout. The lane is a
+// pure function of the finding kind + relationship (never from analyzed input),
+// and it does not change any finding's severity/certainty.
+// ---------------------------------------------------------------------------
+
+test('IAM-401: LANE_ORDER lists every lane in LANES exactly once', () => {
+  assert.deepEqual([...LANE_ORDER].sort(), Object.values(LANES).sort());
+});
+
+test('IAM-401: a multi-category policy assigns each edge to its correct lane', () => {
+  const r = buildGraphFromText(JSON.stringify({
+    Statement: [
+      { Sid: 'pass', Effect: 'Allow', Action: 'iam:PassRole', Resource: 'arn:aws:iam::1:role/app-*', Condition: { StringEquals: { 'iam:PassedToService': 'lambda.amazonaws.com' } } },
+      { Sid: 'run', Effect: 'Allow', Action: 'lambda:CreateFunction', Resource: '*' },
+      { Sid: 'assume', Effect: 'Allow', Action: 'sts:AssumeRole', Resource: '*' },
+      { Sid: 'secrets', Effect: 'Allow', Action: 'secretsmanager:GetSecretValue', Resource: '*' },
+      { Sid: 'kms', Effect: 'Allow', Action: 'kms:Decrypt', Resource: '*' },
+      { Sid: 'tag', Effect: 'Allow', Action: 'ec2:CreateTags', Resource: '*' },
+      { Sid: 'deny', Effect: 'Deny', Action: 's3:DeleteBucket', Resource: '*' },
+    ],
+  }));
+  assert.equal(r.ok, true);
+  const laneOf = (from, type, to) => {
+    const e = findEdge(r.graph, { from, to, type });
+    assert.ok(e, `expected edge ${from}|${type}|${to}`);
+    return e.lane;
+  };
+  // PassRole transition (both hops) -> PRIVILEGE ESCALATION.
+  assert.equal(laneOf('principal', 'can-pass', 'role:passable:lambda'), LANES.PRIVILEGE_ESCALATION);
+  assert.equal(laneOf('role:passable:lambda', 'can-execute-as', 'service:lambda'), LANES.PRIVILEGE_ESCALATION);
+  // AssumeRole expansion -> IDENTITY EXPANSION.
+  assert.equal(laneOf('principal', 'can-assume', 'role:*'), LANES.IDENTITY_EXPANSION);
+  // Secrets read + KMS decrypt -> DATA ACCESS.
+  assert.equal(laneOf('principal', 'can-read', 'datastore:sensitive-data'), LANES.DATA_ACCESS);
+  assert.equal(laneOf('principal', 'can-decrypt', 'datastore:kms-decrypt'), LANES.DATA_ACCESS);
+  // Broad-resource wildcard -> SCOPE.
+  assert.equal(laneOf('principal', 'can-write', 'resource:*'), LANES.SCOPE);
+  // Same-policy Deny -> EXPLICIT DENY (a block never sits inside a grant lane).
+  const deny = r.graph.edges.find((e) => e.type === EDGE_TYPES.DENIES);
+  assert.ok(deny);
+  assert.equal(deny.lane, LANES.EXPLICIT_DENY);
+});
+
+test('IAM-401: IAM self-administration edges are in the PRIVILEGE ESCALATION lane', () => {
+  const r = buildGraphFromText(JSON.stringify({
+    Statement: [{ Sid: 'admin', Effect: 'Allow', Action: 'iam:PutUserPolicy', Resource: '*' }],
+  }));
+  const self = findEdge(r.graph, { from: 'principal', to: 'policy:self', type: EDGE_TYPES.CAN_MODIFY });
+  assert.ok(self);
+  assert.equal(self.lane, LANES.PRIVILEGE_ESCALATION);
+});
+
+test('IAM-401: a merged edge keeps a single consistent lane', () => {
+  const r = buildGraphFromText(JSON.stringify({
+    Statement: [
+      { Sid: 'a', Effect: 'Allow', Action: 'iam:AttachRolePolicy', Resource: '*' },
+      { Sid: 'b', Effect: 'Allow', Action: 'iam:AttachUserPolicy', Resource: '*' },
+    ],
+  }));
+  const self = r.graph.edges.filter((e) => e.to === 'policy:self' && e.type === EDGE_TYPES.CAN_MODIFY);
+  assert.equal(self.length, 1, 'the two statements merge into one edge');
+  assert.equal(self[0].lane, LANES.PRIVILEGE_ESCALATION);
 });
 
 // ---------------------------------------------------------------------------

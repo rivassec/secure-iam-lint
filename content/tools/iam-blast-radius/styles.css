@@ -34,6 +34,12 @@
   --cert-blocked: #57c98a; /* blocked by an explicit Deny (safe) */
   --cert-unknown: #9aa0a8; /* unknown - incomplete context */
   --edge-decrypt: #4fd6c9; /* can-decrypt (kms:Decrypt) label accent, distinct from can-read */
+  /* IAM-401 lane bands: a faint surface behind each semantic lane and a muted
+     uppercase heading. Both are chrome, not data - low contrast so the paths
+     inside stay dominant. */
+  --graph-lane-band: rgba(255, 255, 255, 0.03);
+  --graph-lane-stroke: #2c2f36;
+  --graph-lane-heading: #8b929c;
 }
 * { box-sizing: border-box; }
 body {
@@ -138,6 +144,17 @@ svg.iam-graph text { fill: var(--fg); font-family: "Source Sans Pro", -apple-sys
 }
 .iam-graph .node-unknown-priv .node-type { fill: var(--warn); }
 .iam-graph .node-boundary .node-box { stroke: var(--accent); stroke-width: 2; }
+
+/* IAM-401 semantic lanes. Each non-empty lane is a labeled band grouping the
+   paths inside it (PRIVILEGE ESCALATION / IDENTITY EXPANSION / DATA ACCESS /
+   SCOPE / EXPLICIT DENY), stacked top-to-bottom, drawn behind the edges/nodes.
+   The band is deliberately faint (chrome), and the heading is an uppercase
+   muted label so it orients without competing with the path colors. */
+.iam-graph .lane-band { fill: var(--graph-lane-band); stroke: var(--graph-lane-stroke); stroke-width: 1; }
+.iam-graph .lane-heading {
+  fill: var(--graph-lane-heading); font-size: 11px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase;
+}
 
 /* Edges. The wide transparent hit path is for pointer/focus targeting only; the
    visible edge-path carries the per-certainty stroke + dash. fill:none is

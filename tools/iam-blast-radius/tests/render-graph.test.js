@@ -29,6 +29,8 @@ import {
   CERTAINTY_CLASSES,
   EDGE_STYLE_ORDER,
   EDGE_TYPE_CLASSES,
+  LANE_LABELS,
+  LANE_ORDER,
   SVG_NS,
 } from '../../../content/tools/iam-blast-radius/engine/render-graph.js';
 
@@ -271,6 +273,90 @@ test('IAM-107: the transition lays out left-to-right across columns (pivot betwe
   // so the privilege transition reads as a path rather than parallel spokes.
   assert.ok(principal.x < pivot.x, 'pivot is right of the principal');
   assert.ok(pivot.x < service.x, 'service is right of the pivot');
+});
+
+// --- IAM-401: lane-grouped attack-path layout -------------------------------
+
+test('IAM-401: a multi-category policy lays out distinct, non-empty semantic lanes', () => {
+  const result = analyzeFixture('graph/lane-grouped-multi-category.json');
+  const layout = computeLayout(result.graph);
+  const laneIds = layout.lanes.map((l) => l.id);
+  // The four primary lanes are all present and distinct.
+  for (const id of ['privilege-escalation', 'identity-expansion', 'data-access', 'scope']) {
+    assert.ok(laneIds.includes(id), `expected lane section ${id}; got ${JSON.stringify(laneIds)}`);
+  }
+  // Lanes follow the fixed deterministic order (a subsequence of LANE_ORDER).
+  const orderIdx = laneIds.map((id) => LANE_ORDER.indexOf(id));
+  assert.deepEqual(orderIdx, [...orderIdx].sort((a, b) => a - b), 'lanes in LANE_ORDER order');
+  // Lanes are stacked strictly top-to-bottom (non-overlapping bands).
+  for (let i = 1; i < layout.lanes.length; i++) {
+    assert.ok(layout.lanes[i].y > layout.lanes[i - 1].y, 'each lane band sits below the previous');
+  }
+  // Every non-principal node carries the lane it was placed in; the escalation
+  // pivot + service both land in the privilege-escalation lane.
+  const pivot = layout.nodes.find((n) => n.id === 'role:passable:lambda');
+  const service = layout.nodes.find((n) => n.id === 'service:lambda');
+  assert.equal(pivot.lane, 'privilege-escalation');
+  assert.equal(service.lane, 'privilege-escalation');
+  // The escalation path still reads left-to-right within its lane (IAM-107).
+  assert.ok(pivot.x < service.x, 'service is right of the pivot');
+  // Data-access nodes are in the data-access lane, not competing with escalation.
+  assert.equal(layout.nodes.find((n) => n.id === 'datastore:sensitive-data').lane, 'data-access');
+  assert.equal(layout.nodes.find((n) => n.id === 'datastore:kms-decrypt').lane, 'data-access');
+});
+
+test('IAM-401: empty lanes are omitted (a single-capability policy renders one lane)', () => {
+  const result = analyzeFixture('exfil/s3-getobject-star-positive.json');
+  const layout = computeLayout(result.graph);
+  const laneIds = layout.lanes.map((l) => l.id);
+  // A pure data-access policy must NOT render privilege-escalation / identity /
+  // scope headings for empty lanes.
+  assert.ok(laneIds.includes('data-access'), 'the data-access lane is present');
+  assert.ok(!laneIds.includes('privilege-escalation'), 'no empty privilege-escalation lane');
+  assert.ok(!laneIds.includes('identity-expansion'), 'no empty identity-expansion lane');
+});
+
+test('IAM-401: render draws a labeled heading per non-empty lane, from the fixed vocabulary', () => {
+  const doc = fakeDocument();
+  const r = createGraphRenderer(doc);
+  const el = mount(doc);
+  const result = analyzeFixture('graph/lane-grouped-multi-category.json');
+  const svg = r.render(result.graph, el, { reducedMotion: true });
+
+  const headings = svg
+    .findAll((n) => n.tag === 'text' && (n.getAttribute('class') || '') === 'lane-heading')
+    .map((n) => n.textContent);
+  for (const label of ['PRIVILEGE ESCALATION', 'IDENTITY EXPANSION', 'DATA ACCESS', 'SCOPE']) {
+    assert.ok(headings.includes(label), `expected lane heading "${label}"; got ${JSON.stringify(headings)}`);
+  }
+  // Every heading is a known fixed label (never derived from analyzed input).
+  const known = new Set(Object.values(LANE_LABELS));
+  for (const h of headings) assert.ok(known.has(h), `unexpected lane heading: ${h}`);
+
+  // The lane sections are exposed as accessible groups, and each edge names its
+  // lane in its accessible label.
+  const laneGroups = svg.findAll(
+    (n) => n.tag === 'g' && (n.getAttribute('class') || '').includes('graph-lane'),
+  );
+  assert.ok(laneGroups.length >= 4, 'a group per non-empty lane');
+  for (const g of laneGroups) assert.equal(g.getAttribute('role'), 'group');
+  const escEdge = svg.find(
+    (n) => n.tag === 'g' && /can pass a role/.test(n.getAttribute('aria-label') || ''),
+  );
+  assert.ok(escEdge, 'found the PassRole edge');
+  assert.match(escEdge.getAttribute('aria-label'), /PRIVILEGE ESCALATION/);
+
+  // Still no non-whitelisted tags were synthesized building the lanes.
+  for (const created of doc.created) {
+    assert.ok(ALLOWED_TAGS.has(created.tag), `unexpected element tag created: ${created.tag}`);
+  }
+});
+
+test('IAM-401: lane-grouped render is deterministic (same graph -> identical layout)', () => {
+  const result = analyzeFixture('graph/lane-grouped-multi-category.json');
+  const a = computeLayout(result.graph);
+  const b = computeLayout(result.graph);
+  assert.equal(JSON.stringify(a), JSON.stringify(b));
 });
 
 test('EDGE_STYLE_ORDER lists every certainty class exactly once', () => {

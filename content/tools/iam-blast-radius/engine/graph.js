@@ -49,8 +49,16 @@
 // never rendered in this module. Node count is bounded (T5: resource-exhaustion)
 // and the builder never throws.
 //
+// IAM-401: every edge also carries a semantic `lane` (see LANES) so the renderer
+// can group paths into labeled sections (privilege escalation / identity
+// expansion / data access / scope / explicit deny) instead of a flat radial
+// layout. The lane is a pure function of the finding kind + relationship; it is
+// a visual/organizational grouping only and never changes a finding's severity,
+// certainty, or the AWS semantics it asserts.
+//
 // Public API:
 //   NODE_TYPES, EDGE_TYPES, CERTAINTY, GRAPH_LIMITS   -> frozen vocab/limits
+//   LANES, LANE_ORDER                                 -> frozen lane vocab/order
 //   buildGraph(model, findings)     -> { ok, errors[], graph }   (frozen)
 //   buildGraphFromText(text)        -> { ok, errors[], graph }   (full pipeline)
 //
@@ -96,6 +104,40 @@ export const EDGE_TYPES = Object.freeze({
   CAN_WRITE: 'can-write',
   CAN_DESTROY: 'can-destroy',
 });
+
+// Semantic attack-path lanes (IAM-401). Every edge is assigned to exactly one
+// lane so the renderer can group paths into labeled sections instead of a flat
+// radial layout where every node competes. The lane is a VISUAL/ORGANIZATIONAL
+// grouping only - it never changes a finding's severity, certainty, or the AWS
+// semantics a finding asserts. Lane ids/labels are our own fixed vocabulary,
+// never derived from analyzed input.
+//   PRIVILEGE ESCALATION - paths that let the principal gain privileges:
+//     the PassRole -> passable role [unknown privileges] -> service-execution
+//     transition, plus IAM self-administration (policy/credential/trust
+//     manipulation).
+//   IDENTITY EXPANSION   - sts:AssumeRole reaching other roles.
+//   DATA ACCESS          - sensitive-data reads and KMS decryption.
+//   SCOPE                - broad-resource / wildcard-scope grants and direct
+//     resource/telemetry impact that is not itself an escalation path.
+//   EXPLICIT DENY        - same-policy Deny edges (the most decisive fact),
+//     kept in their own lane so a block never sits inside a grant lane.
+export const LANES = Object.freeze({
+  PRIVILEGE_ESCALATION: 'privilege-escalation',
+  IDENTITY_EXPANSION: 'identity-expansion',
+  DATA_ACCESS: 'data-access',
+  SCOPE: 'scope',
+  EXPLICIT_DENY: 'explicit-deny',
+});
+
+// Deterministic lane order (escalation first, denies last). The renderer walks
+// non-empty lanes in this order; empty lanes are omitted (no empty headings).
+export const LANE_ORDER = Object.freeze([
+  LANES.PRIVILEGE_ESCALATION,
+  LANES.IDENTITY_EXPANSION,
+  LANES.DATA_ACCESS,
+  LANES.SCOPE,
+  LANES.EXPLICIT_DENY,
+]);
 
 export const CERTAINTY = Object.freeze({
   // IAM-202 vocabulary. `confirmed-by-policy` replaces the former
@@ -401,6 +443,7 @@ function createBuilder() {
     finding,
     statementIndex,
     label,
+    lane,
   }) {
     const sourceId = fromId || PRINCIPAL_ID;
     const edgeId = `${sourceId}|${type}|${toId}`;
@@ -441,6 +484,11 @@ function createBuilder() {
       to: toId,
       type,
       certainty,
+      // IAM-401: the semantic lane this edge belongs to. A pure function of the
+      // finding kind + relationship, so merges (same from|type|to) always carry
+      // the same lane. Falls back to SCOPE for any unmapped edge so the renderer
+      // always has a valid lane to place it in.
+      lane: typeof lane === 'string' ? lane : LANES.SCOPE,
       label: label || type,
       statementIndex: typeof statementIndex === 'number' ? statementIndex : null,
       evidence: evidence ? [evidence] : [],
@@ -474,6 +522,7 @@ const RULE_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: `allows ${key}`,
+      lane: LANES.SCOPE,
     });
   },
   'WILDCARD-RESOURCE': (f, b, certainty) => {
@@ -488,6 +537,7 @@ const RULE_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: 'broad write scope',
+      lane: LANES.SCOPE,
     });
   },
   'DIRECT-IAM-ADMIN': (f, b, certainty) =>
@@ -502,6 +552,7 @@ const RULE_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: 'allows all-but-listed',
+      lane: LANES.SCOPE,
     });
   },
   'DATA-EXFIL': (f, b, certainty) => {
@@ -514,6 +565,7 @@ const RULE_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: 'reads sensitive data',
+      lane: LANES.DATA_ACCESS,
     });
   },
   'KMS-DECRYPT': (f, b, certainty) => {
@@ -530,6 +582,7 @@ const RULE_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: 'can decrypt ciphertext',
+      lane: LANES.DATA_ACCESS,
     });
   },
   'DESTRUCTIVE-ACTION': (f, b, certainty) => {
@@ -543,6 +596,7 @@ const RULE_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: 'can destroy',
+      lane: LANES.SCOPE,
     });
   },
   'DETECTION-IMPAIRMENT': (f, b, certainty) => {
@@ -555,6 +609,7 @@ const RULE_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: 'can stop/delete telemetry',
+      lane: LANES.SCOPE,
     });
   },
 };
@@ -584,6 +639,7 @@ const ESCALATION_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: 'can rewrite trust policy',
+      lane: LANES.PRIVILEGE_ESCALATION,
     });
   },
   'CREDENTIAL-CREATION': (f, b) => {
@@ -596,6 +652,7 @@ const ESCALATION_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: 'can mint credentials for',
+      lane: LANES.PRIVILEGE_ESCALATION,
     });
   },
   'ASSUME-ROLE-EXPANSION': (f, b) => {
@@ -612,6 +669,7 @@ const ESCALATION_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: 'can assume (broad role scope)',
+      lane: LANES.IDENTITY_EXPANSION,
     });
   },
 };
@@ -628,6 +686,8 @@ function selfIamModify(f, b, label, certainty) {
     finding: f,
     statementIndex: f.statementIndex,
     label,
+    // IAM self-administration is a privilege-escalation primitive.
+    lane: LANES.PRIVILEGE_ESCALATION,
   });
 }
 
@@ -668,6 +728,7 @@ function passRoleEdges(f, b) {
     finding: f,
     statementIndex: f.statementIndex,
     label: `can pass a role to ${svc}`,
+    lane: LANES.PRIVILEGE_ESCALATION,
   });
   // Hop 2 (KNOWN grant, UNKNOWN reach): the service executes as that passed
   // role - a potential privilege-boundary crossing whose blast radius depends on
@@ -683,6 +744,7 @@ function passRoleEdges(f, b) {
     finding: f,
     statementIndex: f.statementIndex,
     label: `executes as the passed role (potential privilege-boundary crossing)`,
+    lane: LANES.PRIVILEGE_ESCALATION,
   });
 }
 
@@ -730,6 +792,7 @@ function addDenyEdges(model, b) {
       finding: pseudo,
       statementIndex: stmt.index,
       label: usesNotAction ? 'denies all-but-listed' : 'denies',
+      lane: LANES.EXPLICIT_DENY,
     });
   }
 }

@@ -1,0 +1,34 @@
+{
+  "name": "A multi-category policy groups its paths into distinct semantic lanes (IAM-401)",
+  "note": "This policy exercises all four primary attack-path lanes at once so the graph must group them instead of laying every node out as a competing radial spoke. iam:PassRole (scoped to lambda) + lambda:CreateFunction is a PRIVILEGE ESCALATION path that must read through the passable-role [unknown privileges] pivot to the lambda service execution. sts:AssumeRole on * is an IDENTITY EXPANSION capability (can-assume role:*). secretsmanager:GetSecretValue on * and kms:Decrypt on * are DATA ACCESS capabilities (can-read sensitive data + a distinct can-decrypt edge). ec2:CreateTags on Resource:* is a standalone broad-resource SCOPE grant (can-write resource:*). Each edge carries its lane; the renderer draws one labeled section per non-empty lane. The findings table remains the authoritative equivalent; the graph is a progressive-enhancement aid.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassToLambda",
+        "Effect": "Allow",
+        "Action": ["iam:PassRole"],
+        "Resource": ["arn:aws:iam::111122223333:role/app-*"],
+        "Condition": { "StringEquals": { "iam:PassedToService": "lambda.amazonaws.com" } }
+      },
+      { "Sid": "CreateFn", "Effect": "Allow", "Action": ["lambda:CreateFunction"], "Resource": "*" },
+      { "Sid": "AssumeAny", "Effect": "Allow", "Action": ["sts:AssumeRole"], "Resource": "*" },
+      { "Sid": "ReadSecrets", "Effect": "Allow", "Action": ["secretsmanager:GetSecretValue"], "Resource": "*" },
+      { "Sid": "DecryptAny", "Effect": "Allow", "Action": ["kms:Decrypt"], "Resource": "*" },
+      { "Sid": "TagAll", "Effect": "Allow", "Action": ["ec2:CreateTags"], "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-LAMBDA", "ASSUME-ROLE-EXPANSION", "DATA-EXFIL", "KMS-DECRYPT", "WILDCARD-RESOURCE"],
+    "graphEdges": [
+      { "from": "principal", "to": "role:passable:lambda", "type": "can-pass", "certainty": "policy-supported", "lane": "privilege-escalation" },
+      { "from": "role:passable:lambda", "to": "service:lambda", "type": "can-execute-as", "certainty": "policy-supported", "lane": "privilege-escalation" },
+      { "from": "principal", "to": "role:*", "type": "can-assume", "certainty": "potentially-reachable", "lane": "identity-expansion" },
+      { "from": "principal", "to": "datastore:sensitive-data", "type": "can-read", "certainty": "confirmed-by-policy", "lane": "data-access" },
+      { "from": "principal", "to": "datastore:kms-decrypt", "type": "can-decrypt", "certainty": "confirmed-by-policy", "lane": "data-access" },
+      { "from": "principal", "to": "resource:*", "type": "can-write", "certainty": "confirmed-by-policy", "lane": "scope" }
+    ],
+    "graphLanes": ["privilege-escalation", "identity-expansion", "data-access", "scope"]
+  }
+}
