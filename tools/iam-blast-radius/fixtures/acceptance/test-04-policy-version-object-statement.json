@@ -1,0 +1,44 @@
+{
+  "name": "Acceptance test 4 - managed-policy version escalation (object Statement)",
+  "note": "IAM-701 action-array: a single statement contributes MULTIPLE actions (iam:CreatePolicyVersion + iam:SetDefaultPolicyVersion). Contributed actions ride as an ARRAY in evidence + graph-edge evidence, never a comma-joined string. Also verifies an object-valued Statement normalizes identically to a one-element array.",
+  "phase": 7,
+  "story": "IAM-701",
+  "acceptanceTest": 4,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": {
+      "Sid": "ControlPolicyVersions",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreatePolicyVersion",
+        "iam:SetDefaultPolicyVersion"
+      ],
+      "Resource": "arn:aws:iam::123456789012:policy/application/*"
+    }
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["POLICY-VERSION"],
+    "notFindingIds": ["DIRECT-IAM-ADMIN"]
+  },
+  "dedupExpect": {
+    "primaryId": "POLICY-VERSION",
+    "primaryCount": 1,
+    "requireCatalogVersion": true,
+    "subsumesIds": ["DIRECT-IAM-ADMIN"],
+    "notTopLevelIds": ["DIRECT-IAM-ADMIN"],
+    "riskFactors": [{ "key": "direct-iam-admin", "present": true }]
+  },
+  "provenanceExpect": {
+    "focusFindingId": "POLICY-VERSION",
+    "crossStatement": false,
+    "contributingStatements": [
+      {
+        "statementIndex": 0,
+        "statementSid": "ControlPolicyVersions",
+        "actions": ["iam:CreatePolicyVersion", "iam:SetDefaultPolicyVersion"]
+      }
+    ]
+  }
+}

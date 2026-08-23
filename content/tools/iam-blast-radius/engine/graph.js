@@ -244,6 +244,66 @@ function firstResource(finding) {
   return '(unspecified)';
 }
 
+// --- Per-action capability typing (IAM-702) ----------------------------------
+// A broad-resource (WILDCARD-RESOURCE) grant is NOT a single "can-write" reach:
+// its statement can mix reads, decrypts, delegation, destroys, and genuine
+// mutation. Typing every such action under one `can-write` edge aggregates
+// unlike capabilities (acceptance suite tests 8, 24, 1) and reuses one edge
+// semantic for many - a violation of cross-test invariant 7 ("no semantic edge
+// reuse"). classifyCapability() maps one action pattern to the ONE capability it
+// represents so the graph can draw a distinctly-typed edge per capability.
+//
+// These verb tests mirror rules.js's classifiers (kept local so graph.js has no
+// new import surface). The over-approximation direction matches rules.js: an
+// action that is not a recognized read/destroy/decrypt/delegation is treated as
+// a mutating write (the safe direction - never under-state).
+const READ_VERB = /^(get|list|describe|view|lookup|search|head|read|batchget)/i;
+const DESTRUCTIVE_VERB = /^(delete|terminate|remove|destroy|purge|deregister)/i;
+
+// The verb portion of an action (what follows the first ':'); '' for a bare "*".
+function verbOf(pattern) {
+  const p = String(pattern);
+  const idx = p.indexOf(':');
+  return idx === -1 ? '' : p.slice(idx + 1);
+}
+
+// Classify ONE action pattern into its single capability kind. Case-insensitive
+// (IAM action matching is), so "IAM:passrole" classifies as delegation just like
+// "iam:PassRole".
+//   'delegation' - iam:PassRole (pass a role to a service; a delegation, never a
+//                  plain resource write). Alone this is NOT an execution path.
+//   'decrypt'    - kms:Decrypt (turns ciphertext to plaintext; its own edge type,
+//                  distinct from a data read - IAM-202).
+//   'destroy'    - delete/terminate/remove/destroy/purge/deregister families.
+//   'read'       - get/list/describe/... enumeration/read verbs.
+//   'write'      - everything else (incl. "*", "service:*", create/update/put):
+//                  a genuine broad mutation, the safe over-approximation.
+function classifyCapability(pattern) {
+  const lower = String(pattern).toLowerCase();
+  if (lower === 'iam:passrole') return 'delegation';
+  if (lower === 'kms:decrypt') return 'decrypt';
+  const verb = verbOf(pattern);
+  if (DESTRUCTIVE_VERB.test(verb)) return 'destroy';
+  if (READ_VERB.test(verb)) return 'read';
+  return 'write';
+}
+
+// A finding-shaped evidence carrier for ONE typed edge, carrying only the subset
+// of actions that belong to that edge's capability (never the whole aggregate) so
+// the edge's evidence attributes exactly its own actions to the statement
+// (provenance invariant, IAM-701/702). Reuses the granting finding's statement
+// Sid/index, resources, and condition verbatim.
+function findingWithActions(f, actions) {
+  return {
+    id: f.id,
+    statementSid: f.statementSid,
+    statementIndex: f.statementIndex,
+    actions: actions.slice(),
+    resources: f.resources,
+    conditions: f.conditions,
+  };
+}
+
 // Map a finding's policyEvidence (IAM-104: the strength of the POLICY-TEXT
 // evidence for the grant, formerly the single `confidence` field) to a BASE edge
 // certainty class. Edge certainty is about whether THIS policy grants the edge,
@@ -525,23 +585,19 @@ const RULE_MAP = {
       lane: LANES.SCOPE,
     });
   },
-  'WILDCARD-RESOURCE': (f, b, certainty) => {
-    const key = firstResource(f);
-    b.addEdge({
-      toId: `resource:${key}`,
-      toType: NODE_TYPES.RESOURCE,
-      toLabel: `Resource: ${key}`,
-      // A broad non-read grant across resources = write reach over them.
-      type: EDGE_TYPES.CAN_WRITE,
-      certainty,
-      finding: f,
-      statementIndex: f.statementIndex,
-      label: 'broad write scope',
-      lane: LANES.SCOPE,
-    });
+  'WILDCARD-RESOURCE': (f, b, certainty, model) => wildcardResourceEdges(f, b, certainty, model),
+  'DIRECT-IAM-ADMIN': (f, b, certainty) => {
+    // IAM-705 (acceptance test 5): credential creation (iam:CreateAccessKey /
+    // iam:Create*LoginProfile / iam:Update*LoginProfile) is an impersonation
+    // primitive, NOT a self-policy modification - it mints credentials for a
+    // principal, it does not rewrite a policy. A DIRECT-IAM-ADMIN finding whose
+    // ONLY actions are credential creation therefore must not draw the
+    // can-modify(policy:self) edge; the CREDENTIAL-CREATION escalation already
+    // draws the credential-target impersonation edge. A wildcard (iam:* / *) or any
+    // genuine policy-editing action keeps the self-modify edge.
+    if (isCredentialOnlyAdmin(f)) return;
+    selfIamModify(f, b, 'direct IAM administration', certainty);
   },
-  'DIRECT-IAM-ADMIN': (f, b, certainty) =>
-    selfIamModify(f, b, 'direct IAM administration', certainty),
   'NOTACTION-ALLOW': (f, b, certainty) => {
     b.addEdge({
       toId: 'actiongroup:not-action',
@@ -674,6 +730,25 @@ const ESCALATION_MAP = {
   },
 };
 
+// IAM credential-creation actions (impersonation primitives). A DIRECT-IAM-ADMIN
+// finding whose actions are EXACTLY (case-insensitively) these - and nothing that
+// edits a policy - represents credential minting, not self-policy modification, so
+// it must not draw the can-modify(policy:self) edge (IAM-705, acceptance test 5).
+// Concrete tokens only: a wildcard like "iam:*" is not in this set (it also grants
+// policy-editing actions), so a wildcard admin grant keeps the self-modify edge.
+const CREDENTIAL_ONLY_ADMIN_ACTIONS = new Set([
+  'iam:createaccesskey',
+  'iam:createloginprofile',
+  'iam:updateloginprofile',
+]);
+function isCredentialOnlyAdmin(f) {
+  const actions = Array.isArray(f.actions) ? f.actions : [];
+  return (
+    actions.length > 0 &&
+    actions.every((a) => CREDENTIAL_ONLY_ADMIN_ACTIONS.has(String(a).toLowerCase()))
+  );
+}
+
 // IAM self-administration primitives (direct-admin rule + policy escalations) all
 // point at a single Policy node: the principal can rewrite its own permissions.
 function selfIamModify(f, b, label, certainty) {
@@ -689,6 +764,127 @@ function selfIamModify(f, b, label, certainty) {
     // IAM self-administration is a privilege-escalation primitive.
     lane: LANES.PRIVILEGE_ESCALATION,
   });
+}
+
+// WILDCARD-RESOURCE broad-scope grant -> per-capability typed edges (IAM-702).
+// The finding covers a statement whose actions have a broad resource scope
+// (Resource "*" or a NotResource fence). Rather than aggregate every action into
+// one generic `can-write` edge (which merges unlike capabilities - reads,
+// decrypts, delegation, destroys - into one meaningless edge), split the actions
+// by capability and draw ONE distinctly-typed edge per capability kind:
+//   read       -> can-read     (to the broad resource node)
+//   destroy    -> can-destroy  (to the broad resource node; merges with any
+//                               DESTRUCTIVE-ACTION edge on the same resource so a
+//                               destroy is can-destroy, NOT also can-write)
+//   decrypt    -> can-decrypt  (to the shared kms-decrypt datastore; merges with
+//                               any KMS-DECRYPT edge - decryption is not a write)
+//   delegation -> can-pass     (iam:PassRole to a passable-role pivot; a
+//                               delegation edge only. It does NOT create an
+//                               execution path - no compatible service-execution
+//                               primitive is asserted here, so no can-execute-as.
+//                               A later dedup drops this generic pivot when a
+//                               compound PassRole path already draws a specific
+//                               per-service pivot for the same grant.)
+//   write      -> can-write    (genuine broad mutation: create/update/put/"*"/etc)
+// Each edge's evidence carries ONLY its own capability's actions, so no action is
+// attributed to an edge it does not belong to (provenance, IAM-701/702).
+//
+// An Allow+NotAction statement is a complement grant ("everything except a listed
+// few"); its finding `actions` are the EXCLUDED set, not a concrete granted list,
+// so per-action capability typing would be meaningless. For that shape we keep
+// the single broad-scope `can-write` edge (unchanged legacy behavior; complement
+// semantics are handled elsewhere) rather than typing the exclusion list.
+function wildcardResourceEdges(f, b, certainty, model) {
+  const key = firstResource(f);
+  const stmt = findStatement(model, f.statementIndex);
+  const isNotAction = !!(stmt && Array.isArray(stmt.notActions) && stmt.notActions.length > 0);
+  if (isNotAction) {
+    b.addEdge({
+      toId: `resource:${key}`,
+      toType: NODE_TYPES.RESOURCE,
+      toLabel: `Resource: ${key}`,
+      type: EDGE_TYPES.CAN_WRITE,
+      certainty,
+      finding: f,
+      statementIndex: f.statementIndex,
+      label: 'broad write scope (all-but-listed)',
+      lane: LANES.SCOPE,
+    });
+    return;
+  }
+
+  // Group the granted actions by capability, preserving order + determinism.
+  const groups = { read: [], destroy: [], decrypt: [], delegation: [], write: [] };
+  for (const a of Array.isArray(f.actions) ? f.actions : []) {
+    groups[classifyCapability(a)].push(a);
+  }
+
+  if (groups.read.length > 0) {
+    b.addEdge({
+      toId: `resource:${key}`,
+      toType: NODE_TYPES.RESOURCE,
+      toLabel: `Resource: ${key}`,
+      type: EDGE_TYPES.CAN_READ,
+      certainty,
+      finding: findingWithActions(f, groups.read),
+      statementIndex: f.statementIndex,
+      label: 'broad read scope',
+      lane: LANES.SCOPE,
+    });
+  }
+  if (groups.destroy.length > 0) {
+    b.addEdge({
+      toId: `resource:${key}`,
+      toType: NODE_TYPES.RESOURCE,
+      toLabel: `Resource: ${key}`,
+      type: EDGE_TYPES.CAN_DESTROY,
+      certainty,
+      finding: findingWithActions(f, groups.destroy),
+      statementIndex: f.statementIndex,
+      label: 'can destroy',
+      lane: LANES.SCOPE,
+    });
+  }
+  if (groups.decrypt.length > 0) {
+    b.addEdge({
+      toId: 'datastore:kms-decrypt',
+      toType: NODE_TYPES.DATA_STORE,
+      toLabel: 'KMS-decryptable ciphertext',
+      type: EDGE_TYPES.CAN_DECRYPT,
+      certainty,
+      finding: findingWithActions(f, groups.decrypt),
+      statementIndex: f.statementIndex,
+      label: 'can decrypt ciphertext',
+      lane: LANES.DATA_ACCESS,
+    });
+  }
+  if (groups.delegation.length > 0) {
+    b.addEdge({
+      toId: 'role:passable',
+      toType: NODE_TYPES.ROLE,
+      toLabel: 'Passable role [unknown privileges]',
+      toExtra: { unknownPrivileges: true },
+      type: EDGE_TYPES.CAN_PASS,
+      certainty,
+      finding: findingWithActions(f, groups.delegation),
+      statementIndex: f.statementIndex,
+      label: 'can pass a role (delegation)',
+      lane: LANES.PRIVILEGE_ESCALATION,
+    });
+  }
+  if (groups.write.length > 0) {
+    b.addEdge({
+      toId: `resource:${key}`,
+      toType: NODE_TYPES.RESOURCE,
+      toLabel: `Resource: ${key}`,
+      type: EDGE_TYPES.CAN_WRITE,
+      certainty,
+      finding: findingWithActions(f, groups.write),
+      statementIndex: f.statementIndex,
+      label: 'broad write scope',
+      lane: LANES.SCOPE,
+    });
+  }
 }
 
 // PassRole escalations encode the PRIVILEGE TRANSITION, not just the service
@@ -717,6 +913,19 @@ function passRoleEdges(f, b) {
   const certainty = passRoleCertainty(f.policyEvidence);
   const roleId = `role:passable:${svc}`;
   const svcId = `service:${svc}`;
+  // IAM-701: attach PER-STATEMENT evidence to each transition edge. A compound
+  // PassRole path is distributed across statements (the PassRole grant in one,
+  // the service-execution action in another); the finding's evidence[] already
+  // holds the correct per-statement records (role 'pass' / 'execute'). The
+  // edges MUST carry those same records, not the finding's combined action list
+  // re-attributed to the anchor statement - otherwise the can-execute-as edge
+  // would claim the exec action came from the PassRole statement (the provenance
+  // defect this story fixes). Each edge therefore takes only the actions +
+  // statement of its own leg.
+  const passEv = Array.isArray(f.evidence) ? f.evidence.find((e) => e && e.role === 'pass') : null;
+  const execEv = Array.isArray(f.evidence) ? f.evidence.find((e) => e && e.role === 'execute') : null;
+  const passFinding = edgeEvidenceCarrier(f, passEv);
+  const execFinding = edgeEvidenceCarrier(f, execEv);
   // Hop 1 (KNOWN): the principal can pass a role to the service.
   b.addEdge({
     toId: roleId,
@@ -725,8 +934,8 @@ function passRoleEdges(f, b) {
     toExtra: { unknownPrivileges: true },
     type: EDGE_TYPES.CAN_PASS,
     certainty,
-    finding: f,
-    statementIndex: f.statementIndex,
+    finding: passFinding,
+    statementIndex: passEv ? passEv.statementIndex : f.statementIndex,
     label: `can pass a role to ${svc}`,
     lane: LANES.PRIVILEGE_ESCALATION,
   });
@@ -741,11 +950,30 @@ function passRoleEdges(f, b) {
     toExtra: { boundaryCrossing: true },
     type: EDGE_TYPES.CAN_EXECUTE_AS,
     certainty,
-    finding: f,
-    statementIndex: f.statementIndex,
+    finding: execFinding,
+    statementIndex: execEv ? execEv.statementIndex : f.statementIndex,
     label: `executes as the passed role (potential privilege-boundary crossing)`,
     lane: LANES.PRIVILEGE_ESCALATION,
   });
+}
+
+// IAM-701: build a finding-shaped evidence carrier for ONE transition edge from a
+// single per-statement escalation evidence record. evidenceFromFinding() reads
+// {id, statementSid, statementIndex, actions, resources, conditions}; the
+// escalation evidence record stores its condition under `condition` (singular),
+// so it is remapped to `conditions` here. Falls back to the whole finding when a
+// leg's evidence record is somehow absent (defensive; escalation.js always emits
+// both a 'pass' and an 'execute' record for a compound path).
+function edgeEvidenceCarrier(finding, ev) {
+  if (!ev) return finding;
+  return {
+    id: finding.id,
+    statementSid: typeof ev.statementSid === 'string' ? ev.statementSid : finding.statementSid,
+    statementIndex: typeof ev.statementIndex === 'number' ? ev.statementIndex : finding.statementIndex,
+    actions: Array.isArray(ev.actions) ? ev.actions.slice() : [],
+    resources: Array.isArray(ev.resources) ? ev.resources.slice() : [],
+    conditions: ev.condition === undefined ? null : ev.condition,
+  };
 }
 
 // --- Model Deny statements -> `denies` edges (blocked-by-deny) ----------------
@@ -797,6 +1025,36 @@ function addDenyEdges(model, b) {
   }
 }
 
+// Drop the generic `role:passable` delegation edge (from a standalone broad
+// iam:PassRole) when a specific per-service passable-role pivot
+// (`role:passable:<svc>`, drawn by a compound PassRole escalation) already
+// represents the same delegation. Operates on the builder's node/edge Maps
+// BEFORE ordering/freezing. Removes the now-orphan generic node too. Pure,
+// deterministic, never throws.
+function dropRedundantGenericDelegation(nodes, edges) {
+  const GENERIC = 'role:passable';
+  const genericEdgeId = `${PRINCIPAL_ID}|${EDGE_TYPES.CAN_PASS}|${GENERIC}`;
+  if (!edges.has(genericEdgeId)) return;
+  let hasSpecific = false;
+  for (const e of edges.values()) {
+    if (e.type === EDGE_TYPES.CAN_PASS && e.to.startsWith(`${GENERIC}:`)) {
+      hasSpecific = true;
+      break;
+    }
+  }
+  if (!hasSpecific) return;
+  edges.delete(genericEdgeId);
+  // Remove the orphan node only if no surviving edge still references it.
+  let referenced = false;
+  for (const e of edges.values()) {
+    if (e.from === GENERIC || e.to === GENERIC) {
+      referenced = true;
+      break;
+    }
+  }
+  if (!referenced) nodes.delete(GENERIC);
+}
+
 // --- Public entry points -----------------------------------------------------
 
 /**
@@ -829,7 +1087,17 @@ export function buildGraph(model, findings) {
       if (!f || typeof f !== 'object' || typeof f.id !== 'string') continue;
       const ruleMap = RULE_MAP[f.id];
       if (ruleMap) {
-        ruleMap(f, b, ruleCertainty(f, denies, model));
+        const certainty = ruleCertainty(f, denies, model);
+        // DENY LEAK FIX (IAM-702): a rule grant whose actions a same-policy
+        // explicit Deny FULLY overrides is a suppressed grant. It must NOT emit a
+        // positive capability edge (can-write/can-destroy/can-read/... or an
+        // `allows` edge) or count toward risk - "denies are not grants"
+        // (acceptance suite test 8, cross-test invariant 5). The Deny is still
+        // shown on its own `denies` edge (addDenyEdges below); the informational
+        // block lives there, not on a phantom positive edge. Partially-narrowed
+        // grants (certainty downgraded, not blocked) still draw their edge.
+        if (certainty === CERTAINTY.BLOCKED_BY_DENY) continue;
+        ruleMap(f, b, certainty, model);
         continue;
       }
       const escMap = ESCALATION_MAP[f.id];
@@ -840,6 +1108,14 @@ export function buildGraph(model, findings) {
     addDenyEdges(model, b);
 
     const { nodes, edges, truncated } = b.result();
+
+    // IAM-702: a standalone iam:PassRole (broad resource, no compatible service
+    // execution primitive) draws a generic delegation edge to `role:passable`.
+    // When a compound PassRole path ALSO exists it draws a specific per-service
+    // pivot (role:passable:<svc>) for the same delegation, so the generic pivot
+    // is redundant - drop it (and its now-orphan node) so delegation is shown
+    // once, by the more precise edge. Never removes the LAST delegation edge.
+    dropRedundantGenericDelegation(nodes, edges);
 
     // Deterministic ordering.
     const nodeArr = [...nodes.values()].sort(compareNodes);

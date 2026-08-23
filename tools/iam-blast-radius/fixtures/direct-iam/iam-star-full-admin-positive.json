@@ -1,6 +1,6 @@
 {
-  "name": "iam:* on Resource * (positive, multi-finding)",
-  "note": "iam:* is a service wildcard (WILDCARD-ACTION, high), a direct-IAM-admin grant (DIRECT-IAM-ADMIN, high per the IAM-102 severity model), and non-read on Resource \"*\" (WILDCARD-RESOURCE). The rule catalog produces all three (exactFindingIds is the pre-correlation rule set). IAM-201 then folds the same-statement WILDCARD-RESOURCE INTO the more-specific DIRECT-IAM-ADMIN finding as a risk factor - the broad-resource grant just says the IAM administration applies to every resource. WILDCARD-ACTION grants strictly more than any one capability (every action in the service), so it stays an independent top-level row and is NOT subsumed. Because the only broad-resource grant is subsumed, the Standalone broad-resource findings count is 0.",
+  "name": "iam:* on Resource * (positive, de-flooded to one primary)",
+  "note": "iam:* is a service wildcard (WILDCARD-ACTION, high), a direct-IAM-admin grant (DIRECT-IAM-ADMIN, high per the IAM-102 severity model), non-read on Resource \"*\" (WILDCARD-RESOURCE), AND - because iam:* covers every IAM action - it also expands into every specific IAM escalation primitive (ATTACH-POLICY, PUT-INLINE-POLICY, POLICY-VERSION, TRUST-POLICY-MODIFY, CREDENTIAL-CREATION). exactFindingIds is the pre-correlation RULE set (rules.js only). IAM-705 de-floods the acceptance-suite test-12 iam:* case: rather than 7 near-duplicate top-level rows, the whole iam:* grant is presented as ONE primary broad-IAM-administration finding (DIRECT-IAM-ADMIN) with the specific primitives + the iam:* WILDCARD-ACTION folded in as subsumed techniques / risk factors, and the same-statement WILDCARD-RESOURCE folded in as the resource-scope factor (IAM-201). Severity stays high, consistent with the single documented IAM-102 scoring model (critical is reserved for compound privilege-boundary-crossing paths; a broad IAM-admin surface is not one). The rule-catalog version is surfaced on the result (catalogVersion). Because everything is folded into the one primary, all four highlighted summary families are 0 - the primary row itself carries the escalation surface.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -10,21 +10,31 @@
   "expect": {
     "valid": true,
     "exactFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DIRECT-IAM-ADMIN"],
-    "findingIds": ["WILDCARD-ACTION", "DIRECT-IAM-ADMIN"],
-    "notFindingIds": [],
+    "findingIds": ["DIRECT-IAM-ADMIN"],
+    "notFindingIds": ["ATTACH-POLICY", "PUT-INLINE-POLICY", "POLICY-VERSION", "TRUST-POLICY-MODIFY", "CREDENTIAL-CREATION"],
     "compound": {
       "primaryId": "DIRECT-IAM-ADMIN",
-      "subsumes": [{ "id": "WILDCARD-RESOURCE", "statementIndex": 0 }],
-      "independentFindings": [{ "id": "WILDCARD-ACTION", "statementIndex": 0 }],
-      "note": "IAM-201: WILDCARD-RESOURCE on statement 0 is the resource scope of the co-located DIRECT-IAM-ADMIN capability and is folded in as a risk factor. WILDCARD-ACTION (iam:*) is strictly broader than the IAM-admin subset and must remain an independent top-level row.",
+      "subsumes": [
+        { "id": "WILDCARD-RESOURCE", "statementIndex": 0 },
+        { "id": "WILDCARD-ACTION", "statementIndex": 0 },
+        { "id": "ATTACH-POLICY", "statementIndex": 0 },
+        { "id": "PUT-INLINE-POLICY", "statementIndex": 0 },
+        { "id": "POLICY-VERSION", "statementIndex": 0 },
+        { "id": "TRUST-POLICY-MODIFY", "statementIndex": 0 },
+        { "id": "CREDENTIAL-CREATION", "statementIndex": 0 }
+      ],
+      "independentFindings": [],
+      "note": "IAM-705 test 12: iam:* is one broad IAM-administration surface. The specific IAM primitives it expands into, the iam:* WILDCARD-ACTION, and the same-statement WILDCARD-RESOURCE all fold into the single DIRECT-IAM-ADMIN primary (subsumed[] + risk-factor checklist) instead of flooding the table with redundant rows. Nothing is lost.",
       "riskFactors": [
         { "key": "iam:*", "present": true },
-        { "key": "resource-wildcard", "present": true }
+        { "key": "resource-wildcard", "present": true },
+        { "key": "technique:CREDENTIAL-CREATION", "present": true },
+        { "key": "technique:POLICY-VERSION", "present": true }
       ]
     },
     "summary": {
-      "counts": { "privEscPaths": 5, "roleAssumption": 0, "sensitiveData": 0, "broadResource": 0 },
-      "highestRisk": { "id": "ATTACH-POLICY", "severity": "high", "path": "Principal -> iam:Attach*Policy -> attacker-chosen managed policy" }
+      "counts": { "privEscPaths": 0, "roleAssumption": 0, "sensitiveData": 0, "broadResource": 0 },
+      "highestRisk": null
     }
   }
 }

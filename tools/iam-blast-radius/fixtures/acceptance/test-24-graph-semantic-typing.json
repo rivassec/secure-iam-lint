@@ -1,0 +1,36 @@
+{
+  "name": "Acceptance test 24 - graph semantic typing (no generic can-write aggregation)",
+  "note": "IAM-702 edge typing: one statement mixes a read (ec2:DescribeInstances), a decrypt (kms:Decrypt), a delegation (iam:PassRole), and a destroy (s3:DeleteObject) on Resource:*. Each maps to its OWN capability edge - can-read, can-decrypt, can-pass (delegation), can-destroy - never one aggregate can-write. Each edge retains only the action relevant to it (cross-test invariant 7, 'no semantic edge reuse'). iam:PassRole alone draws a delegation edge only: with no compatible service-execution primitive it must NOT create an execution path (no can-execute-as).",
+  "phase": 7,
+  "story": "IAM-702",
+  "acceptanceTest": 24,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "MixedCapabilities",
+        "Effect": "Allow",
+        "Action": ["ec2:DescribeInstances", "kms:Decrypt", "iam:PassRole", "s3:DeleteObject"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["DESTRUCTIVE-ACTION", "KMS-DECRYPT", "WILDCARD-RESOURCE"]
+  },
+  "edgeTypingExpect": {
+    "noExecutionPath": true,
+    "noSemanticReuse": true,
+    "expectEdges": [
+      { "from": "principal", "to": "resource:*", "type": "can-read", "actions": ["ec2:DescribeInstances"] },
+      { "from": "principal", "to": "datastore:kms-decrypt", "type": "can-decrypt", "actions": ["kms:Decrypt"] },
+      { "from": "principal", "to": "role:passable", "type": "can-pass", "actions": ["iam:PassRole"] },
+      { "from": "principal", "to": "resource:*", "type": "can-destroy", "actions": ["s3:DeleteObject"] }
+    ],
+    "forbidEdges": [
+      { "from": "principal", "to": "resource:*", "type": "can-write" }
+    ]
+  }
+}

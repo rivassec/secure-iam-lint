@@ -178,6 +178,7 @@ test('every rule family has at least one positive and one negative fixture', () 
     'DIRECT-IAM-ADMIN': ['direct-iam'],
     'DATA-EXFIL': ['exfil'],
     'KMS-DECRYPT': ['exfil'],
+    'DATA-READ': ['exfil'],
     'DESTRUCTIVE-ACTION': ['destructive'],
     'DETECTION-IMPAIRMENT': ['detection'],
     'NOTACTION-ALLOW': ['notaction-allow'],

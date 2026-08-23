@@ -1,0 +1,45 @@
+{
+  "name": "Acceptance test 23 - duplicate and subsumed findings (originally passing; protect against regression)",
+  "note": "IAM-707 fixturization of an originally-PASSING dedup case. iam:PassRole + lambda:CreateFunction + lambda:InvokeFunction on Resource:* collapses to ONE primary PASSROLE-LAMBDA path (not four repetitive rows). The wildcard PassRole/Lambda scope stays visible as a risk-factor checklist and the WILDCARD-RESOURCE finding is folded into subsumed[] (nothing lost). Risk-summary metrics distinguish primary findings from underlying broad grants, and counts agree across JSON / Markdown / UI.",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": 23,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "EverythingNeededForLambdaEscalation",
+        "Effect": "Allow",
+        "Action": ["iam:PassRole", "lambda:CreateFunction", "lambda:InvokeFunction"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-LAMBDA"],
+    "notFindingIds": ["WILDCARD-RESOURCE"]
+  },
+  "dedupExpect": {
+    "primaryId": "PASSROLE-LAMBDA",
+    "primaryCount": 1,
+    "expectSeverity": "critical",
+    "requireCatalogVersion": true,
+    "subsumesIds": ["WILDCARD-RESOURCE"],
+    "notTopLevelIds": ["WILDCARD-RESOURCE"],
+    "riskFactors": [
+      { "key": "pass-role", "present": true },
+      { "key": "lambda:CreateFunction", "present": true },
+      { "key": "pass-role-resource-wildcard", "present": true },
+      { "key": "exec-resource-wildcard", "present": true },
+      { "key": "passed-to-service-restriction", "present": false }
+    ]
+  },
+  "severityExpect": {
+    "findingId": "PASSROLE-LAMBDA",
+    "severityOneOf": ["critical"],
+    "policyEvidence": "high",
+    "pathExploitabilityOneOf": ["medium", "low"]
+  }
+}

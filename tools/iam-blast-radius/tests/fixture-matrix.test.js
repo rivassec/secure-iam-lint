@@ -76,6 +76,13 @@ const APPLICABILITY = Object.freeze({
   'DIRECT-IAM-ADMIN': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
   'DATA-EXFIL': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   'KMS-DECRYPT': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
+  // IAM-706: resource/variable-scoped data-read capability. notAction is excluded
+  // (an Allow-NotAction inverts the whole action space and does not express a
+  // specific named/variable-scoped S3 read); notResource is excluded (this rule
+  // requires an explicit, named/variable Resource - a NotResource complement is
+  // the DATA-EXFIL/WILDCARD-RESOURCE shape, not a scoped read whose NAME infers
+  // sensitivity).
+  'DATA-READ': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
   'DESTRUCTIVE-ACTION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   'DETECTION-IMPAIRMENT': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   'NOTACTION-ALLOW': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],

@@ -1,0 +1,21 @@
+{
+  "name": "Resource-scoped inferred-sensitive S3 read (positive)",
+  "note": "IAM-706 (acceptance test 7 shape): s3:ListBucket/s3:GetObject on a NAMED bucket whose name infers sensitivity (production-exports). DATA-EXFIL fires only on a BROAD resource, so this scoped read is covered by DATA-READ - a lower-certainty, neutrally-framed data-read capability with sensitivity INFERRED from naming (not proven). Must NOT fire DATA-EXFIL (not broad) or WILDCARD-RESOURCE (read verbs, named resource).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadProductionExports",
+        "Effect": "Allow",
+        "Action": ["s3:ListBucket", "s3:GetObject"],
+        "Resource": ["arn:aws:s3:::production-exports", "arn:aws:s3:::production-exports/*"]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["DATA-READ"],
+    "findingIds": ["DATA-READ"],
+    "notFindingIds": ["DATA-EXFIL", "WILDCARD-RESOURCE", "WILDCARD-ACTION"]
+  }
+}

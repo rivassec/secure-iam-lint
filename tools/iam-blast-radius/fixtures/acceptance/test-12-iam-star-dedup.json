@@ -1,0 +1,43 @@
+{
+  "name": "Acceptance test 12 - wildcard action expansion (iam:* de-flood)",
+  "note": "IAM-705: iam:* covers every IAM action, so the rule + escalation engines expand it into WILDCARD-ACTION, WILDCARD-RESOURCE, DIRECT-IAM-ADMIN, and every specific IAM escalation primitive (ATTACH-POLICY, PUT-INLINE-POLICY, POLICY-VERSION, TRUST-POLICY-MODIFY, CREDENTIAL-CREATION) - 7 near-duplicate rows. The analyzer must present ONE primary broad-IAM-administration finding (DIRECT-IAM-ADMIN) with the specific primitives + the iam:* WILDCARD-ACTION folded in as subsumed techniques / risk factors (reusing the test-23 subsumption mechanism), not a flood of redundant rows. Severity stays high per the single documented IAM-102 scoring model (critical is reserved for compound privilege-boundary-crossing paths). The rule-catalog version must be surfaced on the result.",
+  "phase": 7,
+  "story": "IAM-705",
+  "acceptanceTest": 12,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "BroadIAMAdministration",
+        "Effect": "Allow",
+        "Action": "iam:*",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["DIRECT-IAM-ADMIN"],
+    "notFindingIds": ["ATTACH-POLICY", "PUT-INLINE-POLICY", "POLICY-VERSION", "TRUST-POLICY-MODIFY", "CREDENTIAL-CREATION"]
+  },
+  "dedupExpect": {
+    "primaryId": "DIRECT-IAM-ADMIN",
+    "primaryCount": 1,
+    "expectSeverity": "high",
+    "requireCatalogVersion": true,
+    "subsumesIds": [
+      "WILDCARD-ACTION", "WILDCARD-RESOURCE", "ATTACH-POLICY", "PUT-INLINE-POLICY",
+      "POLICY-VERSION", "TRUST-POLICY-MODIFY", "CREDENTIAL-CREATION"
+    ],
+    "notTopLevelIds": [
+      "WILDCARD-ACTION", "WILDCARD-RESOURCE", "ATTACH-POLICY", "PUT-INLINE-POLICY",
+      "POLICY-VERSION", "TRUST-POLICY-MODIFY", "CREDENTIAL-CREATION"
+    ],
+    "riskFactors": [
+      { "key": "technique:ATTACH-POLICY", "present": true },
+      { "key": "technique:CREDENTIAL-CREATION", "present": true },
+      { "key": "technique:POLICY-VERSION", "present": true }
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "Acceptance test 9 - partial Deny narrows but does not eliminate destruction",
+  "note": "IAM-707 fixturization. A broad s3:DeleteObject Allow on arn:aws:s3:::*/* with a narrow Deny on audit-archive/*. An over-broad deny must NOT suppress the residual dangerous scope: DESTRUCTIVE-ACTION stays HIGH over the broad remaining scope. The narrow deny is RECORDED as a `denies` graph edge (audit-archive excluded) but does not neutralize deletion across other buckets.",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": 9,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DeleteAllObjects",
+        "Effect": "Allow",
+        "Action": "s3:DeleteObject",
+        "Resource": "arn:aws:s3:::*/*"
+      },
+      {
+        "Sid": "ProtectAuditArchive",
+        "Effect": "Deny",
+        "Action": "s3:DeleteObject",
+        "Resource": "arn:aws:s3:::audit-archive/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["DESTRUCTIVE-ACTION"],
+    "notFindingIds": []
+  },
+  "severityExpect": {
+    "findingId": "DESTRUCTIVE-ACTION",
+    "severityOneOf": ["high"],
+    "resourcesInclude": ["arn:aws:s3:::*/*"]
+  },
+  "graphExpect": {
+    "include": [{ "type": "can-destroy" }, { "type": "denies" }]
+  }
+}

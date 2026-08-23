@@ -1,6 +1,6 @@
 {
-  "name": "Direct IAM administration (positive)",
-  "note": "iam:PutUserPolicy + iam:AttachRolePolicy + iam:CreatePolicyVersion on a scoped IAM resource. Isolates DIRECT-IAM-ADMIN: resource is not \"*\" so no WILDCARD-RESOURCE, and these are non-destructive writes.",
+  "name": "Direct IAM administration (positive, generic folded into specifics)",
+  "note": "iam:PutUserPolicy + iam:AttachRolePolicy + iam:CreatePolicyVersion on a scoped IAM resource. These concrete actions each trip a SPECIFIC escalation primitive (PUT-INLINE-POLICY / ATTACH-POLICY / POLICY-VERSION) AND the generic DIRECT-IAM-ADMIN rule. exactFindingIds is the pre-correlation RULE set (rules.js): only DIRECT-IAM-ADMIN fires there (resource is not \"*\" so no WILDCARD-RESOURCE, and these are non-destructive writes). IAM-705 (tests 4/5 dedup): at the analyze() level the generic DIRECT-IAM-ADMIN restates the specific primitives, so it is folded into the highest-priority specific (ATTACH-POLICY) as a risk factor rather than reported as its own row. The specific primitives stay as the authoritative rows.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -12,5 +12,20 @@
       }
     ]
   },
-  "expect": { "valid": true, "exactFindingIds": ["DIRECT-IAM-ADMIN"], "findingIds": ["DIRECT-IAM-ADMIN"], "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"] }
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["DIRECT-IAM-ADMIN"],
+    "findingIds": ["ATTACH-POLICY", "PUT-INLINE-POLICY", "POLICY-VERSION"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
+    "compound": {
+      "primaryId": "ATTACH-POLICY",
+      "subsumes": [{ "id": "DIRECT-IAM-ADMIN", "statementIndex": 0 }],
+      "independentFindings": [
+        { "id": "PUT-INLINE-POLICY", "statementIndex": 0 },
+        { "id": "POLICY-VERSION", "statementIndex": 0 }
+      ],
+      "note": "IAM-705: the generic DIRECT-IAM-ADMIN is folded into the highest-priority co-located specific primitive (ATTACH-POLICY). The other specific primitives remain independent top-level rows - they are distinct techniques, not duplicates of the generic.",
+      "riskFactors": [{ "key": "direct-iam-admin", "present": true }]
+    }
+  }
 }

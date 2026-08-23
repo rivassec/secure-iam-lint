@@ -1,0 +1,56 @@
+{
+  "name": "Acceptance test 2 - PassRole condition permits Lambda, not EC2",
+  "note": "IAM-703 compound AND/OR: iam:PassedToService=lambda selects Lambda and excludes EC2, so only the Lambda path exists. The compound finding must expose explicit allOf/anyOf prerequisites (not a flat AND-list of the whole lambda catalog), and remediation must NOT recommend adding iam:PassedToService when it is already present.",
+  "phase": 7,
+  "story": "IAM-703",
+  "acceptanceTest": 2,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassOnlyToLambda",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::123456789012:role/lambda/*",
+        "Condition": {
+          "StringEquals": {
+            "iam:PassedToService": "lambda.amazonaws.com"
+          }
+        }
+      },
+      {
+        "Sid": "CreateLambda",
+        "Effect": "Allow",
+        "Action": "lambda:CreateFunction",
+        "Resource": "*"
+      },
+      {
+        "Sid": "LaunchEC2",
+        "Effect": "Allow",
+        "Action": "ec2:RunInstances",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-LAMBDA"],
+    "notFindingIds": ["PASSROLE-EC2"]
+  },
+  "compoundExpect": {
+    "focusFindingId": "PASSROLE-LAMBDA",
+    "requiredActions": ["iam:PassRole", "lambda:CreateFunction"],
+    "techniques": [
+      {
+        "technique": "passrole-service-execution",
+        "requiresPassRole": true,
+        "allOf": [["iam:PassRole"], ["lambda:CreateFunction"]]
+      }
+    ],
+    "forbidFindings": ["PASSROLE-EC2"],
+    "remediationForbids": "pin iam:PassedToService",
+    "remediationIncludes": "already pins iam:PassedToService",
+    "whyIncludes": "excludes other services"
+  }
+}

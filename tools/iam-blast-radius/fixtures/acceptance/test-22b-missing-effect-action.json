@@ -1,0 +1,20 @@
+{
+  "name": "Acceptance test 22B - missing Effect and Action blocks (originally passing; protect against regression)",
+  "note": "IAM-707 fixturization of an originally-PASSING case. A statement with neither Effect nor Action must BLOCK with statement-specific schema errors and must NOT be interpreted as Allow. The engine emits INVALID_EFFECT and MISSING_ACTION with the exact JSON path.",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": "22B",
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "Incomplete", "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": false
+  },
+  "errorExpect": {
+    "errorCodes": ["INVALID_EFFECT", "MISSING_ACTION"]
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "Acceptance test 13 - Allow with NotAction (complement grant, excluded set never shown as allowed)",
+  "note": "IAM-704 complement handling. An Allow written with NotAction iam:* grants every action EXCEPT iam:* - a broad inverse (near-administrative) grant. The engine MODELS it (rather than blocking, so the NotAction rule family and its fixtures stay intact) but must NEVER present the EXCLUDED set (iam:*) as an allowed action: the granted-action summary is '*' and the excluded list rides in a separate excludedActions field. Complement grants are approximate, so policy-evidence is reduced a notch (high -> medium) and the limit carries a complement caveat. Analysis is NOT blocked (the shape is a valid identity policy); coverage is a normal identity result.",
+  "phase": 7,
+  "story": "IAM-704",
+  "acceptanceTest": 13,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "EverythingExceptIAM",
+        "Effect": "Allow",
+        "NotAction": "iam:*",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["NOTACTION-ALLOW", "WILDCARD-RESOURCE"],
+    "notFindingIds": ["DIRECT-IAM-ADMIN"]
+  },
+  "complementExpect": {
+    "blocked": false,
+    "detectedFamily": "identity",
+    "excludedNeverAllowed": ["iam:*"],
+    "findings": [
+      {
+        "id": "NOTACTION-ALLOW",
+        "complement": ["NotAction"],
+        "excludedActions": ["iam:*"],
+        "actionsExclude": ["iam:*"],
+        "maxPolicyEvidence": "medium"
+      },
+      {
+        "id": "WILDCARD-RESOURCE",
+        "complement": ["NotAction"],
+        "excludedActions": ["iam:*"],
+        "actionsExclude": ["iam:*"],
+        "maxPolicyEvidence": "medium"
+      }
+    ]
+  }
+}

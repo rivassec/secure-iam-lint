@@ -1,0 +1,28 @@
+{
+  "name": "Acceptance test 20 - mixed policy family blocks (originally passing; protect against regression)",
+  "note": "IAM-707 fixturization of an originally-PASSING case. Under identity mode, a document that mixes an identity grant (s3:GetObject on a Resource) with a trust element (Principal:* + sts:AssumeRole) is NOT a valid single family. The engine fails closed with AMBIGUOUS_POLICY_SHAPE, citing statement 1 (the Principal-bearing trust statement). The trust statement is not silently discarded and the two statements are NOT combined into an attack path. This is CORRECT FINAL behavior (not design-blocked).",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": 20,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "IdentityGrant", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::example/*" },
+      { "Sid": "TrustElement", "Effect": "Allow", "Principal": "*", "Action": "sts:AssumeRole" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["DATA-EXFIL", "DATA-READ", "ASSUME-ROLE-EXPANSION"]
+  },
+  "coverageExpect": {
+    "blocked": true,
+    "detectedFamily": "ambiguous",
+    "blockingCodes": ["AMBIGUOUS_POLICY_SHAPE"],
+    "blockingPathIncludes": "Statement[1]",
+    "noFindings": true,
+    "noCapabilityEdges": true
+  }
+}

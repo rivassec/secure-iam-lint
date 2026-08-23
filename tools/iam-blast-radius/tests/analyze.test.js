@@ -403,16 +403,41 @@ test('compound escalation paths subsume subordinate wildcard rows (IAM-105)', ()
   assert.ok(checked > 0, 'at least one fixture must exercise compound correlation');
 });
 
-test('single-action escalation primitives carry no riskFactors checklist (IAM-105)', () => {
-  // Only compound (multi-grant) paths get a checklist; a standalone primitive
-  // (policy-version, attach-policy, credential-creation, ...) does not.
+test('single-action escalation primitives carry no COMPOUND-PATH checklist (IAM-105 / IAM-705)', () => {
+  // IAM-105 intent: a standalone single-action primitive must NOT fabricate a
+  // compound multi-grant PassRole risk-factor checklist (pass-role /
+  // exec-resource-wildcard / passed-to-service-restriction). IAM-705 refines this:
+  // because every concrete IAM primitive (iam:CreatePolicyVersion, ...) also trips
+  // the generic DIRECT-IAM-ADMIN rule on the same statement, the primitive now
+  // subsumes that generic finding and carries exactly ONE risk factor recording it
+  // (`direct-iam-admin`). That is the generic-into-specific dedup, NOT a compound
+  // path - assert the compound pass-role factors are absent and the only factor is
+  // the direct-iam-admin dedup marker.
   const result = analyze(fixtureText(JSON.parse(
     readFileSync(join(fixturesDir, 'policy-version', 'create-policy-version-positive.json'), 'utf8'),
   )));
   const pv = result.findings.find((f) => f.id === 'POLICY-VERSION');
   assert.ok(pv, 'expected a POLICY-VERSION finding');
-  assert.equal(pv.riskFactors, null, 'single-action primitive has null riskFactors');
-  assert.ok(!('subsumed' in pv) || pv.subsumed === undefined, 'primitive subsumes nothing');
+  // No fabricated compound (PassRole) checklist keys.
+  const COMPOUND_KEYS = new Set([
+    'pass-role', 'lambda:CreateFunction', 'pass-role-resource-wildcard',
+    'exec-resource-wildcard', 'passed-to-service-restriction',
+  ]);
+  for (const rf of pv.riskFactors || []) {
+    assert.ok(!COMPOUND_KEYS.has(rf.key), `POLICY-VERSION must not carry compound-path factor ${rf.key}`);
+  }
+  // The only risk factor is the IAM-705 generic-subsumption marker.
+  assert.deepEqual((pv.riskFactors || []).map((r) => r.key), ['direct-iam-admin']);
+  // ... and the generic DIRECT-IAM-ADMIN it restates is folded in (not dropped).
+  assert.ok(
+    Array.isArray(pv.subsumed) && pv.subsumed.some((s) => s.id === 'DIRECT-IAM-ADMIN'),
+    'the co-located generic DIRECT-IAM-ADMIN is subsumed into the specific primitive',
+  );
+  // The generic is no longer a duplicate top-level row.
+  assert.ok(
+    !result.findings.some((f) => f.id === 'DIRECT-IAM-ADMIN'),
+    'DIRECT-IAM-ADMIN must not also appear as its own top-level row',
+  );
 });
 
 // --- presentation helpers ----------------------------------------------------

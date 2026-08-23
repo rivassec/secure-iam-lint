@@ -1,0 +1,45 @@
+{
+  "name": "Acceptance test 5 - access-key creation for another user",
+  "note": "IAM-703 grounded prerequisites: only iam:CreateAccessKey is granted, so requiredActions and prerequisites must list ONLY iam:CreateAccessKey - never iam:CreateLoginProfile / iam:UpdateLoginProfile, which are absent from the analyzed policy.",
+  "phase": 7,
+  "story": "IAM-703",
+  "acceptanceTest": 5,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "CreateKeysForAutomationUsers",
+        "Effect": "Allow",
+        "Action": "iam:CreateAccessKey",
+        "Resource": "arn:aws:iam::123456789012:user/automation/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["CREDENTIAL-CREATION"],
+    "notFindingIds": ["DIRECT-IAM-ADMIN"]
+  },
+  "dedupExpect": {
+    "primaryId": "CREDENTIAL-CREATION",
+    "primaryCount": 1,
+    "subsumesIds": ["DIRECT-IAM-ADMIN"],
+    "notTopLevelIds": ["DIRECT-IAM-ADMIN"],
+    "riskFactors": [{ "key": "direct-iam-admin", "present": true }],
+    "forbidGraphEdges": [{ "to": "policy:self", "type": "can-modify" }],
+    "requireGraphEdges": [{ "to": "principal:credential-target", "type": "can-modify" }]
+  },
+  "compoundExpect": {
+    "focusFindingId": "CREDENTIAL-CREATION",
+    "requiredActions": ["iam:CreateAccessKey"],
+    "techniques": [
+      {
+        "technique": "credential-creation",
+        "requiresPassRole": false,
+        "allOf": [["iam:CreateAccessKey"]]
+      }
+    ],
+    "forbidPrerequisiteActions": ["iam:CreateLoginProfile", "iam:UpdateLoginProfile"]
+  }
+}

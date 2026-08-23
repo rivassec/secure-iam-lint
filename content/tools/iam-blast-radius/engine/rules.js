@@ -78,6 +78,29 @@ const CONDITION_LIMIT =
   ' The matching statement carries a Condition block, so the grant may be ' +
   'constrained at runtime; confidence is reduced accordingly.';
 
+// IAM-704 (tests 13/14): a statement written with NotAction / NotResource
+// grants everything EXCEPT the listed actions/resources. The excluded set is
+// NOT an allowed capability, and the granted (inverse) set cannot be enumerated
+// exactly from the policy text alone, so a finding on a complement statement is
+// complement-derived: its confidence is reduced and this caveat is appended.
+const COMPLEMENT_LIMIT =
+  ' This statement uses a COMPLEMENT (NotAction / NotResource): it grants every ' +
+  'action / resource EXCEPT the ones listed. The excluded set is not an allowed ' +
+  'capability, and the granted set is its inverse and cannot be enumerated ' +
+  'exactly from the policy text, so this finding is complement-derived and its ' +
+  'confidence is reduced.';
+
+// Confidence ladder (most -> least certain). lowerConfidence() steps DOWN by
+// `notches`, clamping at 'low'. Used to reduce a finding's policy-evidence /
+// path-exploitability a notch for a runtime Condition and again for a complement
+// (NotAction/NotResource) grant, taking the compounded reduction.
+const CONFIDENCE_LADDER = Object.freeze(['high', 'medium', 'low']);
+function lowerConfidence(level, notches) {
+  let i = CONFIDENCE_LADDER.indexOf(level);
+  if (i < 0) i = 0;
+  return CONFIDENCE_LADDER[Math.min(CONFIDENCE_LADDER.length - 1, i + notches)];
+}
+
 // --- Linear glob matcher (ReDoS-safe) ----------------------------------------
 // Matches an IAM wildcard pattern ('*' = any run incl. empty, '?' = one char)
 // against a literal string using two-pointer scanning. O(n*m) worst case, NO
@@ -208,6 +231,58 @@ const BULK_READ_ACTIONS = Object.freeze([
   's3:GetObjectVersion',
 ]);
 
+// Object/bucket reads that DATA-READ (IAM-706) covers when the resource is NAMED
+// or policy-VARIABLE scoped (not broad). DATA-EXFIL owns the broad-resource bulk
+// read (Resource "*"); this catalog is the same object reads plus bucket listing,
+// evaluated only for the resource-scoped case DATA-EXFIL deliberately leaves as
+// routine, and only when naming or a policy variable warrants a lower-certainty
+// data-read capability finding (see ruleDataReadScoped).
+const DATA_READ_ACTIONS = Object.freeze([
+  's3:GetObject',
+  's3:GetObjectVersion',
+  's3:ListBucket',
+]);
+
+// Lowercased substrings whose presence in a resource ARN INFERS - never proves -
+// that the data behind it is sensitive (IAM-706, acceptance test 7). Curated and
+// conservative: every token is clearly sensitivity-suggestive, and the set is
+// deliberately chosen to leave neutral names ("example", "reports", "app-data")
+// alone so a routine least-privilege scoped read stays quiet. The finding always
+// says the sensitivity is inferred from naming, not established.
+const SENSITIVE_NAME_TOKENS = Object.freeze([
+  'production',
+  'backup',
+  'secret',
+  'credential',
+  'confidential',
+  'private',
+  'customer',
+  'payroll',
+  'finance',
+  'export',
+  'sensitive',
+  'archive',
+  'pii',
+]);
+
+// The first sensitivity token a resource ARN contains (lowercased substring), or
+// null. Pure string comparison of inert policy data - never interpreted as code.
+function resourceInfersSensitive(resource) {
+  const r = String(resource).toLowerCase();
+  for (const tok of SENSITIVE_NAME_TOKENS) {
+    if (r.includes(tok)) return tok;
+  }
+  return null;
+}
+
+// Does a resource ARN carry an IAM policy variable (${...})? A variable-scoped
+// resource cannot be resolved to a concrete ARN from the policy text alone
+// (IAM-706, acceptance test 21), so the exact objects in scope stay uncertain and
+// the variable must be preserved verbatim in evidence.
+function resourceHasVariable(resource) {
+  return String(resource).includes('${');
+}
+
 const DETECTION_ACTIONS = Object.freeze([
   'cloudtrail:StopLogging',
   'cloudtrail:DeleteTrail',
@@ -290,6 +365,20 @@ export const RULES = Object.freeze({
     docRef:
       'https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_notaction.html',
   }),
+  // IAM-706: a lower-certainty, resource-scoped data-read capability. Neutral
+  // framing on purpose ("data-read", NOT "exfiltration"): it covers a read scoped
+  // to a NAMED bucket whose name only INFERS sensitivity, or to a policy-VARIABLE
+  // resource whose ARN cannot be resolved. Distinct from DATA-EXFIL (broad-scope
+  // bulk read / secret retrieval, high). Ordered last so it never displaces the
+  // established rules within a statement.
+  'DATA-READ': Object.freeze({
+    id: 'DATA-READ',
+    order: 8,
+    title: 'Data-read capability (resource-scoped, inferred sensitivity)',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_variables.html',
+  }),
 });
 
 export const RULE_IDS = Object.freeze(Object.keys(RULES));
@@ -323,23 +412,59 @@ function makeFinding(ruleId, stmt, fields) {
   //                        same-policy Deny precedence for the edge certainty).
   const evidenceBase = fields.policyEvidence;
   const exploitBase = fields.pathExploitability || fields.policyEvidence;
-  return {
+
+  // IAM-704: complement (NotAction / NotResource) presentation. NEVER surface the
+  // EXCLUDED set as the finding's allowed actions/resources (tests 13, 14):
+  //   - NotAction: there are no positive granted actions to list; the grant is
+  //     "everything except the excluded set", so the granted-action summary is
+  //     '*' (never the excluded list), and the excluded list rides in
+  //     excludedActions.
+  //   - NotResource: there is no literal granted resource ARN; resources is left
+  //     empty and the carve-out rides in excludedResources (never presented as
+  //     the granted resource).
+  // Complement grants are approximate, so confidence drops a notch (on top of
+  // any Condition notch) and the limit spells out the complement caveat.
+  const usesNotAction = Array.isArray(stmt.notActions) && stmt.notActions.length > 0;
+  const usesNotResource = Array.isArray(stmt.notResources) && stmt.notResources.length > 0;
+  const complement = [];
+  if (usesNotAction) complement.push('NotAction');
+  if (usesNotResource) complement.push('NotResource');
+  const complementDerived = complement.length > 0;
+
+  const actions = usesNotAction ? ['*'] : fields.actions.slice();
+  const resources = usesNotResource ? [] : (fields.resources || []).slice();
+
+  let peNotches = 0;
+  let pxNotches = 0;
+  if (conditioned) { peNotches += 1; pxNotches += 1; }
+  if (complementDerived) { peNotches += 1; pxNotches += 1; }
+
+  const finding = {
     id: meta.id,
     severity: fields.severity,
     title: meta.title,
     statementSid: statementSid(stmt),
     statementIndex: stmt.index,
-    actions: fields.actions.slice(),
-    resources: (fields.resources || []).slice(),
+    actions,
+    resources,
     conditions: stmt.condition, // null when absent; inert data otherwise
-    policyEvidence: conditioned ? 'medium' : evidenceBase,
-    pathExploitability: conditioned ? 'medium' : exploitBase,
+    policyEvidence: lowerConfidence(evidenceBase, peNotches),
+    pathExploitability: lowerConfidence(exploitBase, pxNotches),
     why: fields.why,
-    limit: CAPABILITY_LIMIT + (conditioned ? CONDITION_LIMIT : ''),
+    limit:
+      CAPABILITY_LIMIT +
+      (conditioned ? CONDITION_LIMIT : '') +
+      (complementDerived ? COMPLEMENT_LIMIT : ''),
     remediation: fields.remediation,
     ruleVersion: meta.ruleVersion,
     docRef: meta.docRef,
   };
+  // The excluded set is inert policy data, preserved so nothing is lost - but it
+  // is a SEPARATE field, explicitly the EXCLUDED (not allowed) set.
+  if (usesNotAction) finding.excludedActions = stmt.notActions.slice();
+  if (usesNotResource) finding.excludedResources = stmt.notResources.slice();
+  if (complementDerived) finding.complement = complement.slice();
+  return finding;
 }
 
 // The resource scope a finding reports: prefer explicit Resource, fall back to
@@ -635,6 +760,81 @@ function ruleKmsDecrypt(stmt, out) {
   );
 }
 
+// 4a-ter. Resource-scoped / variable-scoped data read (IAM-706, acceptance
+// tests 7 + 21). DATA-EXFIL only flags a bulk object read when the resource
+// scope is BROAD (Resource "*"); a read scoped to a NAMED bucket or a policy-
+// VARIABLE resource is left as routine there. This rule fills that gap with a
+// LOWER-CERTAINTY, neutrally-framed "data-read capability" finding, and ONLY when
+// there is a reason to surface it:
+//   - the resource name INFERS sensitivity (e.g. "production-exports") - stated
+//     as inferred-from-naming, never as proven; or
+//   - the resource is policy-VARIABLE scoped (e.g. ${aws:username}) - the ARN
+//     cannot be resolved from the policy text, so the objects in scope are
+//     uncertain and the variable is preserved verbatim.
+// A neutrally-named, concrete scoped read (routine least privilege) stays quiet,
+// so this never fires on the safe/scoped-read fixtures. Severity is medium and
+// confidence medium-or-lower - a scoped read is strictly less than a wildcard /
+// broad-exfil grant and must never escalate to critical or claim every object is
+// readable (S3 encryption config + KMS key policy are absent from the context).
+function ruleDataReadScoped(stmt, out) {
+  // Broad scope is DATA-EXFIL's job; a NotResource complement is not a named read.
+  if (resourceIsBroad(stmt)) return;
+  if (stmt.resources.length === 0) return;
+  const matched = matchPatterns(stmt, DATA_READ_ACTIONS, false);
+  if (matched.length === 0) return;
+
+  const sensitiveTokens = [];
+  let hasVariable = false;
+  for (const r of stmt.resources) {
+    const tok = resourceInfersSensitive(r);
+    if (tok && !sensitiveTokens.includes(tok)) sensitiveTokens.push(tok);
+    if (resourceHasVariable(r)) hasVariable = true;
+  }
+  // Only surface a finding when sensitivity is inferable from naming OR the read
+  // is variable-scoped. Otherwise a scoped read is routine and produces nothing.
+  if (sensitiveTokens.length === 0 && !hasVariable) return;
+
+  const whyParts = [];
+  if (sensitiveTokens.length > 0) {
+    whyParts.push(
+      'the resource name(s) suggest sensitive data (matched "' +
+        sensitiveTokens.join('", "') +
+        '"), so sensitivity is INFERRED from naming and is NOT proven',
+    );
+  }
+  if (hasVariable) {
+    whyParts.push(
+      'the resource ARN contains an IAM policy variable (e.g. ${aws:username}) ' +
+        'that cannot be resolved to a concrete ARN from the policy text alone, so ' +
+        'the exact objects in scope remain uncertain',
+    );
+  }
+  out.push(
+    makeFinding('DATA-READ', stmt, {
+      severity: 'medium',
+      policyEvidence: 'medium',
+      // A variable-scoped read carries extra irreducible uncertainty about which
+      // objects are actually reachable, so its path-exploitability sits a notch
+      // below a named-but-concrete scoped read.
+      pathExploitability: hasVariable ? 'low' : 'medium',
+      actions: matched,
+      resources: resourceScope(stmt),
+      why:
+        'Grants a data-read capability: the principal can read objects from the ' +
+        'named or variable-scoped resource because ' +
+        whyParts.join('; and ') +
+        ". This is a scoped read, not a broad exfiltration grant, and the " +
+        "account's S3 encryption configuration and any KMS key policy are not in " +
+        'the supplied context, so it does not prove every object is readable.',
+      remediation:
+        'Confirm the principal needs read access to this data; scope the read to ' +
+        'the specific object prefixes required and gate it with conditions (e.g. ' +
+        'aws:SourceVpc / aws:SourceVpce) so the data cannot be pulled from ' +
+        'arbitrary networks.',
+    }),
+  );
+}
+
 // 4b. Destructive actions (generic delete/terminate families), excluding the
 // security services handled by DETECTION-IMPAIRMENT.
 function ruleDestructive(stmt, out) {
@@ -712,6 +912,7 @@ const RULE_FUNCTIONS = [
   ruleDirectIamAdmin,
   ruleDataExfil,
   ruleKmsDecrypt,
+  ruleDataReadScoped,
   ruleDestructive,
   ruleDetectionImpairment,
   ruleNotActionAllow,

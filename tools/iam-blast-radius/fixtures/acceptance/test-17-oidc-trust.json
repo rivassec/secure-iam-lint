@@ -1,0 +1,40 @@
+{
+  "name": "Acceptance test 17 - over-broad GitHub Actions OIDC trust (role-trust, fail-closed by design)",
+  "note": "IAM-707: role-trust family not yet modeled -> fail closed with UNSUPPORTED_POLICY_FAMILY. Encodes current design-blocked behavior; the follow-up feature must rate broad federated subject scope (repo:example-org/*) HIGH, recognize the aud check as a valid constraint, identify sub as broader than a repo+branch/environment binding, and not claim every repo can assume the role without matching token/workflow context.",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": 17,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GitHubOIDC",
+        "Effect": "Allow",
+        "Principal": { "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
+          "StringLike": { "token.actions.githubusercontent.com:sub": "repo:example-org/*" }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION"]
+  },
+  "coverageExpect": {
+    "blocked": true,
+    "detectedFamily": "role-trust",
+    "blockingCodes": ["UNSUPPORTED_POLICY_FAMILY"],
+    "noFindings": true,
+    "noCapabilityEdges": true
+  },
+  "designBlocked": {
+    "feature": "role-trust family analysis",
+    "followUp": "queued as the immediate next feature (Oliver, 2026-08-22)",
+    "intended": "high: org-wide repository / broad federated subject scope; recognize the audience check as valid; flag repo:example-org/* as broader than repo+branch/environment; recommend constraining sub."
+  }
+}

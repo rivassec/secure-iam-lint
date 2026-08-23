@@ -1,0 +1,30 @@
+{
+  "name": "Acceptance test 8 - explicit Deny completely blocks an allowed action",
+  "note": "IAM-702 deny leak: an Allow of ec2:TerminateInstances on Resource:* is overlapped by an exact same-policy Deny. The grant is fully suppressed by AWS explicit-Deny precedence. A suppressed grant must NOT emit any positive capability edge (previously it leaked into both can-write AND can-destroy edges) and must not count in risk totals - 'denies are not grants' (cross-test invariant 5). Only the informational `denies` edge remains. The authoritative findings table is empty.",
+  "phase": 7,
+  "story": "IAM-702",
+  "acceptanceTest": 8,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowTermination", "Effect": "Allow", "Action": "ec2:TerminateInstances", "Resource": "*" },
+      { "Sid": "DenyTermination", "Effect": "Deny", "Action": "ec2:TerminateInstances", "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["DESTRUCTIVE-ACTION", "WILDCARD-RESOURCE"]
+  },
+  "edgeTypingExpect": {
+    "onlyDeniesEdges": true,
+    "expectEdges": [
+      { "from": "principal", "to": "actiongroup:deny#1", "type": "denies", "actions": ["ec2:TerminateInstances"] }
+    ],
+    "forbidEdges": [
+      { "from": "principal", "to": "resource:*", "type": "can-write" },
+      { "from": "principal", "to": "resource:*", "type": "can-destroy" }
+    ]
+  }
+}

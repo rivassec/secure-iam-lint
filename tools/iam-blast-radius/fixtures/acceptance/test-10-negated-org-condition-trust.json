@@ -1,0 +1,37 @@
+{
+  "name": "Acceptance test 10 - negated organization condition expands trust (role-trust, fail-closed by design)",
+  "note": "IAM-707: role-trust family is NOT yet modeled. This document is a role trust policy (Principal:* + sts:AssumeRole), so the engine FAILS CLOSED with UNSUPPORTED_POLICY_FAMILY rather than mis-analyze it under identity rules. The expectation encoded here is the CURRENT design-blocked behavior; the follow-up role-trust feature must flip it to the intended finding.",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": 10,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TrustOutsideOrganization",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "sts:AssumeRole",
+        "Condition": { "StringNotEquals": { "aws:PrincipalOrgID": "o-exampleorgid" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION"]
+  },
+  "coverageExpect": {
+    "blocked": true,
+    "detectedFamily": "role-trust",
+    "blockingCodes": ["UNSUPPORTED_POLICY_FAMILY"],
+    "noFindings": true,
+    "noCapabilityEdges": true
+  },
+  "designBlocked": {
+    "feature": "role-trust family analysis",
+    "followUp": "queued as the immediate next feature (Oliver, 2026-08-22)",
+    "intended": "critical: trust permits principals OUTSIDE the named org; classify StringNotEquals aws:PrincipalOrgID as an EXPANSION/exclusion selector (dangerous polarity), never a protective org restriction; never emit a 'missing aws:PrincipalOrgID' remediation."
+  }
+}

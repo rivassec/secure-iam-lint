@@ -1,0 +1,33 @@
+{
+  "name": "Acceptance test 6 - broad cross-account AssumeRole",
+  "note": "IAM-707 fixturization of an originally-PASSING case (protect against regression). sts:AssumeRole scoped to arn:aws:iam::*:role/deployment/* spans ALL accounts. The engine reports ASSUME-ROLE-EXPANSION with policyEvidence high (the identity policy plainly allows the call) but pathExploitability medium/low (target trust policies are absent, so actual reachability is unknown). The graph target is a potentially-reachable role with unknown privileges; the tool must NOT claim arbitrary roles can actually be assumed.",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": 6,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AssumeAnyDeploymentRole",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::*:role/deployment/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["ASSUME-ROLE-EXPANSION"],
+    "notFindingIds": ["PASSROLE-EC2", "PASSROLE-LAMBDA"]
+  },
+  "severityExpect": {
+    "findingId": "ASSUME-ROLE-EXPANSION",
+    "severityOneOf": ["critical", "high"],
+    "policyEvidence": "high",
+    "pathExploitabilityOneOf": ["medium", "low"]
+  },
+  "graphExpect": {
+    "include": [{ "type": "can-assume" }]
+  }
+}

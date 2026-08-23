@@ -1,0 +1,56 @@
+{
+  "name": "Acceptance test 3 - separate Lambda execution techniques",
+  "note": "IAM-703 anyOf: alternative escalation techniques must not be collapsed into one AND-list. Path A = iam:PassRole AND lambda:CreateFunction (create a function under a passable role). Path B = lambda:UpdateFunctionCode alone (replace code under an existing function role) - does NOT require iam:PassRole and must state the existing function role + invocation path are outside supplied context.",
+  "phase": 7,
+  "story": "IAM-703",
+  "acceptanceTest": 3,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassRole",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::123456789012:role/lambda/AdminAutomationRole"
+      },
+      {
+        "Sid": "CreateFunction",
+        "Effect": "Allow",
+        "Action": "lambda:CreateFunction",
+        "Resource": "*"
+      },
+      {
+        "Sid": "ReplaceExistingCode",
+        "Effect": "Allow",
+        "Action": "lambda:UpdateFunctionCode",
+        "Resource": "arn:aws:lambda:us-west-2:123456789012:function:billing-admin"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-LAMBDA"]
+  },
+  "compoundExpect": {
+    "focusFindingId": "PASSROLE-LAMBDA",
+    "requiredActions": ["iam:PassRole", "lambda:CreateFunction"],
+    "techniques": [
+      {
+        "technique": "passrole-service-execution",
+        "requiresPassRole": true,
+        "allOf": [["iam:PassRole"], ["lambda:CreateFunction"]]
+      },
+      {
+        "technique": "replace-existing-function-code",
+        "requiresPassRole": false,
+        "allOf": [["lambda:UpdateFunctionCode"]],
+        "noteIncludes": "does not require iam:PassRole"
+      }
+    ],
+    "standalonePassRoleFreeTechnique": {
+      "technique": "replace-existing-function-code",
+      "actions": ["lambda:UpdateFunctionCode"]
+    }
+  }
+}

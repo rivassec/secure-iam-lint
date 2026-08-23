@@ -1,6 +1,6 @@
 {
   "name": "iam:* narrowed by a NotAction-Deny still yields CREDENTIAL-CREATION (path survives, downgraded)",
-  "note": "Allow iam:* on * with a same-policy Deny that uses NotAction:iam:CreateAccessKey. That Deny denies everything EXCEPT iam:CreateAccessKey, so iam:CreateAccessKey - a credential-creation escalation primitive - SURVIVES and must still be reported. A NotAction-Deny can never fully cover the broad iam:* grant token (the preserved action stays allowed), so the path must NOT be suppressed; it is kept with confidence downgraded (denyNarrowed) and the limit noting the Deny. Treating the NotAction-Deny as fully covering iam:* would drop the real can-mint-credentials path entirely - a false-safe / false negative (threat-model T8). Regression fixture for the NotAction-Deny-vs-wildcard silent path-suppression defect.",
+  "note": "Allow iam:* on * with a same-policy Deny that uses NotAction:iam:CreateAccessKey. The credential-creation primitive (iam:CreateAccessKey) SURVIVES the NotAction-Deny and must still be reported - a NotAction-Deny can never fully cover the broad iam:* grant token, so the can-mint-credentials path must NOT be silently suppressed (threat-model T8 false-negative). At the ESCALATION-engine level (escalation.test.js) CREDENTIAL-CREATION is a top-level finding. At the analyze() level IAM-705 de-floods the iam:* wildcard into ONE broad DIRECT-IAM-ADMIN primary, so CREDENTIAL-CREATION (and the other IAM primitives) are folded in as subsumed techniques rather than separate rows - the path still SURVIVES (preserved in subsumed[] + the risk-factor checklist), it is not dropped. Regression fixture for the NotAction-Deny-vs-wildcard silent path-suppression defect and the IAM-705 iam:* dedup.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -9,6 +9,12 @@
     ]
   },
   "expect": {
-    "findingIds": ["CREDENTIAL-CREATION"]
+    "compound": {
+      "primaryId": "DIRECT-IAM-ADMIN",
+      "subsumes": [{ "id": "CREDENTIAL-CREATION", "statementIndex": 0 }],
+      "independentFindings": [],
+      "note": "IAM-705: the surviving CREDENTIAL-CREATION path is folded into the broad DIRECT-IAM-ADMIN iam:* primary as a subsumed technique - it survives the NotAction-Deny (present in subsumed[]), it is not silently dropped.",
+      "riskFactors": [{ "key": "technique:CREDENTIAL-CREATION", "present": true }]
+    }
   }
 }

@@ -1,7 +1,10 @@
 {
   "product": "IAM Blast Radius",
   "mvpScope": "Phase 1 JSON analyzer + 5-10 escalation paths + findings table + basic graph + JSON/MD export + strict CSP + zero egress",
-  "immutableContracts": ["docs/architecture.md", "docs/threat-model.md"],
+  "immutableContracts": [
+    "docs/architecture.md",
+    "docs/threat-model.md"
+  ],
   "globalAcceptance": [
     "No inline style/script/on-handler in any shipped HTML (csp_audit clean)",
     "No network API in any shipped JS (grep gate: fetch/XHR/WebSocket/EventSource/sendBeacon/import() remote)",
@@ -22,7 +25,12 @@
         "Reject circular / non-JSON input with a clear error, never throw uncaught",
         "Expose validate(text) -> {ok, errors[], raw} with structured errors"
       ],
-      "acceptance": ["malformed/ + adversarial/ fixtures handled with zero uncaught exceptions", "prototype-pollution keys rejected", "security critic: no high/critical", "reliability critic >=95"],
+      "acceptance": [
+        "malformed/ + adversarial/ fixtures handled with zero uncaught exceptions",
+        "prototype-pollution keys rejected",
+        "security critic: no high/critical",
+        "reliability critic >=95"
+      ],
       "maximumIterations": 4
     },
     {
@@ -36,7 +44,11 @@
         "Support Effect, Action, NotAction, Resource, NotResource, Condition, Sid, Principal",
         "Produce a normalized, frozen model object; preserve statement order and index"
       ],
-      "acceptance": ["safe/ + not-action/ + not-resource/ fixtures parse to expected model", "mixed string/array types normalized", "reliability critic >=95"],
+      "acceptance": [
+        "safe/ + not-action/ + not-resource/ fixtures parse to expected model",
+        "mixed string/array types normalized",
+        "reliability critic >=95"
+      ],
       "maximumIterations": 4
     },
     {
@@ -50,7 +62,12 @@
         "Correct NotAction (everything except listed) and NotResource semantics with explicit caveat text",
         "NEVER claim effective permissions from a single policy; label capability vs effective"
       ],
-      "acceptance": ["explicit-deny/ fixtures: deny wins", "not-action/ + not-resource/ semantics correct", "IAM critic score 100 (no false allow/deny)", "reliability critic >=95"],
+      "acceptance": [
+        "explicit-deny/ fixtures: deny wins",
+        "not-action/ + not-resource/ semantics correct",
+        "IAM critic score 100 (no false allow/deny)",
+        "reliability critic >=95"
+      ],
       "maximumIterations": 4
     },
     {
@@ -65,7 +82,12 @@
         "Flag detection impairment (cloudtrail/guardduty/config stop/delete)",
         "Each finding carries confidence, why, limit, remediation, ruleVersion, docRef"
       ],
-      "acceptance": ["wildcard/ fixtures produce expected findings; safe/ produce none", "every finding has all required fields", "IAM critic 100", "reliability critic >=95"],
+      "acceptance": [
+        "wildcard/ fixtures produce expected findings; safe/ produce none",
+        "every finding has all required fields",
+        "IAM critic 100",
+        "reliability critic >=95"
+      ],
       "maximumIterations": 4
     },
     {
@@ -82,7 +104,12 @@
         "At least 5, up to 10, each with required action combo, resource relationship, conditions, confidence, severity, explanation, remediation, ruleVersion, docRef",
         "Represent missing target-role permissions as 'unknown', never inferred"
       ],
-      "acceptance": ["pass-role/ + assume-role/ positive fixtures detected; negatives (PassRole alone) NOT flagged", "IAM critic 100 on escalation semantics", "reliability critic >=95", "security critic no high/critical"],
+      "acceptance": [
+        "pass-role/ + assume-role/ positive fixtures detected; negatives (PassRole alone) NOT flagged",
+        "IAM critic 100 on escalation semantics",
+        "reliability critic >=95",
+        "security critic no high/critical"
+      ],
       "maximumIterations": 4
     },
     {
@@ -96,7 +123,11 @@
         "Deterministic ordering; enforce max graph node count",
         "Pure data structure, no DOM/SVG here"
       ],
-      "acceptance": ["graph edges match expected fixtures for pass-role + wildcard cases", "certainty classes correct", "reliability critic >=95"],
+      "acceptance": [
+        "graph edges match expected fixtures for pass-role + wildcard cases",
+        "certainty classes correct",
+        "reliability critic >=95"
+      ],
       "maximumIterations": 4
     },
     {
@@ -112,7 +143,13 @@
         "Zero inline style/script/on-handlers; all events via addEventListener",
         "Keyboard-accessible; findings table usable with no graph and no-JS message"
       ],
-      "acceptance": ["csp_audit clean on built HTML", "no network API in shipped JS (grep gate)", "HTML-injection fixtures render as inert text (no XSS)", "security + privacy critics no high/critical", "UX/a11y critic no serious/critical"],
+      "acceptance": [
+        "csp_audit clean on built HTML",
+        "no network API in shipped JS (grep gate)",
+        "HTML-injection fixtures render as inert text (no XSS)",
+        "security + privacy critics no high/critical",
+        "UX/a11y critic no serious/critical"
+      ],
       "maximumIterations": 5
     },
     {
@@ -127,7 +164,14 @@
         "Export findings + model as JSON and Markdown via Blob download; HTML export (if any) fully escaped",
         "Graph is never the only representation; findings table remains authoritative"
       ],
-      "acceptance": ["csp_audit clean", "no network API (grep gate)", "SVG injection fixtures inert", "reduced-motion honored", "UX/a11y critic no serious/critical", "security critic no high/critical"],
+      "acceptance": [
+        "csp_audit clean",
+        "no network API (grep gate)",
+        "SVG injection fixtures inert",
+        "reduced-motion honored",
+        "UX/a11y critic no serious/critical",
+        "security critic no high/critical"
+      ],
       "maximumIterations": 5
     },
     {
@@ -142,7 +186,12 @@
         "A 20000-statement policy must resolve (reject or bounded) in-browser well under 5s, never hang the tab",
         "Limits are documented constants; error messages are user-clear"
       ],
-      "acceptance": ["a >max-statements fixture yields validate() error, analyze() ok:false, no hang", "existing safe/wildcard fixtures unaffected", "reliability critic >=95", "full node --test suite still green"],
+      "acceptance": [
+        "a >max-statements fixture yields validate() error, analyze() ok:false, no hang",
+        "existing safe/wildcard fixtures unaffected",
+        "reliability critic >=95",
+        "full node --test suite still green"
+      ],
       "maximumIterations": 4
     },
     {
@@ -158,7 +207,11 @@
         "KMS: separate kms:Decrypt into a distinct Decryption capability finding; do NOT call it 'reads secret material' and do NOT lump it with Secrets Manager. kms:Decrypt decrypts ciphertext for usable keys; it does not enumerate/retrieve secrets",
         "Wildcard rule: drop the 'non-read action' classification; use neutral 'Resource * leaves this action broadly resource-scoped'"
       ],
-      "acceptance": ["IAM-semantics critic 100 (every claim technically accurate vs AWS docs)", "affected fixtures' expected text/ids updated", "full node --test suite green"],
+      "acceptance": [
+        "IAM-semantics critic 100 (every claim technically accurate vs AWS docs)",
+        "affected fixtures' expected text/ids updated",
+        "full node --test suite green"
+      ],
       "maximumIterations": 4
     },
     {
@@ -172,7 +225,12 @@
         "Standalone wildcard scope, broad kms:Decrypt, secrets access, direct-IAM single actions remain high",
         "Deterministic, documented severity rules; update every fixture's expected severity to match"
       ],
-      "acceptance": ["compound-path fixtures now critical; standalone stay high", "no severity is asserted higher than the evidence supports", "IAM-semantics critic 100", "full node --test suite green"],
+      "acceptance": [
+        "compound-path fixtures now critical; standalone stay high",
+        "no severity is asserted higher than the evidence supports",
+        "IAM-semantics critic 100",
+        "full node --test suite green"
+      ],
       "maximumIterations": 4
     },
     {
@@ -187,7 +245,12 @@
         "Findings table + evidence panel render both; JSON/MD export includes both",
         "Keep the capability-not-effective limit text on every finding"
       ],
-      "acceptance": ["both fields present on all findings", "compound paths show evidence>=exploitability where appropriate", "full node --test suite green", "reliability critic >=95"],
+      "acceptance": [
+        "both fields present on all findings",
+        "compound paths show evidence>=exploitability where appropriate",
+        "full node --test suite green",
+        "reliability critic >=95"
+      ],
       "maximumIterations": 4
     },
     {
@@ -202,7 +265,12 @@
         "Retain standalone wildcard findings ONLY where they do not participate in a compound path",
         "Deterministic subsumption; never drop a genuinely independent finding"
       ],
-      "acceptance": ["pass-role compound fixture: one primary path finding with risk factors, no duplicate subordinate wildcard rows", "independent wildcard (no compound path) still stands alone", "IAM-semantics critic 100", "full node --test suite green"],
+      "acceptance": [
+        "pass-role compound fixture: one primary path finding with risk factors, no duplicate subordinate wildcard rows",
+        "independent wildcard (no compound path) still stands alone",
+        "IAM-semantics critic 100",
+        "full node --test suite green"
+      ],
       "maximumIterations": 5
     },
     {
@@ -217,7 +285,12 @@
         "Built with safe DOM (createElement+textContent); no inline style/script; accessible",
         "Deterministic ordering and counts"
       ],
-      "acceptance": ["summary counts match the findings for fixtures", "csp_audit clean", "UX/a11y critic no serious/critical", "full node --test suite green"],
+      "acceptance": [
+        "summary counts match the findings for fixtures",
+        "csp_audit clean",
+        "UX/a11y critic no serious/critical",
+        "full node --test suite green"
+      ],
       "maximumIterations": 4
     },
     {
@@ -232,7 +305,14 @@
         "Row height must drop substantially (current rows are ~650px because 3 prose columns wrap); table stays the authoritative view and remains fully usable/accessible without the graph",
         "Safe DOM only; csp_audit clean; keyboard operable; no prose lost (all still reachable in the detail)"
       ],
-      "acceptance": ["avg finding row height well under 120px for a typical multi-finding policy", "all prose still present in the expandable detail", "csp_audit clean", "no network API", "UX/a11y critic no serious/critical", "full node --test suite green (e2e updated for the new layout)"],
+      "acceptance": [
+        "avg finding row height well under 120px for a typical multi-finding policy",
+        "all prose still present in the expandable detail",
+        "csp_audit clean",
+        "no network API",
+        "UX/a11y critic no serious/critical",
+        "full node --test suite green (e2e updated for the new layout)"
+      ],
       "maximumIterations": 5
     },
     {
@@ -247,7 +327,13 @@
         "Edges keep evidence + certainty class; SVG text via textContent, numeric attrs only; no markup from input",
         "Deterministic; findings table remains the authoritative equivalent"
       ],
-      "acceptance": ["pass-role fixtures render the unknown-privileges transition node", "graph injection fixtures still inert", "reduced-motion honored", "UX/a11y critic no serious/critical", "full node --test suite green"],
+      "acceptance": [
+        "pass-role fixtures render the unknown-privileges transition node",
+        "graph injection fixtures still inert",
+        "reduced-motion honored",
+        "UX/a11y critic no serious/critical",
+        "full node --test suite green"
+      ],
       "maximumIterations": 5
     },
     {
@@ -262,7 +348,14 @@
         "Rename the risk-summary metric 'Broad-resource grants' to 'Standalone broad-resource findings' (count reflects post-subsumption standalone wildcards only)",
         "Fix grammar in rules.js: 'Grants actions that reads secret material' -> 'read secret material'"
       ],
-      "acceptance": ["KMS fixture: 5 primaries, no duplicate WILDCARD-RESOURCE row for the KMS statement", "a genuinely standalone wildcard-resource still stands alone", "summary metric renamed", "grammar fixed", "IAM-semantics critic 100", "full node --test suite green"],
+      "acceptance": [
+        "KMS fixture: 5 primaries, no duplicate WILDCARD-RESOURCE row for the KMS statement",
+        "a genuinely standalone wildcard-resource still stands alone",
+        "summary metric renamed",
+        "grammar fixed",
+        "IAM-semantics critic 100",
+        "full node --test suite green"
+      ],
       "maximumIterations": 4
     },
     {
@@ -276,7 +369,13 @@
         "Introduce a distinct graph edge type 'can-decrypt' for kms:Decrypt (was 'can-read'); keep the human label 'can decrypt ciphertext'. Update the edge-type ontology and render-graph legend/styles so can-decrypt is visually distinct from can-read.",
         "Update graph fixtures + tests for the new certainty values and edge type; keep SVG text via textContent, injection fixtures inert"
       ],
-      "acceptance": ["pass-role transition edges are policy-supported (not confirmed-by-context)", "kms:Decrypt edge is can-decrypt", "graph injection fixtures still inert", "UX/a11y critic no serious/critical", "full node --test suite green"],
+      "acceptance": [
+        "pass-role transition edges are policy-supported (not confirmed-by-context)",
+        "kms:Decrypt edge is can-decrypt",
+        "graph injection fixtures still inert",
+        "UX/a11y critic no serious/critical",
+        "full node --test suite green"
+      ],
       "maximumIterations": 4
     },
     {
@@ -290,7 +389,12 @@
         "Cover at least these cases: (1) same dangerous actions split across two statements -> compound STILL detected across statements; (2) iam:PassRole restricted by iam:PassedToService pinned to a service that does NOT match the exec action -> that escalation path NOT flagged; (3) iam:PassRole scoped to one specific harmless role ARN -> not flagged as broad; (4) explicit Deny conflicting with Allow on the same action -> deny suppresses; (5) NotAction semantics; (6) NotResource semantics; (7) Condition StringEquals/StringLike narrowing -> acknowledged / lower confidence; (8) permissions-boundary-shaped policy; (9) resource-based / trust policy -> NO identity-escalation finding; (10) read-only-admin wildcard (e.g. Get*/Describe*/List* on *) -> broad but NOT privileged-escalation/critical; (11) action where AWS REQUIRES Resource:* (e.g. ec2:DescribeInstances) -> not penalized as an avoidable wildcard; (12) cross-account AssumeRole constrained to ONE account id (arn:aws:iam::111122223333:role/*) -> lower than all-accounts *:role/*; (13) lambda:UpdateFunctionCode WITHOUT iam:PassRole -> not a PassRole escalation; (14) iam:PassRole WITHOUT any workload-execution primitive -> not escalation; (15) two escalation chains sharing one PassRole primitive.",
         "This story authors DATA + rationale ONLY. Do NOT modify engine code. Do NOT wire the corpus into the blocking test suite yet (the engine may not satisfy all cases - that is IAM-302's job). Keep the existing suite green (fixtures added are inert until wired)."
       ],
-      "acceptance": ["fixtures/negative/ has >=15 fixtures, each with policy + expect + rationale", "IAM-semantics critic 100: EVERY expected outcome is correct per real AWS semantics (an incorrect expectation is blocking - this is the integrity gate)", "no engine files changed", "existing full node --test suite still green"],
+      "acceptance": [
+        "fixtures/negative/ has >=15 fixtures, each with policy + expect + rationale",
+        "IAM-semantics critic 100: EVERY expected outcome is correct per real AWS semantics (an incorrect expectation is blocking - this is the integrity gate)",
+        "no engine files changed",
+        "existing full node --test suite still green"
+      ],
       "maximumIterations": 4
     },
     {
@@ -305,7 +409,13 @@
         "Likely engine fixes: cross-statement compound detection; honor iam:PassedToService service-match before flagging a PassRole path; do not flag PassRole scoped to a specific role or PassRole-without-exec; explicit-Deny suppression; NotAction/NotResource; single-account vs all-accounts AssumeRole severity; treat AWS-required Resource:* actions as not-an-avoidable-wildcard where determinable; read-only wildcards not escalation.",
         "Preserve all Phase-1/2/2.1 behavior; keep determinism, safe DOM, zero egress."
       ],
-      "acceptance": ["tests/negative.test.js green: engine matches every validated negative fixture", "no negative-fixture expectation was weakened (diff shows engine changes, not expectation changes)", "IAM-semantics critic 100 (no false allow/deny, no overstated severity)", "reliability critic >=95", "full node --test suite green (existing + negative)"],
+      "acceptance": [
+        "tests/negative.test.js green: engine matches every validated negative fixture",
+        "no negative-fixture expectation was weakened (diff shows engine changes, not expectation changes)",
+        "IAM-semantics critic 100 (no false allow/deny, no overstated severity)",
+        "reliability critic >=95",
+        "full node --test suite green (existing + negative)"
+      ],
       "maximumIterations": 6
     },
     {
@@ -321,167 +431,413 @@
         "The findings table remains the authoritative view; the graph is still a progressive-enhancement aid and must stay keyboard-accessible with an equivalent accessible representation. Empty lanes are omitted (no empty headings).",
         "Deterministic layout/ordering; enforce the existing max-node cap."
       ],
-      "acceptance": ["a multi-category policy renders distinct PRIVILEGE ESCALATION / IDENTITY EXPANSION / DATA ACCESS / SCOPE lane sections", "escalation paths show the unknown-privileges transition node within their lane", "graph injection fixtures still inert; reduced-motion honored", "UX/a11y critic no serious/critical", "security critic no high/critical", "full node --test suite green (graph fixtures/e2e updated)"],
+      "acceptance": [
+        "a multi-category policy renders distinct PRIVILEGE ESCALATION / IDENTITY EXPANSION / DATA ACCESS / SCOPE lane sections",
+        "escalation paths show the unknown-privileges transition node within their lane",
+        "graph injection fixtures still inert; reduced-motion honored",
+        "UX/a11y critic no serious/critical",
+        "security critic no high/critical",
+        "full node --test suite green (graph fixtures/e2e updated)"
+      ],
       "maximumIterations": 5
     },
     {
       "id": "IAM-501",
       "title": "Phase 5: policy-family model with auto-detect + fail-closed on unsupported shapes",
-      "priority": 25, "phase": 5, "status": "pending",
+      "priority": 25,
+      "phase": 5,
+      "status": "pending",
       "requirements": [
         "Detect the policy family from shape (identity / resource / role-trust / permissions-boundary / SCP-RCP / session). AUTO-DETECT is the default (preserve paste-and-go); do NOT force a manual selector before Analyze. Offer an optional manual family override.",
         "FAIL CLOSED: if the shape is ambiguous, mixed, unknown, or contains a recognized-but-unmodeled element, STOP before rule evaluation and return a blocking coverage state - never present confident findings on a shape not understood.",
         "Model Principal and NotPrincipal as distinct, mutually-exclusive elements. Until a family-aware NotPrincipal evaluator exists, reject NotPrincipal with error code UNSUPPORTED_NOTPRINCIPAL. Same fail-closed treatment for other recognized-but-unmodeled top-level elements, with exact JSON paths.",
         "Every export records the selected/detected family and any blocking coverage state."
       ],
-      "acceptance": ["ambiguous/mixed/unknown shapes fail before rule evaluation with a machine-readable code + JSON path", "NotPrincipal is rejected UNSUPPORTED_NOTPRINCIPAL, never silently ignored", "existing single identity-policy fixtures still analyze (auto-detect = identity)", "QA/IAM-semantics critic 100 (family classification correct per AWS grammar)", "security + reliability critics clean", "full node --test suite green"],
+      "acceptance": [
+        "ambiguous/mixed/unknown shapes fail before rule evaluation with a machine-readable code + JSON path",
+        "NotPrincipal is rejected UNSUPPORTED_NOTPRINCIPAL, never silently ignored",
+        "existing single identity-policy fixtures still analyze (auto-detect = identity)",
+        "QA/IAM-semantics critic 100 (family classification correct per AWS grammar)",
+        "security + reliability critics clean",
+        "full node --test suite green"
+      ],
       "maximumIterations": 6
     },
     {
       "id": "IAM-502",
       "title": "Phase 5: coverage summary above findings + in every export",
-      "priority": 24, "phase": 5, "status": "pending",
+      "priority": 24,
+      "phase": 5,
+      "status": "pending",
       "requirements": [
         "Render a COMPACT 'Analysis coverage' summary above the findings/graph (not a giant dashboard): detected family, statements accepted/rejected, unrecognized actions, unsupported conditions/elements, missing layers, graph complete/truncated, build SHA + rule version + catalog version.",
         "Unsupported elements produce a visually prominent warning state. When any unsupported semantic input exists, replace 'No findings' with 'No findings in the supported subset - unsupported elements prevent a complete conclusion.' Use 'unsupported != safe' wording anywhere exports travel.",
         "Coverage is part of JSON + Markdown exports with stable machine-readable codes; a clean parse is NOT equivalent to complete coverage.",
         "Coverage precedes findings in visual AND DOM order; safe DOM; CSP-clean; keyboard-accessible."
       ],
-      "acceptance": ["coverage panel precedes findings in DOM order", "zero-findings wording flips automatically when coverage incomplete", "coverage present in JSON + MD exports with stable codes", "QA + security + reliability + compat/a11y critics clean", "csp_audit clean; full node --test green"],
+      "acceptance": [
+        "coverage panel precedes findings in DOM order",
+        "zero-findings wording flips automatically when coverage incomplete",
+        "coverage present in JSON + MD exports with stable codes",
+        "QA + security + reliability + compat/a11y critics clean",
+        "csp_audit clean; full node --test green"
+      ],
       "maximumIterations": 5
     },
     {
       "id": "IAM-503",
       "title": "Phase 5: single-flight worker + fail-closed execution boundary",
-      "priority": 23, "phase": 5, "status": "pending",
+      "priority": 23,
+      "phase": 5,
+      "status": "pending",
       "requirements": [
         "Single active analysis job: monotonic job IDs; terminate + invalidate the prior worker when a new job starts; ignore stale responses; clear prior findings/export state at job start; expose a busy state (aria-busy) and prevent duplicate submission; terminate on watchdog expiry.",
         "Fallback boundary: synchronous analysis is permitted ONLY when Worker construction is unavailable BEFORE analysis starts. A worker crash / runtime error / malformed message / watchdog after dispatch must NEVER reprocess hostile input on the main thread - return a bounded error instead.",
         "Add browser-CI (Playwright e2e) tests for two-rapid-submissions (older result cannot overwrite newer), worker-crash + timeout fixtures (engine never runs on main thread), and status/aria-busy/completion/failure/timeout announcements."
       ],
-      "acceptance": ["rapid double-submit: newer result wins, stale ignored", "post-dispatch worker crash/timeout never runs engine on main thread", "aria-busy + announcements tested in e2e across chromium/firefox/webkit", "reliability + security critics clean", "full node --test + e2e green"],
+      "acceptance": [
+        "rapid double-submit: newer result wins, stale ignored",
+        "post-dispatch worker crash/timeout never runs engine on main thread",
+        "aria-busy + announcements tested in e2e across chromium/firefox/webkit",
+        "reliability + security critics clean",
+        "full node --test + e2e green"
+      ],
       "maximumIterations": 6
     },
     {
       "id": "IAM-504",
       "title": "Phase 5: per-rule fixture matrix, explainable evidence, privacy invariants as release gates",
-      "priority": 22, "phase": 5, "status": "pending",
+      "priority": 22,
+      "phase": 5,
+      "status": "pending",
       "requirements": [
         "Every rule has, where semantically applicable: positive, negative, explicit-Deny, condition, NotAction, NotResource, policy-family-mismatch, hostile-string-rendering, deterministic-export fixtures. Add missing ones.",
         "Every finding exposes human- + machine-readable evidence: policy family, statement index/Sid (Sid is display evidence, not stable identity), normalized action, normalized resource, relevant condition, rule ID, certainty, limitation.",
         "Add gating tests (node + browser) asserting: no app-initiated network after initial asset load; no localStorage/sessionStorage/IndexedDB writes by default; policy text excluded from URLs and error payloads; Clear + pagehide wipe in-memory state; exports include caveat/coverage/catalog-version/build-SHA; hostile HTML/SVG/MD/Unicode inert; fixtures behave identically in browser worker and Node module."
       ],
-      "acceptance": ["fixture matrix complete for every rule (gaps filled)", "evidence completeness asserted per finding", "privacy invariants gated in CI (storage/network/url)", "QA + security + reliability critics clean", "full node --test + e2e green"],
+      "acceptance": [
+        "fixture matrix complete for every rule (gaps filled)",
+        "evidence completeness asserted per finding",
+        "privacy invariants gated in CI (storage/network/url)",
+        "QA + security + reliability critics clean",
+        "full node --test + e2e green"
+      ],
       "maximumIterations": 6
     },
     {
       "id": "IAM-505",
       "title": "Phase 5: built-in abuse-case sample policies (visible, fictional, deterministic)",
-      "priority": 21, "phase": 5, "status": "pending",
+      "priority": 21,
+      "phase": 5,
+      "status": "pending",
       "requirements": [
         "Add a small set of built-in sample policies loadable from the UI: at least one obvious escalation, and CRUCIALLY 'scary-but-neutralized' samples where a dangerous-looking grant is blocked by explicit Deny, a permission boundary shape, or unsupported/incomplete context (reuse the negative-corpus intent).",
         "Samples are fictional (placeholder ARNs/account 111122223333), deterministic, keyboard-accessible, and covered by engine tests (a UI sample is not a substitute for a regression fixture).",
         "Loading a sample fills the input and runs the normal flow (incl. coverage panel)."
       ],
-      "acceptance": ["samples load via keyboard + mouse; deterministic output", "at least one scary-but-neutralized sample demonstrates fail-closed/coverage or Deny suppression", "each sample has a matching engine fixture", "QA + compat/a11y + security critics clean", "full node --test + e2e green"],
+      "acceptance": [
+        "samples load via keyboard + mouse; deterministic output",
+        "at least one scary-but-neutralized sample demonstrates fail-closed/coverage or Deny suppression",
+        "each sample has a matching engine fixture",
+        "QA + compat/a11y + security critics clean",
+        "full node --test + e2e green"
+      ],
       "maximumIterations": 4
     },
     {
       "id": "IAM-506",
       "title": "Phase 5: condition classification v1 (classify, do not claim runtime allow/deny)",
-      "priority": 20, "phase": 5, "status": "pending",
+      "priority": 20,
+      "phase": 5,
+      "status": "pending",
       "requirements": [
         "Classify known conditions as constraint (narrows when/where/who), selector (selects service/resource/principal/encryption-context), expansion (negated/wildcarded/missing-key broadening), or unsupported/context-required.",
         "Cover iam:PassedToService, iam:AssociatedResourceArn, kms:ViaService, MFA (aws:MultiFactorAuthPresent), aws:SourceIp, aws:SourceVpc, aws:SourceVpce, aws:PrincipalOrgID, plus Null / ...IfExists / negated operators / multivalue set operators (to avoid wrong missing-key conclusions).",
         "Unknown conditions remain context-required and are NEVER credited as protective. The classifier may say text appears to narrow/select; it must NOT claim a runtime AWS request will match or be denied. Feeds pathExploitability + coverage; interactive request-context simulation is OUT of scope."
       ],
-      "acceptance": ["each covered key classified correctly with negative fixtures (protective/irrelevant/negated/dangerous distinguished)", "unknown conditions never lower risk to 'safe'", "QA/IAM-semantics critic 100", "reliability critic clean", "full node --test green"],
+      "acceptance": [
+        "each covered key classified correctly with negative fixtures (protective/irrelevant/negated/dangerous distinguished)",
+        "unknown conditions never lower risk to 'safe'",
+        "QA/IAM-semantics critic 100",
+        "reliability critic clean",
+        "full node --test green"
+      ],
       "maximumIterations": 5
     },
     {
       "id": "IAM-507",
       "title": "Phase 5: small versioned curated action catalog + unknown-action reporting",
-      "priority": 19, "phase": 5, "status": "pending",
+      "priority": 19,
+      "phase": 5,
+      "status": "pending",
       "requirements": [
         "Add a small, curated, VERSIONED action catalog (a dated snapshot, not the full AWS service-reference build): action existence + access-level annotation for the services the rules already reason about (iam, sts, s3, lambda, ec2, kms, secretsmanager, cloudtrail/guardduty/config, etc.).",
         "Report actions NOT in the catalog as 'unknown action' in coverage (not an error, not silently dropped). Show a visible catalog version/date in the UI + exports.",
         "Design the catalog behind an interface so a generated/sharded catalog can replace it later without touching rules. Do NOT fetch anything at runtime (connect-src 'none')."
       ],
-      "acceptance": ["unknown actions surface in coverage with the catalog version", "no runtime network (grep gate)", "catalog is swappable behind an interface", "QA + security + reliability critics clean", "full node --test green"],
+      "acceptance": [
+        "unknown actions surface in coverage with the catalog version",
+        "no runtime network (grep gate)",
+        "catalog is swappable behind an interface",
+        "QA + security + reliability critics clean",
+        "full node --test green"
+      ],
       "maximumIterations": 5
     },
     {
       "id": "IAM-508",
       "title": "Phase 5: CSP single source of truth (HTTP header authoritative)",
-      "priority": 18, "phase": 5, "status": "pending",
+      "priority": 18,
+      "phase": 5,
+      "status": "pending",
       "requirements": [
         "Treat the Cloudflare HTTP CSP header as authoritative. Keep the <meta> CSP only as a documented fallback (comment in index.html explaining the header is the source of truth and frame-ancestors is header-only). Do NOT introduce drift.",
         "Document the exact header value alongside the meta so the two cannot silently diverge; note this in DEPLOY.md.",
         "No build step is introduced (per Oliver's no-build decision); asset coherence continues to rely on the per-deploy Cloudflare cache purge."
       ],
-      "acceptance": ["meta CSP annotated as fallback; header documented as authoritative in DEPLOY.md", "csp_audit clean; no inline anything", "security critic clean", "full node --test green"],
+      "acceptance": [
+        "meta CSP annotated as fallback; header documented as authoritative in DEPLOY.md",
+        "csp_audit clean; no inline anything",
+        "security critic clean",
+        "full node --test green"
+      ],
       "maximumIterations": 3
     },
     {
       "id": "IAM-509",
       "title": "Phase 5: STAGE the SEO/indexing launch bundle (do NOT remove noindex)",
-      "priority": 17, "phase": 5, "status": "pending",
+      "priority": 17,
+      "phase": 5,
+      "status": "pending",
       "requirements": [
         "Prepare (but keep gated) the full indexability bundle: self-referential canonical, an accurate title + meta description, Open Graph + Twitter Card (name='twitter:*'), truthful SoftwareApplication JSON-LD, and a crawlable docs section covering supported families, coverage behavior, limitations, privacy boundary, examples, rule catalog, and how it differs from AWS Access Analyzer / Policy Simulator.",
         "KEEP <meta name='robots' content='noindex'> in place and DO NOT add the sitemap entry yet - leave a clear TODO comment 'flip noindex + add sitemap + submit to Search Console when Phase-B gates are signed off (Oliver decision)'. This story STAGES only.",
         "Wording rules (SEO critic enforces): use 'potential blast radius', NEVER 'policy simulator' or 'effective permissions'; NO meta keywords; NO absolute claims ('100% private', 'mathematically prove', 'zero exfiltration'); every structured-data claim must be visible on the page; do not promise rich results.",
         "All metadata/JSON-LD is static, CSP-clean, and accurate to the tool."
       ],
-      "acceptance": ["canonical/description/OG/Twitter/JSON-LD present and accurate; docs section crawlable and truthful", "noindex STILL present; no sitemap entry added; TODO comment for the human flip", "SEO critic: wording precise, no keywords, no absolute claims, no rich-result promises, structured data matches visible content", "QA + security critics clean; csp_audit clean", "full node --test green"],
+      "acceptance": [
+        "canonical/description/OG/Twitter/JSON-LD present and accurate; docs section crawlable and truthful",
+        "noindex STILL present; no sitemap entry added; TODO comment for the human flip",
+        "SEO critic: wording precise, no keywords, no absolute claims, no rich-result promises, structured data matches visible content",
+        "QA + security critics clean; csp_audit clean",
+        "full node --test green"
+      ],
       "maximumIterations": 4
     },
     {
       "id": "IAM-601",
       "title": "Phase 6: promote engine security probes to a gating node test",
-      "priority": 15, "phase": 6, "status": "pending",
+      "priority": 15,
+      "phase": 6,
+      "status": "pending",
       "requirements": [
         "Convert security-probes/engine-probes.mjs into tests/security.test.js using node:test + assert (so it runs under node --test on every push, not just as a manual harness).",
         "Cover: 4 prototype-pollution vectors (Object.prototype unpolluted), ReDoS timing bound on pathological wildcards (<3s), resource exhaustion (large statement count / deep nesting / multi-MB) never throws, malformed/crash inputs always return a structured result, determinism under adversarial input.",
         "Keep the manual .mjs harness too (for live-site runs); the node test is the CI gate."
       ],
-      "acceptance": ["tests/security.test.js runs under node --test and passes", "the security assertions are now part of the gating suite", "reliability + security critics clean", "full node --test green"],
+      "acceptance": [
+        "tests/security.test.js runs under node --test and passes",
+        "the security assertions are now part of the gating suite",
+        "reliability + security critics clean",
+        "full node --test green"
+      ],
       "maximumIterations": 4
     },
     {
       "id": "IAM-602",
       "title": "Phase 6: fixture-matrix completeness meta-test",
-      "priority": 14, "phase": 6, "status": "pending",
+      "priority": 14,
+      "phase": 6,
+      "status": "pending",
       "requirements": [
         "Add tests/fixture-matrix.test.js: enumerate every rule ID (rules.js) and escalation ID (escalation.js) and assert the required fixture types exist for each where semantically applicable (positive, negative, boundary; plus deny/condition/NotAction/NotResource/family-mismatch/hostile-render coverage across the fixtures/ tree).",
         "If a rule is missing a required fixture type, the impl agent must ADD the fixture (do not weaken the meta-test). The meta-test must FAIL if a future rule ships without its when-NOT-to-fire coverage.",
         "Document the required matrix in the test so it is self-explaining."
       ],
-      "acceptance": ["meta-test enumerates all rule/escalation IDs and asserts fixture coverage", "any gaps found are filled with real fixtures (validated by the QA/IAM-semantics critic)", "full node --test green"],
+      "acceptance": [
+        "meta-test enumerates all rule/escalation IDs and asserts fixture coverage",
+        "any gaps found are filled with real fixtures (validated by the QA/IAM-semantics critic)",
+        "full node --test green"
+      ],
       "maximumIterations": 5
     },
     {
       "id": "IAM-603",
       "title": "Phase 6: formal determinism gate + node/browser parity",
-      "priority": 13, "phase": 6, "status": "pending",
+      "priority": 13,
+      "phase": 6,
+      "status": "pending",
       "requirements": [
         "Add a determinism gate: run the full fixture corpus through analyze() twice and assert byte-identical findings + graph.",
         "Add a node/browser parity test: assert the engine produces identical findings for the corpus when driven as a Node module vs inside the browser worker (Playwright e2e that posts fixtures to worker.js and compares to the Node analyze() result baseline). Guards against a browser-only divergence.",
         "Deterministic ordering already required; this makes it an explicit named gate."
       ],
-      "acceptance": ["determinism gate green over the whole corpus", "node vs browser-worker parity asserted (e2e) across engines", "reliability critic clean", "full node --test + e2e green"],
+      "acceptance": [
+        "determinism gate green over the whole corpus",
+        "node vs browser-worker parity asserted (e2e) across engines",
+        "reliability critic clean",
+        "full node --test + e2e green"
+      ],
       "maximumIterations": 5
     },
     {
       "id": "IAM-604",
       "title": "Phase 6: mutation testing (nightly, non-blocking) + version-coherence self-test",
-      "priority": 12, "phase": 6, "status": "pending",
+      "priority": 12,
+      "phase": 6,
+      "status": "pending",
       "requirements": [
         "Add a Stryker (or equivalent) mutation-testing config targeting engine/ (evaluator, rules, escalation, correlate), target >=90% mutation score. Wire it as a NIGHTLY GitHub Actions workflow, NOT a PR-blocking gate (it is slow). Add the npm script + devDep + config; do not run it in this loop (nightly CI runs it).",
         "Add a version-coherence self-test: a unit test asserting engine/worker/rule/catalog version identifiers are internally consistent (the manifest matches), and the UI startup check blocks analysis on mismatch.",
         "Pin any new devDep and the GH Actions to commit SHAs."
       ],
-      "acceptance": ["stryker config + nightly workflow present and syntactically valid (mutation runs in nightly CI, not this loop)", "version-coherence unit test green", "GH Actions pinned to SHAs", "full node --test green"],
+      "acceptance": [
+        "stryker config + nightly workflow present and syntactically valid (mutation runs in nightly CI, not this loop)",
+        "version-coherence unit test green",
+        "GH Actions pinned to SHAs",
+        "full node --test green"
+      ],
       "maximumIterations": 4
+    },
+    {
+      "id": "IAM-701",
+      "title": "Phase 7: cross-statement evidence provenance (headers, graph edges, action arrays)",
+      "priority": 13,
+      "phase": 7,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Fix the provenance defect verified in docs/acceptance-suite.md test 1 (verdicts in ~/knowledge/personal/iam-blast-radius-battle-test-2026-08-22.md): a compound finding's detailed evidence[] array is already correct (per-statement), but (a) the finding HEADER (statementSid + actions) attributes cross-statement actions to a single Sid, and (b) the graph edge evidence attributes a combined action list to one statementIndex. Make header + graph-edge evidence carry the SAME correct per-statement records as the finding evidence[]. Enforce the invariant: every action attributed to a statement MUST appear in that exact statement after normalization.",
+        "Fix the evidence action field: where a statement contributes multiple actions it is currently a comma-joined STRING (e.g. 'lambda:CreateFunction, lambda:UpdateFunctionCode'); represent contributed actions as an ARRAY, consistently across findings, escalation objects, and graph-edge evidence (tests 4, 13).",
+        "Add fixtures under fixtures/acceptance/ for tests 1, 4, 11 asserting: PassRole attributed only to its granting statement, RunInstances only to its own; no synthetic statement claims both actions; graph edges retain original per-statement evidence objects; case/scalar test 11 stays a single-statement PASS (both actions legitimately share one Sid there)."
+      ],
+      "acceptance": [
+        "no finding header, escalation object, or graph-edge evidence attributes an action to a statement that does not grant it (verified against analyze() output, not just fixtures)",
+        "evidence action is an array everywhere it can carry multiple actions; no comma-joined action strings",
+        "test-1 / test-4 / test-11 acceptance fixtures present and green",
+        "full node --test green; existing negative corpus (fixtures/negative) unchanged and green"
+      ]
+    },
+    {
+      "id": "IAM-702",
+      "title": "Phase 7: graph edge semantic typing + deny must not emit capability edges",
+      "priority": 14,
+      "phase": 7,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Fix the generic can-write catch-all verified in docs/acceptance-suite.md tests 8, 24, 1: the can-write|resource:* edge currently aggregates unlike actions (reads like ec2:Describe*, decrypts like kms:Decrypt, delegation like iam:PassRole, destroys like s3:DeleteObject). Type edges by capability: reads->can-read, decrypts->can-decrypt, delegation->can-pass/delegation, destroys->can-destroy, genuine broad mutation->can-write. Remove or correctly split the aggregate. iam:PassRole alone must NOT create an execution path without a compatible service execution primitive (test 24 keeps no false exec path - that behavior is correct, preserve it).",
+        "Fix the deny leak verified in test 8: a fully explicitly-denied action (ec2:TerminateInstances Allow overlapped by an exact Deny) currently still emits can-write AND can-destroy edges. Suppressed grants must NOT produce positive capability edges or count in risk totals; a denies edge is fine, an informational suppressed-grant record is acceptable.",
+        "Also stop TerminateInstances (and destructive actions generally) from double-emitting both can-write and can-destroy: a destroy action is can-destroy, not additionally can-write.",
+        "Add fixtures for tests 8, 24 asserting: exactly the typed edges expected per action, no generic can-write aggregation, no capability edge for the denied action, and the cross-test 'no semantic edge reuse' invariant."
+      ],
+      "acceptance": [
+        "no edge aggregates unlike-capability actions; each capability has its own edge type; ec2:Describe* -> can-read, kms:Decrypt -> can-decrypt, iam:PassRole -> delegation, s3:DeleteObject -> can-destroy",
+        "a fully-denied action produces zero positive capability edges and is excluded from risk totals (test 8)",
+        "test-8 / test-24 acceptance fixtures present and green",
+        "full node --test green; graph.test.js + negative corpus unchanged-or-intentionally-updated and green"
+      ]
+    },
+    {
+      "id": "IAM-703",
+      "title": "Phase 7: compound-path AND/OR semantics + standalone techniques",
+      "priority": 15,
+      "phase": 7,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Fix the flat requiredActions AND-list verified in docs/acceptance-suite.md tests 2, 3, 5: alternative escalation techniques are collapsed into one requiredActions array implying ALL are jointly required. Model compound prerequisites with explicit allOf/anyOf. For Lambda (test 3): Path A = iam:PassRole AND lambda:CreateFunction (create under passable role); Path B = lambda:UpdateFunctionCode alone (replace code under an existing function role; does NOT require PassRole) - Path B must state the existing function role + invocation path are outside supplied context.",
+        "requiredActions must never list actions the policy does not actually grant (test 5: CREDENTIAL-CREATION currently lists CreateLoginProfile/UpdateLoginProfile that are absent). Prerequisites shown must be grounded in the analyzed statements or clearly marked as alternative techniques not all present.",
+        "Test 2: keep correctly suppressing the false EC2 path (iam:PassedToService=lambda scopes it); ensure remediation does NOT say 'missing iam:PassedToService' when the condition is present; show PassedToService as a path selector that excludes EC2.",
+        "Add fixtures for tests 2, 3, 5 asserting allOf/anyOf structure, Path B present and PassRole-free, no absent-action prerequisites, and no false EC2 path / no false 'missing PassedToService' remediation."
+      ],
+      "acceptance": [
+        "compound findings expose explicit allOf/anyOf; no flat list implies unrelated alternatives are jointly required",
+        "standalone lambda:UpdateFunctionCode technique is represented as its own path (test 3)",
+        "no requiredActions entry references an action absent from the analyzed policy (test 5)",
+        "test-2 / test-3 / test-5 acceptance fixtures present and green; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-704",
+      "title": "Phase 7: complement (NotAction/NotResource) + version gate + SCP fail-closed",
+      "priority": 16,
+      "phase": 7,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Fix complement handling verified in docs/acceptance-suite.md tests 13, 14: an Allow with NotAction currently emits findings whose actions field shows the EXCLUDED set (iam:*) as if it were allowed, and analysis reports complete. Either (a) model complement semantics correctly (the grant is everything EXCEPT the listed actions/resources, within applicable-resource semantics) OR (b) fail-closed with a blocking coverage warning - NEVER present the excluded set as allowed, and never present an unqualified success on an unmodeled complement. If any real capability is reported from a complement, it must be labeled as complement-derived with reduced confidence; do not treat the NotResource ARN as the granted resource.",
+        "Fix the version gate verified in test 22C: an unsupported policy Version (e.g. 2008-10-17) is currently silently accepted and analyzed. Warn or block per documented version support; never silently rewrite the version to 2012-10-17. Keep 22A (malformed JSON) and 22B (missing Effect/Action) blocking as they already do.",
+        "Fix SCP misdetection verified in test 19: an SCP-shaped control policy (Deny-only guardrails, NotAction-deny with RequestedRegion) is currently detected as an IDENTITY policy and analyzed with identity rules. Detect the SCP/RCP shape and FAIL CLOSED with a coverage block ('SCPs set permission ceilings and do not grant permissions; SCP semantics unsupported') rather than falling back to identity rules. This is fail-closed only - full SCP ceiling analysis is a later feature, NOT this story. Do not report allowed capabilities from an SCP NotAction.",
+        "Add fixtures for tests 13, 14, 19, 22C asserting: excluded set never shown as allowed; complement either modeled-with-reduced-confidence or blocked; unsupported version warned/blocked; SCP-shape blocked (not identity-analyzed)."
+      ],
+      "acceptance": [
+        "no finding presents a NotAction/NotResource excluded set as allowed actions/resources (tests 13, 14)",
+        "unsupported policy Version is warned or blocked, never silently rewritten (test 22C)",
+        "SCP-shaped policy fails closed with a ceiling-not-grant coverage block; no identity-rule fallback, no capabilities from NotAction (test 19)",
+        "test-13/14/19/22C acceptance fixtures present and green; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-705",
+      "title": "Phase 7: dedup wildcard-action flood + collapse overlapping IAM-admin findings + severity reconciliation",
+      "priority": 17,
+      "phase": 7,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Fix the iam:* flood verified in docs/acceptance-suite.md test 12: iam:* currently produces 7 separate top-level rows (ATTACH-POLICY, CREDENTIAL-CREATION, DIRECT-IAM-ADMIN, POLICY-VERSION, PUT-INLINE-POLICY, TRUST-POLICY-MODIFY, WILDCARD-ACTION). Present ONE primary finding (broad IAM administration / escalation surface) with the specific primitives as structured techniques or subsumed risk factors, consistent with the existing subsumption model (test 23 already dedups correctly - reuse that mechanism). Expose the rule-catalog version (do not expand iam:* against an unversioned handwritten list without surfacing the version).",
+        "Collapse the overlapping double-fires verified in tests 4 and 5: DIRECT-IAM-ADMIN fires alongside POLICY-VERSION (test 4) and alongside CREDENTIAL-CREATION (test 5) on the same statement/actions. Deduplicate so a specific primitive finding is not also reported as a generic DIRECT-IAM-ADMIN row; keep the most specific finding, subsume the generic one as a risk factor.",
+        "Remove the spurious can-modify|policy:self edge on iam:CreateAccessKey (test 5) - CreateAccessKey does not modify a policy; its edge is credential-creation/impersonation only.",
+        "SEVERITY RECONCILIATION: do NOT blindly bump iam:* to critical. The documented severity model reserves critical for compound escalation paths (immutableContracts / prior phases). Either present iam:* at the severity the documented model dictates with a clear rationale, OR update the documented model coherently if critical is justified - but the QA/IAM-semantics critic must confirm the severity is consistent with a single documented scoring model (the suite explicitly allows a different severity when the model is consistent). Primary requirement is de-flooding, not the label.",
+        "Update the risk-summary counting so it distinguishes primary findings from subsumed broad grants, and JSON/Markdown/UI counts agree (test 23 invariant). Add fixtures for tests 12, 4, 5 asserting one primary finding + subsumed factors, no double-fire, correct edge on CreateAccessKey, and catalog version surfaced."
+      ],
+      "acceptance": [
+        "iam:* yields one primary finding with subsumed/structured primitives, not a flood of redundant rows (test 12)",
+        "no statement produces both a specific primitive finding and a generic DIRECT-IAM-ADMIN row for the same actions (tests 4, 5)",
+        "iam:CreateAccessKey does not emit can-modify|policy:self; credential-creation/impersonation edge only (test 5)",
+        "severity is consistent with a single documented scoring model (critic-confirmed); rule-catalog version surfaced; risk-summary counts agree across JSON/MD/UI; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-706",
+      "title": "Phase 7: resource-scoped and variable-scoped data-read coverage (inferred sensitivity)",
+      "priority": 18,
+      "phase": 7,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Fix the data-read coverage gap verified in docs/acceptance-suite.md tests 7 and 21 (and the original reviewer point): s3:GetObject/ListBucket on a NAMED bucket (production-app-data / production-exports) and on a policy-VARIABLE-scoped resource (company-home/${aws:username}/*) currently produce NO finding. Add a lower-certainty data-read capability finding: state the principal can read objects from the named/variable-scoped resource, with sensitivity INFERRED from naming and clearly labeled as inferred, not proven. Use a neutral 'data-read capability' framing if sensitivity is only naming-inferred; medium-or-lower confidence.",
+        "Do NOT resolve ${aws:username} (test 21): keep the policy variable verbatim in evidence and exports; do not classify the resource as literal, wildcard-global, or definitely single-user; report a variable-scoped read with preserved uncertainty.",
+        "Test 7 KMS is already handled well (kms:Decrypt with kms:ViaService=s3 -> medium, constrained) - do NOT regress it into unrestricted/wildcard framing; the new S3 finding must coexist with the constrained-KMS finding.",
+        "Do not over-fire: a resource-scoped read is lower severity than a wildcard/exfil finding; must not escalate to critical or claim every object is readable (encryption config + key policy are absent). Add fixtures for tests 7, 21 asserting the inferred-read finding, preserved policy variable, and constrained (not wildcard) KMS."
+      ],
+      "acceptance": [
+        "resource-scoped s3:GetObject on a named bucket yields a data-read finding with sensitivity explicitly inferred-from-naming, medium-or-lower (test 7)",
+        "variable-scoped read reported with ${aws:username} preserved verbatim, not resolved or classified as literal/global/single-user (test 21)",
+        "constrained KMS (kms:ViaService) not regressed to unrestricted; the two findings coexist (test 7)",
+        "test-7 / test-21 acceptance fixtures present and green; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-707",
+      "title": "Phase 7: acceptance-suite fixturization (all 24) + cross-test invariants harness + full re-test",
+      "priority": 19,
+      "phase": 7,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Ensure EVERY one of the 24 tests (+ subcases 22A/B/C) in docs/acceptance-suite.md has a committed fixture under fixtures/acceptance/ and is exercised by a semantic test (tests/acceptance-suite.test.js) driven from analyze() output. Fill any gaps left by IAM-701..706. Fixtures use the existing fixture format (see fixtures/README.md); extend the format with an evidence/edge-provenance assertion if needed.",
+        "Encode the 12 cross-test invariants (docs/acceptance-suite.md 'Cross-test invariants') as reusable assertion helpers applied across all acceptance fixtures where applicable: explicit family, immutable evidence (every displayed action/resource/condition/Sid/index maps back to normalized input), explicit AND/OR, unknown-is-visible, denies-are-not-grants, condition-polarity, no-semantic-edge-reuse, explainable-dedup, exports-agree (browser/JSON/Markdown same finding set+severity+confidence+evidence), invalid-fails-closed, local-only, determinism (byte-equivalent semantic JSON on re-analyze excluding timestamps).",
+        "For tests that remain fail-closed BY DESIGN after this pass (role-trust 10/15/16/17/18, full-SCP-semantics beyond fail-closed) encode their EXPECTED CURRENT behavior (blocked / coverage warning) as the fixture expectation, with a comment tying each to the queued follow-up feature (role-trust is the next feature) so a later story flips them intentionally rather than via a silent skip. No test may be silently skipped.",
+        "Re-run the full battle test: run node --test AND re-run the acceptance suite across all 24 cases; produce a final scoreboard (pass/fail per test) written to progress.md and docs/acceptance-suite-results.md. Report which of the original 24 now pass, which remain fail-closed-by-design (with the follow-up feature named), and confirm the 6 originally-passing tests (6,11,20,22A,22B,23) + the negative corpus never regressed."
+      ],
+      "acceptance": [
+        "all 24 tests (+22A/B/C) have committed acceptance fixtures and are run by tests/acceptance-suite.test.js; zero silent skips",
+        "the 12 cross-test invariants are encoded as helpers and applied; determinism + exports-agree invariants pass",
+        "final scoreboard written to docs/acceptance-suite-results.md + progress.md; originally-passing tests + negative corpus not regressed",
+        "full node --test green; every acceptance fixture either passes or is an explicit design-blocked expectation tied to a named follow-up feature"
+      ]
     }
   ]
 }

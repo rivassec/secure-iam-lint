@@ -1,0 +1,32 @@
+{
+  "name": "Acceptance test 21 - policy variables prevent exact resource resolution",
+  "note": "IAM-706: s3:GetObject on a ${aws:username}-scoped resource yields a variable-scoped DATA-READ with the policy variable preserved VERBATIM (never resolved, never classified literal / wildcard-global / definitely single-user) and lower path-exploitability. Must NOT fire DATA-EXFIL (not broad) or WILDCARD-RESOURCE.",
+  "phase": 7,
+  "story": "IAM-706",
+  "acceptanceTest": 21,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "UserScopedHomeDirectory",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::company-home/${aws:username}/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["DATA-READ"],
+    "notFindingIds": ["DATA-EXFIL", "WILDCARD-RESOURCE"]
+  },
+  "dataReadExpect": {
+    "findingId": "DATA-READ",
+    "statementIndex": 0,
+    "maxSeverity": "medium",
+    "maxPathExploitability": "low",
+    "variableScoped": true,
+    "preserveVerbatim": "arn:aws:s3:::company-home/${aws:username}/*"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "Acceptance test 19 - SCP deny guardrail fails closed (not identity-analyzed)",
+  "note": "IAM-704 SCP fail-closed. A deny-only organizations control policy (LeaveOrganization deny + region guardrail via NotAction-deny with aws:RequestedRegion) was previously misdetected as an IDENTITY policy and run through identity rules, which silently produced zero findings and hid that the document was never an identity policy. The engine now detects the SCP/RCP shape and FAILS CLOSED with a UNSUPPORTED_SCP_SHAPE coverage block: SCPs set permission CEILINGS and do not grant, so no capabilities are reported from the NotAction and no identity-rule fallback occurs. Full SCP ceiling analysis is a later feature; this is fail-closed only.",
+  "phase": 7,
+  "story": "IAM-704",
+  "acceptanceTest": 19,
+  "family": "scp-rcp",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyLeavingOrganization",
+        "Effect": "Deny",
+        "Action": "organizations:LeaveOrganization",
+        "Resource": "*"
+      },
+      {
+        "Sid": "DenyUnapprovedRegions",
+        "Effect": "Deny",
+        "NotAction": ["iam:*", "route53:*", "support:*"],
+        "Resource": "*",
+        "Condition": {
+          "StringNotEquals": {
+            "aws:RequestedRegion": ["us-east-1", "us-west-2"]
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["NOTACTION-ALLOW", "WILDCARD-RESOURCE", "DIRECT-IAM-ADMIN"]
+  },
+  "coverageExpect": {
+    "blocked": true,
+    "detectedFamily": "scp-rcp",
+    "blockingCodes": ["UNSUPPORTED_SCP_SHAPE"],
+    "noFindings": true,
+    "noCapabilityEdges": true
+  }
+}

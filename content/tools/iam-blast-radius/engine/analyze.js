@@ -125,7 +125,17 @@ export function findingToRow(finding) {
         text = String(f.severity || 'info');
         break;
       case 'statement':
-        text = String(f.statementSid || '');
+        // IAM-701: a compound cross-statement finding is granted by MORE THAN
+        // ONE statement; showing only the anchor Sid next to the combined action
+        // list would imply that one statement granted everything. List every
+        // contributing statement's Sid so the cell never mis-attributes an
+        // action's origin (the per-action breakdown rides in contributingStatements
+        // / the export). Single-statement findings render their one Sid as before.
+        text = Array.isArray(f.contributingStatements) && f.contributingStatements.length > 1
+          ? f.contributingStatements
+            .map((s) => String(s.statementSid || `(index ${s.statementIndex})`))
+            .join(', ')
+          : String(f.statementSid || '');
         break;
       case 'actions':
         text = textList(f.actions);
@@ -177,6 +187,9 @@ const SUMMARY_CATEGORY_BY_ID = Object.freeze({
   'ASSUME-ROLE-EXPANSION': 'roleAssumption',
   'DATA-EXFIL': 'sensitiveData',
   'KMS-DECRYPT': 'sensitiveData',
+  // IAM-706: a resource/variable-scoped data-read capability is a sensitive-data
+  // access capability too (lower certainty than DATA-EXFIL, still counted here).
+  'DATA-READ': 'sensitiveData',
   'WILDCARD-RESOURCE': 'broadResource',
 });
 

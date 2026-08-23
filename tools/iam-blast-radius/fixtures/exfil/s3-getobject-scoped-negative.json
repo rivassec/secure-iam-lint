@@ -1,11 +1,11 @@
 {
   "name": "s3:GetObject scoped (negative)",
-  "note": "s3:GetObject on a single scoped bucket prefix is routine and must NOT fire DATA-EXFIL: the bulk-read rule requires a broad resource scope. Guards the \"on *\" boundary of the exfil rule.",
+  "note": "s3:GetObject on a single scoped bucket prefix is routine and must NOT fire DATA-EXFIL: the bulk-read rule requires a broad resource scope. Guards the \"on *\" boundary of the exfil rule. IAM-706: it must ALSO NOT fire DATA-READ - the bucket name (reports-bucket) is neutral (no sensitivity token) and the ARN carries no policy variable, so a routine scoped read stays quiet.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
       { "Sid": "ReadOneBucket", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::reports-bucket/*" }
     ]
   },
-  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["DATA-EXFIL", "WILDCARD-RESOURCE"] }
+  "expect": { "valid": true, "exactFindingIds": [], "findingIds": [], "notFindingIds": ["DATA-EXFIL", "WILDCARD-RESOURCE", "DATA-READ"] }
 }

@@ -175,7 +175,31 @@ export function toMarkdown(analysis) {
     out.push(line(['- Policy evidence: ', String(f.policyEvidence || '')]));
     out.push(line(['- Path exploitability: ', String(f.pathExploitability || '')]));
     out.push(line(['- Actions: ', list(f.actions)]));
+    // IAM-701: when a finding's actions are distributed across MORE THAN ONE
+    // statement (a compound cross-statement path), spell out the per-statement
+    // provenance so the single "- Statement:" anchor above is never read as
+    // granting the whole combined action list. Each line attributes only the
+    // actions the named statement actually grants.
+    const cs = Array.isArray(f.contributingStatements) ? f.contributingStatements : [];
+    if (cs.length > 1) {
+      out.push('- Contributing statements (which statement grants which action):');
+      for (const s of cs) {
+        out.push(line([
+          '  - ', mdSafe(s.statementSid || `(index ${s.statementIndex})`),
+          ': ', list(s.actions),
+        ]));
+      }
+    }
     out.push(line(['- Resources: ', list(f.resources)]));
+    // IAM-704: a complement (NotAction/NotResource) grant. The excluded set is
+    // reported EXPLICITLY as excluded (never as an allowed action/resource) so a
+    // downloaded report cannot be misread as granting the listed items.
+    if (Array.isArray(f.excludedActions) && f.excludedActions.length > 0) {
+      out.push(line(['- Excluded actions (NOT granted; complement carve-out): ', list(f.excludedActions)]));
+    }
+    if (Array.isArray(f.excludedResources) && f.excludedResources.length > 0) {
+      out.push(line(['- Excluded resources (NOT granted; complement carve-out): ', list(f.excludedResources)]));
+    }
     if (f.why) out.push(line(['- Why it matters: ', String(f.why)]));
     if (f.limit) out.push(line(['- What this does NOT prove: ', String(f.limit)]));
     if (f.remediation) out.push(line(['- Remediation: ', String(f.remediation)]));

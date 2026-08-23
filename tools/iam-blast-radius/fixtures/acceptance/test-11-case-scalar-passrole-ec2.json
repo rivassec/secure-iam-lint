@@ -1,0 +1,35 @@
+{
+  "name": "Acceptance test 11 - case-insensitive action + scalar normalization",
+  "note": "IAM-701 provenance control: BOTH actions legitimately share ONE Sid here (single statement), so the finding stays a single-statement PASS - contributingStatements has exactly one entry and both actions belong to it. Verifies case-insensitive matching (IAM:passrole / EC2:runinstances) and scalar Statement + scalar Resource normalization do not fabricate cross-statement provenance.",
+  "phase": 7,
+  "story": "IAM-701",
+  "acceptanceTest": 11,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": {
+      "Sid": "OddCasing",
+      "Effect": "Allow",
+      "Action": [
+        "IAM:passrole",
+        "EC2:runinstances"
+      ],
+      "Resource": "*"
+    }
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-EC2"]
+  },
+  "provenanceExpect": {
+    "focusFindingId": "PASSROLE-EC2",
+    "crossStatement": false,
+    "contributingStatements": [
+      {
+        "statementIndex": 0,
+        "statementSid": "OddCasing",
+        "actions": ["iam:PassRole", "EC2:runinstances"]
+      }
+    ]
+  }
+}

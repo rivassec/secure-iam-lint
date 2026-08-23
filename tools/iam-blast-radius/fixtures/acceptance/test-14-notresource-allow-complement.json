@@ -1,0 +1,39 @@
+{
+  "name": "Acceptance test 14 - Allow with NotResource (complement scope, excluded ARN never shown as granted)",
+  "note": "IAM-704 complement handling. An Allow of s3:GetObject scoped with NotResource grants the action on EVERY resource EXCEPT the listed one - a broad read. The engine models the granted action (s3:GetObject) but must NEVER treat the NotResource ARN (arn:aws:s3:::audit-archive/*) as the granted resource: the resources array is emptied and the carve-out rides in a separate excludedResources field. Complement scope is approximate, so policy-evidence is reduced a notch. Analysis is NOT blocked (valid identity policy).",
+  "phase": 7,
+  "story": "IAM-704",
+  "acceptanceTest": 14,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadEveryBucketExceptAudit",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "NotResource": "arn:aws:s3:::audit-archive/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["DATA-EXFIL"],
+    "notFindingIds": []
+  },
+  "complementExpect": {
+    "blocked": false,
+    "detectedFamily": "identity",
+    "excludedResourcesNeverGranted": ["arn:aws:s3:::audit-archive/*"],
+    "findings": [
+      {
+        "id": "DATA-EXFIL",
+        "complement": ["NotResource"],
+        "excludedResources": ["arn:aws:s3:::audit-archive/*"],
+        "resourcesExclude": ["arn:aws:s3:::audit-archive/*"],
+        "resourcesEmpty": true,
+        "maxPolicyEvidence": "medium"
+      }
+    ]
+  }
+}

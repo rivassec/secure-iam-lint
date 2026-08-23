@@ -1,6 +1,6 @@
 {
-  "name": "Rule grant fully overridden by same-policy Deny -> blocked-by-deny edge, dropped from table",
-  "note": "Allow ec2:TerminateInstances on a concrete instance, with an unconditional same-policy Deny of the same action on the same resource. rules.js still EMITS the DESTRUCTIVE-ACTION capability finding (it is not Deny-aware), so graph.js can apply AWS explicit-Deny precedence and draw the can-destroy edge as blocked-by-deny, not confirmed-by-policy. But the AUTHORITATIVE FINDINGS TABLE drops the finding: an explicit Deny that fully covers the granted action removes the capability, so analyze() must not list it as a live risk (IAM-302; consistent with the frozen negative corpus explicit-deny-suppresses-exfil). The graph still shows the blocked edge; the table shows only live capabilities. Overstating a fully-denied grant as a table finding, or the edge as confirmed, would be a truthfulness harm (threat-model T8).",
+  "name": "Rule grant fully overridden by same-policy Deny -> NO positive capability edge, only the denies edge",
+  "note": "Allow ec2:TerminateInstances on a concrete instance, with an unconditional same-policy Deny of the same action on the same resource. The grant is FULLY suppressed by AWS explicit-Deny precedence. IAM-702 (acceptance suite test 8, cross-test invariant 5 'denies are not grants'): a fully-denied action must NOT emit a positive capability edge (no can-destroy, no can-write) and must not count in risk totals - a suppressed grant is not a grant. Only the `denies` edge remains, carrying the block as the decisive fact. The AUTHORITATIVE FINDINGS TABLE likewise drops the finding (IAM-302; consistent with the frozen negative corpus explicit-deny-suppresses-exfil). Previously graph.js drew a blocked-by-deny can-destroy edge here; that leaked a suppressed grant into the graph as a positive capability edge (a truthfulness harm, threat-model T8), which IAM-702 removes.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -12,8 +12,7 @@
     "valid": true,
     "findingIds": [],
     "notFindingIds": ["DESTRUCTIVE-ACTION"],
-    "graphEdges": [
-      { "from": "principal", "to": "resource:arn:aws:ec2:us-east-1:111122223333:instance/i-abc", "type": "can-destroy", "certainty": "blocked-by-deny" },
+    "exactGraphEdges": [
       { "from": "principal", "to": "actiongroup:deny#1", "type": "denies", "certainty": "blocked-by-deny" }
     ]
   }

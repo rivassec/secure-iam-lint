@@ -436,7 +436,7 @@ test('IAM-401: a merged edge keeps a single consistent lane', () => {
 // confirmed-by-policy - an overstated-certainty (threat-model T8) harm.
 // ---------------------------------------------------------------------------
 
-test('rule edge fully overridden by an unconditional same-policy Deny -> blocked-by-deny', () => {
+test('rule edge fully overridden by an unconditional same-policy Deny -> NO positive edge, only denies (IAM-702)', () => {
   const arn = 'arn:aws:ec2:us-east-1:1:instance/i-abc';
   const r = buildGraphFromText(JSON.stringify({
     Statement: [
@@ -445,13 +445,22 @@ test('rule edge fully overridden by an unconditional same-policy Deny -> blocked
     ],
   }));
   assert.equal(r.ok, true);
-  const destroy = findEdge(r.graph, { from: 'principal', to: `resource:${arn}`, type: EDGE_TYPES.CAN_DESTROY });
-  assert.ok(destroy, 'expected a can-destroy edge from the DESTRUCTIVE-ACTION rule');
-  assert.equal(
-    destroy.certainty,
-    CERTAINTY.BLOCKED_BY_DENY,
-    'a same-policy Deny of the granted action must block the rule edge, not leave it confirmed',
+  // IAM-702 (acceptance test 8, cross-test invariant 5): a fully-denied grant is
+  // a suppressed grant, so it emits NO positive capability edge (no can-destroy,
+  // no can-write) - "denies are not grants". Rendering a blocked-by-deny positive
+  // edge would leak a suppressed grant into the graph (truthfulness harm, T8).
+  assert.ok(
+    !findEdge(r.graph, { from: 'principal', to: `resource:${arn}`, type: EDGE_TYPES.CAN_DESTROY }),
+    'a fully-denied action must not emit a can-destroy edge',
   );
+  assert.ok(
+    !findEdge(r.graph, { from: 'principal', to: `resource:${arn}`, type: EDGE_TYPES.CAN_WRITE }),
+    'a fully-denied action must not emit a can-write edge either',
+  );
+  // The Deny is still surfaced as the decisive fact on its own denies edge.
+  const deny = r.graph.edges.find((e) => e.type === EDGE_TYPES.DENIES);
+  assert.ok(deny, 'the same-policy Deny must still appear as its own denies edge');
+  assert.equal(deny.certainty, CERTAINTY.BLOCKED_BY_DENY);
 });
 
 test('rule edge partially narrowed by a same-policy Deny -> downgraded to context-required', () => {
@@ -546,19 +555,29 @@ test('a NotAction-Deny narrows a full "*" rule edge but NEVER hard-blocks it', (
   );
 });
 
-test('control: a POSITIVE-action Deny that covers the whole wildcard grant DOES block it', () => {
+test('control: a POSITIVE-action Deny that covers the whole wildcard grant DROPS the positive edge (IAM-702)', () => {
   // Contrast with the NotAction cases above: Allow s3:* + Deny s3:* (positive
-  // Action) genuinely covers the entire grant, so blocked-by-deny is correct.
-  // This must stay distinct from the NotAction narrowing case.
+  // Action) genuinely covers the ENTIRE grant, so the grant is fully suppressed.
+  // IAM-702: a fully-denied grant emits NO positive capability edge (no allows,
+  // no can-write) - only the denies edge remains. This must stay distinct from
+  // the NotAction narrowing case (which keeps a downgraded, still-reachable edge).
   const r = buildGraphFromText(JSON.stringify({
     Statement: [
       { Sid: 'all', Effect: 'Allow', Action: 's3:*', Resource: '*' },
       { Sid: 'blockall', Effect: 'Deny', Action: 's3:*', Resource: '*' },
     ],
   }));
-  const allows = findEdge(r.graph, { from: 'principal', to: 'actiongroup:s3:*', type: EDGE_TYPES.ALLOWS });
-  assert.ok(allows);
-  assert.equal(allows.certainty, CERTAINTY.BLOCKED_BY_DENY);
+  assert.ok(
+    !findEdge(r.graph, { from: 'principal', to: 'actiongroup:s3:*', type: EDGE_TYPES.ALLOWS }),
+    'a fully-denied wildcard grant must not emit an allows edge',
+  );
+  assert.ok(
+    !findEdge(r.graph, { from: 'principal', to: 'resource:*', type: EDGE_TYPES.CAN_WRITE }),
+    'nor a broad-resource can-write edge',
+  );
+  const deny = r.graph.edges.find((e) => e.type === EDGE_TYPES.DENIES);
+  assert.ok(deny, 'the covering Deny is still surfaced as its own denies edge');
+  assert.equal(deny.certainty, CERTAINTY.BLOCKED_BY_DENY);
 });
 
 test('NotAction-Allow rule edge is narrowed (never fully blocked) by a same-policy Deny', () => {
@@ -571,15 +590,20 @@ test('NotAction-Allow rule edge is narrowed (never fully blocked) by a same-poli
   const e = findEdge(r.graph, { from: 'principal', to: 'actiongroup:not-action', type: EDGE_TYPES.ALLOWS });
   assert.ok(e, 'expected the NotAction allows edge');
   // ec2:TerminateInstances is granted by "everything except iam:*" and denied,
-  // so the all-but-listed grant is narrowed, but a Deny can never cover it all.
-  assert.equal(e.certainty, CERTAINTY.CONTEXT_REQUIRED);
+  // so the all-but-listed grant is narrowed, but a Deny can never cover it all
+  // (the edge is downgraded, never blocked-by-deny). IAM-704: a NotAction grant
+  // is now complement-derived (policyEvidence reduced a notch), so the narrowed
+  // certainty steps one further down to potentially-reachable. The invariant the
+  // test guards - narrowed, never fully blocked - still holds.
+  assert.equal(e.certainty, CERTAINTY.POTENTIALLY_REACHABLE);
+  assert.notEqual(e.certainty, CERTAINTY.BLOCKED_BY_DENY);
 });
 
-test('escalation edges remain driven by escalation.js policyEvidence, not re-folded here', () => {
-  // escalation.js already suppresses a fully-blocked PUT-INLINE-POLICY path, so
-  // graph.js must not also try to block it: with the Allow fully denied, the
-  // only surviving edge is the DIRECT-IAM-ADMIN rule edge (blocked-by-deny), and
-  // there is exactly one can-modify(policy:self) edge (no escalation duplicate).
+test('a fully-denied IAM-admin grant emits NO self-modify edge; escalation stays suppressed (IAM-702)', () => {
+  // escalation.js already suppresses the fully-blocked PUT-INLINE-POLICY path.
+  // IAM-702: the DIRECT-IAM-ADMIN rule edge is ALSO dropped now (the grant is
+  // fully denied), so there are ZERO can-modify(policy:self) edges - a suppressed
+  // grant is not a grant (cross-test invariant 5). Only the denies edge remains.
   const r = buildGraphFromText(JSON.stringify({
     Statement: [
       { Sid: 'grant', Effect: 'Allow', Action: 'iam:PutUserPolicy', Resource: '*' },
@@ -587,8 +611,10 @@ test('escalation edges remain driven by escalation.js policyEvidence, not re-fol
     ],
   }));
   const selfEdges = r.graph.edges.filter((e) => e.to === 'policy:self' && e.type === EDGE_TYPES.CAN_MODIFY);
-  assert.equal(selfEdges.length, 1, 'the suppressed escalation must not add a second self edge');
-  assert.equal(selfEdges[0].certainty, CERTAINTY.BLOCKED_BY_DENY);
+  assert.equal(selfEdges.length, 0, 'a fully-denied IAM-admin grant must not emit a self-modify edge');
+  const deny = r.graph.edges.find((e) => e.type === EDGE_TYPES.DENIES);
+  assert.ok(deny, 'the Deny is still surfaced as its own denies edge');
+  assert.equal(deny.certainty, CERTAINTY.BLOCKED_BY_DENY);
 });
 
 // ---------------------------------------------------------------------------

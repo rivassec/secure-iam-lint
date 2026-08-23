@@ -1,0 +1,21 @@
+{
+  "name": "Variable-scoped S3 read (boundary)",
+  "note": "IAM-706 (acceptance test 21 shape): s3:GetObject on a policy-VARIABLE-scoped resource (${aws:username}). The ARN cannot be resolved from the policy text, so DATA-READ fires with the variable preserved verbatim and lower path-exploitability. This is the decision boundary between a concrete named read and an unresolvable variable read. Must NOT fire DATA-EXFIL (not broad) or WILDCARD-RESOURCE.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadOwnHome",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::company-home/${aws:username}/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "exactFindingIds": ["DATA-READ"],
+    "findingIds": ["DATA-READ"],
+    "notFindingIds": ["DATA-EXFIL", "WILDCARD-RESOURCE"]
+  }
+}

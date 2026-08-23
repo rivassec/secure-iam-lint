@@ -155,16 +155,21 @@ function actionServiceOf(token) {
 
 // The set of services a compound path actually uses, taken from its per-statement
 // evidence actions (the pass grant contributes "iam", the exec grant contributes
-// the executed service, e.g. "lambda"). Multi-action evidence strings are comma-
-// joined, so split them apart. This is the allowlist a subordinate wildcard
-// finding's own action services are checked against.
+// the executed service, e.g. "lambda"). IAM-701: evidence records carry an
+// `actions` ARRAY (a legacy `action` string is still tolerated), so iterate the
+// array rather than re-splitting a comma-joined display string. This is the
+// allowlist a subordinate wildcard finding's own action services are checked
+// against.
 function pathServicesOf(primary) {
   const set = new Set();
   for (const ev of primary.evidence) {
     if (!ev) continue;
-    for (const part of String(ev.action == null ? '' : ev.action).split(',')) {
-      set.add(actionServiceOf(part.trim()));
-    }
+    const acts = Array.isArray(ev.actions)
+      ? ev.actions
+      : ev.action == null
+        ? []
+        : String(ev.action).split(',');
+    for (const a of acts) set.add(actionServiceOf(String(a).trim()));
   }
   return set;
 }
@@ -238,7 +243,8 @@ function withSubsumed(primary, subs) {
  */
 export function correlateFindings(findings) {
   const afterCompound = correlateCompoundPaths(findings);
-  return correlateSameStatementCapabilities(afterCompound);
+  const afterCapabilities = correlateSameStatementCapabilities(afterCompound);
+  return correlateIamAdmin(afterCapabilities);
 }
 
 function correlateCompoundPaths(findings) {
@@ -417,6 +423,256 @@ function correlateSameStatementCapabilities(findings) {
   for (const f of list) {
     if (subsumed.has(f)) continue; // folded into its capability primary
     if (attachTo.has(f)) out.push(withCapabilitySubsumed(f, attachTo.get(f)));
+    else out.push(f);
+  }
+  return out;
+}
+
+// --- IAM-705: IAM-administration dedup ---------------------------------------
+//
+// A third correlation, closing the acceptance-suite iam:* flood (test 12) and the
+// generic/specific double-fire (tests 4, 5). The IAM-admin rule family overlaps
+// itself: iam:CreatePolicyVersion trips BOTH the specific POLICY-VERSION
+// escalation AND the generic DIRECT-IAM-ADMIN rule; iam:* trips DIRECT-IAM-ADMIN
+// PLUS every specific IAM primitive (ATTACH/PUT-INLINE/POLICY-VERSION/
+// TRUST-MODIFY/CREDENTIAL-CREATION) PLUS the iam:* WILDCARD-ACTION. Left alone
+// that is 7 near-duplicate rows for a single statement. This pass collapses the
+// overlap into ONE primary using the established subsumption mechanism (subsumed[]
+// + a risk-factor checklist), so nothing is dropped and the authoritative table
+// stays scannable.
+//
+// TWO distinct relationships, distinguished by whether the DIRECT-IAM-ADMIN grant
+// is a bare iam:* SERVICE wildcard or a concrete list of specific IAM actions:
+//
+//   Scenario A - iam:* flood. The statement grants the whole `iam:*` service
+//     wildcard, so DIRECT-IAM-ADMIN ("broad IAM administration / escalation
+//     surface") is the honest primary and every specific primitive it triggers is
+//     just a facet of that wildcard, not an independently-listed grant. The
+//     specifics + the co-located iam:* WILDCARD-ACTION fold INTO DIRECT-IAM-ADMIN
+//     as subsumed techniques + risk factors. Scoped to the `iam` service wildcard
+//     ONLY: a bare "*" grants every service (compound cross-service PassRole paths
+//     etc. that are genuinely broader than IAM admin), so it is deliberately NOT
+//     collapsed here - its findings stay independent (threat-model T8: never hide
+//     a strictly-broader capability).
+//
+//   Scenario B - specific primitive present. The statement lists concrete IAM
+//     actions (e.g. iam:CreatePolicyVersion, iam:CreateAccessKey). The specific
+//     escalation finding (POLICY-VERSION, CREDENTIAL-CREATION, ...) is the more
+//     precise, more useful row; the generic DIRECT-IAM-ADMIN merely restates
+//     "this touches IAM admin", so DIRECT-IAM-ADMIN folds INTO the highest-priority
+//     specific primitive as a risk factor. When several specific primitives sit on
+//     one statement they each remain their own row (they are distinct techniques);
+//     only the generic DIRECT-IAM-ADMIN is folded.
+//
+// A DIRECT-IAM-ADMIN with NEITHER an iam:* wildcard NOR any specific primitive on
+// its statement (e.g. iam:CreateUser alone) is a genuine standalone row and is
+// left untouched.
+//
+// Severity note (IAM-705 / IAM-102 model): the primary keeps its documented
+// severity (DIRECT-IAM-ADMIN is `high` - a standalone escalation primitive, not a
+// compound privilege-boundary-crossing path, which is what `critical` is reserved
+// for). This pass de-floods; it never bumps severity past what the evidence and the
+// single documented scoring model support.
+const IAM_ADMIN_GENERIC_ID = 'DIRECT-IAM-ADMIN';
+const IAM_ADMIN_SPECIFIC_IDS = new Set([
+  'ATTACH-POLICY',
+  'PUT-INLINE-POLICY',
+  'POLICY-VERSION',
+  'TRUST-POLICY-MODIFY',
+  'CREDENTIAL-CREATION',
+]);
+// Deterministic tie-break for which specific primitive becomes the scenario-B
+// primary when a statement carries more than one (lower index wins).
+const IAM_ADMIN_SPECIFIC_PRIORITY = [
+  'ATTACH-POLICY',
+  'PUT-INLINE-POLICY',
+  'POLICY-VERSION',
+  'TRUST-POLICY-MODIFY',
+  'CREDENTIAL-CREATION',
+];
+// Human labels for the folded specific primitives, surfaced as the primary's
+// risk-factor checklist so the collapsed techniques stay visible.
+const IAM_ADMIN_TECHNIQUE_LABELS = {
+  'ATTACH-POLICY': 'Attach a managed policy to a principal (iam:Attach*Policy)',
+  'PUT-INLINE-POLICY': 'Write an inline policy on a principal (iam:Put*Policy)',
+  'POLICY-VERSION':
+    'Set a new default managed-policy version (iam:CreatePolicyVersion / iam:SetDefaultPolicyVersion)',
+  'TRUST-POLICY-MODIFY': 'Rewrite a role trust policy (iam:UpdateAssumeRolePolicy)',
+  'CREDENTIAL-CREATION':
+    'Create credentials for a principal (iam:CreateAccessKey / iam:CreateLoginProfile)',
+};
+
+const IAM_ADMIN_FLOOD_REASON =
+  'Subsumed into the broad IAM-administration primary on the same statement: ' +
+  'the iam:* service wildcard already grants this specific primitive, so it is ' +
+  'reported as a technique of that primary rather than a separate row.';
+const IAM_ADMIN_GENERIC_REASON =
+  'Subsumed into the more-specific IAM primitive on the same statement: the ' +
+  'generic direct-IAM-administration rule only restates that this statement ' +
+  'touches IAM administration, so it is folded in as a risk factor rather than a ' +
+  'duplicate row.';
+
+function isServiceWildcardToken(token) {
+  return /^[A-Za-z0-9_-]+:\*$/.test(String(token == null ? '' : token));
+}
+
+// Is the DIRECT-IAM-ADMIN grant the `iam:*` SERVICE wildcard (scenario A)? A bare
+// "*" is intentionally excluded - it is strictly broader than IAM admin.
+function directIamIsServiceWildcard(finding) {
+  return (
+    Array.isArray(finding.actions) &&
+    finding.actions.some(
+      (a) => isServiceWildcardToken(a) && actionServiceOf(a) === 'iam',
+    )
+  );
+}
+
+// Risk factors naming each folded specific primitive (present = the primitive is
+// available). WILDCARD-ACTION is not given its own factor here - the iam:* breadth
+// is already represented by the capability-pass `iam:*` factor - so a folded
+// WILDCARD-ACTION only rides in subsumed[].
+function iamAdminTechniqueFactors(folded) {
+  const factors = [];
+  for (const f of folded) {
+    if (!IAM_ADMIN_SPECIFIC_IDS.has(f.id)) continue;
+    factors.push({
+      key: `technique:${f.id}`,
+      label: IAM_ADMIN_TECHNIQUE_LABELS[f.id] || `${f.id} primitive available`,
+      present: true,
+    });
+  }
+  return factors;
+}
+
+function withIamAdminPrimary(generic, folded) {
+  const clone = {};
+  for (const key of Object.keys(generic)) clone[key] = generic[key];
+  const existingSubsumed = Array.isArray(generic.subsumed) ? generic.subsumed : [];
+  clone.subsumed = [
+    ...existingSubsumed,
+    ...folded.map((f) => subsumedView(f, IAM_ADMIN_FLOOD_REASON)),
+  ];
+  const existingFactors = Array.isArray(generic.riskFactors) ? generic.riskFactors : [];
+  clone.riskFactors = [...existingFactors, ...iamAdminTechniqueFactors(folded)];
+  return deepFreeze(clone);
+}
+
+// Merge risk-factor lists, keeping the FIRST occurrence of each key so a factor
+// carried up from the folded generic never duplicates one the specific already
+// exposes. Order-preserving + deterministic.
+function mergeRiskFactors(...lists) {
+  const seen = new Set();
+  const out = [];
+  for (const list of lists) {
+    for (const rf of Array.isArray(list) ? list : []) {
+      if (!rf || typeof rf.key !== 'string') continue;
+      if (seen.has(rf.key)) continue;
+      seen.add(rf.key);
+      out.push(rf);
+    }
+  }
+  return out;
+}
+
+function withGenericSubsumed(specific, generic) {
+  const clone = {};
+  for (const key of Object.keys(specific)) clone[key] = specific[key];
+  const specificSubsumed = Array.isArray(specific.subsumed) ? specific.subsumed : [];
+  // The generic may itself have absorbed a WILDCARD-RESOURCE scope factor in the
+  // capability pass (IAM-201). Carry those nested snapshots up so folding the
+  // generic away never drops what was folded into it ("nothing lost").
+  const genericSubsumed = Array.isArray(generic.subsumed) ? generic.subsumed : [];
+  clone.subsumed = [
+    ...specificSubsumed,
+    subsumedView(generic, IAM_ADMIN_GENERIC_REASON),
+    ...genericSubsumed,
+  ];
+  clone.riskFactors = mergeRiskFactors(
+    specific.riskFactors,
+    [{
+      key: 'direct-iam-admin',
+      label: 'Also matches the generic direct-IAM-administration rule for this statement',
+      present: true,
+    }],
+    // Carry the generic's scope factors (e.g. the resource-wildcard signal it
+    // picked up from a subsumed WILDCARD-RESOURCE) so they stay visible.
+    generic.riskFactors,
+  );
+  return deepFreeze(clone);
+}
+
+/**
+ * Collapse overlapping IAM-administration findings on a statement into one
+ * primary (IAM-705). Runs after the compound + capability passes, so any
+ * WILDCARD-RESOURCE already folded into a DIRECT-IAM-ADMIN is carried through.
+ *
+ * @param {Array<object>} findings post-capability-pass finding list
+ * @returns {Array<object>} new list: the IAM-admin overlap de-flooded; unrelated
+ *          findings pass through untouched.
+ */
+function correlateIamAdmin(findings) {
+  const list = Array.isArray(findings) ? findings.slice() : [];
+
+  const genericByStmt = new Map(); // statementIndex -> DIRECT-IAM-ADMIN finding
+  const specificsByStmt = new Map(); // statementIndex -> [specific findings]
+  const iamWildcardActionByStmt = new Map(); // statementIndex -> iam:* WILDCARD-ACTION
+  for (const f of list) {
+    if (!f || typeof f.statementIndex !== 'number') continue;
+    if (f.id === IAM_ADMIN_GENERIC_ID) {
+      genericByStmt.set(f.statementIndex, f);
+    } else if (IAM_ADMIN_SPECIFIC_IDS.has(f.id)) {
+      if (!specificsByStmt.has(f.statementIndex)) specificsByStmt.set(f.statementIndex, []);
+      specificsByStmt.get(f.statementIndex).push(f);
+    } else if (
+      f.id === 'WILDCARD-ACTION' &&
+      Array.isArray(f.actions) &&
+      f.actions.length > 0 &&
+      f.actions.every((a) => isServiceWildcardToken(a) && actionServiceOf(a) === 'iam')
+    ) {
+      iamWildcardActionByStmt.set(f.statementIndex, f);
+    }
+  }
+
+  const subsumed = new Set();
+  const scenarioA = new Map(); // generic finding -> [folded findings]
+  const scenarioB = new Map(); // specific finding -> generic finding
+
+  for (const [stmt, generic] of genericByStmt) {
+    const specifics = specificsByStmt.get(stmt) || [];
+    if (directIamIsServiceWildcard(generic)) {
+      // Scenario A: iam:* flood. DIRECT-IAM-ADMIN is the primary; fold the
+      // specific primitives + the co-located iam:* WILDCARD-ACTION into it.
+      const folded = specifics.slice();
+      const wa = iamWildcardActionByStmt.get(stmt);
+      if (wa) folded.push(wa);
+      if (folded.length > 0) {
+        scenarioA.set(generic, folded);
+        for (const f of folded) subsumed.add(f);
+      }
+    } else if (specifics.length > 0) {
+      // Scenario B: keep the most-specific primitive; fold the generic in.
+      let target = specifics[0];
+      let bestRank = IAM_ADMIN_SPECIFIC_PRIORITY.indexOf(target.id);
+      for (const s of specifics) {
+        const rank = IAM_ADMIN_SPECIFIC_PRIORITY.indexOf(s.id);
+        if (rank !== -1 && (bestRank === -1 || rank < bestRank)) {
+          target = s;
+          bestRank = rank;
+        }
+      }
+      scenarioB.set(target, generic);
+      subsumed.add(generic);
+    }
+    // else: standalone DIRECT-IAM-ADMIN (e.g. iam:CreateUser) -> untouched.
+  }
+
+  if (subsumed.size === 0) return list;
+
+  const out = [];
+  for (const f of list) {
+    if (subsumed.has(f)) continue;
+    if (scenarioA.has(f)) out.push(withIamAdminPrimary(f, scenarioA.get(f)));
+    else if (scenarioB.has(f)) out.push(withGenericSubsumed(f, scenarioB.get(f)));
     else out.push(f);
   }
   return out;

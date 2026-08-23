@@ -1,0 +1,46 @@
+{
+  "name": "Acceptance test 7 - S3 data access constrained through KMS",
+  "note": "IAM-706: s3:ListBucket/s3:GetObject on a NAMED bucket (production-exports) yields a lower-certainty DATA-READ capability with sensitivity INFERRED from naming (medium-or-lower), NOT a broad DATA-EXFIL. kms:Decrypt constrained by kms:ViaService=s3 stays a constrained (medium) KMS-DECRYPT. The two findings coexist. The tool must not claim every object is decryptable/readable - S3 encryption configuration and the KMS key policy are absent from the supplied context.",
+  "phase": 7,
+  "story": "IAM-706",
+  "acceptanceTest": 7,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadProductionExports",
+        "Effect": "Allow",
+        "Action": ["s3:ListBucket", "s3:GetObject"],
+        "Resource": ["arn:aws:s3:::production-exports", "arn:aws:s3:::production-exports/*"]
+      },
+      {
+        "Sid": "DecryptOnlyThroughS3",
+        "Effect": "Allow",
+        "Action": "kms:Decrypt",
+        "Resource": "arn:aws:kms:us-west-2:123456789012:key/11111111-2222-3333-4444-555555555555",
+        "Condition": { "StringEquals": { "kms:ViaService": "s3.us-west-2.amazonaws.com" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["DATA-READ", "KMS-DECRYPT"],
+    "notFindingIds": ["DATA-EXFIL", "WILDCARD-RESOURCE", "WILDCARD-ACTION"]
+  },
+  "dataReadExpect": {
+    "findingId": "DATA-READ",
+    "statementIndex": 0,
+    "maxSeverity": "medium",
+    "maxPathExploitability": "medium",
+    "sensitivityInferred": true,
+    "resourcesInclude": ["arn:aws:s3:::production-exports", "arn:aws:s3:::production-exports/*"],
+    "coexistsWith": {
+      "findingId": "KMS-DECRYPT",
+      "statementIndex": 1,
+      "maxSeverity": "medium",
+      "constrainedNotBroad": true,
+      "resourcesInclude": ["arn:aws:kms:us-west-2:123456789012:key/11111111-2222-3333-4444-555555555555"]
+    }
+  }
+}

@@ -782,10 +782,27 @@ function makeEscalation(id, anchor, fields) {
     escalation: {
       technique: fields.technique,
       service: fields.service || null,
+      // IAM-703: `requiredActions` is a flat convenience list for the PRIMARY
+      // technique, and it is GROUNDED - every entry is an action the analyzed
+      // policy actually grants (never a catalog action the policy does not
+      // contain). The authoritative AND/OR structure lives in `prerequisites`.
       requiredActions: (fields.requiredActions || []).slice(),
+      // IAM-703: explicit AND/OR prerequisites. `prerequisites.anyOf` lists the
+      // alternative TECHNIQUES that achieve this escalation (holding any ONE
+      // suffices - they are NOT jointly required). Each technique's `allOf` lists
+      // the grant groups it jointly needs; each group's `anyOf` lists the
+      // interchangeable actions that satisfy that group. This replaces the old
+      // flat requiredActions AND-list that wrongly implied unrelated alternative
+      // techniques were all jointly required. Every action named here is granted
+      // by the analyzed policy (grounded), never an absent catalog action.
+      prerequisites: fields.prerequisites || null,
       targetPermissions: 'unknown',
     },
     evidence: fields.evidence.slice(),
+    // IAM-701: explicit per-statement provenance for the header. Every action is
+    // attributed ONLY to the statement that grants it, so a cross-statement
+    // compound finding never implies the anchor Sid granted the whole set.
+    contributingStatements: contributingStatementsFrom(fields.evidence),
     // IAM-105: compound escalation paths expose a present/absent risk-factor
     // checklist (the grants + scope conditions that constitute the path). null
     // for single-action primitives, which are not compound paths.
@@ -805,17 +822,98 @@ function downgrade(confidence) {
   return 'low';
 }
 
-function evidenceOf(stmt, role, action, note) {
+// IAM-701: contributed actions are represented as an ARRAY, never a comma-joined
+// string. Where a statement contributes several actions (e.g. an exec statement
+// granting lambda:CreateFunction + lambda:UpdateFunctionCode) they ride as
+// distinct array elements so every downstream consumer (graph-edge evidence,
+// correlate, render, export) can reason per-action without re-splitting a
+// display string. `actions` accepts a string or an array and is normalized to an
+// array here.
+function evidenceOf(stmt, role, actions, note) {
+  const list = Array.isArray(actions) ? actions.slice() : [actions];
   return {
     statementIndex: stmt.index,
     statementSid: statementSid(stmt),
     role, // 'pass' | 'execute' | 'primitive'
-    action,
+    actions: list,
     resources: resourceScope(stmt),
     condition: stmt.condition,
     note: note || null,
   };
 }
+
+// IAM-701: per-statement provenance for a finding HEADER. A compound path is
+// distributed across statements (PassRole in one, the service action in
+// another); the scalar statementSid/statementIndex names only the anchor, so on
+// its own it would attribute the whole combined action list to a single Sid.
+// contributingStatements makes the mapping explicit and correct: one entry per
+// contributing statement, each carrying ONLY the actions that statement grants
+// (deduped, ordered by statement index). Derived from the same per-statement
+// evidence[] records, so header and evidence[] can never drift.
+function contributingStatementsFrom(evidence) {
+  const byIndex = new Map();
+  for (const ev of Array.isArray(evidence) ? evidence : []) {
+    if (!ev || typeof ev.statementIndex !== 'number') continue;
+    let entry = byIndex.get(ev.statementIndex);
+    if (!entry) {
+      entry = {
+        statementIndex: ev.statementIndex,
+        statementSid: ev.statementSid,
+        actions: [],
+      };
+      byIndex.set(ev.statementIndex, entry);
+    }
+    for (const a of Array.isArray(ev.actions) ? ev.actions : []) {
+      if (!entry.actions.includes(a)) entry.actions.push(a);
+    }
+  }
+  return [...byIndex.keys()].sort((x, y) => x - y).map((i) => byIndex.get(i));
+}
+
+// --- Prerequisite (AND/OR) helpers (IAM-703) ---------------------------------
+// A `group` is an OR of interchangeable actions that satisfy one requirement of
+// a technique (e.g. "any lambda code-run action"). A `technique` ANDs its groups
+// together (allOf) and is one alternative way to achieve the escalation; the
+// finding's prerequisites OR the techniques together (anyOf). Every action here
+// must be one the policy actually grants - callers pass grounded action lists.
+function prereqGroup(anyOf, role) {
+  return { role: role || null, anyOf: (Array.isArray(anyOf) ? anyOf : [anyOf]).slice() };
+}
+
+function prereqTechnique(id, allOf, opts) {
+  return {
+    technique: id,
+    allOf: (Array.isArray(allOf) ? allOf : [allOf]).slice(),
+    requiresPassRole: !!(opts && opts.requiresPassRole),
+    note: (opts && opts.note) || null,
+  };
+}
+
+function prerequisitesOf(techniques) {
+  return { anyOf: (Array.isArray(techniques) ? techniques : [techniques]).slice() };
+}
+
+// Gather every concrete action in `catalog` that is granted by some Allow in
+// `allows` and SURVIVES same-policy explicit-Deny precedence (deny-filtered).
+// Deterministic order: statement order, then match order; deduped. Used to
+// ground a standalone technique's prerequisites in the policy's real grants.
+function survivingGrantedActions(allows, denies, catalog) {
+  const found = [];
+  for (const stmt of allows) {
+    const m = grantedPatternsFor(stmt, catalog);
+    if (m.length === 0) continue;
+    const d = applyDenyToActions(denies, m, stmt);
+    for (const a of d.actions) if (!found.includes(a)) found.push(a);
+  }
+  return found;
+}
+
+// Lambda: only role-SETTING actions (create a function with a role, or change an
+// existing function's execution role) require iam:PassRole. Replacing an existing
+// function's code (lambda:UpdateFunctionCode) runs under that function's EXISTING
+// role and needs NO PassRole - it is a distinct standalone technique (acceptance
+// suite test 3, Path B), NOT part of the compound PassRole path's requirement.
+const LAMBDA_CODE_ONLY_ACTIONS = Object.freeze(['lambda:UpdateFunctionCode']);
 
 // --- PassRole + service-execution family -------------------------------------
 
@@ -938,13 +1036,46 @@ function detectPassRolePaths(allows, out, denies) {
       evidenceOf(
         passStmt,
         'pass',
-        PASS_ROLE_ACTION,
+        [PASS_ROLE_ACTION],
         pinned
           ? `an iam:PassedToService condition permits passing a role to ${svc.principal}`
           : 'PassRole is not pinned to a service (can pass to any service)',
       ),
-      evidenceOf(execStmt, 'execute', effectiveExecActions.join(', '), `runs code as the passed role via ${svc.service}`),
+      evidenceOf(execStmt, 'execute', effectiveExecActions, `runs code as the passed role via ${svc.service}`),
     ];
+
+    // IAM-703: structured AND/OR prerequisites replace the old flat AND-list.
+    // The PRIMARY technique ANDs the iam:PassRole grant with ANY ONE surviving
+    // service-execution action - both are grounded in this policy's real grants.
+    const techniques = [
+      prereqTechnique('passrole-service-execution', [
+        prereqGroup([PASS_ROLE_ACTION], 'pass'),
+        prereqGroup(effectiveExecActions, 'execute'),
+      ], { requiresPassRole: true }),
+    ];
+    // Lambda-only alternative technique (acceptance suite test 3, Path B):
+    // lambda:UpdateFunctionCode replaces an EXISTING function's code, which runs
+    // under that function's existing execution role, so it needs NO iam:PassRole.
+    // It is a SEPARATE path, never folded into the compound AND-list. Surface it
+    // when the policy grants it and it survives same-policy Deny.
+    if (svc.service === 'lambda') {
+      const codeOnly = survivingGrantedActions(allows, denies, LAMBDA_CODE_ONLY_ACTIONS);
+      if (codeOnly.length > 0) {
+        techniques.push(
+          prereqTechnique('replace-existing-function-code', [
+            prereqGroup(codeOnly, 'execute'),
+          ], {
+            requiresPassRole: false,
+            note:
+              'Replaces the code of an existing Lambda function, which runs ' +
+              'under that function\'s existing execution role - this technique ' +
+              'does not require iam:PassRole. The existing function\'s role and ' +
+              'its invocation path are outside the supplied context.',
+          }),
+        );
+      }
+    }
+
     out.push(
       makeEscalation(svc.id, anchor, {
         // Critical (IAM-102): a compound PassRole + service-execution path lets
@@ -963,7 +1094,11 @@ function detectPassRolePaths(allows, out, denies) {
         passUncertain,
         technique: 'passrole-service-execution',
         service: svc.service,
-        requiredActions: [PASS_ROLE_ACTION].concat(svc.execActions),
+        // Grounded (IAM-703): only iam:PassRole + the surviving service-execution
+        // action(s) this policy actually grants - never the full service catalog.
+        // Alternative techniques (e.g. Lambda Path B) live in prerequisites.
+        requiredActions: combinedActions,
+        prerequisites: prerequisitesOf(techniques),
         actions: combinedActions,
         resources: resourceScope(passStmt),
         evidence,
@@ -976,16 +1111,26 @@ function detectPassRolePaths(allows, out, denies) {
           'role\'s credentials (whether execution is actually obtained still ' +
           'depends on instance-profile / service behavior). ' +
           (pinned
-            ? `The PassRole grant\'s iam:PassedToService condition permits passing ` +
-              `a role to ${svc.principal}, so it can feed this service.`
+            ? `The PassRole grant\'s iam:PassedToService condition selects ` +
+              `${svc.principal} and thereby excludes other services (for example ` +
+              `EC2), so this grant can feed ${svc.service} but not the services it ` +
+              'excludes.'
             : 'The PassRole grant does not use iam:PassedToService to restrict ' +
               'which supported AWS services may receive the role (AWS still ' +
               'enforces which services a role can be passed to).'),
-        remediation:
-          'Scope iam:PassRole to the specific role ARNs that must be passed and ' +
-          `pin iam:PassedToService to ${svc.principal}; separate role-passing ` +
-          `from ${svc.service} workload-creation duties, and constrain the ` +
-          'passable roles with a permission boundary.',
+        remediation: pinned
+          ? // Already pinned to this service - do NOT recommend adding the
+            // iam:PassedToService restriction that is already present (IAM-703,
+            // test 2: no "missing iam:PassedToService" remediation).
+            `The PassRole grant already pins iam:PassedToService to ${svc.principal}, ` +
+              `which correctly excludes other services. Further reduce risk by ` +
+              'scoping iam:PassRole to the specific role ARNs that must be passed, ' +
+              `separating role-passing from ${svc.service} workload-creation duties, ` +
+              'and constraining the passable roles with a permission boundary.'
+          : 'Scope iam:PassRole to the specific role ARNs that must be passed and ' +
+            `pin iam:PassedToService to ${svc.principal}; separate role-passing ` +
+            `from ${svc.service} workload-creation duties, and constrain the ` +
+            'passable roles with a permission boundary.',
       }),
     );
   }
@@ -1011,10 +1156,17 @@ function detectPolicyVersion(allows, out, denies) {
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'policy-version-manipulation',
-        requiredActions: POLICY_VERSION_ACTIONS.slice(),
+        // Grounded (IAM-703): only the policy-version action(s) actually granted,
+        // not the full catalog. These are interchangeable alternatives - holding
+        // either one satisfies the technique - so prerequisites is a single
+        // anyOf group, never an AND-list.
+        requiredActions: actions.slice(),
+        prerequisites: prerequisitesOf([
+          prereqTechnique('policy-version-manipulation', [prereqGroup(actions, 'primitive')], {}),
+        ]),
         actions,
         resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions.join(', '))],
+        evidence: [evidenceOf(stmt, 'primitive', actions)],
         why:
           'Grants managed-policy version control (iam:CreatePolicyVersion / ' +
           'iam:SetDefaultPolicyVersion). A principal attached to (or able to ' +
@@ -1051,10 +1203,15 @@ function detectAttachPolicy(allows, out, denies) {
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'attach-policy',
-        requiredActions: ATTACH_POLICY_ACTIONS.slice(),
+        // Grounded (IAM-703): only the attach action(s) granted; interchangeable
+        // alternatives -> a single anyOf group.
+        requiredActions: actions.slice(),
+        prerequisites: prerequisitesOf([
+          prereqTechnique('attach-policy', [prereqGroup(actions, 'primitive')], {}),
+        ]),
         actions,
         resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions.join(', '))],
+        evidence: [evidenceOf(stmt, 'primitive', actions)],
         why:
           'Grants iam:Attach{User,Role,Group}Policy. A principal that can attach ' +
           'a managed policy to itself (or a principal it controls) can attach ' +
@@ -1090,10 +1247,15 @@ function detectPutInlinePolicy(allows, out, denies) {
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'put-inline-policy',
-        requiredActions: PUT_INLINE_POLICY_ACTIONS.slice(),
+        // Grounded (IAM-703): only the put-inline action(s) granted;
+        // interchangeable alternatives -> a single anyOf group.
+        requiredActions: actions.slice(),
+        prerequisites: prerequisitesOf([
+          prereqTechnique('put-inline-policy', [prereqGroup(actions, 'primitive')], {}),
+        ]),
         actions,
         resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions.join(', '))],
+        evidence: [evidenceOf(stmt, 'primitive', actions)],
         why:
           'Grants iam:Put{User,Role,Group}Policy. A principal that can write an ' +
           'inline policy on itself (or a principal it controls) can grant itself ' +
@@ -1126,10 +1288,14 @@ function detectTrustModify(allows, out, denies) {
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'trust-policy-modification',
-        requiredActions: TRUST_MODIFY_ACTIONS.slice(),
+        // Grounded (IAM-703): only the trust-modify action(s) granted.
+        requiredActions: actions.slice(),
+        prerequisites: prerequisitesOf([
+          prereqTechnique('trust-policy-modification', [prereqGroup(actions, 'primitive')], {}),
+        ]),
         actions,
         resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions.join(', '))],
+        evidence: [evidenceOf(stmt, 'primitive', actions)],
         why:
           'Grants iam:UpdateAssumeRolePolicy. A principal can rewrite a role\'s ' +
           'trust policy to trust itself and then assume the role, taking on the ' +
@@ -1166,10 +1332,19 @@ function detectCredentialCreation(allows, out, denies) {
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'credential-creation',
-        requiredActions: CREDENTIAL_ACTIONS.slice(),
+        // Grounded (IAM-703, acceptance suite test 5): only the credential-
+        // creation action(s) this policy actually grants - NOT the full catalog.
+        // A policy granting only iam:CreateAccessKey must not list
+        // iam:CreateLoginProfile / iam:UpdateLoginProfile as prerequisites, since
+        // those are absent. The granted primitives are interchangeable
+        // alternatives -> a single anyOf group.
+        requiredActions: actions.slice(),
+        prerequisites: prerequisitesOf([
+          prereqTechnique('credential-creation', [prereqGroup(actions, 'primitive')], {}),
+        ]),
         actions,
         resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions.join(', '))],
+        evidence: [evidenceOf(stmt, 'primitive', actions)],
         why:
           'Grants credential creation (iam:CreateAccessKey / ' +
           'iam:CreateLoginProfile / iam:UpdateLoginProfile). A principal that can ' +
@@ -1243,10 +1418,17 @@ function detectAssumeRoleExpansion(allows, out, denies) {
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
         technique: 'assume-role-expansion',
-        requiredActions: ['sts:AssumeRole'],
+        // Grounded (IAM-703): the sts:AssumeRole* action(s) actually granted -
+        // never a hardcoded 'sts:AssumeRole' the policy may not contain (a policy
+        // may grant only sts:AssumeRoleWithWebIdentity). Interchangeable
+        // alternatives -> a single anyOf group.
+        requiredActions: actions.slice(),
+        prerequisites: prerequisitesOf([
+          prereqTechnique('assume-role-expansion', [prereqGroup(actions, 'primitive')], {}),
+        ]),
         actions,
         resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions.join(', '), 'broad role scope')],
+        evidence: [evidenceOf(stmt, 'primitive', actions, 'broad role scope')],
         why,
         remediation:
           'Scope sts:AssumeRole to the specific role ARNs the principal must ' +

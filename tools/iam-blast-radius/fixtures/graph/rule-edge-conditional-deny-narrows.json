@@ -1,6 +1,6 @@
 {
   "name": "Conditional same-policy Deny narrows a rule edge (may-block, not blocked)",
-  "note": "Allow iam:PutUserPolicy with an unconditional grant, but a same-policy Deny of the same action carries a Condition (MFA absent). A conditional Deny may not fire, so it must NOT be reported as a hard block; graph.js downgrades the can-modify(policy:self) edge to context-required instead of blocked-by-deny.",
+  "note": "Allow iam:PutUserPolicy with an unconditional grant, but a same-policy Deny of the same action carries a Condition (MFA absent). A conditional Deny may not fire, so it must NOT be reported as a hard block; graph.js downgrades the can-modify(policy:self) edge to context-required instead of blocked-by-deny. The graph is built from the pre-correlation finding set, so the DIRECT-IAM-ADMIN self-modify edge is unaffected by IAM-705; at the table level iam:PutUserPolicy trips the specific PUT-INLINE-POLICY primitive and the generic DIRECT-IAM-ADMIN is folded into it (IAM-705 dedup), so the authoritative row is PUT-INLINE-POLICY.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -10,7 +10,8 @@
   },
   "expect": {
     "valid": true,
-    "findingIds": ["DIRECT-IAM-ADMIN", "PUT-INLINE-POLICY"],
+    "findingIds": ["PUT-INLINE-POLICY"],
+    "notFindingIds": ["DIRECT-IAM-ADMIN"],
     "graphEdges": [
       { "from": "principal", "to": "policy:self", "type": "can-modify", "certainty": "context-required" }
     ]

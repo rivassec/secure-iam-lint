@@ -1,0 +1,28 @@
+{
+  "name": "Acceptance test 22C - unsupported policy Version warned/blocked, never silently rewritten",
+  "note": "IAM-704 version gate. A legacy Version 2008-10-17 was previously accepted silently and analyzed under 2012-10-17 grammar. The engine now fails closed with a UNSUPPORTED_POLICY_VERSION coverage block. The version is NEVER silently rewritten: the parsed model preserves version '2008-10-17' verbatim, and no findings are produced under an unvalidated grammar. (22A malformed JSON and 22B missing Effect/Action stay hard validation failures elsewhere; this fixture covers 22C only.)",
+  "phase": 7,
+  "story": "IAM-704",
+  "acceptanceTest": "22C",
+  "family": "identity",
+  "policy": {
+    "Version": "2008-10-17",
+    "Statement": {
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "*"
+    }
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["DATA-EXFIL"]
+  },
+  "coverageExpect": {
+    "blocked": true,
+    "blockingCodes": ["UNSUPPORTED_POLICY_VERSION"],
+    "noFindings": true,
+    "noCapabilityEdges": true,
+    "preservedVersion": "2008-10-17"
+  }
+}

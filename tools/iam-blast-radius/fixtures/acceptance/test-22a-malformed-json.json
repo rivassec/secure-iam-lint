@@ -1,0 +1,15 @@
+{
+  "name": "Acceptance test 22A - malformed JSON blocks (originally passing; protect against regression)",
+  "note": "IAM-707 fixturization of an originally-PASSING case. Structurally invalid JSON (an unterminated Statement array) must BLOCK analysis with a JSON syntax error and produce NO findings, risk score, or graph from partially parsed input. policyRaw carries the exact malformed text (it cannot be expressed as a clean JS object).",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": "22A",
+  "family": "identity",
+  "policyRaw": "{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n}",
+  "expect": {
+    "valid": false
+  },
+  "errorExpect": {
+    "errorCodes": ["INVALID_JSON"]
+  }
+}

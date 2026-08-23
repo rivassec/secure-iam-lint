@@ -1,0 +1,37 @@
+{
+  "name": "Acceptance test 16 - third-party trust protected by ExternalId (role-trust, fail-closed by design)",
+  "note": "IAM-707: role-trust family not yet modeled -> fail closed with UNSUPPORTED_POLICY_FAMILY. Encodes current design-blocked behavior; the follow-up feature must recognize sts:ExternalId as a confused-deputy CONSTRAINT (not authentication/secrecy), never emit 'missing ExternalId', and keep the target role's permissions out of scope.",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": 16,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "VendorAccess",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::111122223333:root" },
+        "Action": "sts:AssumeRole",
+        "Condition": { "StringEquals": { "sts:ExternalId": "customer-7f6af74e" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION"]
+  },
+  "coverageExpect": {
+    "blocked": true,
+    "detectedFamily": "role-trust",
+    "blockingCodes": ["UNSUPPORTED_POLICY_FAMILY"],
+    "noFindings": true,
+    "noCapabilityEdges": true
+  },
+  "designBlocked": {
+    "feature": "role-trust family analysis",
+    "followUp": "queued as the immediate next feature (Oliver, 2026-08-22)",
+    "intended": "informational/low-medium cross-account trust; recognize sts:ExternalId as a constraint (confused-deputy mitigation, unique per customer); do NOT describe it as authentication or secrecy; do NOT report 'missing ExternalId'."
+  }
+}

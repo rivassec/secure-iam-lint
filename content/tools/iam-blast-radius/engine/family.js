@@ -42,6 +42,13 @@ export const FAMILIES = Object.freeze({
 // family here (plus its rules), without touching this gate's control flow.
 export const SUPPORTED_FAMILIES = Object.freeze(new Set([FAMILIES.IDENTITY]));
 
+// The single IAM policy-language version whose grammar this analyzer models
+// (IAM-704). An ABSENT Version is tolerated (the model records null and AWS
+// applies default/legacy behavior); any OTHER explicit version - notably the
+// legacy '2008-10-17' - is unsupported. The engine NEVER silently rewrites an
+// unsupported version to this one; it fails closed instead.
+export const SUPPORTED_POLICY_VERSION = '2012-10-17';
+
 // Human labels for the UI / exports. Falls back to the raw token.
 export const FAMILY_LABELS = Object.freeze({
   identity: 'Identity policy',
@@ -60,6 +67,11 @@ export const COVERAGE_CODES = Object.freeze({
   UNSUPPORTED_POLICY_FAMILY: 'UNSUPPORTED_POLICY_FAMILY',
   AMBIGUOUS_POLICY_SHAPE: 'AMBIGUOUS_POLICY_SHAPE',
   OVERRIDE_SHAPE_MISMATCH: 'OVERRIDE_SHAPE_MISMATCH',
+  // IAM-704: a control-policy (SCP/RCP) shape must fail closed rather than fall
+  // back to identity rules - SCPs set permission CEILINGS, they do not grant.
+  UNSUPPORTED_SCP_SHAPE: 'UNSUPPORTED_SCP_SHAPE',
+  // IAM-704: an explicit policy Version this analyzer does not model.
+  UNSUPPORTED_POLICY_VERSION: 'UNSUPPORTED_POLICY_VERSION',
 });
 
 // The set of families a caller may select via the optional manual override.
@@ -95,6 +107,52 @@ function hasPrincipalElement(s) {
   return (s && (s.principal != null || s.notPrincipal != null)) || false;
 }
 
+// --- SCP / RCP control-policy shape (IAM-704, test 19) -----------------------
+// An SCP/RCP is an ORGANIZATIONS control policy: a set of Deny guardrails (or
+// Allow ceilings) that CAP what member accounts may do - it never grants a
+// permission. Run through identity rules it would look like a harmless zero-
+// grant policy (all-Deny yields no findings), which silently hides that the
+// document was never an identity policy at all. We detect the control-policy
+// shape and fail closed. Full SCP CEILING analysis is a later feature; here we
+// only refuse to mis-analyze it as identity.
+//
+// Shape signature (deliberately narrow so a legitimate identity policy is not
+// swept up): EVERY statement is an unconditional-family Deny (no Principal),
+// AND at least one statement carries a hallmark org/region guardrail signal -
+// an `organizations:*` action/NotAction, or a region-scoping condition key
+// (aws:RequestedRegion). A plain "Deny everything except iam:*" with no such
+// guardrail stays an ordinary (identity) Deny and is NOT treated as an SCP.
+const SCP_GUARDRAIL_CONDITION_KEYS = new Set(['aws:requestedregion']);
+
+function isOrgControlAction(a) {
+  return String(a).toLowerCase().startsWith('organizations:');
+}
+
+function hasScpGuardrailCondition(stmt) {
+  const c = stmt.condition;
+  if (!c || typeof c !== 'object') return false;
+  for (const op of Object.getOwnPropertyNames(c)) {
+    const inner = c[op];
+    if (!inner || typeof inner !== 'object') continue;
+    for (const key of Object.getOwnPropertyNames(inner)) {
+      if (SCP_GUARDRAIL_CONDITION_KEYS.has(String(key).toLowerCase())) return true;
+    }
+  }
+  return false;
+}
+
+function isScpShape(statements) {
+  if (statements.length === 0) return false;
+  if (!statements.every((s) => s.effect === 'Deny')) return false;
+  if (statements.some(hasPrincipalElement)) return false; // SCPs attach to OUs, not principals
+  for (const s of statements) {
+    if (s.actions.some(isOrgControlAction)) return true;
+    if (s.notActions.some(isOrgControlAction)) return true;
+    if (hasScpGuardrailCondition(s)) return true;
+  }
+  return false;
+}
+
 function isTrustOnly(statements) {
   for (const s of statements) {
     // A trust policy has no Resource/NotResource and only trust actions.
@@ -112,6 +170,24 @@ function isTrustOnly(statements) {
 // detected family plus any blocking codes the SHAPE mandates.
 function classifyShape(statements) {
   const blockingCodes = [];
+
+  // 0) SCP / RCP control-policy shape (IAM-704, test 19): fail closed BEFORE the
+  // identity fallback so a deny-only org guardrail is never analyzed with
+  // identity rules. This is fail-closed only; full SCP ceiling semantics come
+  // later.
+  if (isScpShape(statements)) {
+    blockingCodes.push(code(
+      COVERAGE_CODES.UNSUPPORTED_SCP_SHAPE,
+      'Detected a Service Control Policy / Resource Control Policy shape ' +
+        '(organization-wide Deny guardrails). SCPs set permission CEILINGS and ' +
+        'do not GRANT permissions, so identity-policy rules do not apply and a ' +
+        'NotAction here does not describe allowed capabilities. Full SCP ceiling ' +
+        'analysis is not yet supported; analysis stops rather than fall back to ' +
+        'identity-policy rules.',
+      `Statement[${statements[0].index}]`,
+    ));
+    return { detected: FAMILIES.SCP_RCP, blockingCodes };
+  }
 
   // 1) NotPrincipal is a recognized-but-unmodeled element: reject each
   // occurrence with its exact JSON path. This is a resource-policy element, so
@@ -192,6 +268,23 @@ export function detectFamily(model, options) {
   const notes = [];
 
   const { detected, blockingCodes } = classifyShape(statements);
+
+  // IAM-704 (test 22C): version gate. An ABSENT Version is tolerated; any
+  // EXPLICIT version other than the modeled grammar (e.g. legacy '2008-10-17')
+  // is unsupported. Fail closed rather than analyze under - or silently rewrite
+  // to - a version whose semantics were never validated. This is orthogonal to
+  // the family shape, so it stacks with any shape block above.
+  const version = model && typeof model.version === 'string' ? model.version : null;
+  if (version !== null && version !== SUPPORTED_POLICY_VERSION) {
+    blockingCodes.push(code(
+      COVERAGE_CODES.UNSUPPORTED_POLICY_VERSION,
+      `Policy Version "${version}" is not supported. This analyzer models the ` +
+        `"${SUPPORTED_POLICY_VERSION}" policy grammar and never silently rewrites ` +
+        'an unsupported version. Analysis stops rather than present findings under ' +
+        'a version whose semantics it has not validated.',
+      'Version',
+    ));
+  }
 
   // Optional manual override. It NEVER relaxes a shape-mandated block (you
   // cannot force a NotPrincipal / resource document to evaluate as identity),

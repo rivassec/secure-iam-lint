@@ -1,0 +1,27 @@
+{
+  "name": "Data-read (inferred-sensitive) under a Condition, with an unrelated Deny",
+  "note": "IAM-706 fixture matrix: DATA-READ witnesses the condition + deny cells. s3:ListBucket/s3:GetObject on an inferred-sensitive bucket (production-backup) is a scoped data-read capability; an aws:SourceVpc StringEquals Condition narrows it (confidence drops a notch) and an unrelated explicit Deny (s3:DeleteObject) is present but does not suppress the read. Must fire DATA-READ; must NOT fire DATA-EXFIL (scoped, not broad), WILDCARD-RESOURCE (read verbs, named resource), or DESTRUCTIVE-ACTION (the destructive action is a Deny, not an Allow grant).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadProductionBackup",
+        "Effect": "Allow",
+        "Action": ["s3:ListBucket", "s3:GetObject"],
+        "Resource": ["arn:aws:s3:::production-backup", "arn:aws:s3:::production-backup/*"],
+        "Condition": { "StringEquals": { "aws:SourceVpc": "vpc-0abc1234def567890" } }
+      },
+      {
+        "Sid": "DenyObjectDeletes",
+        "Effect": "Deny",
+        "Action": "s3:DeleteObject",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["DATA-READ"],
+    "notFindingIds": ["DATA-EXFIL", "WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION"]
+  }
+}

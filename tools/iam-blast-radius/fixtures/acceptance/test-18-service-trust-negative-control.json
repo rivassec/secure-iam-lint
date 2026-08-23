@@ -1,0 +1,36 @@
+{
+  "name": "Acceptance test 18 - normal AWS service trust (role-trust negative control, fail-closed by design)",
+  "note": "IAM-707: role-trust family not yet modeled -> fail closed with UNSUPPORTED_POLICY_FAMILY. This is the negative control: a benign lambda.amazonaws.com service-trust. Failing closed is ACCEPTABLE here (it loses the informational service-trust relationship the follow-up feature will show); crucially it must NOT infer the role's permissions or a privilege-escalation path from the trust policy alone, and it must not raise a public/external-account finding. Encodes current design-blocked behavior.",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": 18,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "LambdaServiceTrust",
+        "Effect": "Allow",
+        "Principal": { "Service": "lambda.amazonaws.com" },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION", "PASSROLE-LAMBDA"]
+  },
+  "coverageExpect": {
+    "blocked": true,
+    "detectedFamily": "role-trust",
+    "blockingCodes": ["UNSUPPORTED_POLICY_FAMILY"],
+    "noFindings": true,
+    "noCapabilityEdges": true
+  },
+  "designBlocked": {
+    "feature": "role-trust family analysis",
+    "followUp": "queued as the immediate next feature (Oliver, 2026-08-22)",
+    "intended": "no public-trust or external-account finding; OK to show an informational service-trust relationship; never infer role permissions or an escalation path from the trust policy alone."
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "Acceptance test 15 - public role trust (role-trust, fail-closed by design)",
+  "note": "IAM-707: role-trust family not yet modeled. Principal:* + sts:AssumeRole with no Resource is the trust-policy shape; the engine FAILS CLOSED with UNSUPPORTED_POLICY_FAMILY and does NOT evaluate it as an identity policy (so it never emits a spurious broad-Resource finding for the omitted Resource). Encodes current design-blocked behavior.",
+  "phase": 7,
+  "story": "IAM-707",
+  "acceptanceTest": 15,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PublicTrust", "Effect": "Allow", "Principal": "*", "Action": "sts:AssumeRole" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION", "WILDCARD-RESOURCE"]
+  },
+  "coverageExpect": {
+    "blocked": true,
+    "detectedFamily": "role-trust",
+    "blockingCodes": ["UNSUPPORTED_POLICY_FAMILY"],
+    "noFindings": true,
+    "noCapabilityEdges": true
+  },
+  "designBlocked": {
+    "feature": "role-trust family analysis",
+    "followUp": "queued as the immediate next feature (Oliver, 2026-08-22)",
+    "intended": "critical: unrestricted role trust; the role's permissions remain unknown/out of scope; graph origin should represent EXTERNAL principals, not the subject of this policy."
+  }
+}

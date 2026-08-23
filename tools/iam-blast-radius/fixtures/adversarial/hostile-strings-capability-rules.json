@@ -1,6 +1,6 @@
 {
   "name": "Hostile strings across capability-rule statements",
-  "note": "IAM-504 fixture matrix: hostile-string-rendering witness for the capability rules. Every statement carries an HTML/JS payload in its Sid and (where applicable) its Resource ARN, while its actions genuinely trigger a rule. analyze() must surface each finding with the hostile string carried verbatim as inert DATA (statementSid / resources / conditions) so the createElement+textContent renderer receives inert text - never markup. Covers WILDCARD-ACTION, WILDCARD-RESOURCE, DATA-EXFIL, KMS-DECRYPT, DESTRUCTIVE-ACTION, DETECTION-IMPAIRMENT, DIRECT-IAM-ADMIN, NOTACTION-ALLOW (plus the escalation paths the NotAction inversion necessarily grants).",
+  "note": "IAM-504 fixture matrix: hostile-string-rendering witness for the capability rules. Every statement carries an HTML/JS payload in its Sid and (where applicable) its Resource ARN, while its actions genuinely trigger a rule. analyze() must surface each finding with the hostile string carried verbatim as inert DATA (statementSid / resources / conditions) so the createElement+textContent renderer receives inert text - never markup. Covers WILDCARD-ACTION, WILDCARD-RESOURCE, DATA-EXFIL, KMS-DECRYPT, DESTRUCTIVE-ACTION, DETECTION-IMPAIRMENT, DIRECT-IAM-ADMIN, NOTACTION-ALLOW (plus the escalation paths the NotAction inversion necessarily grants). IAM-705: the DIRECT-IAM-ADMIN witness uses iam:CreateUser (a direct-IAM-admin action that is NOT a specific escalation primitive) so DIRECT-IAM-ADMIN stays a standalone top-level finding rather than being folded into a specific primitive by the IAM-admin dedup; the specific primitives (PUT-INLINE-POLICY etc.) get their hostile witness from hostile-strings-escalation-paths.json.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -10,8 +10,9 @@
       { "Sid": "<img src=x onerror=alert(1)>km", "Effect": "Allow", "Action": "kms:Decrypt", "Resource": "*" },
       { "Sid": "<img src=x onerror=alert(1)>de", "Effect": "Allow", "Action": "s3:DeleteBucket", "Resource": "arn:aws:s3:::<script>alert(1)</script>" },
       { "Sid": "<img src=x onerror=alert(1)>dt", "Effect": "Allow", "Action": "cloudtrail:StopLogging", "Resource": "*" },
-      { "Sid": "<img src=x onerror=alert(1)>ia", "Effect": "Allow", "Action": "iam:PutUserPolicy", "Resource": "arn:aws:iam::111122223333:user/<script>alert(1)</script>" },
-      { "Sid": "<img src=x onerror=alert(1)>na", "Effect": "Allow", "NotAction": ["s3:GetObject"], "Resource": "arn:aws:s3:::bucket" }
+      { "Sid": "<img src=x onerror=alert(1)>ia", "Effect": "Allow", "Action": "iam:CreateUser", "Resource": "arn:aws:iam::111122223333:user/<script>alert(1)</script>" },
+      { "Sid": "<img src=x onerror=alert(1)>na", "Effect": "Allow", "NotAction": ["s3:GetObject"], "Resource": "arn:aws:s3:::bucket" },
+      { "Sid": "<img src=x onerror=alert(1)>dr", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::production-<script>alert(1)</script>/*" }
     ]
   },
   "expect": {
@@ -20,7 +21,8 @@
     "hostile": true,
     "hostileFor": [
       "WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "KMS-DECRYPT",
-      "DESTRUCTIVE-ACTION", "DETECTION-IMPAIRMENT", "DIRECT-IAM-ADMIN", "NOTACTION-ALLOW"
+      "DESTRUCTIVE-ACTION", "DETECTION-IMPAIRMENT", "DIRECT-IAM-ADMIN", "NOTACTION-ALLOW",
+      "DATA-READ"
     ]
   }
 }
