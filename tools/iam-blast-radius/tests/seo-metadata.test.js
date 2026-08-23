@@ -1,13 +1,10 @@
-// IAM-509: STAGE the SEO / indexing launch bundle (do NOT remove noindex).
-//
-// The full indexability bundle (canonical, description, Open Graph, Twitter
-// Card, SoftwareApplication JSON-LD, and a crawlable docs section) is STAGED
-// but GATED: noindex is intentionally KEPT and no sitemap entry is added yet.
-// This suite is the drift guard for the staged bundle - it fails if the
-// metadata is missing/inaccurate, if a wording rule is broken (SEO critic:
-// precise wording, no keywords, no absolute claims, structured data must match
-// visible content), or if the gate is accidentally lifted (noindex removed or a
-// sitemap entry sneaked in).
+// SEO / indexing drift guard. LAUNCHED 2026-08-22: the page is now indexable
+// (robots index,follow) and its canonical URL is injected into sitemap.xml by
+// the deploy workflow (Pelican does not emit a sitemap entry for a static tool,
+// and none is hand-added to the tool dir). This suite fails if the metadata is
+// missing/inaccurate, a wording rule is broken (precise wording, no keywords,
+// no absolute claims, structured data must match visible content), or if the
+// page regresses out of the index (robots flipped back to noindex).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,23 +49,29 @@ const bodyText = (() => {
   return collapse(body);
 })();
 
-// --- gate: noindex kept, no sitemap ---------------------------------------
+// --- gate: launched (indexable), no hand-added sitemap file ----------------
 
-test('noindex is STILL present (the page must stay out of the index)', () => {
+test('the page is indexable: robots is index,follow and noindex is gone', () => {
   assert.match(
     html,
-    /<meta\s+name="robots"\s+content="noindex"\s*\/?>/i,
-    'the noindex robots meta must remain until the human flip',
+    /<meta\s+name="robots"\s+content="index,\s*follow"\s*\/?>/i,
+    'robots must be index,follow now that indexing is launched',
+  );
+  assert.doesNotMatch(
+    html,
+    /content="noindex"/i,
+    'the noindex meta must be removed after the launch flip',
   );
 });
 
-test('the human-flip TODO comment is present and names the gated steps', () => {
-  const todo = html.match(/TODO\(Oliver\):[\s\S]*?-->/);
-  assert.ok(todo, 'TODO(Oliver) flip comment not found');
-  const t = todo[0].toLowerCase();
-  assert.ok(t.includes('noindex'), 'TODO must mention flipping noindex');
-  assert.ok(t.includes('sitemap'), 'TODO must mention adding the sitemap');
-  assert.ok(t.includes('search console'), 'TODO must mention Search Console submission');
+test('the launch comment records the remaining Search Console step', () => {
+  // The staged TODO(Oliver) comment is replaced by a launch note; the one
+  // remaining human step (Search Console submission) must stay documented.
+  // (Target the launch comment specifically - it is not the first HTML comment.)
+  const launch = (html.match(/<!--[\s\S]*?-->/g) || []).find((c) => /search console/i.test(c));
+  assert.ok(launch, 'launch comment (mentioning Search Console) not found');
+  const c = launch.toLowerCase();
+  assert.ok(c.includes('index'), 'launch comment must note the page is indexable');
 });
 
 test('no sitemap file was hand-added under the shipped tool dir', () => {
