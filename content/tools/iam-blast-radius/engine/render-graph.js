@@ -187,6 +187,19 @@ export function computeLayout(graph) {
   const rawNodes = Array.isArray(g.nodes) ? g.nodes : [];
   const rawEdges = Array.isArray(g.edges) ? g.edges : [];
 
+  // IAM-802: a ROLE-TRUST graph has no identity Principal root - its origin is
+  // the EXTERNAL principal(s) that may assume the role (graph.js buildTrustGraph;
+  // acceptance-suite test 15). When no `principal` node is present we must NOT
+  // synthesize/draw the "Principal (subject of this policy)" node (that would
+  // contradict the trust semantics). Instead the layout roots at the in-degree-0
+  // origin node(s). Identity graphs (which always include the principal node) are
+  // unaffected and lay out byte-identically.
+  const hasPrincipal = rawNodes.some((n) => n && n.id === PRINCIPAL_ID);
+  // Draw the identity Principal root for identity graphs AND for a genuinely
+  // empty graph (the legacy no-analysis default: a lone principal node). Skip it
+  // ONLY for a populated principal-less graph, i.e. a role-trust graph rooted at
+  // external principals.
+  const drawPrincipal = hasPrincipal || rawNodes.length === 0;
   const principal = rawNodes.find((n) => n && n.id === PRINCIPAL_ID) || {
     id: PRINCIPAL_ID,
     type: 'Principal',
@@ -199,10 +212,10 @@ export function computeLayout(graph) {
   const nodeById = new Map();
   for (const n of rawNodes) if (n && typeof n.id === 'string') nodeById.set(n.id, n);
 
-  // --- Layered columns by hop-distance from the principal (IAM-107) ----------
-  // Escalation-path transitions chain THROUGH an intermediate node (principal ->
+  // --- Layered columns by hop-distance from the root (IAM-107) ---------------
+  // Escalation-path transitions chain THROUGH an intermediate node (root ->
   // passable role -> service), so deeper nodes belong in later columns and the
-  // path reads left to right. Depth = shortest hop count from the principal;
+  // path reads left to right. Depth = shortest hop count from the root(s);
   // an unreachable node defaults to column 1. Pure BFS, deterministic.
   const adjacency = new Map();
   for (const e of rawEdges) {
@@ -210,8 +223,23 @@ export function computeLayout(graph) {
     if (!adjacency.has(e.from)) adjacency.set(e.from, []);
     adjacency.get(e.from).push(e.to);
   }
-  const depth = new Map([[PRINCIPAL_ID, 0]]);
-  const queue = [PRINCIPAL_ID];
+  // Identity graph: root at the principal (depth 0). Principal-less trust graph:
+  // root at every in-degree-0 origin node at depth 1, so the leftmost drawn
+  // column mirrors the identity graph's column 1 (targets start at Math.max(1,..)).
+  let depth;
+  let queue;
+  if (drawPrincipal) {
+    depth = new Map([[PRINCIPAL_ID, 0]]);
+    queue = [PRINCIPAL_ID];
+  } else {
+    const hasIncoming = new Set();
+    for (const e of rawEdges) if (e && typeof e === 'object') hasIncoming.add(e.to);
+    const origins = rawNodes
+      .filter((n) => n && typeof n.id === 'string' && !hasIncoming.has(n.id))
+      .map((n) => n.id);
+    depth = new Map(origins.map((id) => [id, 1]));
+    queue = origins.slice();
+  }
   while (queue.length > 0) {
     const cur = queue.shift();
     const d = depth.get(cur);
@@ -329,21 +357,26 @@ export function computeLayout(graph) {
   const height = round(Math.max(stackBottom + PAD, 2 * PAD + NODE_H));
 
   // Principal on the left, vertically centered across the whole band stack.
-  const principalY = round((height - NODE_H) / 2);
-  const principalNode = {
-    id: principal.id,
-    type: principal.type || 'Principal',
-    label: typeof principal.label === 'string' ? principal.label : String(principal.id),
-    lane: null,
-    x: PAD,
-    y: principalY,
-    w: NODE_W,
-    h: NODE_H,
-    cx: round(PAD + NODE_W / 2),
-    cy: round(principalY + NODE_H / 2),
-  };
-  positioned.set(principal.id, principalNode);
-  layoutNodes.unshift(principalNode);
+  // IAM-802: only for identity graphs. A role-trust graph has no principal-subject
+  // root (its origin is the external principal already placed in a lane), so we do
+  // NOT synthesize/draw one here.
+  if (drawPrincipal) {
+    const principalY = round((height - NODE_H) / 2);
+    const principalNode = {
+      id: principal.id,
+      type: principal.type || 'Principal',
+      label: typeof principal.label === 'string' ? principal.label : String(principal.id),
+      lane: null,
+      x: PAD,
+      y: principalY,
+      w: NODE_W,
+      h: NODE_H,
+      cx: round(PAD + NODE_W / 2),
+      cy: round(principalY + NODE_H / 2),
+    };
+    positioned.set(principal.id, principalNode);
+    layoutNodes.unshift(principalNode);
+  }
 
   // Group parallel edges (same source/target pair) so they can be fanned apart.
   const groupCount = new Map();

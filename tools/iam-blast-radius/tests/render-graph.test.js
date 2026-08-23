@@ -177,6 +177,49 @@ test('computeLayout tolerates empty / malformed graph input without throwing', (
   assert.ok(empty.nodes.length >= 1);
 });
 
+test('IAM-802: a principal-less role-trust graph roots at the external origin, draws no phantom principal', () => {
+  const r = analyze(JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{ Sid: 'P', Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole' }],
+  }));
+  const layout = computeLayout(r.graph);
+  // No synthesized "Principal (subject of this policy)" node - the trust graph
+  // is rooted at the external principal (acceptance-suite test 15).
+  assert.ok(!layout.nodes.some((n) => n.id === 'principal'),
+    'a role-trust layout must not draw the identity principal-subject root');
+  const origin = layout.nodes.find((n) => n.id === 'ext:anonymous');
+  const role = layout.nodes.find((n) => n.id === 'role:trust-target');
+  assert.ok(origin && role, 'origin + role nodes are laid out');
+  assert.equal(role.unknownPrivileges, true, 'target-role privileges marker carried to the layout');
+  // The origin sits to the LEFT of the target role (path reads left-to-right).
+  assert.ok(origin.x < role.x, 'external origin is left of the target role');
+  // The can-assume edge is laid out with finite geometry.
+  const edge = layout.edges.find((e) => e.type === 'can-assume');
+  assert.ok(edge, 'can-assume edge laid out');
+  for (const v of [edge.x1, edge.y1, edge.x2, edge.y2]) {
+    assert.ok(Number.isFinite(v), 'edge endpoints are finite');
+  }
+});
+
+test('IAM-802: rendering a role-trust graph is inert and omits the principal-subject label', () => {
+  const r = analyze(JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{ Sid: 'P', Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole' }],
+  }));
+  const doc = fakeDocument();
+  const renderer = createGraphRenderer(doc);
+  const svg = renderer.render(r.graph, mount(doc), { reducedMotion: true });
+  const all = svg.textContent;
+  assert.doesNotMatch(all, /subject of this policy/i,
+    'a trust graph render never shows the identity principal-subject label');
+  assert.match(all, /Any principal \(public \/ anonymous\)/, 'external origin label rendered');
+  assert.match(all, /privileges unknown/i, 'target-role unknown-privileges marker rendered');
+  // Inertness (threat-model T1): only allowed tags were created.
+  for (const el of doc.created) {
+    assert.ok(ALLOWED_TAGS.has(el.tag), `unexpected element created: ${el.tag}`);
+  }
+});
+
 test('an edge to an absent node is dropped from the layout', () => {
   const graph = {
     nodes: [{ id: 'principal', type: 'Principal', label: 'P' }],

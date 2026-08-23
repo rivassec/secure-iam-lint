@@ -40,7 +40,21 @@ export const FAMILIES = Object.freeze({
 // Families the engine can actually evaluate in this phase. Everything else
 // fails closed. Kept as a Set so a future phase adds an evaluator by adding a
 // family here (plus its rules), without touching this gate's control flow.
-export const SUPPORTED_FAMILIES = Object.freeze(new Set([FAMILIES.IDENTITY]));
+// IAM-801 (Phase 8): ROLE_TRUST joins IDENTITY as a supported family - it now
+// has a dedicated, family-aware evaluator (engine/trust.js) that the
+// orchestrator routes trust statements to instead of the identity rules. The
+// remaining families (resource / permissions-boundary / scp-rcp / session) stay
+// fail-closed until each grows its own evaluator.
+export const SUPPORTED_FAMILIES = Object.freeze(new Set([
+  FAMILIES.IDENTITY,
+  FAMILIES.ROLE_TRUST,
+]));
+
+// The Principal type keys the role-trust evaluator models (trust-policy-
+// semantics.md section 2). A role-trust document that names any OTHER Principal
+// type is an unmodeled shape: the gate fails closed on it rather than guess
+// ("unsupported != safe"). Mirrors trust.js KNOWN_PRINCIPAL_TYPES.
+const KNOWN_PRINCIPAL_TYPES = new Set(['AWS', 'Service', 'Federated', 'CanonicalUser']);
 
 // The single IAM policy-language version whose grammar this analyzer models
 // (IAM-704). An ABSENT Version is tolerated (the model records null and AWS
@@ -72,6 +86,10 @@ export const COVERAGE_CODES = Object.freeze({
   UNSUPPORTED_SCP_SHAPE: 'UNSUPPORTED_SCP_SHAPE',
   // IAM-704: an explicit policy Version this analyzer does not model.
   UNSUPPORTED_POLICY_VERSION: 'UNSUPPORTED_POLICY_VERSION',
+  // IAM-801: a role-trust document naming a Principal type the trust evaluator
+  // does not model (anything outside AWS/Service/Federated/CanonicalUser). The
+  // shape is recognized as role-trust but stays fail-closed - never guessed.
+  UNSUPPORTED_PRINCIPAL_TYPE: 'UNSUPPORTED_PRINCIPAL_TYPE',
 });
 
 // The set of families a caller may select via the optional manual override.
@@ -153,6 +171,21 @@ function isScpShape(statements) {
   return false;
 }
 
+// Role-trust statements whose Principal names a type the trust evaluator does
+// not model (a key outside KNOWN_PRINCIPAL_TYPES). A wildcard Principal ("*")
+// carries no byType keys, so it is never flagged here. Deterministic order.
+function unmodeledPrincipalTypeStatements(statements) {
+  const out = [];
+  for (const s of statements) {
+    const p = s && s.principal;
+    if (!p || p.anyPrincipal || !p.byType) continue;
+    for (const key of Object.keys(p.byType)) {
+      if (!KNOWN_PRINCIPAL_TYPES.has(key)) { out.push(s); break; }
+    }
+  }
+  return out;
+}
+
 function isTrustOnly(statements) {
   for (const s of statements) {
     // A trust policy has no Resource/NotResource and only trust actions.
@@ -215,19 +248,38 @@ function classifyShape(statements) {
   }
 
   // 3) Every statement carries a principal element -> resource-based. Refine to
-  // role-trust when the shape is the trust-policy shape. Either way this is an
-  // unmodeled family: fail closed.
+  // role-trust when the shape is the trust-policy shape.
+  //   - role-trust (IAM-801): SUPPORTED via the family-aware trust evaluator, so
+  //     it does NOT fail closed here - UNLESS it names an unmodeled Principal
+  //     type, which keeps it fail-closed ("unsupported != safe").
+  //   - a general resource-based policy stays unmodeled: fail closed.
+  // NotPrincipal was already rejected above (UNSUPPORTED_NOTPRINCIPAL); when it
+  // is present we add no further family/principal-type block (the NotPrincipal
+  // block is authoritative).
   if (withoutElement.length === 0) {
     const detected = isTrustOnly(statements) ? FAMILIES.ROLE_TRUST : FAMILIES.RESOURCE;
     if (notPrincipalStmts.length === 0) {
-      blockingCodes.push(code(
-        COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY,
-        `Detected a ${FAMILY_LABELS[detected]} (every statement names a ` +
-          'Principal). This analyzer models identity-policy semantics only, so ' +
-          'it stops before rule evaluation rather than present identity findings ' +
-          'on a resource-based document.',
-        `Statement[${statements[0].index}].Principal`,
-      ));
+      if (detected === FAMILIES.ROLE_TRUST) {
+        for (const s of unmodeledPrincipalTypeStatements(statements)) {
+          blockingCodes.push(code(
+            COVERAGE_CODES.UNSUPPORTED_PRINCIPAL_TYPE,
+            'This role trust policy names a Principal type the trust evaluator ' +
+              'does not model (only AWS, Service, Federated, and CanonicalUser ' +
+              'are modeled). Analysis stops rather than guess an unrecognized ' +
+              'principal shape (unsupported does NOT mean safe).',
+            `Statement[${s.index}].Principal`,
+          ));
+        }
+      } else {
+        blockingCodes.push(code(
+          COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY,
+          `Detected a ${FAMILY_LABELS[detected]} (every statement names a ` +
+            'Principal). This analyzer models identity-policy and role-trust ' +
+            'semantics only, so it stops before rule evaluation rather than ' +
+            'present findings on a resource-based document it does not model.',
+          `Statement[${statements[0].index}].Principal`,
+        ));
+      }
     }
     return { detected, blockingCodes };
   }
@@ -314,18 +366,21 @@ export function detectFamily(model, options) {
         ));
       }
       notes.push(`Family manually overridden to "${override}".`);
-    } else if (override === FAMILIES.IDENTITY && detected !== FAMILIES.IDENTITY) {
-      // User forced "identity" on a shape that is not identity-shaped. We do not
-      // trust the override to override the shape: fail closed with a mismatch.
+    } else if (override !== detected) {
+      // User forced a SUPPORTED family (identity or role-trust) onto a shape that
+      // is not that family. The SHAPE always wins: fail closed with a mismatch
+      // rather than force one family's evaluator onto a document of another shape
+      // (e.g. identity rules onto a trust policy, or the trust evaluator onto an
+      // identity policy).
       blockingCodes.push(code(
         COVERAGE_CODES.OVERRIDE_SHAPE_MISMATCH,
-        `Manual override "identity" conflicts with the detected ` +
-          `${FAMILY_LABELS[detected] || detected}. The shape wins; analysis stops ` +
-          'rather than force identity rules onto a document that is not an ' +
-          'identity policy.',
+        `Manual override "${FAMILY_LABELS[override] || override}" conflicts with ` +
+          `the detected ${FAMILY_LABELS[detected] || detected}. The shape wins; ` +
+          'analysis stops rather than force one family\'s rules onto a document ' +
+          'whose shape is a different family.',
         null,
       ));
-      notes.push('Manual override "identity" did not match the detected shape.');
+      notes.push(`Manual override "${override}" did not match the detected shape.`);
     } else {
       notes.push(`Family manually overridden to "${override}" (matches detected shape).`);
     }

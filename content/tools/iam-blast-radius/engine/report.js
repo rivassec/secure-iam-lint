@@ -126,6 +126,9 @@ export function toMarkdown(analysis) {
         (Array.isArray(s.missingLayers) && s.missingLayers.length > 0
           ? s.missingLayers.map((l) => String(l.label)).join(', ')
           : '(none)'));
+      if (s.trustDeny && s.trustDeny.present) {
+        out.push(`- Same-policy trust Deny: ${s.trustDeny.note}`);
+      }
       out.push(`- Attack-path graph: ${s.graph.truncated ? 'truncated (bounded; findings table stays authoritative)' : 'complete'}.`);
       out.push(`- Build SHA: ${s.versions.buildSha}`);
       out.push(`- Rule version: ${s.versions.ruleVersion}`);

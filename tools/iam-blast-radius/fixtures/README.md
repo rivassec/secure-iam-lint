@@ -175,3 +175,30 @@ these expectations.
   condition-narrowed grants.
 - `rationale`: REQUIRED. Cites the concrete AWS semantics; this is the
   integrity gate (an incorrect expectation is blocking).
+
+## Trust negative corpus (`negative-trust/`, IAM-805)
+
+`negative-trust/` is the role-trust analogue of `negative/`: the
+"does-not-fire / low" truth corpus for ROLE-TRUST policies. Each fixture pairs
+a trust policy with the outcome that is CORRECT per real AWS trust semantics
+(grounded in `docs/trust-policy-semantics.md`) plus a `rationale` citing the
+AWS behavior that makes the expectation true. It is the credibility artifact
+proving the trust analyzer knows when NOT to fire - the load-bearing guard
+against overclaiming (threat-model T8: a trust policy conveys WHO MAY ASSUME a
+role, never the assumed role's permissions).
+
+Each fixture carries `"family": "role-trust"` and reuses the exact
+`negativeExpect` schema documented above (`mustFind` / `mustNotFind` /
+`maxSeverity` / `maxPathExploitability`). `tests/negative-trust.test.js` (a
+mirror of `tests/negative.test.js`) drives every fixture through `analyze()`
+and enforces the frozen contract, plus trust-specific invariants: no
+identity-style finding on a trust policy, every trust finding marks the target
+role's permissions out-of-scope/unknown, and no "missing ExternalId" /
+"missing aws:PrincipalOrgID" remediation. The `negativeExpect` outcomes are
+FROZEN TRUTH: fix `engine/trust.js`, never these expectations.
+
+Cases covered: normal service trust (informational only), tightly-scoped OIDC
+(repo + ref, not HIGH), tightly-scoped SAML subject, ExternalId-protected
+vendor cross-account (confused-deputy constraint), org-constrained trust
+(`StringEquals aws:PrincipalOrgID`), and SourceArn / SourceAccount-constrained
+service trust.

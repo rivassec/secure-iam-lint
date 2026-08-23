@@ -1,0 +1,32 @@
+{
+  "name": "Auxiliary session action only (sts:SetSourceIdentity) with an external-account principal - session-control, NOT cross-account assume",
+  "note": "IAM-805 iteration 3 blocking-defect regression. A statement whose ONLY action is an auxiliary session action (sts:SetSourceIdentity) grants no ability to assume the role, even when it names an external account/root principal. It must be classified as an informational session-control capability, NEVER a high TRUST-CROSS-ACCOUNT 'delegates assume-role' finding (that asserts an assumption the action does not grant - threat-model T8).",
+  "phase": 8,
+  "story": "IAM-805",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SetSourceIdentityOnlyCrossAccount",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::999999999999:root" },
+        "Action": "sts:SetSourceIdentity"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["TRUST-SESSION-CONTROL"],
+    "mustNotFind": [
+      "TRUST-PUBLIC",
+      "TRUST-CROSS-ACCOUNT",
+      "TRUST-ORG-EXPANSION",
+      "TRUST-FEDERATED",
+      "WILDCARD-RESOURCE",
+      "ASSUME-ROLE-EXPANSION"
+    ],
+    "maxSeverity": { "TRUST-SESSION-CONTROL": "info" },
+    "maxPathExploitability": { "TRUST-SESSION-CONTROL": "low" }
+  },
+  "rationale": "sts:SetSourceIdentity only PERMITS setting a source identity on the session; it is required in the trust policy for the role to accept a source identity, but it is an accountability/traceability control, not an assume grant (trust-policy-semantics 3, source 9). AWS evaluates the assume action and this auxiliary action for the SAME caller, so an external account that cannot already assume the role via a separate sts:AssumeRole* grant never reaches sts:SetSourceIdentity - the statement is inert. Naming an external account/root principal on an aux-only statement does NOT delegate assume-role to that account; classifying it as a high cross-account trust ('any identity the trusted account authorizes can assume this role') would assert an assumption the action does not convey (threat-model T8). The correct classification is an informational session-control capability whose prose never claims assumption. Ref: AWS Monitor and control actions taken with assumed roles (sts:SetSourceIdentity); docs/trust-policy-semantics.md sec 3."
+}

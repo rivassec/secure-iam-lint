@@ -1,0 +1,37 @@
+{
+  "name": "OIDC (GitHub Actions) role trust with an org-wide subject (repo:example-org/*) -> HIGH federated-subject expansion",
+  "note": "IAM-804: a Federated OIDC principal (token.actions.githubusercontent.com) whose sub condition is org-wide (repo:example-org/*) trusts an organization-wide set of workloads, not one specific workload. The audience (aud) check is recognized as a valid CONSTRAINT (it does not lower the broad-subject finding). Severity HIGH. The finding must NOT claim every repository can assume the role (a matching token + workflow context are out of scope) and must recommend constraining sub to a repository + branch/environment. The assumed role's permissions remain out of scope / unknown.",
+  "phase": 8,
+  "story": "IAM-804",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GitHubOIDCOrgWide",
+        "Effect": "Allow",
+        "Principal": { "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
+          "StringLike": { "token.actions.githubusercontent.com:sub": "repo:example-org/*" }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-FEDERATED"],
+    "notFindingIds": ["TRUST-PUBLIC", "TRUST-CROSS-ACCOUNT", "ASSUME-ROLE-EXPANSION", "WILDCARD-RESOURCE"]
+  },
+  "federatedExpect": {
+    "findingId": "TRUST-FEDERATED",
+    "provider": "oidc",
+    "subjectScope": "broad",
+    "severity": "high",
+    "audRecognizedAsConstraint": true,
+    "recommendsConstrainingSub": true,
+    "mustNotClaimEveryRepoCanAssume": true,
+    "targetPermissions": "unknown"
+  }
+}

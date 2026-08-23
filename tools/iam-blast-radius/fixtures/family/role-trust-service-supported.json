@@ -1,0 +1,28 @@
+{
+  "name": "Role trust policy detected as role-trust and analyzed (supported)",
+  "note": "IAM-801: Principal + only sts:AssumeRole and no Resource is the role-trust shape. It declares WHO may assume the role. The role-trust family is now SUPPORTED via the family-aware trust evaluator (engine/trust.js), so it is NOT blocked - it is routed to the trust analyzer, never the identity rules. A benign lambda service trust yields an informational TRUST-SERVICE relationship and no identity-escalation finding.",
+  "phase": 8,
+  "story": "IAM-801",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TrustLambda",
+        "Effect": "Allow",
+        "Principal": { "Service": "lambda.amazonaws.com" },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "expect": {
+    "findingIds": ["TRUST-SERVICE"],
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION", "TRUST-POLICY-MODIFY", "WILDCARD-RESOURCE"]
+  },
+  "familyExpect": {
+    "detected": "role-trust",
+    "family": "role-trust",
+    "blocked": false,
+    "supported": true,
+    "blockingCodes": []
+  }
+}

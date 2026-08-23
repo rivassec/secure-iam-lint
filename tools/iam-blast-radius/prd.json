@@ -838,6 +838,141 @@
         "final scoreboard written to docs/acceptance-suite-results.md + progress.md; originally-passing tests + negative corpus not regressed",
         "full node --test green; every acceptance fixture either passes or is an explicit design-blocked expectation tied to a named follow-up feature"
       ]
+    },
+    {
+      "id": "IAM-800",
+      "title": "Phase 8: AWS-verified trust-policy semantics reference (grounding)",
+      "priority": 20,
+      "phase": 8,
+      "status": "pending",
+      "maximumIterations": 3,
+      "requirements": [
+        "Research and write docs/trust-policy-semantics.md: a concise, AWS-verified spec that grounds the role-trust feature. Cover: Principal types (AWS account id / root / user ARN / role ARN, Service, Federated OIDC, Federated SAML, CanonicalUser, and '*' = anonymous/public); the trust action set (sts:AssumeRole, sts:AssumeRoleWithWebIdentity, sts:AssumeRoleWithSAML, sts:TagSession, sts:SetSourceIdentity); and the v1 trust condition keys WITH POLARITY: sts:ExternalId (confused-deputy mitigation; presence is a constraint; unique-per-customer; NOT authentication or secrecy), aws:PrincipalOrgID (StringEquals = constraint, StringNotEquals = EXPANSION), OIDC aud + sub (e.g. GitHub Actions token.actions.githubusercontent.com:sub grammar; repo:org/* is broad vs repo:org/repo:ref:refs/heads/main which is tight), SAML saml:aud, aws:SourceArn / aws:SourceAccount (confused-deputy constraint for service principals), aws:MultiFactorAuthPresent, aws:SourceIp.",
+        "State the confused-deputy problem plainly, and the load-bearing invariant used by every later story: a trust policy conveys WHO MAY ASSUME the role, never the assumed role's permissions (target-role privileges are always out of scope / unknown).",
+        "Document the Phase-8 trust SEVERITY MODEL coherently: Principal '*' public = critical; unconditioned external cross-account/root = high; external cross-account + sts:ExternalId (or other confused-deputy constraint) = low/medium; OIDC broad sub (repo:org/*) = high; normal service trust = informational. Everything outside the v1 condition-key set is 'unsupported, reduces confidence'.",
+        "Use WebSearch/WebFetch to verify against current AWS documentation and cite sources. ASCII only; no secrets. This story changes NO shipped code - it is the reference IAM-801..806 build against."
+      ],
+      "acceptance": [
+        "docs/trust-policy-semantics.md present; covers every Principal type, every v1 trust action, and every v1 condition key with explicit polarity",
+        "includes the confused-deputy explanation, the trust-severity model, and the 'trust != target-role permissions' invariant",
+        "claims are consistent with current AWS documentation (verifier critic confirms against cited sources)",
+        "no shipped-code changes in this story"
+      ]
+    },
+    {
+      "id": "IAM-801",
+      "title": "Phase 8: accept role-trust family + Principal/action model + retain fail-closed traps",
+      "priority": 21,
+      "phase": 8,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "In engine/family.js plus a NEW trust evaluation path, ACCEPT role-trust as a supported family (it currently fail-closes with UNSUPPORTED_POLICY_FAMILY - see acceptance-suite tests 10/15/16/17/18). Parse Principal into typed forms: aws-account, aws-root, aws-principal-arn, service, federated-oidc, federated-saml, canonical-user, anonymous ('*'). Parse the trust action set. Route trust statements to the trust analyzer, NEVER to identity rules.",
+        "KEEP FAIL-CLOSED on: NotPrincipal (retain UNSUPPORTED_NOTPRINCIPAL - it is an expansion trap), unknown/unmodeled Principal types, and mixed identity+trust documents (still AMBIGUOUS_POLICY_SHAPE). The coverage summary must report the trust family as supported and enumerate any unsupported trust elements ('unsupported != safe').",
+        "Do NOT emit identity-style findings (no WILDCARD-RESOURCE / broad-Resource) on trust policies - trust policies commonly omit Resource. Every trust finding must carry the limitation that the assumed role's permissions are unknown / out of scope.",
+        "Reference docs/trust-policy-semantics.md and docs/acceptance-suite.md tests 10/15/16/17/18. Preserve all identity-family behavior unchanged."
+      ],
+      "acceptance": [
+        "role-trust family is supported (not blocked); Principal + trust-action model parsed; trust statements routed to the trust analyzer",
+        "NotPrincipal, unknown Principal type, and mixed identity+trust still fail closed",
+        "no identity-style broad-Resource finding on a trust policy; every trust finding states the target role's permissions are out of scope",
+        "full node --test green; identity-family behavior and the Phase-7 acceptance fixtures unchanged"
+      ]
+    },
+    {
+      "id": "IAM-802",
+      "title": "Phase 8: public/anonymous + cross-account trust findings + external-origin graph",
+      "priority": 22,
+      "phase": 8,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Principal '*' (or {\"AWS\":\"*\"}) with a trust action -> a PUBLIC-TRUST finding at severity CRITICAL (unrestricted role trust; role permissions unknown). Do not fabricate a broad-Resource finding (acceptance-suite test 15).",
+        "External AWS account / root / principal-ARN trust -> a cross-account trust finding; severity HIGH when unconditioned. Recognize sts:ExternalId as a confused-deputy CONSTRAINT that reduces severity to low/medium per the trust severity model - NEVER report 'missing ExternalId', and never describe ExternalId as authentication or secrecy (it is a per-customer confused-deputy mitigation) (test 16).",
+        "Graph: an external-principal ORIGIN node -> can-assume -> this role (target privileges unknown). The origin represents external principals, NOT 'principal subject of this policy'. Reuse typed edges; do not reintroduce a generic can-write aggregation.",
+        "Reference docs/trust-policy-semantics.md + tests 15, 16."
+      ],
+      "acceptance": [
+        "Principal '*' -> critical PUBLIC-TRUST; no broad-Resource finding (test 15)",
+        "external-account trust with sts:ExternalId -> low/medium with ExternalId recognized as a confused-deputy constraint; no 'missing ExternalId'; ExternalId not described as auth/secrecy (test 16)",
+        "graph origin is external principals; a can-assume edge points to the role with target privileges marked unknown",
+        "full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-803",
+      "title": "Phase 8: trust condition polarity (org-id expansion, confused-deputy constraints)",
+      "priority": 23,
+      "phase": 8,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Extend the Phase-5 condition classifier for trust keys with correct POLARITY (per docs/trust-policy-semantics.md): aws:PrincipalOrgID StringEquals = org CONSTRAINT (reduces exploitability); StringNotEquals = EXPANSION -> a critical dangerous-polarity finding. NEVER report aws:PrincipalOrgID as 'missing' when it is present with expanding polarity (acceptance-suite test 10).",
+        "aws:SourceArn / aws:SourceAccount = confused-deputy constraints (especially for service principals); aws:MultiFactorAuthPresent and aws:SourceIp = constraints. A negated/expanding condition must RAISE the finding; a constraining condition LOWERS path-exploitability.",
+        "Classify only - never assert a runtime AWS allow/deny. Unsupported condition keys reduce confidence and are surfaced in coverage, not silently ignored.",
+        "Reference tests 10, 16."
+      ],
+      "acceptance": [
+        "StringNotEquals aws:PrincipalOrgID -> critical expansion finding classifying the operator as expansion/exclusion (not protection); no 'missing PrincipalOrgID' remediation (test 10)",
+        "SourceArn/SourceAccount/MFA/SourceIp classified as constraints that reduce exploitability",
+        "polarity is classification only (no runtime allow/deny claim); unsupported keys surfaced in coverage",
+        "full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-804",
+      "title": "Phase 8: federated OIDC/SAML trust (subject-scope expansion)",
+      "priority": 24,
+      "phase": 8,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Federated Principal (OIDC provider or SAML). For OIDC (e.g. token.actions.githubusercontent.com): recognize the aud check as a valid CONSTRAINT; analyze sub scope - repo:org/* (or an absent sub) = broad org-wide repository trust -> HIGH; a sub bound to repo + ref/branch/environment = tight (low/medium). Recommend constraining sub to the intended repository + branch/environment (acceptance-suite test 17).",
+        "Do NOT claim that every repository can assume the role - that requires the matching token + workflow context, which is out of scope. SAML federated trust handled analogously (saml:aud as a constraint).",
+        "Reference docs/trust-policy-semantics.md + test 17."
+      ],
+      "acceptance": [
+        "OIDC with repo:org/* sub -> HIGH federated-subject-expansion finding; aud recognized as a constraint; recommends constraining sub; does not claim every repo can assume (test 17)",
+        "a tightly-scoped OIDC sub (repo + ref) does not fire the high expansion finding (boundary)",
+        "full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-805",
+      "title": "Phase 8: service-trust negative control + trust negative corpus",
+      "priority": 25,
+      "phase": 8,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Principal Service (e.g. lambda.amazonaws.com) = normal AWS service trust: emit at most an informational service-trust relationship, NO public/external/escalation finding, and NEVER infer the assumed role's permissions or an escalation path from the trust policy alone (acceptance-suite test 18, negative control).",
+        "Add a trust NEGATIVE CORPUS (fixtures/negative-trust/) with FROZEN 'does-not-fire / low' contracts + rationale, analogous to the Phase-3 negative corpus: normal service trust, tightly-scoped OIDC (repo + ref), ExternalId-protected vendor cross-account, org-constrained (StringEquals PrincipalOrgID) trust, and SourceArn-constrained service trust. This is the credibility artifact proving the trust analyzer knows when NOT to fire.",
+        "Wire the trust negative corpus into a test (mirror tests/negative.test.js). Reference test 18."
+      ],
+      "acceptance": [
+        "service trust -> informational only; no external/escalation finding; no target-role permission inference (test 18)",
+        "trust negative corpus present with frozen contracts + rationale; every entry passes its contract",
+        "full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-806",
+      "title": "Phase 8: flip role-trust acceptance fixtures + trust cross-invariants + full re-test",
+      "priority": 26,
+      "phase": 8,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Remove the designBlocked markers on the acceptance fixtures for tests 10, 15, 16, 17, 18 and assert their REAL expected findings (per docs/acceptance-suite.md Expected-result prose + the Phase-8 trust severity model). Keep NotPrincipal fail-closed (do not regress that).",
+        "Apply the 12 cross-test invariants to the trust fixtures, especially: evidence-immutable provenance (every attributed action/condition maps to its exact statement), condition-polarity, unknown-visible (every trust finding states target-role perms out of scope), denies-are-not-grants, no-semantic-edge-reuse, exports-agree (JSON/Markdown/UI), determinism.",
+        "Re-run the full battle test (node --test + the 24-case acceptance suite) and update docs/acceptance-suite-results.md: role-trust tests 10/15/16/17/18 now PASS with correct findings + severity. Confirm no regression to the 15 Phase-7 fixes, the 6 originally-passing tests, or the identity/trust negative corpora."
+      ],
+      "acceptance": [
+        "tests 10/15/16/17/18 flipped from design-blocked to pass with correct findings + severity; NotPrincipal still fail-closed",
+        "the 12 cross-test invariants hold across the trust fixtures (provenance, polarity, unknown-visible, exports-agree, determinism)",
+        "docs/acceptance-suite-results.md updated; no regression to Phase-7 fixes, originally-passing tests, or negative corpora",
+        "full node --test green"
+      ]
     }
   ]
 }

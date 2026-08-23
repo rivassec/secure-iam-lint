@@ -1,14 +1,24 @@
-# IAM Blast Radius - acceptance-suite final scoreboard (IAM-707)
+# IAM Blast Radius - acceptance-suite final scoreboard (IAM-707 + IAM-806)
 
-Phase 7 close-out. Every one of the 24 acceptance-suite tests (with test 22
-expanded into subcases 22A / 22B / 22C) now has a committed fixture under
-`fixtures/acceptance/` and is driven from real `analyze()` output by
-`tests/acceptance-suite.test.js`, alongside the six per-defect Phase-7 harnesses
-(`acceptance-provenance`, `acceptance-edge-typing`, `acceptance-compound`,
-`acceptance-complement`, `acceptance-dedup`, `acceptance-data-read`).
+Phase 7 close-out, updated at the Phase-8 close-out (IAM-806). Every one of the
+24 acceptance-suite tests (with test 22 expanded into subcases 22A / 22B / 22C)
+has a committed fixture under `fixtures/acceptance/` and is driven from real
+`analyze()` output by `tests/acceptance-suite.test.js`, alongside the six
+per-defect Phase-7 harnesses (`acceptance-provenance`, `acceptance-edge-typing`,
+`acceptance-compound`, `acceptance-complement`, `acceptance-dedup`,
+`acceptance-data-read`) and the Phase-8 trust harnesses (`trust`,
+`trust-federated`, `negative-trust`).
+
+Phase-8 update: the role-trust family is now a SUPPORTED family (engine/trust.js
++ family-aware routing, stories IAM-801..805). Acceptance tests 10, 15, 16, 17,
+18 - previously fail-closed BY DESIGN as `UNSUPPORTED_POLICY_FAMILY` - are flipped
+to their REAL expected trust findings and severities (IAM-806) and now PASS.
+`NotPrincipal` remains fail-closed (`UNSUPPORTED_NOTPRINCIPAL`); it is an
+expansion trap and was NOT flipped.
 
 Baseline for the "was" column is the 2026-08-22 battle test
-(`~/knowledge/personal/iam-blast-radius-battle-test-2026-08-22.md`).
+(`~/knowledge/personal/iam-blast-radius-battle-test-2026-08-22.md`); the "Now"
+column reflects the Phase-8 state.
 
 ## Scoreboard
 
@@ -23,15 +33,15 @@ Baseline for the "was" column is the 2026-08-22 battle test
 | 7 | S3 read constrained by KMS | FAIL | FIXED - DATA-READ (inferred sensitivity, medium) + constrained KMS-DECRYPT coexist | test-07 |
 | 8 | Explicit Deny blocks action | FAIL | FIXED - no capability finding; only a `denies` edge; suppressed grant excluded from totals/edges | test-08 |
 | 9 | Partial Deny | PARTIAL | FIXED - DESTRUCTIVE-ACTION high over residual broad scope; narrow deny recorded as `denies` edge | test-09 |
-| 10 | Negated org condition (trust) | BLOCKED | DESIGN-BLOCKED (role-trust family) - fail-closed UNSUPPORTED_POLICY_FAMILY | test-10 |
+| 10 | Negated org condition (trust) | BLOCKED | FIXED (Phase 8) - TRUST-ORG-EXPANSION critical; StringNotEquals aws:PrincipalOrgID classified as expansion/exclusion (never "missing"); target-role perms out of scope; external-origin can-assume graph | test-10 |
 | 11 | Case-insensitive + scalar | PASS | PASS (preserved) - single-statement PASSROLE-EC2; original casing kept for evidence | test-11 |
 | 12 | iam:* expansion | FAIL | FIXED - ONE primary DIRECT-IAM-ADMIN (high) with subsumed primitives; no 7-row flood; catalog version surfaced | test-12 |
 | 13 | Allow with NotAction | FAIL | FIXED - complement modeled; excluded set never shown as allowed; reduced (complement-derived) confidence | test-13 |
 | 14 | Allow with NotResource | FAIL | FIXED - NotResource carve-out never presented as the granted resource | test-14 |
-| 15 | Public role trust | BLOCKED | DESIGN-BLOCKED (role-trust family) - fail-closed UNSUPPORTED_POLICY_FAMILY | test-15 |
-| 16 | Third-party trust + ExternalId | BLOCKED | DESIGN-BLOCKED (role-trust family) - fail-closed UNSUPPORTED_POLICY_FAMILY | test-16 |
-| 17 | Over-broad OIDC trust | BLOCKED | DESIGN-BLOCKED (role-trust family) - fail-closed UNSUPPORTED_POLICY_FAMILY | test-17 |
-| 18 | Normal service trust (neg ctrl) | BLOCKED | DESIGN-BLOCKED (role-trust family) - fail-closed UNSUPPORTED_POLICY_FAMILY | test-18 |
+| 15 | Public role trust | BLOCKED | FIXED (Phase 8) - TRUST-PUBLIC critical; no identity broad-Resource finding (Resource legitimately omitted); external-origin can-assume from ext:anonymous, no principal-subject node | test-15 |
+| 16 | Third-party trust + ExternalId | BLOCKED | FIXED (Phase 8) - TRUST-CROSS-ACCOUNT low; sts:ExternalId recognized as a confused-deputy constraint (never "missing", never called auth/secret); target-role perms out of scope | test-16 |
+| 17 | Over-broad OIDC trust | BLOCKED | FIXED (Phase 8) - TRUST-FEDERATED high; aud a valid constraint, repo:example-org/* sub broad (not credited); recommends repo+ref/env; no "every repo can assume" claim | test-17 |
+| 18 | Normal service trust (neg ctrl) | BLOCKED | FIXED (Phase 8) - TRUST-SERVICE informational only; no public/external/escalation finding; no target-role-permission inference (negative control) | test-18 |
 | 19 | SCP deny guardrail | FAIL (misdetect) | FIXED - detected as SCP/RCP shape; fail-closed UNSUPPORTED_SCP_SHAPE (no identity fallback). Full SCP ceiling semantics = later feature | test-19 |
 | 20 | Mixed policy family | PASS | PASS (preserved) - fail-closed AMBIGUOUS_POLICY_SHAPE citing Statement[1] | test-20 |
 | 21 | Policy variables | FAIL | FIXED - DATA-READ with `${aws:username}` preserved verbatim (not resolved/classified) | test-21 |
@@ -45,22 +55,43 @@ Baseline for the "was" column is the 2026-08-22 battle test
 
 - **PASS preserved (originally passing, guarded against regression):** 6 tests -
   6, 11, 20, 22A, 22B, 23.
-- **FIXED this phase (were FAIL/PARTIAL):** 15 tests - 1, 2, 3, 4, 5, 7, 8, 9,
+- **FIXED in Phase 7 (were FAIL/PARTIAL):** 15 tests - 1, 2, 3, 4, 5, 7, 8, 9,
   12, 13, 14, 19, 21, 22C, 24.
-- **DESIGN-BLOCKED (fail-closed by design):** 5 tests - 10, 15, 16, 17, 18.
+- **FIXED in Phase 8 (role-trust family, were DESIGN-BLOCKED):** 5 tests - 10,
+  15, 16, 17, 18.
 
-All 26 cases have committed fixtures; none is silently skipped.
+All 26 cases have committed fixtures and PASS from real `analyze()` output; none
+is silently skipped. `DESIGN_BLOCKED_IDS` in `tests/acceptance-suite.test.js` is
+now empty - the mechanism is retained so a future unsupported family can be
+encoded as design-blocked (never a skip), but no acceptance test currently uses
+it.
 
-## Design-blocked cases and the queued follow-up
+## Phase-8 role-trust close-out (IAM-806)
 
-Tests 10, 15, 16, 17, 18 are **role trust policies**. The engine does not yet
-model the role-trust family, so it FAILS CLOSED (`UNSUPPORTED_POLICY_FAMILY`)
-rather than mis-analyze a trust document with identity rules. Each fixture
-carries a `designBlocked` marker naming the queued follow-up
-(**role-trust family analysis**, the immediate next feature per Oliver,
-2026-08-22) and the intended finding a later story must produce. The
-acceptance-suite harness asserts the CURRENT blocked behavior, so a future story
-flips these deliberately - never via a silent skip.
+Tests 10, 15, 16, 17, 18 are **role trust policies**. Through Phase 7 the engine
+did not model the role-trust family and FAILED CLOSED
+(`UNSUPPORTED_POLICY_FAMILY`) rather than mis-analyze a trust document with
+identity rules. Phase 8 (IAM-801..805) shipped `engine/trust.js` and family-aware
+routing, and IAM-806 flipped these five fixtures from their `designBlocked`
+markers to their REAL expected findings + severities, per
+`docs/trust-policy-semantics.md` and the Phase-8 trust severity model:
+
+- Every trust finding carries the load-bearing limitation that the assumed
+  role's permissions are OUT OF SCOPE / UNKNOWN (a trust policy conveys who may
+  assume the role, never the role's power).
+- The graph origin is the EXTERNAL principal(s) - `ext:anonymous`,
+  `ext:arn:...:root`, `ext:arn:...:oidc-provider/...`, `svc:lambda.amazonaws.com`
+  - via a typed `can-assume` edge to a single `role:trust-target` node whose
+  privileges are marked unknown; there is NO identity "principal subject" origin
+  and NO generic `can-write` aggregation.
+- Condition polarity is classification-only: `StringNotEquals aws:PrincipalOrgID`
+  reads as an expansion/exclusion (test 10, critical), `sts:ExternalId` as a
+  confused-deputy constraint (test 16, never "missing"/auth/secret), OIDC `aud`
+  as a constraint and a `repo:org/*` `sub` as broad-uncredited (test 17).
+
+`NotPrincipal` was NOT flipped: it stays fail-closed with
+`UNSUPPORTED_NOTPRINCIPAL` (expansion trap), asserted in `family.test.js` and
+`trust.test.js`.
 
 Test 19 is fail-closed for the SCP/RCP shape (`UNSUPPORTED_SCP_SHAPE`). The
 Phase-7 requirement (block rather than fall back to identity rules) is MET; full
@@ -81,8 +112,16 @@ engine sources), 12. determinism (byte-identical export on re-analysis).
 
 ## Verification
 
-- `node --test "tests/**/*.test.js"` -> **763 pass, 0 fail, 0 skipped**.
+- `node --test "tests/**/*.test.js"` -> **880 pass, 0 fail, 0 skipped**
+  (Phase-8 close-out; was 763 at the Phase-7 close-out).
+- All 26 acceptance cases PASS from real `analyze()` output; the 12 cross-test
+  invariants (including evidence-immutable provenance, condition-polarity,
+  unknown-visible, denies-are-not-grants, no-semantic-edge-reuse, exports-agree,
+  determinism) are applied across every acceptance fixture, trust fixtures
+  included.
 - `gate:no-network` + `gate:no-unsafe-dom` clean on the shipped tree.
-- Originally-passing tests (6, 11, 20, 22A, 22B, 23) and the negative corpus
-  (`fixtures/negative`) unchanged and green.
+- Originally-passing tests (6, 11, 20, 22A, 22B, 23), the identity negative
+  corpus (`fixtures/negative`), and the trust negative corpus
+  (`fixtures/negative-trust`) unchanged and green; the 15 Phase-7 fixes not
+  regressed.
 - Playwright browser matrix remains CI's job (no browser run claimed here).

@@ -1,8 +1,8 @@
 {
-  "name": "Acceptance test 10 - negated organization condition expands trust (role-trust, fail-closed by design)",
-  "note": "IAM-707: role-trust family is NOT yet modeled. This document is a role trust policy (Principal:* + sts:AssumeRole), so the engine FAILS CLOSED with UNSUPPORTED_POLICY_FAMILY rather than mis-analyze it under identity rules. The expectation encoded here is the CURRENT design-blocked behavior; the follow-up role-trust feature must flip it to the intended finding.",
-  "phase": 7,
-  "story": "IAM-707",
+  "name": "Acceptance test 10 - negated organization condition expands trust (role-trust, supported)",
+  "note": "IAM-801: the role-trust family is now SUPPORTED via the family-aware trust evaluator. A StringNotEquals aws:PrincipalOrgID reads as an EXPANSION (dangerous polarity): it permits principals OUTSIDE the named organization, not a restriction to it. This is a critical TRUST-ORG-EXPANSION finding; the operator is classified as expansion/exclusion, NOT a protective org restriction, and the remediation never claims aws:PrincipalOrgID is 'missing'. The assumed role's permissions stay out of scope/unknown.",
+  "phase": 8,
+  "story": "IAM-801",
   "acceptanceTest": 10,
   "family": "role-trust",
   "policy": {
@@ -19,19 +19,27 @@
   },
   "expect": {
     "valid": true,
-    "findingIds": [],
-    "notFindingIds": ["ASSUME-ROLE-EXPANSION"]
+    "findingIds": ["TRUST-ORG-EXPANSION"],
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION", "WILDCARD-RESOURCE"]
   },
   "coverageExpect": {
-    "blocked": true,
-    "detectedFamily": "role-trust",
-    "blockingCodes": ["UNSUPPORTED_POLICY_FAMILY"],
-    "noFindings": true,
-    "noCapabilityEdges": true
+    "blocked": false,
+    "detectedFamily": "role-trust"
   },
-  "designBlocked": {
-    "feature": "role-trust family analysis",
-    "followUp": "queued as the immediate next feature (Oliver, 2026-08-22)",
-    "intended": "critical: trust permits principals OUTSIDE the named org; classify StringNotEquals aws:PrincipalOrgID as an EXPANSION/exclusion selector (dangerous polarity), never a protective org restriction; never emit a 'missing aws:PrincipalOrgID' remediation."
+  "severityExpect": {
+    "findingId": "TRUST-ORG-EXPANSION",
+    "severityOneOf": ["critical"],
+    "policyEvidence": "high",
+    "pathExploitabilityOneOf": ["medium", "high"]
+  },
+  "graphExpect": {
+    "include": [
+      { "type": "can-assume", "from": "ext:anonymous", "to": "role:trust-target" }
+    ],
+    "exclude": [
+      { "type": "can-write" },
+      { "type": "can-read" },
+      { "from": "principal" }
+    ]
   }
 }

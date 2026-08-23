@@ -1,8 +1,8 @@
 {
-  "name": "Acceptance test 15 - public role trust (role-trust, fail-closed by design)",
-  "note": "IAM-707: role-trust family not yet modeled. Principal:* + sts:AssumeRole with no Resource is the trust-policy shape; the engine FAILS CLOSED with UNSUPPORTED_POLICY_FAMILY and does NOT evaluate it as an identity policy (so it never emits a spurious broad-Resource finding for the omitted Resource). Encodes current design-blocked behavior.",
-  "phase": 7,
-  "story": "IAM-707",
+  "name": "Acceptance test 15 - public role trust (role-trust, supported)",
+  "note": "IAM-801: role-trust is supported. Principal:* + sts:AssumeRole with no Resource is unrestricted (public) role trust -> critical TRUST-PUBLIC. It is NOT evaluated as an identity policy, so the omitted Resource never produces a spurious broad-Resource finding. The role's permissions remain unknown/out of scope on the finding.",
+  "phase": 8,
+  "story": "IAM-801",
   "acceptanceTest": 15,
   "family": "role-trust",
   "policy": {
@@ -13,19 +13,27 @@
   },
   "expect": {
     "valid": true,
-    "findingIds": [],
+    "findingIds": ["TRUST-PUBLIC"],
     "notFindingIds": ["ASSUME-ROLE-EXPANSION", "WILDCARD-RESOURCE"]
   },
   "coverageExpect": {
-    "blocked": true,
-    "detectedFamily": "role-trust",
-    "blockingCodes": ["UNSUPPORTED_POLICY_FAMILY"],
-    "noFindings": true,
-    "noCapabilityEdges": true
+    "blocked": false,
+    "detectedFamily": "role-trust"
   },
-  "designBlocked": {
-    "feature": "role-trust family analysis",
-    "followUp": "queued as the immediate next feature (Oliver, 2026-08-22)",
-    "intended": "critical: unrestricted role trust; the role's permissions remain unknown/out of scope; graph origin should represent EXTERNAL principals, not the subject of this policy."
+  "severityExpect": {
+    "findingId": "TRUST-PUBLIC",
+    "severityOneOf": ["critical"],
+    "policyEvidence": "high",
+    "pathExploitabilityOneOf": ["medium", "high"]
+  },
+  "graphExpect": {
+    "include": [
+      { "type": "can-assume", "from": "ext:anonymous", "to": "role:trust-target" }
+    ],
+    "exclude": [
+      { "type": "can-write" },
+      { "type": "can-read" },
+      { "from": "principal" }
+    ]
   }
 }

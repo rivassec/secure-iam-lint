@@ -185,19 +185,23 @@ test('detectFamily classifies each family from shape', () => {
   assert.equal(familyOf({ Statement: [{ Effect: 'Allow', Principal: { AWS: '*' }, Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::1:role/r' }] }).detected, FAMILIES.RESOURCE);
 });
 
-test('detectFamily: identity is the only supported/unblocked family', () => {
+test('detectFamily: identity and role-trust are supported; a resource policy is not', () => {
   const id = familyOf({ Statement: [{ Effect: 'Allow', Action: 's3:*', Resource: '*' }] });
   assert.equal(id.blocked, false);
   assert.equal(id.supported, true);
-  for (const fam of ['resource', 'role-trust']) {
-    const p = fam === 'resource'
-      ? { Statement: [{ Effect: 'Allow', Principal: { AWS: '*' }, Action: 's3:*', Resource: 'arn:aws:s3:::b/*' }] }
-      : { Statement: [{ Effect: 'Allow', Principal: { Service: 'ec2.amazonaws.com' }, Action: 'sts:AssumeRole' }] };
-    const c = familyOf(p);
-    assert.equal(c.blocked, true, `${fam} blocked`);
-    assert.equal(c.supported, false, `${fam} unsupported`);
-    assert.ok(SUPPORTED_FAMILIES.has(FAMILIES.IDENTITY) && !SUPPORTED_FAMILIES.has(c.family));
-  }
+
+  // IAM-801: a role-trust shape is now supported (routed to the trust evaluator).
+  const trust = familyOf({ Statement: [{ Effect: 'Allow', Principal: { Service: 'ec2.amazonaws.com' }, Action: 'sts:AssumeRole' }] });
+  assert.equal(trust.detected, FAMILIES.ROLE_TRUST);
+  assert.equal(trust.blocked, false, 'role-trust is supported, not blocked');
+  assert.equal(trust.supported, true);
+  assert.ok(SUPPORTED_FAMILIES.has(FAMILIES.ROLE_TRUST));
+
+  // A general resource-based policy stays unmodeled and fails closed.
+  const res = familyOf({ Statement: [{ Effect: 'Allow', Principal: { AWS: '*' }, Action: 's3:*', Resource: 'arn:aws:s3:::b/*' }] });
+  assert.equal(res.blocked, true, 'resource blocked');
+  assert.equal(res.supported, false, 'resource unsupported');
+  assert.ok(!SUPPORTED_FAMILIES.has(res.family));
 });
 
 // ---------------------------------------------------------------------------
@@ -206,7 +210,10 @@ test('detectFamily: identity is the only supported/unblocked family', () => {
 
 test('manual override: selecting an unmodeled family blocks even a clean identity shape', () => {
   const idPolicy = { Statement: [{ Effect: 'Allow', Action: 's3:*', Resource: '*' }] };
-  for (const fam of ['resource', 'role-trust', 'permissions-boundary', 'scp-rcp', 'session']) {
+  // IAM-801: role-trust is now a SUPPORTED family, so it is no longer in this
+  // "unmodeled" list; forcing it onto an identity shape is a shape mismatch,
+  // asserted separately below.
+  for (const fam of ['resource', 'permissions-boundary', 'scp-rcp', 'session']) {
     assert.ok(OVERRIDE_FAMILIES.has(fam), `${fam} is a selectable override`);
     const c = familyOf(idPolicy, { family: fam });
     assert.equal(c.override, fam, `${fam} recorded as override`);
@@ -214,6 +221,13 @@ test('manual override: selecting an unmodeled family blocks even a clean identit
     assert.equal(c.blocked, true, `${fam} override blocks (no evaluator)`);
     assert.ok(c.blockingCodes.some((b) => b.code === COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY));
   }
+});
+
+test('manual override "role-trust" on an identity shape fails closed (shape wins)', () => {
+  const c = familyOf({ Statement: [{ Effect: 'Allow', Action: 's3:*', Resource: '*' }] }, { family: 'role-trust' });
+  assert.equal(c.override, 'role-trust');
+  assert.equal(c.blocked, true, 'cannot force the trust evaluator onto an identity shape');
+  assert.ok(c.blockingCodes.some((b) => b.code === COVERAGE_CODES.OVERRIDE_SHAPE_MISMATCH));
 });
 
 test('manual override "identity" on a non-identity shape fails closed (shape wins)', () => {
@@ -269,22 +283,30 @@ test('existing identity fixtures still auto-detect as identity and analyze', () 
 });
 
 // ---------------------------------------------------------------------------
-// The two pre-existing Principal-bearing fixtures now fail closed (intentional
-// IAM-501 change): they still produce NO identity-escalation findings, and now
-// they do so via an explicit blocking coverage state instead of silently.
+// The two pre-existing Principal-bearing trust fixtures are now ANALYZED by the
+// family-aware trust evaluator (intentional IAM-801 change): role-trust is a
+// supported family, so they are no longer blocked. Crucially they still produce
+// NO identity-escalation finding on a trust policy - only trust (TRUST-*)
+// findings may appear.
 // ---------------------------------------------------------------------------
 
-test('pre-existing trust fixtures now return an explicit blocking coverage state', () => {
+test('pre-existing trust fixtures are analyzed by the role-trust evaluator (supported, no identity findings)', () => {
   for (const rel of [
     'assume-role/trust-policy-not-escalation.json',
     'negative/resource-based-trust-policy-no-escalation.json',
   ]) {
     const data = JSON.parse(readFileSync(join(fixturesDir, rel), 'utf8'));
     const result = analyze(fixtureText(data));
-    assert.equal(result.ok, true, `${rel}: ok (blocking coverage is a conclusion)`);
-    assert.equal(result.coverage.blocked, true, `${rel}: fails closed`);
+    assert.equal(result.ok, true, `${rel}: ok`);
+    assert.equal(result.coverage.blocked, false, `${rel}: role-trust is supported (not blocked)`);
     assert.equal(result.coverage.family, 'role-trust', `${rel}: detected role-trust`);
-    assert.equal(result.findings.length, 0, `${rel}: no identity findings`);
+    // A trust policy never yields an identity-style finding; only TRUST-* rows.
+    for (const f of result.findings) {
+      assert.ok(/^TRUST-/.test(f.id), `${rel}: only trust findings allowed on a trust policy, got ${f.id}`);
+    }
+    for (const bad of ['ASSUME-ROLE-EXPANSION', 'TRUST-POLICY-MODIFY', 'WILDCARD-RESOURCE', 'PASSROLE-LAMBDA', 'DIRECT-IAM-ADMIN']) {
+      assert.ok(!result.findings.some((f) => f.id === bad), `${rel}: must not fire identity ${bad}`);
+    }
   }
 });
 

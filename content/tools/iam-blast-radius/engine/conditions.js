@@ -55,6 +55,22 @@ const KNOWN_KEYS = Object.freeze({
   'aws:sourcevpce': { class: CONDITION_CLASS.CONSTRAINT, role: 'network', label: 'Source VPC endpoint' },
   'aws:principalorgid': { class: CONDITION_CLASS.CONSTRAINT, role: 'org', label: 'Principal organization' },
   'aws:requestedregion': { class: CONDITION_CLASS.CONSTRAINT, role: 'region', label: 'Requested region' },
+  // Trust condition keys (IAM-803, docs/trust-policy-semantics.md section 4).
+  // These are modeled with correct POLARITY so a role-trust policy's conditions
+  // are UNDERSTOOD, not reported as unsupported: a positive value-match reads as
+  // a constraint; a NEGATED operator on any of them (e.g. StringNotEquals
+  // aws:PrincipalOrgID - the crux) flips to an EXPANSION via the negated-operator
+  // branch below. sts:ExternalId is the confused-deputy correlation value (a
+  // constraint; NOT authentication and NOT a secret - the classifier only reads
+  // its presence/polarity, never treats it as a credential). aws:SourceArn /
+  // aws:SourceAccount are the confused-deputy constraints for service-principal
+  // trust. aws:PrincipalArn / aws:PrincipalAccount pin which principal is trusted.
+  // Classification NEVER asserts a runtime STS allow/deny (threat-model T8).
+  'sts:externalid': { class: CONDITION_CLASS.CONSTRAINT, role: 'confused-deputy', label: 'External ID (confused-deputy correlation value)' },
+  'aws:sourcearn': { class: CONDITION_CLASS.CONSTRAINT, role: 'confused-deputy', label: 'Source ARN' },
+  'aws:sourceaccount': { class: CONDITION_CLASS.CONSTRAINT, role: 'confused-deputy', label: 'Source account' },
+  'aws:principalarn': { class: CONDITION_CLASS.CONSTRAINT, role: 'principal', label: 'Principal ARN' },
+  'aws:principalaccount': { class: CONDITION_CLASS.CONSTRAINT, role: 'principal', label: 'Principal account' },
   // Selectors - pick which service / resource / encryption-context is in play.
   // A selector changes SCOPE; it is not automatically a guardrail, so it is
   // never credited as narrowing here (the escalation engine decides direction,
@@ -63,6 +79,27 @@ const KNOWN_KEYS = Object.freeze({
   'iam:associatedresourcearn': { class: CONDITION_CLASS.SELECTOR, role: 'resource', label: 'Associated resource ARN' },
   'kms:viaservice': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'KMS calling service' },
 });
+
+// OIDC / SAML federation claim keys (docs/trust-policy-semantics.md 4.4/4.5)
+// carry a provider-host prefix rather than a fixed name, so they cannot live in
+// the exact-match KNOWN_KEYS table: GitHub Actions uses
+// `token.actions.githubusercontent.com:aud` / `:sub`, other OIDC providers use
+// their own host, and SAML uses `saml:aud` / `saml:sub`. This resolver models
+// them so a federated trust policy's aud/sub keys are UNDERSTOOD (not reported as
+// unsupported). A positive `aud` (audience) check is a valid CONSTRAINT - AWS docs
+// say recognize it, do not flag it "missing". A `sub` (subject) check narrows WHICH
+// workload may assume the role; its breadth is value-driven and handled at
+// classification time (a wildcarded `repo:org/*` subject is broad, not a dependable
+// single-workload guardrail). Returns null for any non-federation key.
+function federationMeta(keyLower) {
+  if (keyLower.endsWith(':aud')) {
+    return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-audience', label: 'Federated audience (aud)', federation: 'aud' };
+  }
+  if (keyLower.endsWith(':sub')) {
+    return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-subject', label: 'Federated subject (sub)', federation: 'sub' };
+  }
+  return null;
+}
 
 // Base operators (after stripping set qualifier + IfExists) whose match is
 // NEGATED - "everything EXCEPT the listed values" - so they broaden rather than
@@ -76,6 +113,40 @@ const NEGATED_OPERATORS = new Set([
   'numericnotequals',
   'datenotequals',
   'notipaddress',
+]);
+
+// Positive string/ARN equality-family operators (base form, after parseOperator).
+// A value-scoping TRUST key - a confused-deputy correlation value (sts:ExternalId),
+// a service/resource scope (aws:SourceArn/aws:SourceAccount), an org scope
+// (aws:PrincipalOrgID StringEquals), or a principal scope (aws:PrincipalArn/
+// aws:PrincipalAccount) - only pins a VALUE, and so only reads as a dependable
+// guardrail, when matched with one of these. A Date/Numeric/Bool/other operator on
+// such a key does NOT scope its value (DateGreaterThan sts:ExternalId compares a
+// date, it does not require a matching external-id correlation value), so it must
+// never be credited here while trust.js keeps the finding HIGH - crediting it would
+// re-open the severity-vs-provenance mismatch (adversarial-critic IAM-804 iteration
+// 5: DateGreaterThan sts:ExternalId was credited=true though trust.js requires a
+// positive string/ARN operator). MUST mirror trust.js POSITIVE_STRING_MATCH_OPERATORS.
+const POSITIVE_STRING_MATCH_OPERATORS = new Set([
+  'stringequals',
+  'stringequalsignorecase',
+  'stringlike',
+  'arnequals',
+  'arnlike',
+]);
+
+// The trust value-scoping keys whose crediting REQUIRES a positive string/ARN match
+// operator (mirrors the keys trust.js gates through scopesValue). Any other key
+// (aws:SourceIp via IpAddress, aws:MultiFactorAuthPresent via Bool, aws:SourceVpc/
+// aws:SourceVpce/aws:RequestedRegion via string match, the OIDC/SAML aud/sub claims
+// handled by trust.js with their own polarity) is intentionally NOT gated here.
+const VALUE_SCOPING_TRUST_KEYS = new Set([
+  'sts:externalid',
+  'aws:sourcearn',
+  'aws:sourceaccount',
+  'aws:principalarn',
+  'aws:principalaccount',
+  'aws:principalorgid',
 ]);
 
 /**
@@ -120,6 +191,139 @@ function toValueArray(value) {
 // that is request-context reasoning we do not claim.)
 function hasWildcardValue(values) {
   return values.some((v) => v === '*');
+}
+
+// Key-aware narrowing test for the account/org/ARN condition keys, MIRRORING
+// engine/trust.js valueNarrowsKey so a finding's conditionClassification.credited
+// AGREES with the trust severity trust.js assigns (adversarial-critic IAM-803
+// iteration 2 defect 2: hasWildcardValue only rejected the exact "*", so a
+// match-everything glob on a key-aware field - StringLike aws:PrincipalOrgID
+// "o-*", ArnLike aws:SourceArn "arn:aws:*:*:*:*" - was credited=true in the
+// evidence panel even though trust.js correctly kept the finding high). These
+// helpers must stay behaviorally identical to trust.js; both are kept local so
+// each module stays dependency-free (same rationale as the duplicated
+// NEGATED_OPERATORS set).
+function hasGlob(s) {
+  return s.includes('*') || s.includes('?');
+}
+
+// An account-id key (aws:SourceAccount / aws:PrincipalAccount) is a full 12-digit
+// number and an org-id key (aws:PrincipalOrgID) is o-<body>; any glob leaves them
+// unpinned ("o-*" matches every org), so only a complete literal narrows.
+function accountOrOrgValueNarrows(value) {
+  const s = String(value);
+  if (s === '') return false;
+  return !hasGlob(s);
+}
+
+// Common AWS ARN resource-TYPE keywords. In an ARN resource of the form
+// "<type>/<id>" or "<type>:<id>", the LEADING token is a resource-type CATEGORY
+// (role, secret, function, trail, ...), not a specific resource. A value whose
+// only surviving literal is such a category keyword - e.g. arn:aws:iam::*:role/*
+// (every role in every account) or arn:aws:secretsmanager:*:*:secret:* (every
+// secret in every account) - bounds NOTHING (not which account, not which
+// resource) and is therefore NOT a confused-deputy scope. Only a concrete
+// resource IDENTIFIER narrows. This list and arnValueNarrows() below MUST stay
+// behaviorally identical to engine/trust.js (ARN_RESOURCE_TYPE_KEYWORDS +
+// arnValueNarrows) so a finding's conditionClassification.credited AGREES with
+// the trust severity trust.js assigns (adversarial-critic IAM-804 iteration 3
+// defect: this module credited a bare resource-type-keyword ARN like
+// arn:aws:iam::*:role/* as a confused-deputy guardrail on a finding trust.js
+// correctly keeps HIGH - a wrong-provenance over-credit). Kept lowercase; matched
+// case-insensitively.
+const ARN_RESOURCE_TYPE_KEYWORDS = new Set([
+  'role', 'user', 'group', 'policy', 'instance-profile', 'mfa',
+  'server-certificate', 'saml-provider', 'oidc-provider', 'assumed-role',
+  'federated-user', 'secret', 'function', 'layer', 'trail', 'key', 'alias',
+  'topic', 'queue', 'table', 'instance', 'volume', 'snapshot',
+  'security-group', 'subnet', 'vpc', 'stream', 'parameter', 'stack',
+  'cluster', 'db', 'rule', 'log-group', 'event-bus', 'pipeline', 'project',
+  'repository', 'distribution', 'certificate', 'domain', 'application',
+]);
+
+// An ARN key (aws:SourceArn / aws:PrincipalArn) narrows only when a globbed value
+// still pins an identifying component: the account segment (ARN field index 4) is
+// the primary identifier, else a concrete resource IDENTIFIER must survive in the
+// resource part. It does NOT narrow when the only surviving literal is a bare
+// resource-TYPE keyword before the wildcard: arn:aws:iam::*:role/* and
+// arn:aws:secretsmanager:*:*:secret:* name a CATEGORY across every account.
+// "arn:aws:*:*:*:*" / "arn:aws:iam::*:*" pin nothing either. MUST mirror
+// engine/trust.js arnValueNarrows (adversarial-critic IAM-804 iteration 3).
+function arnValueNarrows(value) {
+  const s = String(value);
+  if (s === '') return false;
+  if (!hasGlob(s)) return true; // a fully literal ARN narrows
+  const segs = s.split(':');
+  const account = segs.length > 4 ? segs[4] : '';
+  if (account !== '' && !hasGlob(account)) return true; // account segment pinned
+  const resource = segs.length > 5 ? segs.slice(5).join(':') : '';
+  // Tokenize the resource on path ('/') and sub-resource (':') separators, and
+  // require a concrete resource IDENTIFIER token: one that carries a literal
+  // (survives wildcard stripping) and is NOT merely a leading resource-TYPE
+  // keyword. arn:aws:iam::*:role/* -> ['role','*']: 'role' is a category keyword
+  // in first position, '*' is pure wildcard -> nothing concrete -> does not
+  // narrow. arn:aws:s3:::specific-bucket/* -> ['specific-bucket','*']:
+  // 'specific-bucket' is a concrete id -> narrows.
+  const tokens = resource.split(/[/:]/);
+  return tokens.some((t, i) => {
+    const literal = t.replace(/[*?]/g, '').trim();
+    if (literal.length === 0) return false; // a pure-wildcard token pins nothing
+    if (i === 0 && ARN_RESOURCE_TYPE_KEYWORDS.has(literal.toLowerCase())) return false;
+    return true;
+  });
+}
+
+// An all-addresses IP/CIDR range constrains nothing: IpAddress aws:SourceIp
+// 0.0.0.0/0 (or the IPv6 equivalent) matches every source, so it is a vacuous
+// match-everything value exactly like a wildcarded org id or ARN. MUST stay
+// behaviorally identical to trust.js isAllAddressIp (trust.js lines 319-323) so a
+// finding's conditionClassification.credited AGREES with the trust severity
+// trust.js assigns: without this guard, conditions.js routed an all-addresses
+// aws:SourceIp through valueNarrowsKey's default arm (which rejects only ''/all-
+// glob) and credited it as a narrowing Source-IP guardrail on a HIGH cross-account
+// trust whose own why-text says "no confused-deputy constraint" and never mentions
+// SourceIp - the severity-vs-provenance contradiction already eliminated for
+// ExternalId/org/ARN globs (adversarial-critic IAM-806 iteration 2). A vacuous
+// 0.0.0.0/0 stamped into the evidence as a credited guardrail can falsely reassure
+// a reviewer of a wide-open cross-account trust (threat-model T8).
+function isAllAddressIp(v) {
+  const s = String(v).trim().toLowerCase();
+  return s === '*' || s === '0.0.0.0/0' || s === '0/0' ||
+    s === '::/0' || s === '::0/0' || s === '::0' || s === '::';
+}
+
+// Dispatch the narrowing test for the trust-relevant scoping keys. Any other
+// constraint key narrows unless it is empty or a value made entirely of glob
+// metacharacters ('*'/'?'). The exact-"*" case is already handled by
+// hasWildcardValue before this is consulted, but a match-everything glob that is
+// not the bare "*" - e.g. StringLike sts:ExternalId "?*" (matches every non-empty
+// string, functionally identical to "*") - reaches here and must NOT be credited:
+// crediting it in the evidence panel while trust.js keeps the finding high (the
+// trust.js default arm now rejects the same all-glob values) would re-open the
+// severity-vs-provenance mismatch (adversarial-critic IAM-804 iteration 4 finding
+// 2). MUST stay behaviorally identical to trust.js isAllGlobOrEmpty.
+function valueNarrowsKey(keyLower, value) {
+  switch (keyLower) {
+    case 'aws:sourceaccount':
+    case 'aws:principalaccount':
+    case 'aws:principalorgid':
+      return accountOrOrgValueNarrows(value);
+    case 'aws:sourcearn':
+    case 'aws:principalarn':
+      return arnValueNarrows(value);
+    case 'aws:sourceip': {
+      // A source-IP range narrows only when it is a real (non-empty, non-all-glob)
+      // range that is NOT an all-addresses range: 0.0.0.0/0 and the IPv6 forms
+      // match every source and must classify as expansion/uncredited, mirroring
+      // trust.js isAllAddressIp so the evidence panel agrees with trust severity.
+      const s = String(value);
+      return s !== '' && !/^[*?]+$/.test(s) && !isAllAddressIp(s);
+    }
+    default: {
+      const s = String(value);
+      return s !== '' && !/^[*?]+$/.test(s);
+    }
+  }
 }
 
 // Interpret a Null operator's value: "true" tests the key is ABSENT (broadening,
@@ -171,8 +375,13 @@ export function classifyConditionEntry(operator, key, value) {
   const keyStr = String(key);
   const keyLower = keyStr.toLowerCase();
   const values = toValueArray(value);
-  const known = Object.prototype.hasOwnProperty.call(KNOWN_KEYS, keyLower);
-  const meta = known ? KNOWN_KEYS[keyLower] : null;
+  // Exact-match modeled keys first, then the federation aud/sub resolver (whose
+  // keys carry a provider-host prefix). Anything neither knows stays unknown ->
+  // context-required, surfaced in coverage (unsupported does NOT mean safe).
+  const meta = Object.prototype.hasOwnProperty.call(KNOWN_KEYS, keyLower)
+    ? KNOWN_KEYS[keyLower]
+    : federationMeta(keyLower);
+  const known = meta !== null;
 
   const negated = NEGATED_OPERATORS.has(base);
   const wildcard = hasWildcardValue(values);
@@ -229,6 +438,30 @@ export function classifyConditionEntry(operator, key, value) {
   } else if (wildcard) {
     cls = CONDITION_CLASS.EXPANSION;
     notes.push(`value is a wildcard "*", which does not constrain ${meta.label}`);
+  } else if (meta.federation === 'sub' && values.some((v) => v.includes('*') || v.includes('?'))) {
+    // A federated SUBJECT that carries a glob (e.g. GitHub Actions
+    // `repo:org/*`) scopes an organization-wide / pattern set of workloads, not
+    // one specific workload. It narrows the subject SPACE but is not a dependable
+    // single-workload guardrail, so it is classified as a constraint yet NOT
+    // credited (docs/trust-policy-semantics.md 4.4: repo:org/* is broad; a repo +
+    // ref/branch/environment binding is tight). This is a text reading of breadth,
+    // never a claim that a specific token would or would not match at runtime.
+    cls = CONDITION_CLASS.CONSTRAINT;
+    notes.push(`selects a BROAD ${meta.label}: a wildcarded subject such as repo:org/* scopes an organization-wide or pattern set of workloads rather than one specific workload, so it is not credited as a dependable guardrail`);
+    credited = false;
+  } else if (meta.class === CONDITION_CLASS.CONSTRAINT &&
+             !(values.length > 0 && values.every((v) => valueNarrowsKey(keyLower, v)))) {
+    // A would-be constraint whose value(s) still match the key's WHOLE value
+    // space (e.g. StringLike aws:PrincipalOrgID "o-*", ArnLike aws:SourceArn
+    // "arn:aws:*:*:*:*") does not narrow - it is a vacuous match-everything glob.
+    // Classify it as an expansion and never credit it, so the evidence panel does
+    // not label a vacuous condition a guardrail on a finding trust.js keeps high
+    // (IAM-803 iteration 2 defect 2). IAM ORs the multiple values of one
+    // operator+key, so a co-listed match-all element defeats a pinned one; hence
+    // .every (mirrors trust.js). An empty value list cannot narrow either.
+    cls = CONDITION_CLASS.EXPANSION;
+    notes.push(`value(s) for ${meta.label} match the key's whole value space (e.g. a wildcarded org id or ARN), so this does not narrow ${meta.label}`);
+    credited = false;
   } else {
     cls = meta.class;
     if (cls === CONDITION_CLASS.CONSTRAINT) {
@@ -238,6 +471,17 @@ export function classifyConditionEntry(operator, key, value) {
     }
     // Credit a constraint only when it reads as a dependable guardrail.
     credited = cls === CONDITION_CLASS.CONSTRAINT;
+    // A value-scoping trust key pins its value ONLY under a positive string/ARN
+    // match operator. A Date/Numeric/other operator on such a key (e.g.
+    // DateGreaterThan sts:ExternalId) does not scope the value, so it is NOT a
+    // dependable guardrail - crediting it would over-credit a finding trust.js
+    // correctly keeps HIGH (adversarial-critic IAM-804 iteration 5). Mirrors
+    // trust.js scopesValue (positive-operator gate). The class stays CONSTRAINT
+    // (the key IS a known scoping key), but credited flips off with a note.
+    if (credited && VALUE_SCOPING_TRUST_KEYS.has(keyLower) && !POSITIVE_STRING_MATCH_OPERATORS.has(base)) {
+      credited = false;
+      notes.push(`operator "${operator}" is not a positive string/ARN match, so it does not scope ${meta.label} by value and is not credited as a guardrail`);
+    }
   }
 
   // ...IfExists and ForAllValues weaken any would-be guardrail: they can pass

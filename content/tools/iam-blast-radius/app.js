@@ -290,6 +290,11 @@ function renderCoveragePanel(coverage) {
   );
   appendProse(dl, 'Unrecognized actions', coverageList(s.unrecognizedActions));
   appendProse(dl, 'Unsupported conditions', coverageList(s.unsupportedConditions));
+  // IAM-806: same-policy trust Deny caveat (a neutralizing Deny is never silently
+  // discarded from a "complete" analysis). Rendered as inert textContent.
+  if (s.trustDeny && s.trustDeny.present && s.trustDeny.note) {
+    appendProse(dl, 'Same-policy trust Deny', s.trustDeny.note);
+  }
   appendProse(dl, 'Attack-path graph', s.graph.truncated ? 'truncated (bounded)' : 'complete');
   section.appendChild(dl);
 

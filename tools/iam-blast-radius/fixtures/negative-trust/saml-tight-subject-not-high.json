@@ -1,0 +1,37 @@
+{
+  "name": "SAML federated trust with a tight subject (saml:aud + saml:sub) - does NOT fire the high expansion finding",
+  "note": "IAM-805 (SAML analogue of the tight-OIDC boundary). A Federated SAML principal with a positive saml:aud audience constraint AND a specific saml:sub subject scopes trust narrowly. A TRUST-FEDERATED relationship is recorded but must NOT reach HIGH.",
+  "phase": 8,
+  "story": "IAM-805",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "CorpSamlTight",
+        "Effect": "Allow",
+        "Principal": { "Federated": "arn:aws:iam::123456789012:saml-provider/CorpIdP" },
+        "Action": "sts:AssumeRoleWithSAML",
+        "Condition": {
+          "StringEquals": {
+            "saml:aud": "https://signin.aws.amazon.com/saml",
+            "saml:sub": "analytics-pipeline@example.com"
+          }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["TRUST-FEDERATED"],
+    "mustNotFind": [
+      "TRUST-PUBLIC",
+      "TRUST-CROSS-ACCOUNT",
+      "TRUST-ORG-EXPANSION",
+      "WILDCARD-RESOURCE",
+      "ASSUME-ROLE-EXPANSION"
+    ],
+    "maxSeverity": { "TRUST-FEDERATED": "medium" },
+    "maxPathExploitability": { "TRUST-FEDERATED": "medium" }
+  },
+  "rationale": "For SAML federation, saml:aud is the endpoint URL to which SAML assertions are presented and is a valid audience CONSTRAINT analogous to OIDC aud; a saml:sub bound to one identity narrows the subject. With both present, the trust is scoped to a specific subject rather than an org-wide/absent subject, so the high subject-expansion finding does not apply and severity stays low/medium (trust-policy-semantics 4.5, by analogy to the OIDC test 17 boundary). The analyzer must recognize aud as a constraint (not missing) and must not claim assumption is confirmed - a matching SAML assertion is out of scope. The assumed role's permissions remain out of scope / unknown. Ref: AWS SAML-based federation condition keys (saml:aud); docs/trust-policy-semantics.md sec 4.5."
+}

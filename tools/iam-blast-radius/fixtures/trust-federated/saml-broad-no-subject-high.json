@@ -1,0 +1,34 @@
+{
+  "name": "SAML role trust with an audience check but NO subject-narrowing condition -> HIGH (broad, analogous to a broad OIDC subject)",
+  "note": "IAM-804: SAML federated trust is handled analogously to OIDC. saml:aud is recognized as a valid CONSTRAINT, but absence of a subject-scoping condition (no saml:sub) leaves the federated subject broad, so severity is HIGH by analogy with a broad OIDC subject (trust-policy-semantics 4.5). The analyzer classifies the trust text only - it never asserts a specific SAML assertion would be accepted at runtime - and the assumed role's permissions remain out of scope / unknown.",
+  "phase": 8,
+  "story": "IAM-804",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "OktaSAMLBroad",
+        "Effect": "Allow",
+        "Principal": { "Federated": "arn:aws:iam::123456789012:saml-provider/OktaProvider" },
+        "Action": "sts:AssumeRoleWithSAML",
+        "Condition": {
+          "StringEquals": { "saml:aud": "https://signin.aws.amazon.com/saml" }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-FEDERATED"],
+    "notFindingIds": ["TRUST-PUBLIC", "TRUST-CROSS-ACCOUNT", "ASSUME-ROLE-EXPANSION", "WILDCARD-RESOURCE"]
+  },
+  "federatedExpect": {
+    "findingId": "TRUST-FEDERATED",
+    "provider": "saml",
+    "subjectScope": "broad",
+    "severity": "high",
+    "audRecognizedAsConstraint": true,
+    "targetPermissions": "unknown"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "Auxiliary session action only (sts:TagSession) with Principal '*' - session-control, NOT public assume",
+  "note": "IAM-805 iteration 3 blocking-defect regression. A statement whose ONLY action is an auxiliary session action (sts:TagSession) grants no ability to assume the role, even with Principal '*'. It must be classified as an informational session-control capability, NEVER a critical TRUST-PUBLIC 'any principal may assume' finding (that asserts an assumption the action does not grant - threat-model T8).",
+  "phase": 8,
+  "story": "IAM-805",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TagSessionOnlyPublic",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "sts:TagSession"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["TRUST-SESSION-CONTROL"],
+    "mustNotFind": [
+      "TRUST-PUBLIC",
+      "TRUST-CROSS-ACCOUNT",
+      "TRUST-ORG-EXPANSION",
+      "TRUST-FEDERATED",
+      "WILDCARD-RESOURCE",
+      "ASSUME-ROLE-EXPANSION"
+    ],
+    "maxSeverity": { "TRUST-SESSION-CONTROL": "info" },
+    "maxPathExploitability": { "TRUST-SESSION-CONTROL": "low" }
+  },
+  "rationale": "sts:TagSession only PERMITS passing session tags on an assume; it is required in the trust policy for a caller/IdP to pass session tags, but it grants nothing on its own (trust-policy-semantics 3, source 8). AWS evaluates the assume action and the auxiliary session action for the SAME caller, so a principal that cannot already assume this role via a separate sts:AssumeRole* grant never reaches sts:TagSession - the statement is inert. Even with Principal '*' there is no assume grant here, so classifying it as public/anonymous role trust ('any principal may assume') would assert an assumption the action does not convey (threat-model T8). The correct classification is an informational session-control capability with prose that never claims assumption. Ref: AWS Pass session tags in STS (sts:TagSession); docs/trust-policy-semantics.md sec 3."
+}

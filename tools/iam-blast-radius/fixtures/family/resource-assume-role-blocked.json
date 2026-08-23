@@ -1,0 +1,31 @@
+{
+  "name": "Resource-based policy with a broad sts:AssumeRole fails closed (not fired as identity escalation)",
+  "note": "IAM-801: every statement names a Principal AND a Resource, so this is a general resource-based policy (not the role-trust shape, which omits Resource). Resource-based policies stay unmodeled and fail closed with UNSUPPORTED_POLICY_FAMILY. Critically, the ASSUME-ROLE-EXPANSION escalation that WOULD fire on the same sts:AssumeRole + broad role ARN under identity mode is correctly suppressed by the family mismatch - this is the escalation-side family-mismatch witness (fixture-matrix Gate 5) after role-trust became supported.",
+  "phase": 8,
+  "story": "IAM-801",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ResourceGrantAssume",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::444455556666:root" },
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::*:role/*"
+      }
+    ]
+  },
+  "expect": {
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION"],
+    "familyMismatchFor": ["ASSUME-ROLE-EXPANSION"]
+  },
+  "familyExpect": {
+    "detected": "resource",
+    "family": "resource",
+    "blocked": true,
+    "supported": false,
+    "blockingCodes": [
+      { "code": "UNSUPPORTED_POLICY_FAMILY", "path": "Statement[0].Principal" }
+    ]
+  }
+}

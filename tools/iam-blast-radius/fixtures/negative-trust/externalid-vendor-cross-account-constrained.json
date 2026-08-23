@@ -1,0 +1,34 @@
+{
+  "name": "Vendor cross-account trust protected by sts:ExternalId - confused-deputy constraint lowers severity",
+  "note": "IAM-805 (acceptance-suite test 16). A specific external account is trusted, but sts:ExternalId StringEquals is a documented confused-deputy CONSTRAINT. The cross-account finding must drop to low/medium; the analyzer must NOT report 'missing ExternalId' and must NOT describe ExternalId as authentication or a secret.",
+  "phase": 8,
+  "story": "IAM-805",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "VendorAccess",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::111122223333:root" },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": { "sts:ExternalId": "customer-7f6af74e" }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["TRUST-CROSS-ACCOUNT"],
+    "mustNotFind": [
+      "TRUST-PUBLIC",
+      "TRUST-ORG-EXPANSION",
+      "TRUST-FEDERATED",
+      "WILDCARD-RESOURCE",
+      "ASSUME-ROLE-EXPANSION"
+    ],
+    "maxSeverity": { "TRUST-CROSS-ACCOUNT": "medium" },
+    "maxPathExploitability": { "TRUST-CROSS-ACCOUNT": "medium" }
+  },
+  "rationale": "The trust names one specific external account (arn:aws:iam::111122223333:root), so it is a bounded cross-account relationship, not public or all-accounts. The StringEquals sts:ExternalId condition is the AWS-documented mitigation for the confused-deputy problem: the third party sends an agreed per-customer identifier on every AssumeRole call, unique among its customers. Its PRESENCE is a constraint that lowers exploitability toward low/medium - it must never be reported as 'missing', and never described as authentication or a secret (it is a correlation value that can appear in logs). Severity must stay at or below medium here. The assumed role's permissions remain out of scope / unknown. Ref: AWS confused deputy problem + third-party access (external ID unique per customer); docs/trust-policy-semantics.md sec 1 and 4.1."
+}

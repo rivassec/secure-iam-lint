@@ -1,8 +1,8 @@
 {
-  "name": "Acceptance test 18 - normal AWS service trust (role-trust negative control, fail-closed by design)",
-  "note": "IAM-707: role-trust family not yet modeled -> fail closed with UNSUPPORTED_POLICY_FAMILY. This is the negative control: a benign lambda.amazonaws.com service-trust. Failing closed is ACCEPTABLE here (it loses the informational service-trust relationship the follow-up feature will show); crucially it must NOT infer the role's permissions or a privilege-escalation path from the trust policy alone, and it must not raise a public/external-account finding. Encodes current design-blocked behavior.",
-  "phase": 7,
-  "story": "IAM-707",
+  "name": "Acceptance test 18 - normal AWS service trust (role-trust negative control, supported)",
+  "note": "IAM-801: role-trust is supported. This is the negative control: a benign lambda.amazonaws.com service trust yields at most an INFORMATIONAL TRUST-SERVICE relationship - no public/external-account finding and no escalation path, and NEVER an inference about the role's permissions from the trust policy alone.",
+  "phase": 8,
+  "story": "IAM-801",
   "acceptanceTest": 18,
   "family": "role-trust",
   "policy": {
@@ -18,19 +18,27 @@
   },
   "expect": {
     "valid": true,
-    "findingIds": [],
-    "notFindingIds": ["ASSUME-ROLE-EXPANSION", "PASSROLE-LAMBDA"]
+    "findingIds": ["TRUST-SERVICE"],
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION", "PASSROLE-LAMBDA", "TRUST-PUBLIC", "TRUST-CROSS-ACCOUNT"]
   },
   "coverageExpect": {
-    "blocked": true,
-    "detectedFamily": "role-trust",
-    "blockingCodes": ["UNSUPPORTED_POLICY_FAMILY"],
-    "noFindings": true,
-    "noCapabilityEdges": true
+    "blocked": false,
+    "detectedFamily": "role-trust"
   },
-  "designBlocked": {
-    "feature": "role-trust family analysis",
-    "followUp": "queued as the immediate next feature (Oliver, 2026-08-22)",
-    "intended": "no public-trust or external-account finding; OK to show an informational service-trust relationship; never infer role permissions or an escalation path from the trust policy alone."
+  "severityExpect": {
+    "findingId": "TRUST-SERVICE",
+    "severityOneOf": ["info"],
+    "policyEvidence": "high",
+    "pathExploitabilityOneOf": ["low", "medium"]
+  },
+  "graphExpect": {
+    "include": [
+      { "type": "can-assume", "from": "svc:lambda.amazonaws.com", "to": "role:trust-target" }
+    ],
+    "exclude": [
+      { "type": "can-write" },
+      { "type": "can-read" },
+      { "from": "principal" }
+    ]
   }
 }

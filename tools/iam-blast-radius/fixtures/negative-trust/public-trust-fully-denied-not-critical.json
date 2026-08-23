@@ -1,0 +1,37 @@
+{
+  "name": "Public Allow trust fully neutralized by an unconditional public Deny - NOT critical, the role is unassumable",
+  "note": "IAM-806 iteration 3 blocking-defect regression. A same-policy explicit Deny for Principal '*' on sts:AssumeRole overrides the co-present Allow (AWS explicit-Deny precedence). The role is unassumable, so a critical TRUST-PUBLIC 'any principal may assume' finding would be categorically false (threat-model T8). analyzeTrust stays Deny-unaware when it emits findings (a Deny is never a positive grant); the pipeline applies precedence, dropping the fully-neutralized finding from the authoritative table - mirroring the identity engine's IAM-302 same-policy Deny suppression.",
+  "phase": 8,
+  "story": "IAM-806",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PublicAssume",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "sts:AssumeRole"
+      },
+      {
+        "Sid": "DenyAll",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": [
+      "TRUST-PUBLIC",
+      "TRUST-CROSS-ACCOUNT",
+      "TRUST-ORG-EXPANSION",
+      "TRUST-FEDERATED",
+      "TRUST-SERVICE",
+      "WILDCARD-RESOURCE",
+      "ASSUME-ROLE-EXPANSION"
+    ]
+  },
+  "rationale": "AWS policy evaluation applies explicit-Deny precedence: an explicit Deny that matches the request (here Principal '*' + sts:AssumeRole, unconditioned) always overrides any Allow, so no principal - anonymous or otherwise - can assume this role. Reporting a critical 'public role trust (any principal may assume)' finding on a role that is provably unassumable is a truthfulness harm (threat-model T8, docs/trust-policy-semantics.md sec 0/5). The Deny is not discarded: it is surfaced as a blocked-by-deny relationship in the graph and as a coverage caveat (never an assume finding). Ref: AWS policy evaluation logic (explicit Deny precedence); docs/trust-policy-semantics.md."
+}

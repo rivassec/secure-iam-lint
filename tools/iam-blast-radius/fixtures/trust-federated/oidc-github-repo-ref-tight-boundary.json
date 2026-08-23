@@ -1,0 +1,38 @@
+{
+  "name": "OIDC (GitHub Actions) role trust with a tight subject (repo + ref) -> does NOT fire the high expansion finding (boundary)",
+  "note": "IAM-804 boundary: a Federated OIDC sub bound to a specific repository AND ref (repo:example-org/repo-name:ref:refs/heads/main) scopes trust to one workload. TRUST-FEDERATED is still emitted (a federated relationship exists) but at low/medium - it must NOT reach HIGH, distinguishing a properly-scoped workload from an org-wide wildcard. The aud check is recognized as a constraint. Target-role permissions remain out of scope / unknown.",
+  "phase": 8,
+  "story": "IAM-804",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GitHubOIDCRepoRef",
+        "Effect": "Allow",
+        "Principal": { "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": {
+            "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+            "token.actions.githubusercontent.com:sub": "repo:example-org/repo-name:ref:refs/heads/main"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-FEDERATED"],
+    "notFindingIds": ["TRUST-PUBLIC", "TRUST-CROSS-ACCOUNT", "ASSUME-ROLE-EXPANSION", "WILDCARD-RESOURCE"]
+  },
+  "federatedExpect": {
+    "findingId": "TRUST-FEDERATED",
+    "provider": "oidc",
+    "subjectScope": "tight",
+    "maxSeverity": "medium",
+    "notSeverity": "high",
+    "audRecognizedAsConstraint": true,
+    "targetPermissions": "unknown"
+  }
+}

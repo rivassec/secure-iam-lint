@@ -1,0 +1,35 @@
+{
+  "name": "Service trust constrained by aws:SourceAccount - confused-deputy constraint, still informational",
+  "note": "IAM-805 (service confused-deputy constraint variant). A service principal (cloudtrail.amazonaws.com) trust pinned with aws:SourceAccount stays a normal, hardened service relationship (informational) and never an external/escalation finding.",
+  "phase": 8,
+  "story": "IAM-805",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "CloudTrailServiceTrustPinned",
+        "Effect": "Allow",
+        "Principal": { "Service": "cloudtrail.amazonaws.com" },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": { "aws:SourceAccount": "123456789012" }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["TRUST-SERVICE"],
+    "mustNotFind": [
+      "TRUST-PUBLIC",
+      "TRUST-CROSS-ACCOUNT",
+      "TRUST-ORG-EXPANSION",
+      "TRUST-FEDERATED",
+      "WILDCARD-RESOURCE",
+      "ASSUME-ROLE-EXPANSION"
+    ],
+    "maxSeverity": { "TRUST-SERVICE": "info" },
+    "maxPathExploitability": { "TRUST-SERVICE": "low" }
+  },
+  "rationale": "aws:SourceAccount compares the account that initiated the request and is available only when the call is made directly by a service principal; AWS lists it as a sensitive key for which wildcards have no valid use case. Used in a service-principal trust it is a confused-deputy CONSTRAINT tying the assume to a specific initiating account. This remains an ordinary service-role relationship: it stays informational (TRUST-SERVICE) and must never be raised to an external-account, public, or escalation finding, and licences no inference about the assumed role's permissions (out of scope / unknown). Ref: AWS global condition key aws:SourceAccount; docs/trust-policy-semantics.md sec 4.3 and 5."
+}

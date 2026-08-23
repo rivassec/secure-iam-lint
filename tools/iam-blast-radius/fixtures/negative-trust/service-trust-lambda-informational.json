@@ -1,0 +1,32 @@
+{
+  "name": "Normal AWS service trust (lambda.amazonaws.com) - informational only, never external/escalation",
+  "note": "IAM-805 negative control (acceptance-suite test 18). A service principal assuming the role is a standard service-role relationship. The analyzer emits at most an informational TRUST-SERVICE relationship and NEVER a public/external/escalation finding, and NEVER infers the assumed role's permissions from the trust policy alone.",
+  "phase": 8,
+  "story": "IAM-805",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "LambdaServiceTrust",
+        "Effect": "Allow",
+        "Principal": { "Service": "lambda.amazonaws.com" },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["TRUST-SERVICE"],
+    "mustNotFind": [
+      "TRUST-PUBLIC",
+      "TRUST-CROSS-ACCOUNT",
+      "TRUST-ORG-EXPANSION",
+      "TRUST-FEDERATED",
+      "WILDCARD-RESOURCE",
+      "ASSUME-ROLE-EXPANSION"
+    ],
+    "maxSeverity": { "TRUST-SERVICE": "info" },
+    "maxPathExploitability": { "TRUST-SERVICE": "low" }
+  },
+  "rationale": "AWS documents a service principal (Principal.Service, e.g. lambda.amazonaws.com) in a role trust policy as a normal service-role relationship: the named AWS service may assume the role to act on the account's behalf (trust-policy-semantics 2.5). It is neither an external-account principal nor anonymous, so no PUBLIC-TRUST, cross-account, org-expansion, or federated-subject finding applies. Critically, a trust policy conveys WHO MAY ASSUME the role, never the assumed role's permissions - so no escalation path or privilege inference is licensed by the trust document alone (the negative control, acceptance test 18). Emitting anything above informational, or any identity-style broad-Resource finding, would overstate the evidence (threat-model T8). Ref: AWS Principal element (Service); docs/trust-policy-semantics.md sec 2.5 and 5 (service trust = informational)."
+}

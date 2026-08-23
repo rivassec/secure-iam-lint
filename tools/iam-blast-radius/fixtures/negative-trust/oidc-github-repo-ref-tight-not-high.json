@@ -1,0 +1,37 @@
+{
+  "name": "Tightly-scoped GitHub Actions OIDC trust (repo + ref) - does NOT fire the high subject-expansion finding",
+  "note": "IAM-805 (boundary of acceptance-suite test 17). A Federated OIDC principal whose sub is bound to a specific repository AND git ref (repo:example-org/repo-name:ref:refs/heads/main) scopes trust to one workload. A TRUST-FEDERATED relationship is still recorded, but it must NOT reach HIGH - the org-wide-subject expansion does not apply. The aud check is a valid constraint.",
+  "phase": 8,
+  "story": "IAM-805",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GitHubOIDCRepoRef",
+        "Effect": "Allow",
+        "Principal": { "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": {
+            "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+            "token.actions.githubusercontent.com:sub": "repo:example-org/repo-name:ref:refs/heads/main"
+          }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["TRUST-FEDERATED"],
+    "mustNotFind": [
+      "TRUST-PUBLIC",
+      "TRUST-CROSS-ACCOUNT",
+      "TRUST-ORG-EXPANSION",
+      "WILDCARD-RESOURCE",
+      "ASSUME-ROLE-EXPANSION"
+    ],
+    "maxSeverity": { "TRUST-FEDERATED": "medium" },
+    "maxPathExploitability": { "TRUST-FEDERATED": "medium" }
+  },
+  "rationale": "For GitHub Actions OIDC, the subject claim token.actions.githubusercontent.com:sub scopes WHICH workloads may assume the role. A sub bound to both a repository and a git ref (repo:example-org/repo-name:ref:refs/heads/main) trusts one branch of one repository, not an organization-wide wildcard (repo:example-org/*). The severity model raises HIGH only for a broad/org-wide or absent sub; a repo+ref binding is tight and must stay low/medium (trust-policy-semantics 4.4, acceptance test 17 boundary). The aud check (sts.amazonaws.com) is a valid audience CONSTRAINT and must not be reported as missing. The analyzer must not claim assumption is confirmed - a matching OIDC token and workflow context are out of scope - only that the trust is narrowly SCOPED. The assumed role's permissions remain unknown. Ref: AWS OIDC federation condition keys (...:aud, ...:sub); docs/trust-policy-semantics.md sec 4.4."
+}

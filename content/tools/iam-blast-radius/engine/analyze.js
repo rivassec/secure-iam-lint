@@ -14,9 +14,10 @@
 import { modelFromText } from './model.js';
 import { analyzeRules, ruleFindingDenySuppressed } from './rules.js';
 import { analyzeEscalations } from './escalation.js';
+import { analyzeTrust, trustFindingDenyState, summarizeTrustDeny } from './trust.js';
 import { correlateFindings } from './correlate.js';
-import { buildGraph, GRAPH_LIMITS } from './graph.js';
-import { detectFamily } from './family.js';
+import { buildGraph, buildTrustGraph, GRAPH_LIMITS } from './graph.js';
+import { detectFamily, FAMILIES } from './family.js';
 import { enrichCoverage } from './coverage.js';
 import { classifyConditions, unsupportedConditionKeys } from './conditions.js';
 import { defaultCatalog, unrecognizedActions } from './catalog.js';
@@ -365,6 +366,71 @@ function blockedResult(model, coverage) {
   });
 }
 
+// IAM-801: the model parsed cleanly and the family gate classified it as a
+// SUPPORTED role-trust policy. Route it to the family-aware trust evaluator
+// (engine/trust.js) instead of the identity rules/escalation engine, then build
+// the same success-shaped result the identity path returns.
+//
+// IAM-802: the trust GRAPH now models the external-origin relationship
+// (external principal(s) -> can-assume -> this role, target privileges unknown)
+// via buildTrustGraph. The origin is the EXTERNAL principals, never the identity
+// "Principal subject of this policy" root (acceptance-suite test 15); it reuses
+// the typed `can-assume` edge and never emits identity-style capability edges on
+// a trust policy. The findings table remains the authoritative view.
+function trustResult(model, coverage, effectiveFamily) {
+  const trust = analyzeTrust(model);
+  if (!trust.ok) return fail(trust.errors);
+
+  // IAM-806: same-policy explicit-Deny precedence for the AUTHORITATIVE TABLE.
+  // analyzeTrust is Deny-unaware (a Deny is never a positive trust grant), so a
+  // trust grant a same-policy Deny FULLY neutralizes is dropped from the table
+  // here - it would otherwise over-claim "any principal may assume" a role that is
+  // actually unassumable (threat-model T8). This mirrors the identity path's
+  // ruleFindingDenySuppressed filter (IAM-302). buildTrustGraph still receives the
+  // FULL trust.findings + model, so it can draw the blocked-by-deny `denies` edge.
+  const tableFindings = trust.findings.filter(
+    (f) => trustFindingDenyState(f, model) !== 'full',
+  );
+  const stamped = tableFindings.map((f) => stampFamily(f, effectiveFamily));
+  const findings = Object.freeze(sortFindings(stamped));
+
+  // Build the trust graph from the raw trust findings (they carry the typed
+  // per-statement Principal evidence buildTrustGraph reads) PLUS the model (for
+  // the same-policy Deny edges). On any failure we fall back to an empty graph -
+  // the findings table stays authoritative.
+  const tg = buildTrustGraph(model, trust.findings);
+  const graph = tg.ok ? tg.graph : emptyGraph();
+  // IAM-806 (c): never report a "complete" analysis while a neutralizing Deny is
+  // silently discarded. summarizeTrustDeny surfaces every same-policy trust Deny
+  // as a coverage caveat; an UNMODELED one (conditional / partial overlap) marks
+  // coverage incomplete. A fully-modeled Deny (finding suppressed + blocked-by-deny
+  // edge) is not itself incomplete, matching the identity engine.
+  const enriched = enrichCoverage(coverage, {
+    model,
+    graph,
+    catalogVersion: defaultCatalog.version,
+    unsupportedConditions: unsupportedConditionKeys(model),
+    unrecognizedActions: unrecognizedActions(model, defaultCatalog),
+    trustDeny: summarizeTrustDeny(model, trust.findings),
+  });
+
+  return Object.freeze({
+    ok: true,
+    errors: Object.freeze([]),
+    findings,
+    model,
+    graph: Object.freeze(graph),
+    catalogVersion: CATALOG_VERSION,
+    counts: Object.freeze({
+      findings: findings.length,
+      edges: graph.edges.length,
+      nodes: graph.nodes.length,
+    }),
+    family: enriched.family,
+    coverage: enriched,
+  });
+}
+
 /**
  * Run the full analysis pipeline on raw policy text.
  *
@@ -387,6 +453,19 @@ export function analyze(text, options) {
     // identity findings on a resource/trust/ambiguous/NotPrincipal document.
     const coverage = detectFamily(m.model, options || {});
     if (coverage.blocked) return blockedResult(m.model, coverage);
+
+    const effectiveFamily = coverage.family || coverage.detected || 'unknown';
+
+    // IAM-801 (Phase 8): a role-trust policy is routed to the family-aware TRUST
+    // evaluator, NEVER to the identity rules/escalation engine. A trust policy
+    // conveys WHO MAY ASSUME the role, not the role's permissions; running
+    // identity rules on it would emit spurious identity-style findings (e.g. a
+    // broad-Resource finding for the Resource a trust policy legitimately omits).
+    // Every trust finding carries the limitation that the assumed role's
+    // permissions are out of scope / unknown.
+    if (effectiveFamily === FAMILIES.ROLE_TRUST) {
+      return trustResult(m.model, coverage, effectiveFamily);
+    }
 
     const rules = analyzeRules(m.model);
     const esc = analyzeEscalations(m.model);
@@ -417,8 +496,8 @@ export function analyze(text, options) {
     const correlated = correlateFindings(tableFindings);
     // IAM-504: stamp the effective policy family onto every finding so each row
     // carries the full explainable-evidence set (family + statement + action +
-    // resource + condition + rule id + certainty + limitation).
-    const effectiveFamily = coverage.family || coverage.detected || 'unknown';
+    // resource + condition + rule id + certainty + limitation). effectiveFamily
+    // is computed once above (used by the trust-family branch too).
     const stamped = correlated.map((f) => stampFamily(f, effectiveFamily));
     const findings = Object.freeze(sortFindings(stamped));
 

@@ -19,11 +19,15 @@ import { analyze } from '../../../content/tools/iam-blast-radius/engine/analyze.
 import { toJSON } from '../../../content/tools/iam-blast-radius/engine/report.js';
 import { RULE_IDS } from '../../../content/tools/iam-blast-radius/engine/rules.js';
 import { ESCALATION_IDS } from '../../../content/tools/iam-blast-radius/engine/escalation.js';
+import { TRUST_IDS } from '../../../content/tools/iam-blast-radius/engine/trust.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(here, '..', 'fixtures');
 
-const CATALOG = new Set([...RULE_IDS, ...ESCALATION_IDS]);
+// IAM-801: the role-trust family adds its own finding ids (TRUST-*), emitted by
+// the family-aware trust evaluator (engine/trust.js) rather than the identity
+// rules/escalation catalog. They carry the same canonical evidence contract.
+const CATALOG = new Set([...RULE_IDS, ...ESCALATION_IDS, ...TRUST_IDS]);
 const CERTAINTY = new Set(['high', 'medium', 'low']);
 
 function fixtureText(fx) {

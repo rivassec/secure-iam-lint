@@ -1,0 +1,35 @@
+{
+  "name": "Service trust constrained by aws:SourceArn - confused-deputy constraint, still informational",
+  "note": "IAM-805 (service confused-deputy constraint). A service principal (s3.amazonaws.com) trust further pinned with aws:SourceArn is the recommended confused-deputy mitigation for service trust. It remains a normal service relationship (informational) and never an external/escalation finding.",
+  "phase": 8,
+  "story": "IAM-805",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "S3ServiceTrustPinned",
+        "Effect": "Allow",
+        "Principal": { "Service": "s3.amazonaws.com" },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "ArnLike": { "aws:SourceArn": "arn:aws:s3:::example-source-bucket" }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["TRUST-SERVICE"],
+    "mustNotFind": [
+      "TRUST-PUBLIC",
+      "TRUST-CROSS-ACCOUNT",
+      "TRUST-ORG-EXPANSION",
+      "TRUST-FEDERATED",
+      "WILDCARD-RESOURCE",
+      "ASSUME-ROLE-EXPANSION"
+    ],
+    "maxSeverity": { "TRUST-SERVICE": "info" },
+    "maxPathExploitability": { "TRUST-SERVICE": "low" }
+  },
+  "rationale": "aws:SourceArn compares the ARN of the resource that caused a service to make the call and is available when the call is made directly by an AWS service principal. Used in a service-principal trust it is the documented confused-deputy mitigation - a CONSTRAINT that ties the assume to a specific source resource. This is a normal, well-hardened service-role relationship: it stays informational (TRUST-SERVICE) and must never be elevated to an external-account, public, or escalation finding, nor licence any inference about the assumed role's permissions (out of scope / unknown). Ref: AWS global condition key aws:SourceArn; docs/trust-policy-semantics.md sec 4.3 and 5 (service trust = informational)."
+}

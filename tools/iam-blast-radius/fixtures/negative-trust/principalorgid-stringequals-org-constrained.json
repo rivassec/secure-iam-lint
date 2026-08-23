@@ -1,0 +1,34 @@
+{
+  "name": "Cross-account trust confined to an org (StringEquals aws:PrincipalOrgID) - constraint, not expansion",
+  "note": "IAM-805 (constraint polarity, contrast with acceptance-suite test 10). StringEquals aws:PrincipalOrgID confines trust to principals INSIDE the named organization - a constraint. This must lower severity and must NOT be misread as the StringNotEquals expansion (which is the critical org-exclusion case). No 'missing PrincipalOrgID' remediation.",
+  "phase": 8,
+  "story": "IAM-805",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TrustInsideOrg",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::111122223333:root" },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": { "aws:PrincipalOrgID": "o-exampleorgid" }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["TRUST-CROSS-ACCOUNT"],
+    "mustNotFind": [
+      "TRUST-PUBLIC",
+      "TRUST-ORG-EXPANSION",
+      "TRUST-FEDERATED",
+      "WILDCARD-RESOURCE",
+      "ASSUME-ROLE-EXPANSION"
+    ],
+    "maxSeverity": { "TRUST-CROSS-ACCOUNT": "medium" },
+    "maxPathExploitability": { "TRUST-CROSS-ACCOUNT": "medium" }
+  },
+  "rationale": "aws:PrincipalOrgID with the StringEquals operator confines trust to principals that belong to the named AWS Organization (o-exampleorgid). Per the polarity rule, StringEquals on this key is a CONSTRAINT that narrows who may assume the role and lowers path-exploitability - the inverse of StringNotEquals, which is the critical org-EXCLUSION expansion (acceptance test 10). The analyzer must classify this operator as a protective org restriction, must NOT flip it to an expansion finding, and must NOT emit a 'missing aws:PrincipalOrgID' remediation, since the key is present with constraining polarity. Severity stays at or below medium. The assumed role's permissions remain out of scope / unknown. Ref: AWS global condition key aws:PrincipalOrgID; docs/trust-policy-semantics.md sec 4.2."
+}

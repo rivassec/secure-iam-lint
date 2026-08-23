@@ -11,10 +11,13 @@
 //      fixture FAILS here - there are no silent skips.
 //   2. PER-FIXTURE semantics - drives each fixture through analyze() and asserts
 //      its expect / coverageExpect / errorExpect / severityExpect / graphExpect.
-//   3. DESIGN-BLOCKED cases - the role-trust family (tests 10, 15, 16, 17, 18) is
-//      fail-closed BY DESIGN in this phase. Their fixtures carry a `designBlocked`
-//      marker naming the queued follow-up feature; the harness asserts the CURRENT
-//      blocked behavior so a later story flips them intentionally, never via a skip.
+//   3. DESIGN-BLOCKED cases - historically the role-trust family (tests 10, 15,
+//      16, 17, 18) was fail-closed BY DESIGN and each fixture carried a
+//      `designBlocked` marker. IAM-801 landed the family-aware trust evaluator, so
+//      role-trust is now SUPPORTED and those tests are driven by their real
+//      expect/severityExpect like any other fixture. DESIGN_BLOCKED_IDS is now
+//      empty; the mechanism is retained so a FUTURE unsupported family can be
+//      encoded as design-blocked without a silent skip.
 //   4. CROSS-TEST INVARIANTS - the 12 invariants from docs/acceptance-suite.md,
 //      encoded as reusable helpers and applied across every applicable fixture.
 //
@@ -44,10 +47,13 @@ const REQUIRED_IDS = Object.freeze([
   '15', '16', '17', '18', '19', '20', '21', '22A', '22B', '22C', '23', '24',
 ]);
 
-// The 5 role-trust tests that are fail-closed BY DESIGN until the queued
-// role-trust family feature lands. Their fixtures must carry a designBlocked
-// marker; the harness asserts blocked behavior, not the eventual finding.
-const DESIGN_BLOCKED_IDS = new Set(['10', '15', '16', '17', '18']);
+// Tests that are fail-closed BY DESIGN (no evaluator yet) - their fixtures must
+// carry a designBlocked marker and the harness asserts the blocked behavior, not
+// an eventual finding, so a later story flips them intentionally (never a skip).
+// IAM-801 shipped the role-trust evaluator, so tests 10/15/16/17/18 moved out of
+// this set and are now driven by their real expectations. The set is empty but
+// retained for a future unsupported family.
+const DESIGN_BLOCKED_IDS = new Set([]);
 
 const KNOWN_FAMILIES = new Set(Object.values(FAMILIES));
 

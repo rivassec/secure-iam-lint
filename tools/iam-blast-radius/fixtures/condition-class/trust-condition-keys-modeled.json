@@ -1,0 +1,31 @@
+{
+  "name": "Trust condition keys are modeled with correct polarity (IAM-803)",
+  "note": "IAM-803 extends the Phase-5 condition classifier for the trust condition keys (docs/trust-policy-semantics.md section 4). sts:ExternalId is the confused-deputy correlation value (a constraint - never authentication, never a secret), and aws:SourceArn / aws:SourceAccount are the confused-deputy constraints for the calling service/resource. Because these keys are now UNDERSTOOD, a cross-account trust that carries them is NOT reported as having unsupported conditions and coverage stays complete - fixing the incoherence where the trust evaluator credited ExternalId as a constraint while the classifier still called it 'not modelled'. Classification is text-only; it never asserts a runtime STS allow/deny.",
+  "story": "IAM-803",
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "VendorWithConfusedDeputyConstraints",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::111122223333:root" },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": { "sts:ExternalId": "customer-7f6af74e", "aws:SourceAccount": "111122223333" },
+          "ArnLike": { "aws:SourceArn": "arn:aws:cloudtrail:us-east-1:111122223333:trail/org" }
+        }
+      }
+    ]
+  },
+  "conditionClass": {
+    "coverageIncomplete": false,
+    "unsupportedConditions": [],
+    "entries": [
+      { "key": "aws:SourceArn", "class": "constraint", "appears": "narrows", "credited": true, "known": true, "negated": false },
+      { "key": "aws:SourceAccount", "class": "constraint", "appears": "narrows", "credited": true, "known": true, "negated": false },
+      { "key": "sts:ExternalId", "class": "constraint", "appears": "narrows", "credited": true, "known": true, "negated": false }
+    ],
+    "expectFindingIds": ["TRUST-CROSS-ACCOUNT"]
+  }
+}

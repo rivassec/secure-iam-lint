@@ -151,18 +151,35 @@ export function enrichCoverage(coverage, context) {
 
   const truncated = !!(graph && graph.truncated);
 
+  // IAM-806: same-policy trust Deny caveat (from summarizeTrustDeny). A trust
+  // policy's explicit Deny restricts who may assume the role; it must never be
+  // silently discarded from a "complete" analysis. `present` surfaces it; an
+  // `unmodeled` one (conditional / partial overlap) contributes to incomplete.
+  const trustDenyCtx = (ctx.trustDeny && typeof ctx.trustDeny === 'object') ? ctx.trustDeny : null;
+  const trustDeny = trustDenyCtx
+    ? Object.freeze({
+      present: !!trustDenyCtx.present,
+      count: Number.isFinite(trustDenyCtx.count) ? trustDenyCtx.count : 0,
+      unmodeled: !!trustDenyCtx.unmodeled,
+      note: trustDenyCtx.note ? String(trustDenyCtx.note) : null,
+    })
+    : Object.freeze({ present: false, count: 0, unmodeled: false, note: null });
+
   // Any unsupported semantic input makes the coverage incomplete: a blocked
-  // shape, a recognized-but-unmodeled element, an unrecognized action, or an
-  // unsupported condition. Drives the zero-findings wording flip + warning state.
+  // shape, a recognized-but-unmodeled element, an unrecognized action, an
+  // unsupported condition, or an unmodeled same-policy trust Deny. Drives the
+  // zero-findings wording flip + warning state.
   const incomplete = !!cov.blocked
     || unsupportedElements.length > 0
     || unrecognizedActions.length > 0
-    || unsupportedConditions.length > 0;
+    || unsupportedConditions.length > 0
+    || trustDeny.unmodeled;
 
   // Stable machine-readable codes carried into exports. Today this mirrors the
   // family gate's blocking codes; future non-blocking coverage codes append here
   // (a clean parse is still not proof of complete coverage).
   const codes = blockingCodes.map((b) => String(b && b.code));
+  if (trustDeny.unmodeled) codes.push('TRUST_DENY_UNMODELED');
 
   const summary = Object.freeze({
     detectedFamily: cov.detected || 'unknown',
@@ -177,6 +194,7 @@ export function enrichCoverage(coverage, context) {
     unsupportedConditions: Object.freeze(unsupportedConditions),
     unsupportedElements: Object.freeze(unsupportedElements),
     missingLayers: Object.freeze(missingLayers),
+    trustDeny,
     graph: Object.freeze({ complete: !truncated, truncated }),
     versions: Object.freeze({
       buildSha: BUILD_SHA,
