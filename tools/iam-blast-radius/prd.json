@@ -434,6 +434,54 @@
       ],
       "acceptance": ["canonical/description/OG/Twitter/JSON-LD present and accurate; docs section crawlable and truthful", "noindex STILL present; no sitemap entry added; TODO comment for the human flip", "SEO critic: wording precise, no keywords, no absolute claims, no rich-result promises, structured data matches visible content", "QA + security critics clean; csp_audit clean", "full node --test green"],
       "maximumIterations": 4
+    },
+    {
+      "id": "IAM-601",
+      "title": "Phase 6: promote engine security probes to a gating node test",
+      "priority": 15, "phase": 6, "status": "pending",
+      "requirements": [
+        "Convert security-probes/engine-probes.mjs into tests/security.test.js using node:test + assert (so it runs under node --test on every push, not just as a manual harness).",
+        "Cover: 4 prototype-pollution vectors (Object.prototype unpolluted), ReDoS timing bound on pathological wildcards (<3s), resource exhaustion (large statement count / deep nesting / multi-MB) never throws, malformed/crash inputs always return a structured result, determinism under adversarial input.",
+        "Keep the manual .mjs harness too (for live-site runs); the node test is the CI gate."
+      ],
+      "acceptance": ["tests/security.test.js runs under node --test and passes", "the security assertions are now part of the gating suite", "reliability + security critics clean", "full node --test green"],
+      "maximumIterations": 4
+    },
+    {
+      "id": "IAM-602",
+      "title": "Phase 6: fixture-matrix completeness meta-test",
+      "priority": 14, "phase": 6, "status": "pending",
+      "requirements": [
+        "Add tests/fixture-matrix.test.js: enumerate every rule ID (rules.js) and escalation ID (escalation.js) and assert the required fixture types exist for each where semantically applicable (positive, negative, boundary; plus deny/condition/NotAction/NotResource/family-mismatch/hostile-render coverage across the fixtures/ tree).",
+        "If a rule is missing a required fixture type, the impl agent must ADD the fixture (do not weaken the meta-test). The meta-test must FAIL if a future rule ships without its when-NOT-to-fire coverage.",
+        "Document the required matrix in the test so it is self-explaining."
+      ],
+      "acceptance": ["meta-test enumerates all rule/escalation IDs and asserts fixture coverage", "any gaps found are filled with real fixtures (validated by the QA/IAM-semantics critic)", "full node --test green"],
+      "maximumIterations": 5
+    },
+    {
+      "id": "IAM-603",
+      "title": "Phase 6: formal determinism gate + node/browser parity",
+      "priority": 13, "phase": 6, "status": "pending",
+      "requirements": [
+        "Add a determinism gate: run the full fixture corpus through analyze() twice and assert byte-identical findings + graph.",
+        "Add a node/browser parity test: assert the engine produces identical findings for the corpus when driven as a Node module vs inside the browser worker (Playwright e2e that posts fixtures to worker.js and compares to the Node analyze() result baseline). Guards against a browser-only divergence.",
+        "Deterministic ordering already required; this makes it an explicit named gate."
+      ],
+      "acceptance": ["determinism gate green over the whole corpus", "node vs browser-worker parity asserted (e2e) across engines", "reliability critic clean", "full node --test + e2e green"],
+      "maximumIterations": 5
+    },
+    {
+      "id": "IAM-604",
+      "title": "Phase 6: mutation testing (nightly, non-blocking) + version-coherence self-test",
+      "priority": 12, "phase": 6, "status": "pending",
+      "requirements": [
+        "Add a Stryker (or equivalent) mutation-testing config targeting engine/ (evaluator, rules, escalation, correlate), target >=90% mutation score. Wire it as a NIGHTLY GitHub Actions workflow, NOT a PR-blocking gate (it is slow). Add the npm script + devDep + config; do not run it in this loop (nightly CI runs it).",
+        "Add a version-coherence self-test: a unit test asserting engine/worker/rule/catalog version identifiers are internally consistent (the manifest matches), and the UI startup check blocks analysis on mismatch.",
+        "Pin any new devDep and the GH Actions to commit SHAs."
+      ],
+      "acceptance": ["stryker config + nightly workflow present and syntactically valid (mutation runs in nightly CI, not this loop)", "version-coherence unit test green", "GH Actions pinned to SHAs", "full node --test green"],
+      "maximumIterations": 4
     }
   ]
 }

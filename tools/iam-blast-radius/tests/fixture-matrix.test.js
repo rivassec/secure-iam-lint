@@ -1,25 +1,44 @@
-// IAM-504: per-rule fixture matrix as a release gate.
+// IAM-504 + IAM-602: fixture-matrix completeness meta-test as a release gate.
 // Runs on node's built-in runner: `node --test`.
 //
-// Every rule (rules.js risk catalog + escalation.js path catalog) must ship a
-// fixture for each kind that is SEMANTICALLY APPLICABLE to it:
+// This is the self-explaining specification of the fixture corpus. It enumerates
+// EVERY rule id (rules.js RULE_IDS) and escalation id (escalation.js
+// ESCALATION_IDS) and fails - it does not skip - if any of them ships without
+// the fixture coverage its risk category requires. A future rule that lands
+// without its "when NOT to fire" coverage breaks this gate.
+//
+// REQUIRED MATRIX
+// ---------------
+// Per-rule cells (asserted for every id where SEMANTICALLY APPLICABLE, encoded
+// in APPLICABILITY below with a documented rationale per exclusion):
 //   positive        - a policy where the rule fires
-//   negative        - a policy where the rule must NOT fire (asserted absent)
-//   deny            - a policy exercising the rule's interaction with an
-//                     explicit Deny (suppressed, or present-but-Deny-aware)
+//   negative        - a policy where the rule must NOT fire (asserted absent):
+//                     the primary "when-NOT-to-fire" coverage
+//   boundary        - an edge/near-miss policy (scoped/conditioned/partial-
+//                     wildcard/almost-firing) that exercises the rule's decision
+//                     boundary; sourced from the `*-boundary.json` fixtures
+//   deny            - the rule's interaction with an explicit Deny (suppressed,
+//                     or present-but-Deny-aware)
 //   condition       - the rule under a Condition (narrowed, still explainable)
 //   notAction       - the rule reached via an Allow-NotAction inversion
 //   notResource     - the rule under a NotResource scope
 //   hostile         - a positive witness whose Sid/ARN/Condition carry HTML/JS
 //                     payloads that must ride through analyze() as inert DATA
-//   (deterministic-export is a GLOBAL property, asserted once at the end.)
 //
-// "Where semantically applicable" is encoded in APPLICABILITY with a documented
-// rationale per exclusion (see below). This gate FAILS - it does not skip - if
-// any applicable cell loses its fixture, so the matrix cannot silently regress.
+// Tree-wide cells (coverage that must exist ACROSS the fixtures/ tree, spanning
+// rule categories - not one per individual id):
+//   family-mismatch - a dangerous-looking policy in a family the engine does NOT
+//                     model (resource / role-trust / NotPrincipal / ambiguous)
+//                     that FAILS CLOSED: analyze() blocks and the identity rule
+//                     that WOULD fire on the same actions is correctly suppressed
+//   deterministic-export - same input -> byte-identical JSON + Markdown
+//
 // Coverage is DERIVED from fixture content + real analyze() output (a fixture
 // witnesses a cell only if the engine actually behaves as the kind requires),
-// so a mislabeled fixture cannot paper over a gap.
+// so a mislabeled fixture cannot paper over a gap. The family-mismatch gate is
+// double-locked: the engine must actually fail closed on the shape AND the same
+// policy reshaped to identity form must actually fire the declared rule, so a
+// "family-mismatch" claim can never be vacuous.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,11 +55,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(here, '..', 'fixtures');
 
 // --- Applicability matrix ----------------------------------------------------
-// positive/negative/deny/condition/hostile apply to EVERY rule (a grant can
-// always be present, absent, Deny-interacting, Condition-narrowed, or carry a
-// hostile string). notAction / notResource are applicable only where such a
-// policy is a realistic, engine-detectable expression of the rule - never a
-// contrived one:
+// positive/negative/boundary/deny/condition/hostile apply to EVERY rule (a grant
+// can always be present, absent, at a decision boundary, Deny-interacting,
+// Condition-narrowed, or carry a hostile string). notAction / notResource are
+// applicable only where such a policy is a realistic, engine-detectable
+// expression of the rule - never a contrived one:
 //   - notAction applies to action-breadth / IAM-action rules: an Allow-NotAction
 //     inverts the whole action space, so it genuinely grants iam:*/admin actions
 //     and the broad-resource rule. It does NOT meaningfully express a specific
@@ -52,24 +71,32 @@ const fixturesDir = join(here, '..', 'fixtures');
 //     shape for pure action-breadth (WILDCARD-ACTION, NOTACTION-ALLOW) or the
 //     PassRole+exec compound paths, so those are excluded.
 const APPLICABILITY = Object.freeze({
-  'WILDCARD-ACTION': ['positive', 'negative', 'deny', 'condition', 'notAction', 'hostile'],
-  'WILDCARD-RESOURCE': ['positive', 'negative', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
-  'DIRECT-IAM-ADMIN': ['positive', 'negative', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
-  'DATA-EXFIL': ['positive', 'negative', 'deny', 'condition', 'notResource', 'hostile'],
-  'KMS-DECRYPT': ['positive', 'negative', 'deny', 'condition', 'notResource', 'hostile'],
-  'DESTRUCTIVE-ACTION': ['positive', 'negative', 'deny', 'condition', 'notResource', 'hostile'],
-  'DETECTION-IMPAIRMENT': ['positive', 'negative', 'deny', 'condition', 'notResource', 'hostile'],
-  'NOTACTION-ALLOW': ['positive', 'negative', 'deny', 'condition', 'notAction', 'hostile'],
-  'PASSROLE-LAMBDA': ['positive', 'negative', 'deny', 'condition', 'hostile'],
-  'PASSROLE-EC2': ['positive', 'negative', 'deny', 'condition', 'hostile'],
-  'PASSROLE-SERVICE': ['positive', 'negative', 'deny', 'condition', 'hostile'],
-  'POLICY-VERSION': ['positive', 'negative', 'deny', 'condition', 'notAction', 'hostile'],
-  'ATTACH-POLICY': ['positive', 'negative', 'deny', 'condition', 'notAction', 'hostile'],
-  'PUT-INLINE-POLICY': ['positive', 'negative', 'deny', 'condition', 'notAction', 'hostile'],
-  'TRUST-POLICY-MODIFY': ['positive', 'negative', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
-  'CREDENTIAL-CREATION': ['positive', 'negative', 'deny', 'condition', 'notAction', 'hostile'],
-  'ASSUME-ROLE-EXPANSION': ['positive', 'negative', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
+  'WILDCARD-ACTION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],
+  'WILDCARD-RESOURCE': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
+  'DIRECT-IAM-ADMIN': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
+  'DATA-EXFIL': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
+  'KMS-DECRYPT': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
+  'DESTRUCTIVE-ACTION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
+  'DETECTION-IMPAIRMENT': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
+  'NOTACTION-ALLOW': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],
+  'PASSROLE-LAMBDA': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
+  'PASSROLE-EC2': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
+  'PASSROLE-SERVICE': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
+  'POLICY-VERSION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],
+  'ATTACH-POLICY': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],
+  'PUT-INLINE-POLICY': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],
+  'TRUST-POLICY-MODIFY': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
+  'CREDENTIAL-CREATION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],
+  'ASSUME-ROLE-EXPANSION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
 });
+
+// A boundary witness is one of the curated `*-boundary.json` edge-case fixtures
+// (scoped resource, narrowing Condition, partial wildcard, PassedToService
+// near-miss, conditional Deny) that analyze() relates to the rule - it produces
+// the rule OR asserts it absent. The filename marks the author's boundary INTENT;
+// relatedness via real analyze() output is the engine-verified half (so a
+// mislabeled file cannot witness a rule it never touches).
+const BOUNDARY_NAME_RE = /boundary/i;
 
 // A hostile string is present when a finding field carries markup / script / URI
 // scheme payload verbatim (proof it rode through as inert DATA, not markup).
@@ -130,6 +157,7 @@ function buildCoverage() {
     const hasNotAction = st.some((s) => s && s.NotAction);
     const hasNotResource = st.some((s) => s && s.NotResource);
     const isHostile = !!(data.expect && data.expect.hostile === true);
+    const isBoundary = BOUNDARY_NAME_RE.test(file);
 
     for (const rule of Object.keys(APPLICABILITY)) {
       const kinds = APPLICABILITY[rule];
@@ -140,6 +168,7 @@ function buildCoverage() {
 
       if (positive && kinds.includes('positive')) c.positive.push(file);
       if (negative && kinds.includes('negative')) c.negative.push(file);
+      if (related && isBoundary && kinds.includes('boundary')) c.boundary.push(file);
       if (related && hasDeny && kinds.includes('deny')) c.deny.push(file);
       if (related && hasCond && kinds.includes('condition')) c.condition.push(file);
       if (related && hasNotAction && kinds.includes('notAction')) c.notAction.push(file);
@@ -224,4 +253,88 @@ test('deterministic-export: JSON + Markdown are byte-identical across runs', () 
     assert.equal(toJSON(a), toJSON(analyze(fixtureText(fx))), `${rel}: JSON not deterministic`);
     assert.equal(toMarkdown(a), toMarkdown(analyze(fixtureText(fx))), `${rel}: Markdown not deterministic`);
   }
+});
+
+// --- Gate 5: family-mismatch coverage exists across the tree -----------------
+// A "family-mismatch" witness proves the engine fails closed on a shape it does
+// not model (resource / role-trust / NotPrincipal / ambiguous) INSTEAD OF firing
+// an identity rule on the dangerous actions it carries. A fixture declares the
+// rule ids it witnesses via `expect.familyMismatchFor`. The gate is double-locked
+// so the claim can never be vacuous:
+//   (a) analyze(policy) fails closed - coverage.blocked === true, zero findings;
+//   (b) the SAME policy reshaped to identity form (Principal/NotPrincipal
+//       stripped from every statement) actually FIRES each declared id -> the
+//       action set is genuinely rule-triggering and was suppressed ONLY by the
+//       family mismatch.
+// This is tree-wide coverage (spanning rule categories), not one witness per id:
+// the corpus must witness at least one capability rule (rules.js) AND at least
+// one escalation path (escalation.js) failing closed.
+function identityVariant(policy) {
+  const p = JSON.parse(JSON.stringify(policy));
+  const st = Array.isArray(p.Statement) ? p.Statement : (p.Statement ? [p.Statement] : []);
+  for (const s of st) { if (s) { delete s.Principal; delete s.NotPrincipal; } }
+  p.Statement = st;
+  return p;
+}
+
+test('family-mismatch: dangerous actions in an unmodeled family fail closed (not fired as identity rules)', () => {
+  const witnesses = loadAllFixtures().filter(
+    ({ data }) => data.expect && Array.isArray(data.expect.familyMismatchFor)
+      && data.expect.familyMismatchFor.length > 0,
+  );
+  assert.ok(
+    witnesses.length >= 2,
+    'expected at least two family-mismatch witnesses (declare expect.familyMismatchFor)',
+  );
+
+  const RULE_SET = new Set(RULE_IDS);
+  const ESC_SET = new Set(ESCALATION_IDS);
+  const capabilityWitnessed = new Set();
+  const escalationWitnessed = new Set();
+
+  for (const { file, data } of witnesses) {
+    // (a) the real shape fails closed with no confident findings.
+    const blockedRes = analyze(fixtureText(data));
+    assert.equal(blockedRes.ok, true, `${file}: family-mismatch fixture must analyze ok`);
+    assert.ok(
+      blockedRes.coverage && blockedRes.coverage.blocked === true,
+      `${file}: family-mismatch witness must fail closed (coverage.blocked)`,
+    );
+    assert.equal(
+      blockedRes.findings.length, 0,
+      `${file}: a fail-closed shape must produce zero confident findings`,
+    );
+
+    // (b) the identity-shaped variant actually fires each declared id, proving
+    //     the suppression came from the family mismatch and nothing else.
+    const idRes = analyze(JSON.stringify(identityVariant(data.policy)));
+    assert.equal(
+      idRes.coverage && idRes.coverage.blocked, false,
+      `${file}: identity variant must NOT be blocked (else the witness is vacuous)`,
+    );
+    const fired = new Set(idRes.findings.map((f) => f.id));
+    for (const f of idRes.findings) for (const s of (f.subsumed || [])) fired.add(s.id);
+
+    for (const id of data.expect.familyMismatchFor) {
+      assert.ok(
+        RULE_SET.has(id) || ESC_SET.has(id),
+        `${file}: familyMismatchFor lists ${id} which is not a live rule/escalation id`,
+      );
+      assert.ok(
+        fired.has(id),
+        `${file}: identity variant must fire ${id} (else this is not a real family-mismatch of that rule)`,
+      );
+      if (RULE_SET.has(id)) capabilityWitnessed.add(id);
+      if (ESC_SET.has(id)) escalationWitnessed.add(id);
+    }
+  }
+
+  assert.ok(
+    capabilityWitnessed.size >= 1,
+    'family-mismatch coverage must span at least one capability rule (rules.js)',
+  );
+  assert.ok(
+    escalationWitnessed.size >= 1,
+    'family-mismatch coverage must span at least one escalation path (escalation.js)',
+  );
 });

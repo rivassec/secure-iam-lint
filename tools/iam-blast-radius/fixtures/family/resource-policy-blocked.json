@@ -15,7 +15,10 @@
       }
     ]
   },
-  "expect": { "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL"] },
+  "expect": {
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL"],
+    "familyMismatchFor": ["WILDCARD-ACTION"]
+  },
   "familyExpect": {
     "detected": "resource",
     "family": "resource",

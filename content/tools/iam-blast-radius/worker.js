@@ -9,7 +9,7 @@
 //
 // Loaded as a module worker: new Worker('worker.js', { type: 'module' }).
 
-import { analyze } from './engine/analyze.js';
+import { analyze, CATALOG_VERSION } from './engine/analyze.js';
 
 self.addEventListener('message', (event) => {
   const data = event && event.data;
@@ -30,7 +30,9 @@ self.addEventListener('message', (event) => {
       findings: [],
       model: null,
       graph: { nodes: [], edges: [], truncated: false, limits: {} },
-      catalogVersion: '1',
+      // IAM-604: derive the fallback catalog version from the same constant the
+      // success path uses, so the worker cannot drift from the engine manifest.
+      catalogVersion: CATALOG_VERSION,
       counts: { findings: 0, edges: 0, nodes: 0 },
       family: null,
       coverage: null,

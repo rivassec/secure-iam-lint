@@ -44,18 +44,37 @@ direct-iam, destructive, exfil, detection, notaction-allow,
 pass-role, assume-role, malformed, adversarial (XSS/proto-pollution/DoS),
 family (policy-family classification + fail-closed, IAM-501).
 
-## Per-rule fixture matrix (IAM-504)
+## Fixture-matrix completeness meta-test (IAM-504 + IAM-602)
 
-`tests/fixture-matrix.test.js` is a release gate that requires every rule
-(rules.js risk catalog + escalation.js path catalog) to ship a fixture for each
-kind that is SEMANTICALLY APPLICABLE to it: `positive`, `negative`, `deny`
-(explicit-Deny interaction), `condition`, `notAction`, `notResource`, and
-`hostile` (a positive witness whose Sid/ARN/Condition carry HTML/JS payloads
-that must ride through analyze() as inert DATA). `deterministic-export` is a
-global cell asserted once. Applicability ("where semantically applicable") and
-its rationale live in `APPLICABILITY` in that test; coverage is DERIVED from
-real analyze() output, so a mislabeled fixture cannot paper over a gap, and the
-gate FAILS (not skips) if any applicable cell loses its fixture.
+`tests/fixture-matrix.test.js` is a release gate that enumerates every rule
+(rules.js risk catalog + escalation.js path catalog) and FAILS (not skips) if
+any of them ships without the coverage its risk category requires. Coverage is
+DERIVED from real analyze() output, so a mislabeled fixture cannot paper over a
+gap. Applicability ("where semantically applicable") and its rationale live in
+`APPLICABILITY` in that test.
+
+Per-rule cells (each id, where applicable): `positive`, `negative` (the primary
+when-NOT-to-fire coverage), `boundary` (an edge/near-miss `*-boundary.json`
+fixture the engine relates to the rule), `deny` (explicit-Deny interaction),
+`condition`, `notAction`, `notResource`, and `hostile` (a positive witness whose
+Sid/ARN/Condition carry HTML/JS payloads that must ride through analyze() as
+inert DATA).
+
+Tree-wide cells (coverage that must exist across the corpus, spanning rule
+categories - not one per id): `family-mismatch` and `deterministic-export`.
+`family-mismatch` proves the engine fails closed on an unmodeled family
+(resource / role-trust / NotPrincipal / ambiguous) instead of firing an identity
+rule on the dangerous actions it carries. A witness declares the rule ids it
+covers via `expect.familyMismatchFor`, and the gate double-locks the claim:
+analyze(policy) must fail closed (coverage.blocked, zero findings) AND the same
+policy reshaped to identity form (Principal/NotPrincipal stripped) must actually
+fire each declared id - so a family-mismatch claim can never be vacuous. The
+corpus must witness at least one capability rule and one escalation path.
+
+```json
+{ "expect": { "notFindingIds": ["WILDCARD-ACTION"],
+  "familyMismatchFor": ["WILDCARD-ACTION"] } }
+```
 
 Most cells are witnessed by the existing category fixtures. Fixtures added for
 IAM-504 gaps live in their capability/escalation dir (e.g. `exfil/`,

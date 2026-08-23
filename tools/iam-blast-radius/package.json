@@ -8,7 +8,10 @@
     "test": "node --test \"tests/**/*.test.js\"",
     "typecheck": "tsc --checkJs --noEmit --allowJs --target es2022 --module es2022 ../../content/tools/iam-blast-radius/engine/*.js",
     "gate:no-network": "! grep -rInE 'fetch\\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|import\\([\"'\\''`]https?:' ../../content/tools/iam-blast-radius/ || (echo 'NETWORK API FOUND' && exit 1)",
-    "gate:no-unsafe-dom": "! grep -rInE 'innerHTML|outerHTML|insertAdjacentHTML|\\beval\\(|new Function' ../../content/tools/iam-blast-radius/ || (echo 'UNSAFE DOM/EVAL FOUND' && exit 1)"
+    "gate:no-unsafe-dom": "! grep -rInE 'innerHTML|outerHTML|insertAdjacentHTML|\\beval\\(|new Function' ../../content/tools/iam-blast-radius/ || (echo 'UNSAFE DOM/EVAL FOUND' && exit 1)",
+    "mutation": "stryker run"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@stryker-mutator/core": "8.7.1"
+  }
 }

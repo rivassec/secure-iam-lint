@@ -14,7 +14,10 @@
       }
     ]
   },
-  "expect": { "notFindingIds": ["ASSUME-ROLE-EXPANSION", "TRUST-POLICY-MODIFY"] },
+  "expect": {
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION", "TRUST-POLICY-MODIFY"],
+    "familyMismatchFor": ["ASSUME-ROLE-EXPANSION"]
+  },
   "familyExpect": {
     "detected": "role-trust",
     "family": "role-trust",

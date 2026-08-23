@@ -15,6 +15,7 @@ import { LIMITS } from './engine/validate.js';
 import { toJSON, toMarkdown } from './engine/report.js';
 import { createGraphRenderer } from './engine/render-graph.js';
 import { noFindingsMessage } from './engine/coverage.js';
+import { checkVersionCoherence } from './engine/version.js';
 import { SAMPLES } from './samples.js';
 
 // Wall-clock budget for a single worker run before we terminate it (T5).
@@ -27,6 +28,12 @@ const state = {
 
 let els = null;
 let graphRenderer = null;
+
+// IAM-604: set at startup when the shipped version identifiers are internally
+// inconsistent (a partial / torn deploy). While set, analysis is blocked - the
+// tool fails closed rather than report findings from an engine whose modules
+// disagree about their own versions (threat-model T8: mislabeled certainty).
+let versionBlock = null;
 
 // IAM-503: single-flight analysis boundary. At most one analysis job may be in
 // flight. A monotonic id identifies the current job; starting a new job
@@ -123,6 +130,45 @@ function renderErrors(errors) {
     ul.appendChild(li);
   }
   wrap.appendChild(ul);
+  els.findings.appendChild(wrap);
+}
+
+// IAM-604: render the fail-closed notice when the shipped version identifiers do
+// not agree with the engine manifest. Safe DOM only (createElement +
+// textContent); the mismatched values ride through as inert text. This replaces
+// the findings region with an alert and analysis stays disabled.
+function renderVersionBlock(coherence) {
+  clearChildren(els.findings);
+  const wrap = document.createElement('div');
+  wrap.className = 'errors version-mismatch';
+  wrap.setAttribute('role', 'alert');
+
+  const heading = document.createElement('p');
+  heading.textContent =
+    "Analysis is disabled: this tool's version identifiers are inconsistent.";
+  wrap.appendChild(heading);
+
+  const explain = document.createElement('p');
+  explain.textContent =
+    'The shipped files disagree about their own version, which usually means a ' +
+    'partial or cached deploy. To avoid reporting findings from a torn engine, ' +
+    'analysis is blocked. Reload after the deploy completes; if it persists, the ' +
+    'assets need a cache purge.';
+  wrap.appendChild(explain);
+
+  const mismatches = coherence && Array.isArray(coherence.mismatches)
+    ? coherence.mismatches
+    : [];
+  if (mismatches.length > 0) {
+    const ul = document.createElement('ul');
+    for (const m of mismatches) {
+      const li = document.createElement('li');
+      li.textContent =
+        `${String(m.id)}: expected ${String(m.expected)}, found ${String(m.actual)}`;
+      ul.appendChild(li);
+    }
+    wrap.appendChild(ul);
+  }
   els.findings.appendChild(wrap);
 }
 
@@ -818,6 +864,13 @@ function runInWorker(text, family) {
 }
 
 function analyzeText(text) {
+  // IAM-604: fail closed on an incoherent shipped version set. The startup check
+  // already disabled the button and rendered the notice; this guard also stops a
+  // programmatic caller (e.g. loadSample) from analyzing against a torn engine.
+  if (versionBlock) {
+    setStatus('Analysis is disabled until the version mismatch is resolved.');
+    return;
+  }
   if (typeof text !== 'string' || text.trim().length === 0) {
     invalidateCurrentJob();
     setBusy(false);
@@ -996,6 +1049,22 @@ function init() {
   setBusy(false); // stable initial aria-busy state on the findings region
   resetEvidence();
   renderSamples(); // IAM-505: build the built-in sample loader buttons
+
+  // IAM-604: version-coherence startup gate. If the shipped identifiers do not
+  // agree with the engine manifest, fail closed: disable the Analyze/import
+  // controls, show the mismatch notice, and refuse to analyze (analyzeText also
+  // guards on `versionBlock`). Event handlers are still wired below so the
+  // controls exist and stay inert; the guard - not just the disabled attribute -
+  // is the real block.
+  const coherence = checkVersionCoherence();
+  if (!coherence.ok) {
+    versionBlock = coherence;
+    if (els.analyzeBtn) els.analyzeBtn.disabled = true;
+    if (els.file) els.file.disabled = true;
+    setExportEnabled(false);
+    renderVersionBlock(coherence);
+    setStatus('Analysis is disabled: version identifiers are inconsistent (possible partial deploy).');
+  }
 
   if (els.analyzeBtn) {
     els.analyzeBtn.addEventListener('click', () => {
