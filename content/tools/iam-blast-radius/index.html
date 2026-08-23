@@ -22,20 +22,14 @@
   <title>IAM Blast Radius - client-side AWS IAM policy analyzer</title>
 
   <!--
-    IAM-509: SEO / indexing launch bundle is STAGED but GATED.
-    The <meta name="robots" content="noindex"> below is intentionally KEPT, and
-    NO sitemap entry is added (this static tool is not emitted by Pelican's
-    sitemap plugin, and none is to be added by hand). The canonical, description,
-    Open Graph, Twitter Card, and SoftwareApplication JSON-LD below are STAGED so
-    the launch bundle is ready and reviewable, but the page stays out of the
-    index until the human flip.
-    TODO(Oliver): flip noindex + add sitemap + submit to Search Console when the
-    Phase-B gates are signed off (Oliver decision). Until then this page is not
-    indexable and advertises no crawlable URL.
-    Every claim in the metadata/JSON-LD below is also stated in the visible
-    "About this tool" docs section, and all of it is static + CSP-clean.
+    SEO / indexing LAUNCHED 2026-08-22 (Phase-B semantic-assurance gates +
+    Phase-6 CI/CD hardening signed off). The page is now indexable; its canonical
+    URL is injected into sitemap.xml by the deploy workflow (static tools are not
+    emitted by Pelican's sitemap plugin). Every claim in the metadata/JSON-LD
+    below is also stated in the visible "About this tool" docs section, and all of
+    it is static + CSP-clean. Remaining human step: submit/inspect in Search Console.
   -->
-  <meta name="robots" content="noindex">
+  <meta name="robots" content="index,follow">
   <link rel="canonical" href="https://rivassec.com/tools/iam-blast-radius/">
   <meta name="description" content="Privacy-preserving, client-side AWS IAM policy analyzer. Paste one policy and see its potential blast radius - privilege-escalation paths, role-assumption reach, sensitive-data access, and broad-resource grants - analyzed entirely in your browser, with every finding graded by certainty. It shows the potential blast radius of a single policy, not a full account-wide permission evaluation.">
   <meta property="og:type" content="website">
