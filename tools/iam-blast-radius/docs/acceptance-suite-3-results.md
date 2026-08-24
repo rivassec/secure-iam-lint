@@ -18,6 +18,20 @@ enforced by the dedicated harnesses (`acceptance-suite-3-fixtures.test.js`,
 Generated against the working-tree engine (build SHA `dev`, rule version `1`,
 action catalog `2026.08.22`).
 
+## Post-release correction (2026-08-24) - honest tally
+
+Corrected release tally: **38/39 engine cases pass, one known conservative
+FALSE POSITIVE (T91); 7 procedural/UI cases covered by named acceptance tests.**
+
+T91 (cross-account PassRole) is reclassified from COMPLETE to a **known
+conservative false positive**, not merely a caveated pass. A cross-account-only
+`iam:PassRole` target cannot support the reported same-account EC2 execution
+path, so reporting `PASSROLE-EC2:critical` is analytically incorrect even though
+it errs on the safe (over-claim) side. FIX SPEC (queued, Phase 11): when the
+subject account is known and differs from the exact role-ARN account, SUPPRESS
+the compound path and report an ineffective/incompatible PassRole grant; without
+subject-account context, mark viability UNKNOWN rather than critical.
+
 ## Verdict legend (docs/acceptance-suite-3.md "Result states")
 
 - **COMPLETE** - supported semantics fully evaluated; no overstatement.
@@ -101,7 +115,7 @@ No suite-3 test currently returns a false or overstated result.
 | 88 | Only execution role is passable | COMPLETE | `PASSROLE-SERVICE`; execution-role influence only, not application credentials |
 | 89 | Only task role is passable | COMPLETE | `PASSROLE-SERVICE` task-role execution path; target perms unknown |
 | 90 | RegisterTaskDefinition without RunTask | COMPLETE | `PASSROLE-SERVICE` staging capability; no confirmed launch (RunTask absent) |
-| 91 | Cross-account PassRole target | COMPLETE | `PASSROLE-EC2` with the same-account-service caveat; foreign-account role path not asserted as fully viable |
+| 91 | Cross-account PassRole target | KNOWN FALSE POSITIVE (conservative) | emits `PASSROLE-EC2:critical` with a same-account-service caveat in prose, but a cross-account-only PassRole cannot support the same-account EC2 path - analytically incorrect. Fix queued Phase 11 (subject-account-aware suppression / UNKNOWN viability). |
 
 ## Campaign F - false-positive control, state isolation, rendering safety, limits
 

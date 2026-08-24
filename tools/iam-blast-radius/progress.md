@@ -100,3 +100,20 @@ distinct, critical OK; T90 RegisterTaskDefinition-without-RunTask -> high stagin
 still emits PASSROLE-EC2:critical with only a prose same-account caveat (over-
 claims in the safe direction). Workflow-robustness follow-up: treat a
 critic-agent error as NON-pass (retry / block), not as an implicit approval.
+
+## Post-release corrections (2026-08-24) - MUST stay in the release record
+1. T91 is a KNOWN CONSERVATIVE FALSE POSITIVE, not a residual quirk. Honest
+   Suite-III tally: 38/39 engine cases pass + 1 known conservative FP (T91) + 7
+   procedural/UI cases. Fix queued Phase 11: subject-account-aware PassRole
+   viability (differs-from-role-account -> suppress/ineffective; unknown-subject
+   -> UNKNOWN viability, never critical).
+2. CRITIC ERRORS MUST FAIL CLOSED (new workflow standard, applies to all future
+   Ralph phases). Model each critic outcome explicitly as one of:
+   PASS | BLOCKER | ERROR | TIMEOUT | INVALID_RESPONSE. ONLY all-PASS permits
+   acceptance. Null / missing / malformed / errored / timed-out critic results
+   must: (a) prevent auto-acceptance, (b) write a ledger entry, (c) record
+   attempts + failure reason, (d) retry within a bounded policy, (e) require a
+   successful review before promotion. Root cause of the IAM-1005 miss: a 529
+   storm made all critics return null, which the harness read as an empty
+   blocker list = implicit approval. That control failure is more serious than
+   T91 because it compromises the review itself.
