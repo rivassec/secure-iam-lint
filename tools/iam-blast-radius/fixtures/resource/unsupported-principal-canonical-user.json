@@ -1,0 +1,49 @@
+{
+  "name": "CanonicalUser resource grant surfaces fail-closed (never silently dropped)",
+  "note": "IAM-1208 (Phase 12.1, fix 4): a recognized-but-unmodeled Amazon S3 CanonicalUser principal is NOT one of the modeled resource-finding types (anonymous / named account / service / KMS account-delegation). Before this fix it produced ZERO findings - a silent drop that reads as 'safe'. The resource evaluator now fails closed toward surfacing: it emits exactly one RESOURCE-UNSUPPORTED-PRINCIPAL finding (medium) so the grant is always visible, mirroring the trust family's fail-closed invalid-principal handling. No graph can-access edge is drawn (the reach is UNDETERMINED). The policy must NOT be mis-analyzed as an identity policy (no DATA-READ / DATA-EXFIL / WILDCARD-RESOURCE).",
+  "phase": 12,
+  "story": "IAM-1208",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::shared-assets/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GrantCanonicalUser",
+        "Effect": "Allow",
+        "Principal": {
+          "CanonicalUser": "79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be"
+        },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::shared-assets/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "s3-object",
+    "principalTypes": ["canonical-user"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-UNSUPPORTED-PRINCIPAL"],
+    "findingSeverities": { "RESOURCE-UNSUPPORTED-PRINCIPAL": "medium" },
+    "whyIncludes": {
+      "RESOURCE-UNSUPPORTED-PRINCIPAL": ["CanonicalUser", "does NOT model", "unsupported"]
+    },
+    "graphEdgeTypes": [],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ", "PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT"]
+  }
+}

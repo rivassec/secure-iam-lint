@@ -1,0 +1,49 @@
+{
+  "name": "Invalid wildcard Principal ARN on a resource policy surfaces fail-closed",
+  "note": "IAM-1208 (Phase 12.1, fix 4): an AWS Principal ARN carrying a partial '*'/'?' wildcard (arn:aws:iam::123456789012:role/app/*) is an INVALID Principal element - AWS rejects such a policy at save time and the granted set is UNDETERMINED. It is neither a specific same/cross-account grant nor a broad one, so the named-principal branches never emit it and, before this fix, it was silently dropped (zero findings). The evaluator now fails closed toward surfacing with one RESOURCE-UNSUPPORTED-PRINCIPAL finding (high), never expanding the wildcard into 'every matching role' and never dropping it. No graph can-access edge is drawn (the reach is UNDETERMINED). Must not be mis-analyzed as identity.",
+  "phase": 12,
+  "story": "IAM-1208",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::deployments/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GrantWildcardArn",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::123456789012:role/app/*"
+        },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::deployments/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "s3-object",
+    "principalTypes": ["aws-principal-arn-wildcard"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-UNSUPPORTED-PRINCIPAL"],
+    "findingSeverities": { "RESOURCE-UNSUPPORTED-PRINCIPAL": "high" },
+    "whyIncludes": {
+      "RESOURCE-UNSUPPORTED-PRINCIPAL": ["NOT a valid IAM Principal element", "UNDETERMINED", "fail-closed"]
+    },
+    "graphEdgeTypes": [],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ", "PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT"]
+  }
+}

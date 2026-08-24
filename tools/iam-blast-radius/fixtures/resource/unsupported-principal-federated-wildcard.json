@@ -1,0 +1,49 @@
+{
+  "name": "Invalid wildcard Federated principal on a resource policy surfaces fail-closed",
+  "note": "IAM-1208 (Phase 12.1, fix 4): a Federated principal containing a partial '*'/'?' wildcard (arn:aws:iam::123456789012:oidc-provider/*) is an INVALID Principal element - a Federated principal is a SPECIFIC provider ARN and the element does not wildcard-match provider ARNs, so the member matches NO provider. Before this fix it was silently dropped (zero findings). The evaluator now fails closed toward surfacing with one RESOURCE-UNSUPPORTED-PRINCIPAL finding (high). No graph can-access edge is drawn.",
+  "phase": 12,
+  "story": "IAM-1208",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sqs", "arn": "arn:aws:sqs:us-west-2:123456789012:ingest-queue" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GrantWildcardFederated",
+        "Effect": "Allow",
+        "Principal": {
+          "Federated": "arn:aws:iam::123456789012:oidc-provider/*"
+        },
+        "Action": "sqs:SendMessage",
+        "Resource": "arn:aws:sqs:us-west-2:123456789012:ingest-queue"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "sqs",
+    "principalTypes": ["federated-wildcard"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-UNSUPPORTED-PRINCIPAL"],
+    "findingSeverities": { "RESOURCE-UNSUPPORTED-PRINCIPAL": "high" },
+    "whyIncludes": {
+      "RESOURCE-UNSUPPORTED-PRINCIPAL": ["NOT a valid Principal element", "matches NO provider", "fail-closed"]
+    },
+    "graphEdgeTypes": [],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "PUBLIC-ACCESS", "RESOURCE-CONFUSED-DEPUTY"]
+  }
+}

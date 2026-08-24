@@ -1,0 +1,49 @@
+{
+  "name": "Invalid wildcard Service principal on a resource policy surfaces fail-closed",
+  "note": "IAM-1208 (Phase 12.1, fix 4): a Service principal containing a partial '*'/'?' wildcard (ec2-*.amazonaws.com) is an INVALID Principal element - an AWS Service principal is an EXACT identifier and the element does not wildcard-match service names, so the member matches NO service. It is not a valid service grant, so the confused-deputy (service) branch never emits it and, before this fix, it was silently dropped. The evaluator now fails closed toward surfacing with one RESOURCE-UNSUPPORTED-PRINCIPAL finding (high), never presented as a normal service grant. No graph can-access edge is drawn.",
+  "phase": 12,
+  "story": "IAM-1208",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sns", "arn": "arn:aws:sns:us-west-2:123456789012:security-events" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GrantWildcardService",
+        "Effect": "Allow",
+        "Principal": {
+          "Service": "ec2-*.amazonaws.com"
+        },
+        "Action": "sns:Publish",
+        "Resource": "arn:aws:sns:us-west-2:123456789012:security-events"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "sns",
+    "principalTypes": ["service-wildcard"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-UNSUPPORTED-PRINCIPAL"],
+    "findingSeverities": { "RESOURCE-UNSUPPORTED-PRINCIPAL": "high" },
+    "whyIncludes": {
+      "RESOURCE-UNSUPPORTED-PRINCIPAL": ["NOT a valid Principal element", "matches NO", "fail-closed"]
+    },
+    "graphEdgeTypes": [],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "PUBLIC-ACCESS", "RESOURCE-CONFUSED-DEPUTY"]
+  }
+}

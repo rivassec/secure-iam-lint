@@ -1403,6 +1403,96 @@
         "suite-2 26/27/28/32/33/49/51/53 + suite-3 69/85 now analyzed correctly (not fail-closed); scoreboards updated",
         "no regression to suites 1/2/3 or the identity/trust negative corpora; full node --test green"
       ]
+    },
+    {
+      "id": "IAM-1208",
+      "title": "Phase 12.1: resource-family adversarial hardening (principal-condition, source-set mismatch, null-context, dropped principals)",
+      "priority": 58,
+      "phase": 12,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Fix the resource evaluator over/under-claims the Phase-12 adversarial critic found in engine/resource.js (core suite unaffected; these are edge cases). (1) Principal '*' narrowed by a PRINCIPAL-IDENTITY condition is NOT unconditioned anonymous/public: extend PRINCIPAL_SCOPING_KEYS beyond aws:PrincipalOrgID to include aws:PrincipalArn, aws:PrincipalTag/*, aws:userid, aws:PrincipalOrgPaths, aws:PrincipalType. When such a key is present on an anonymous-'*' Allow, report 'Broad principal syntax narrowed by a principal condition' (high), NOT critical PUBLIC-ACCESS, and DROP the 'including anonymous / unauthenticated / anyone' wording (suite-2 test 49, suite-3 test 85).",
+        "(2) Multi-value confused-deputy mismatch: compute a resolvable-account SET for BOTH aws:SourceArn and aws:SourceAccount; when both sets are non-empty and FULLY DISJOINT (no shared account), classify the binding as state='mismatched' / severity=medium (warn: internally inconsistent, likely ineffective) - never info/source-bound. Handle both directions (single SourceAccount + multi SourceArn, and multi SourceAccount + single SourceArn) (suite-2 test 53 set variants).",
+        "(3) Fail closed at the resource boundary: analyzeResource(model, rejected-or-null-context) (parseResourceContext ok:false) must return ok:false (or a coverage object carrying the parser's actual code RESOURCE_CONTEXT_REQUIRED / UNSUPPORTED_RESOURCE_SHAPE) and a note that the context was REJECTED - never ok:true with a note claiming the policy was 'accepted and routed' / context 'recorded'.",
+        "(4) No silent drop of unmodeled principal types: route CanonicalUser, aws-principal-arn-wildcard, service-wildcard, and federated-wildcard principals to a fail-closed coverage-warning finding (mirror the trust family's 'fail closed toward surfacing'), so a CanonicalUser grant or an over-broad/invalid wildcard-ARN principal always surfaces >=1 finding, never zero. Add fixtures for all four fixes; do NOT regress the 8 suite-2 flips, suite-3 69/85, or any negative corpus."
+      ],
+      "acceptance": [
+        "Principal '*' + PrincipalArn/PrincipalTag/userid/OrgPaths/PrincipalType -> narrowed (high), no 'anonymous/anyone' wording (tests 49, 85); pure network-only or no-condition '*' still critical PUBLIC-ACCESS",
+        "disjoint multi-value SourceArn/SourceAccount -> 'mismatched' medium warning (both directions); genuinely source-bound still info negative-control (test 53)",
+        "analyzeResource with a rejected/null context fails closed (ok:false / correct code, 'rejected' note), never 'accepted and routed'",
+        "CanonicalUser / wildcard-ARN / service-wildcard / federated-wildcard principals surface a fail-closed coverage finding, never zero-findings; fixtures added; full node --test green; suite-2 flips + suite-3 69/85 + negative corpora not regressed"
+      ]
+    },
+    {
+      "id": "IAM-1300",
+      "title": "Phase 13: AWS-verified SCP/RCP semantics grounding doc",
+      "priority": 60,
+      "phase": 13,
+      "status": "pending",
+      "maximumIterations": 3,
+      "requirements": [
+        "Research + write docs/scp-rcp-semantics.md (AWS-verified, cite sources). SCP (Service Control Policy): a permission CEILING on member accounts - it constrains the MAXIMUM available permissions and NEVER grants; an action is effective only if allowed by an identity policy AND permitted (not denied, and within any SCP Allow) by every applicable SCP. Cover: Deny guardrails; SCP Allow-list ceilings; NotAction complements in SCPs (Deny NotAction = deny everything EXCEPT the listed, do NOT read the list as allowed); aws:RequestedRegion region guardrails with global-service exceptions; StringNotEqualsIfExists behavior in Deny. RCP (Resource Control Policy): org-level guardrails on RESOURCES, deny-only, set a ceiling on who may access org resources; confused-deputy at org scope (aws:SourceOrgID, aws:PrincipalIsAWSService, aws:SourceAccount presence via Null); RCPs never grant.",
+        "State the load-bearing invariant reused from the permissions-boundary ceiling family: an SCP/RCP Allow is a CEILING, not a grant - the analyzer must NEVER manufacture a positive capability finding/edge from an SCP/RCP. No shipped-code change in this story."
+      ],
+      "acceptance": [
+        "docs/scp-rcp-semantics.md present; covers SCP ceiling/deny-guardrail/NotAction/region semantics + RCP deny-only/confused-deputy semantics + the ceiling-not-grant invariant",
+        "claims consistent with current AWS docs (aws-verifier confirms against cited sources)",
+        "no shipped-code change"
+      ]
+    },
+    {
+      "id": "IAM-1301",
+      "title": "Phase 13: SCP ceiling semantics (ceiling, not grant)",
+      "priority": 61,
+      "phase": 13,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Model the SCP family as a CEILING family (reuse the permissions-boundary envelope pattern, engine/envelope.js). When family=scp (or the SCP branch of scp-rcp): an SCP Allow is the MAXIMUM permission envelope, NOT a grant - emit NO positive capability findings/edges claiming access; report the ceiling/guardrail shape and state 'SCPs set permission ceilings and do not grant permissions; effective access is the intersection of identity policies and this ceiling.' (docs/acceptance-suite.md test 19, docs/acceptance-suite-2.md test 43).",
+        "Deny guardrails: report an organizations:LeaveOrganization deny, region guardrails (StringNotEquals/StringNotEqualsIfExists aws:RequestedRegion with global-service NotAction exceptions) as GUARDRAILS, not grants. NotAction in an SCP Deny = deny everything except the listed - NEVER report the NotAction list as allowed capabilities. A negated IfExists in a Deny can still deny when the key is absent (test 43) - report the over-broad regional-deny hazard.",
+        "Add fixtures for suite-1 test 19 (SCP deny guardrail) and suite-2 test 43 (negated IfExists deny) analyzed as SCP guardrails (not fail-closed, not identity)."
+      ],
+      "acceptance": [
+        "SCP Allow -> ceiling/guardrail reporting, ZERO positive capability findings/edges; ceiling-not-grant wording present (tests 19, 43)",
+        "Deny guardrails + region controls reported as guardrails; NotAction-deny list never reported as allowed",
+        "negated-IfExists deny surfaces the over-broad regional-deny hazard (test 43)",
+        "fixtures present; full node --test green; identity/trust/resource behavior unchanged"
+      ]
+    },
+    {
+      "id": "IAM-1302",
+      "title": "Phase 13: RCP resource-control guardrails (deny-only, org confused-deputy)",
+      "priority": 62,
+      "phase": 13,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Model the RCP family: org-level resource guardrails, DENY-ONLY, a ceiling on who may access org resources - never a grant. Interpret a StringNotEqualsIfExists aws:SourceOrgID + Null aws:SourceAccount + Bool aws:PrincipalIsAWSService deny (docs/acceptance-suite-2.md test 52) as a resource-control guardrail targeting requests by AWS service principals with source-account context; do NOT report S3 permissions or public access; state a corresponding Allow must exist elsewhere; preserve the interaction of the three conditions (do not evaluate each as an independent deny).",
+        "Add a fixture for suite-2 test 52 analyzed as an RCP guardrail (not fail-closed, not identity, no manufactured grant)."
+      ],
+      "acceptance": [
+        "RCP deny-guardrail reported as a resource-control ceiling, no S3/public-access finding, no manufactured grant (test 52)",
+        "the SourceOrgID/Null/PrincipalIsAWSService condition interaction preserved, not evaluated as independent denies",
+        "fixture present; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1303",
+      "title": "Phase 13: fixturize + re-run all three suites + full-family capstone scoreboard",
+      "priority": 63,
+      "phase": 13,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Fixturize the SCP/RCP suite tests (suite-1 19, suite-2 43/52) as committed acceptance fixtures driven from analyze(); they flip from fail-closed to real SCP/RCP guardrail analysis. Re-run ALL THREE suites + node --test; update the scoreboards (docs/acceptance-suite-2-results.md + a final capstone note).",
+        "Capstone: confirm the analyzer now covers the FULL AWS IAM policy-family set - identity, role-trust, resource (S3/SNS/SQS/KMS), permissions-boundary, session, SCP, RCP - each either analyzed correctly or explicitly fail-closed on a genuinely-unmodeled sub-shape with a machine-readable code. Confirm NO regression to any suite (1/2/3) or any negative corpus (identity/trust/resource). Write a final family-coverage matrix to docs/."
+      ],
+      "acceptance": [
+        "suite-1 19 + suite-2 43/52 now analyzed as SCP/RCP guardrails (not fail-closed); scoreboards updated",
+        "full-family coverage matrix written; every family analyzed-or-explicitly-fail-closed with a code",
+        "no regression to suites 1/2/3 or the identity/trust/resource negative corpora; full node --test green"
+      ]
     }
   ]
 }
