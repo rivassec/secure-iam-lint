@@ -984,8 +984,27 @@ const LAMBDA_CODE_ONLY_ACTIONS = Object.freeze(['lambda:UpdateFunctionCode']);
 
 // --- PassRole + service-execution family -------------------------------------
 
+// An AWS account id is exactly 12 decimal digits. The cross-account PassRole
+// downgrade (T91) compares the subject account against the accounts pinned in
+// the passed-role ARNs via raw string inequality, so it MUST only run for a
+// well-formed concrete account id. A missing, wildcard ("*"), whitespace, or
+// textual/garbage subject ("unknown", "N/A", "tbd", "acct-1", ...) means the
+// subject account is AMBIGUOUS, not "a known account that differs": the path's
+// cross-account viability is UNKNOWN, so the critical->medium demotion must NOT
+// fire (firing it would silently suppress a possibly-viable critical path - the
+// exact false negative threat-model T8 forbids). Normalize/validate here so the
+// passedRoleAccounts comparison downstream is only reached for a real account id.
+const CONCRETE_ACCOUNT_ID_RE = /^[0-9]{12}$/;
+
 function detectPassRolePaths(allows, out, denies, ctx) {
-  const subjectAccount = ctx && ctx.subjectAccount ? String(ctx.subjectAccount) : null;
+  const rawSubjectAccount = ctx && ctx.subjectAccount != null ? String(ctx.subjectAccount) : null;
+  const subjectAccount = rawSubjectAccount && CONCRETE_ACCOUNT_ID_RE.test(rawSubjectAccount)
+    ? rawSubjectAccount
+    : null;
+  // The subject's partition (aws / aws-us-gov / aws-cn / ...). Defaults to 'aws'.
+  const subjectPartition = ctx && typeof ctx.partition === 'string' && ctx.partition.trim()
+    ? ctx.partition.trim()
+    : 'aws';
   // Gather the Allow statements that grant iam:PassRole (concrete or via iam:*).
   const passStmts = [];
   for (const stmt of allows) {
@@ -1157,34 +1176,101 @@ function detectPassRolePaths(allows, out, denies, ctx) {
       }
     }
 
-    // --- Cross-account PassRole target (suite-3 test 91) ---------------------
-    // iam:PassRole passes a role only to a service in the SAME account as the
-    // role; ec2:RunInstances (and peer service launches) run in the CALLER's
-    // account. If a subject/principal account is known and EVERY passed-role
-    // resource PINS a specific account, none of which equals the subject, the
-    // direct path is NOT viable: report it, but do not assert viability - lower
-    // confidence and warn about the account mismatch.
+    // --- PassRole target viability: account + partition + deny-residual (T91) -
+    // iam:PassRole passes a role only to a service in the SAME account AND SAME
+    // partition as the role; the service launch (ec2:RunInstances and peers) runs
+    // in the CALLER's account+partition. The direct compound path is viable only
+    // if a role in the subject's own account+partition can actually be passed.
     //
-    // CRITICAL guard (everyPassResourcePinsSpecificAccount): the downgrade fires
-    // only when NO resource can reach the subject's own account. A bare "*" or an
-    // account-wildcard role ARN (arn:aws:iam::*:role/...) coexisting with a
-    // foreign-account ARN still lets the principal pass a role in its OWN account
-    // to the service - a fully viable, wildcard-broad critical path - so the
-    // mismatch must NOT fire and must NOT emit a "not viable across accounts"
-    // claim in that case (severity stays critical).
+    //   subject KNOWN, no reachable same-account+partition role -> NOT viable:
+    //     demote (critical->medium) + a warning code. A pure PARTITION difference
+    //     (account matches, partition differs) -> PARTITION_MISMATCH; otherwise a
+    //     cross-ACCOUNT incompatibility -> PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE.
+    //     A Deny that removes every subject-account role (residual foreign-only,
+    //     T91-09) is the same kind of non-viability even when an Allow "*" nominally
+    //     reaches the subject account.
+    //   subject UNKNOWN, viability hinges on a concrete-account match (every passable
+    //     resource pins a CONCRETE 12-digit account, none is "*"/account-wildcard)
+    //     -> viability UNKNOWN: cap pathExploitability at low + record subjectAccount
+    //     as a required-unknown. Severity is NOT lowered (the subject COULD be that
+    //     account - suppressing a possibly-viable critical path is the false negative
+    //     threat-model T8 forbids); we merely refuse to over-claim exploitability.
+    //   otherwise (a "*" / account-wildcard reaches any account) -> viable, unchanged.
+    const parsedPassResources = passStmt.resources.map(parsePassResource);
+    const concreteSpecific = parsedPassResources.filter(
+      (r) => !r.star && !r.other
+        && !String(r.account).includes('*')
+        && !String(r.partition).includes('*'),
+    );
     let accountMismatch = false;
-    if (subjectAccount && passedRoleAccounts.length > 0
-      && everyPassResourcePinsSpecificAccount(passStmt.resources)
-      && passedRoleAccounts.every((a) => a !== subjectAccount)) {
-      accountMismatch = true;
-      severity = severity === 'critical' ? 'medium' : 'low';
-      pathExploitability = 'low';
-      extraWhy +=
-        ` Account mismatch: the passed role(s) are in account ` +
-        `${passedRoleAccounts.join(', ')} but the analyzed principal is in account ` +
-        `${subjectAccount}. iam:PassRole can pass a role only to a service in the ` +
-        'SAME account as the role, so this is NOT a viable direct ' +
-        `PassRole-to-${svc.service} path across accounts.`;
+    let targetResources = [];
+    let excludedTargets = [];
+    const warningCodes = [];
+    const requiredUnknowns = [];
+
+    if (subjectAccount) {
+      for (const r of concreteSpecific) {
+        if (resourceReachesSubject(r, subjectAccount, subjectPartition)) targetResources.push(r.raw);
+        else excludedTargets.push(r.raw);
+      }
+      const anyReaches = parsedPassResources.some(
+        (r) => resourceReachesSubject(r, subjectAccount, subjectPartition),
+      );
+      const subjectDenied = denyRemovesAllSubjectRoles(denies, subjectAccount, subjectPartition);
+      const viable = anyReaches && !subjectDenied;
+      if (!viable && (concreteSpecific.length > 0 || subjectDenied)) {
+        accountMismatch = true;
+        severity = severity === 'critical' ? 'medium' : 'low';
+        pathExploitability = 'low';
+        // A pure partition mismatch: every pinned resource matches the subject
+        // ACCOUNT but sits in a different partition (and no deny-residual involved).
+        const partitionOnly = !subjectDenied
+          && concreteSpecific.length > 0
+          && concreteSpecific.every(
+            (r) => r.account === subjectAccount && !partitionReaches(r.partition, subjectPartition),
+          );
+        if (partitionOnly) {
+          warningCodes.push('PARTITION_MISMATCH');
+          extraWhy +=
+            ` Partition mismatch: the passed role(s) are in partition ` +
+            `${[...new Set(concreteSpecific.map((r) => r.partition))].join(', ')} but the ` +
+            `analyzed principal is in partition ${subjectPartition}. iam:PassRole cannot ` +
+            'pass a role across partitions, so this is NOT a viable direct ' +
+            `PassRole-to-${svc.service} path.`;
+        } else {
+          warningCodes.push('PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE');
+          extraWhy += subjectDenied
+            ? ` Deny residual: an explicit Deny removes every iam:PassRole target in the ` +
+              `analyzed principal's account (${subjectAccount}), leaving only foreign-account ` +
+              'roles in the allowed scope. A foreign-account role cannot be passed to a ' +
+              `same-account ${svc.service}, so this is NOT a viable direct PassRole-to-` +
+              `${svc.service} path across accounts.`
+            : ` Account mismatch: the passed role(s) are in account ` +
+              `${excludedTargets.length ? [...new Set(concreteSpecific.map((r) => r.account))].join(', ') : passedRoleAccounts.join(', ')} ` +
+              `but the analyzed principal is in account ${subjectAccount}. iam:PassRole can ` +
+              'pass a role only to a service in the SAME account as the role, so this is NOT ' +
+              `a viable direct PassRole-to-${svc.service} path across accounts.`;
+        }
+      }
+    } else {
+      // Subject account unknown. Only cap exploitability when viability genuinely
+      // depends on an account we cannot confirm: every passable resource pins a
+      // CONCRETE 12-digit account (no "*"/account-wildcard that would reach any
+      // account regardless). A placeholder/short account id (e.g. "1") is NOT
+      // treated as a concrete account (preserves prior medium exploitability).
+      const allPinConcreteAccount = parsedPassResources.length > 0
+        && parsedPassResources.every(
+          (r) => !r.star && !r.other && CONCRETE_ACCOUNT_ID_RE.test(String(r.account)),
+        );
+      if (allPinConcreteAccount) {
+        pathExploitability = 'low'; // cap (never raises: 'low' is the floor)
+        requiredUnknowns.push('subjectAccount');
+        extraWhy +=
+          ` The passed role(s) pin a specific account, but the analyzed principal's ` +
+          'account is not supplied, so whether this is a same-account (viable) or ' +
+          'cross-account (not viable) pass is UNKNOWN. Path exploitability is capped ' +
+          'at low pending the subject account; supply it to resolve viability.';
+      }
     }
 
     // IAM-105 risk-factor checklist: the present/absent grants + scope
@@ -1331,6 +1417,12 @@ function detectPassRolePaths(allows, out, denies, ctx) {
         viable: false,
       };
     }
+    // IAM-1102 (11B): partition/account/deny-residual viability metadata. Only
+    // attached when non-empty so unaffected findings are byte-identical.
+    if (warningCodes.length) escalationFinding.escalation.warningCodes = warningCodes.slice();
+    if (requiredUnknowns.length) escalationFinding.escalation.requiredUnknowns = requiredUnknowns.slice();
+    if (targetResources.length) escalationFinding.escalation.targetResources = targetResources.slice();
+    if (excludedTargets.length) escalationFinding.escalation.excludedTargets = excludedTargets.slice();
     out.push(escalationFinding);
   }
 }
@@ -1708,20 +1800,70 @@ function specificAccountsInRoleArns(resources) {
   return accts.sort();
 }
 
-// suite-3 test 91 hardening: does EVERY resource in a PassRole grant pin a
-// SPECIFIC (non-wildcard) AWS account in a role ARN? Only when that holds can we
-// be certain no resource reaches a role in the subject's OWN account. A bare
-// "*", an account-wildcard role ARN (arn:aws:iam::*:role/...), or any non-pinned
-// resource means a SAME-account pass is possible, so the cross-account mismatch
-// downgrade must NOT fire - firing it would understate a viable, wildcard-broad
-// same-account PassRole path (false negative). Empty list -> false (nothing to
-// pin), which combines with the passedRoleAccounts.length guard.
-function everyPassResourcePinsSpecificAccount(resources) {
-  const list = Array.isArray(resources) ? resources : [];
-  if (list.length === 0) return false;
-  return list.every(
-    (r) => /^arn:aws:iam::[0-9]{1,20}:role\//.test(String(r == null ? '' : r)),
-  );
+
+// --- Partition-aware PassRole target parsing (IAM-1102 / T91) -----------------
+// iam:PassRole passes a role only to a service in the SAME account AND the SAME
+// partition as the role; the service launch runs in the CALLER's account +
+// partition. Reasoning about cross-account/cross-partition viability therefore
+// needs the role ARN's partition and account, not just the account. Any partition
+// (aws / aws-us-gov / aws-cn / ...) is captured, unlike the aws-only helpers above.
+const ROLE_ARN_PARTS_RE = /^arn:([^:]*):iam::([^:]*):role\/(.*)$/i;
+
+// Classify one PassRole RESOURCE token. Returns exactly one shape:
+//   { star:true }                    -> "*" (reaches any account/partition)
+//   { other:true }                   -> not a role ARN we can pin (conservative)
+//   { partition, account, path, raw} -> a role ARN (account/partition may be "*")
+function parsePassResource(r) {
+  const s = String(r == null ? '' : r);
+  if (s === '*') return { star: true, raw: s };
+  const m = ROLE_ARN_PARTS_RE.exec(s);
+  if (!m) return { other: true, raw: s };
+  return { partition: m[1], account: m[2], path: m[3], raw: s };
+}
+
+function partitionReaches(resPartition, subjectPartition) {
+  return resPartition === subjectPartition || String(resPartition).includes('*');
+}
+function accountReaches(resAccount, subjectAccount) {
+  return String(resAccount).includes('*') || resAccount === subjectAccount;
+}
+
+// Could this passable-role RESOURCE reach a role in the subject's OWN account +
+// partition (i.e. could iam:PassRole hand a same-account role to a same-account
+// service)? A bare "*" reaches anything; a role ARN reaches the subject only when
+// BOTH its partition and account admit the subject's. A non-role-ARN we cannot pin
+// is treated as NOT a same-account reach (conservative - it never manufactures
+// viability). Requires a known subjectAccount.
+function resourceReachesSubject(res, subjectAccount, subjectPartition) {
+  if (res.star) return true;
+  if (res.other) return false;
+  return partitionReaches(res.partition, subjectPartition)
+    && accountReaches(res.account, subjectAccount);
+}
+
+// T91-09 deny-residual: does an in-scope, UNCONDITIONAL Deny on iam:PassRole
+// remove EVERY role in the subject's account+partition from the passable set? If
+// so, even an Allow "*" cannot pass a same-account role, so the direct same-account
+// path is not viable. A conditional deny is NOT treated as a guaranteed removal
+// (it may not always apply) - being conservative here avoids a false negative.
+function denyRemovesAllSubjectRoles(denies, subjectAccount, subjectPartition) {
+  if (!subjectAccount) return false;
+  const base = `arn:${subjectPartition}:iam::${subjectAccount}:role/`;
+  const probeA = `${base}__probe_alpha__`;
+  const probeB = `${base}__probe_beta_9x__`;
+  for (const d of Array.isArray(denies) ? denies : []) {
+    const deniesPassRole = (d.actions || []).some((a) => actionGrants(a, PASS_ROLE_ACTION));
+    if (!deniesPassRole) continue;
+    if (hasNonEmptyCondition(d)) continue; // conditional deny may not always apply
+    for (const r of (d.resources || [])) {
+      const pat = String(r);
+      // A pattern covers ALL subject-account roles iff it matches two DISTINCT
+      // role paths in that account+partition (so a single specific role ARN, which
+      // matches only its own path, does not qualify).
+      if (globMatch(pat, probeA) && globMatch(pat, probeB)) return true;
+    }
+  }
+  return false;
 }
 
 // A single principal has ONE value for each principal-scoped request key for the
@@ -2136,9 +2278,15 @@ export function analyzeEscalations(model, options) {
     const denies = model.statements.filter((s) => s.effect === 'Deny' && isIdentityStmt(s));
 
     const findings = [];
-    // IAM-1005: an optional analysis context (e.g. subjectAccount) flows to the
-    // detectors; only detectPassRolePaths reads it (cross-account PassRole).
-    const ctx = { subjectAccount: (options && options.subjectAccount) || null };
+    // IAM-1005 / IAM-1102 (11B): an optional analysis context (subjectAccount +
+    // partition) flows to the detectors; only detectPassRolePaths reads it
+    // (cross-account / cross-partition PassRole viability). partition defaults to
+    // 'aws' when unspecified.
+    const ctx = {
+      subjectAccount: (options && options.subjectAccount) || null,
+      partition: (options && typeof options.partition === 'string' && options.partition.trim())
+        ? options.partition.trim() : 'aws',
+    };
     for (const detect of DETECTORS) detect(allows, findings, denies, ctx);
 
     // Deterministic order: by anchor statement index, then escalation order,

@@ -74,6 +74,32 @@ source). Findings use a fixed schema: `{id, severity, location, criterion,
 evidence, required_outcome, blocking}`. Only `blocking:true` findings force a
 re-impl; the arbiter feeds them verbatim to the next engineer.
 
+### 1.5 The arbiter is a tested module, not ad-hoc code (NEW - IAM-1101 / 11A)
+
+The Section-1.2/1.3 outcome model is implemented ONCE as a testable repo module,
+`ralph/review-decision.mjs` (`classifyResponse` + `decide` + `runReview` +
+`InMemoryLedger`), and unit-gated by **all 15**
+`docs/record-tests/cases/workflow-cases.json` fault-injection cases in
+`tests/critic-fail-closed.test.js`. It is the empirical fix for the IAM-1005
+529-storm auto-accept: `ERROR`/`TIMEOUT`/`INVALID_RESPONSE`/`null`/missing critic
+results classify as explicit non-pass states, a story is accepted **iff** every
+required critic returns an explicit `PASS` **and** a durable, schema-valid ledger
+row is committed, and every fault (including a failed ledger write) blocks
+acceptance while still writing a ledger record. Its emitted objects conform to
+both bundle schemas (`critic-result.schema.json`, `review-ledger-entry.schema.json`),
+verified in-test by a self-contained subset validator.
+
+**Authoring standard for every phase workflow (12/13 onward):** the arbiter block
+in `ralph/phase*-workflow.js` MUST reuse this model rather than re-deriving accept
+logic. Because the Workflow-tool loader injects globals (`agent`/`parallel`/`log`/
+`phase`) and does not import cross-file modules into a workflow body,
+`ralph/phase11-workflow.js` carries an `arbitrate(panel, criticResponses)` helper
+that is a byte-for-byte behavioral mirror of `decide()` (all-PASS -> `approved`;
+any missing/`ERROR`/`TIMEOUT`/`INVALID_RESPONSE` -> `review_error`, fail-closed
+retry, never accept; any blocker -> `blocked`). Copy that block verbatim into new
+phase workflows and keep it in lockstep with `review-decision.mjs`; that module's
+15-case suite is the source of truth.
+
 ---
 
 ## 2. How often engineer agents are replaced (Ralph loop)

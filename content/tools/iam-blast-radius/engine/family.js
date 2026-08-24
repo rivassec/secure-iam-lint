@@ -128,6 +128,32 @@ export const COVERAGE_CODES = Object.freeze({
   // has no Resource element, so a Resource here is a trust-policy syntax error
   // (test 68).
   UNSUPPORTED_TRUST_RESOURCE: 'UNSUPPORTED_TRUST_RESOURCE',
+  // IAM-1103 (11C): a NON-EMPTY family selection that is neither a recognized
+  // canonical family, a known synonym (scp/rcp/trust), nor auto-detect. A typo or
+  // garbage token ("banana", "scpp", "identityx", "SCP " with stray whitespace)
+  // must FAIL CLOSED here rather than fall through to the auto-detect fallback and
+  // get silently analyzed as an identity policy (the DEF-05-style fail-OPEN). An
+  // absent/empty selection is NOT invalid - it is "no selection" (paste-and-go
+  // auto-detect, or POLICY_FAMILY_REQUIRED under the explicit-family contract).
+  INVALID_FAMILY: 'INVALID_FAMILY',
+});
+
+// IAM-1103: canonicalize the family-selection vocabulary. A caller (or a record-
+// test bundle) may name a family by a common synonym - notably the org-control
+// families "scp" / "rcp", and "trust" for role-trust. These are RECOGNIZED family
+// names, not garbage, so they must NOT slip through to the "unrecognized token ->
+// auto-detect" path and get silently analyzed as an identity policy (the DEF-05
+// fail-OPEN: an SCP run through identity rules emits confident capability findings
+// on a document that GRANTS nothing). We map each synonym to its canonical engine
+// token BEFORE override resolution; the canonical token then fails closed on its
+// own merits (scp-rcp / resource are unmodeled -> UNSUPPORTED_POLICY_FAMILY;
+// role-trust is shape-checked). A token that is neither canonical nor a known
+// synonym stays "unrecognized" and preserves the back-compatible auto-detect
+// fallback (family.test.js: "nonsense" -> auto-detect).
+const FAMILY_ALIASES = Object.freeze({
+  scp: FAMILIES.SCP_RCP,
+  rcp: FAMILIES.SCP_RCP,
+  trust: FAMILIES.ROLE_TRUST,
 });
 
 // The set of families a caller may select via the optional manual override.
@@ -368,9 +394,58 @@ export function detectFamily(model, options) {
   // from an ABSENT selection - so paste-and-go auto-detect remains available but
   // is no longer a silent default. An OVERRIDE_FAMILIES token is an explicit pick
   // of a concrete family; anything else (empty / garbage) is "no selection".
-  const rawSelection = typeof opts.family === 'string' ? opts.family : '';
+  // IAM-1103: canonicalize a recognized family synonym (scp/rcp/trust/...) to its
+  // engine token BEFORE any selection logic, so a known control-policy family
+  // never falls through to the auto-detect fallback and gets analyzed as identity
+  // (the DEF-05 fail-open). Case-insensitive; a genuinely unknown token is left
+  // untouched (it stays "unrecognized" and auto-detects, per family.test.js).
+  // IAM-1103: TRIM whitespace and canonicalize BEFORE any matching so a stray
+  // space ("SCP ") or case variance ("Rcp") still resolves to its canonical
+  // family. Resolution order: known synonym (scp/rcp/trust) -> canonical override
+  // family -> auto -> otherwise preserve the raw token for messaging. Case-
+  // insensitive throughout.
+  const rawInputRaw = typeof opts.family === 'string' ? opts.family : '';
+  const trimmed = rawInputRaw.trim();
+  const lower = trimmed.toLowerCase();
+  let canonical;
+  if (Object.prototype.hasOwnProperty.call(FAMILY_ALIASES, lower)) {
+    canonical = FAMILY_ALIASES[lower];
+  } else if (OVERRIDE_FAMILIES.has(lower)) {
+    canonical = lower;
+  } else if (lower === 'auto' || lower === 'auto-detect') {
+    canonical = lower;
+  } else {
+    canonical = trimmed; // unrecognized token, preserved for the error message
+  }
+  const rawSelection = canonical;
   const isAuto = rawSelection === 'auto' || rawSelection === 'auto-detect';
   const hasExplicitSelection = isAuto || OVERRIDE_FAMILIES.has(rawSelection);
+
+  // IAM-1103 (11C): a NON-EMPTY selection that resolved to none of the recognized
+  // forms is an INVALID family. FAIL CLOSED here - BEFORE shape classification and
+  // before the requireExplicitFamily gate - never auto-detect a typo/garbage token
+  // into identity (the DEF-05 fail-OPEN: an unrecognized family on an SCP-shaped
+  // grant-nothing document would emit confident identity capability findings). An
+  // empty/absent selection is "no selection", handled below, and is NOT invalid.
+  if (trimmed.length > 0 && !hasExplicitSelection) {
+    return Object.freeze({
+      detected: FAMILIES.UNKNOWN,
+      override: null,
+      family: null,
+      supported: false,
+      blocked: true,
+      blockingCodes: Object.freeze([Object.freeze(code(
+        COVERAGE_CODES.INVALID_FAMILY,
+        `Unrecognized policy family "${trimmed}". Select a supported family ` +
+          '(identity, resource, role-trust, permissions-boundary, scp-rcp, or ' +
+          'session) or Auto-detect. Analysis stops rather than guess a family from ' +
+          'an unrecognized selection and risk analyzing the document as the wrong ' +
+          'family (unsupported does NOT mean safe).',
+        null,
+      ))]),
+      notes: Object.freeze([]),
+    });
+  }
 
   // IAM-1001: MANDATORY family selection (the UI contract). When the caller
   // demands an explicit selection and none was made, fail closed with

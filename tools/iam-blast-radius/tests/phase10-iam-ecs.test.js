@@ -210,3 +210,38 @@ test('91c: foreign PassRole ARN + account-wildcard ARN -> stays critical, no acc
     'must not assert non-viability when an account-wildcard reaches the subject account',
   );
 });
+
+// 11B (IAM-1102) regression guard: the cross-account demotion compares the
+// subject account against the passed-role accounts by RAW string inequality, so
+// it must fire ONLY for a well-formed concrete AWS account id (12 digits). An
+// ambiguous / garbage subjectAccount ("unknown", "*", whitespace, textual, wrong
+// length) means cross-account viability is UNKNOWN - the principal COULD be in
+// the foreign account, making the path fully viable/critical - so the finding
+// must stay critical and emit no account-mismatch (silently suppressing it is the
+// exact false negative threat-model T8 forbids).
+test('11B: an ambiguous/garbage subjectAccount does NOT demote a critical cross-account PassRole path', () => {
+  const policy = {
+    Version: '2012-10-17',
+    Statement: [
+      { Effect: 'Allow', Action: 'iam:PassRole', Resource: 'arn:aws:iam::999988887777:role/foreignRole' },
+      { Effect: 'Allow', Action: 'ec2:RunInstances', Resource: '*' },
+    ],
+  };
+  const text = JSON.stringify(policy);
+  // Sanity: with NO subject the path is critical.
+  assert.equal(byId(analyze(text), 'PASSROLE-EC2').severity, 'critical');
+  for (const bad of ['unknown', 'N/A', 'ambiguous', '*', '   ', 'acct-1', 'tbd', '123', '99998888777A', '0x1', '1234567890123']) {
+    const f = byId(analyze(text, { subjectAccount: bad }), 'PASSROLE-EC2');
+    assert.ok(f, `PASSROLE-EC2 present for subjectAccount ${JSON.stringify(bad)}`);
+    assert.equal(f.severity, 'critical', `garbage subjectAccount ${JSON.stringify(bad)} must not demote the path`);
+    assert.ok(!f.escalation.accountMismatch, `no account-mismatch asserted for ambiguous subject ${JSON.stringify(bad)}`);
+    assert.ok(
+      !/NOT a viable direct PassRole-to-ec2 path across accounts/i.test(f.why),
+      `must not claim non-viability for ambiguous subject ${JSON.stringify(bad)}`,
+    );
+  }
+  // A well-formed concrete account id that genuinely differs STILL demotes.
+  const demoted = byId(analyze(text, { subjectAccount: '111122223333' }), 'PASSROLE-EC2');
+  assert.notEqual(demoted.severity, 'critical', 'a real 12-digit foreign account id still demotes');
+  assert.ok(demoted.escalation.accountMismatch, 'account-mismatch asserted for a concrete differing account');
+});

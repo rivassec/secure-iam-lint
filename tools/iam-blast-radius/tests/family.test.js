@@ -285,12 +285,97 @@ test('manual override "identity" on an identity shape analyzes normally', () => 
   assert.ok(result.findings.length > 0, 'identity rules ran');
 });
 
-test('an unrecognized override token is ignored (auto-detect wins) and noted', () => {
-  const c = familyOf({ Statement: [{ Effect: 'Allow', Action: 's3:*', Resource: '*' }] }, { family: 'nonsense' });
-  assert.equal(c.override, null, 'garbage override not recorded as a real override');
-  assert.equal(c.family, FAMILIES.IDENTITY, 'auto-detect prevails');
-  assert.equal(c.blocked, false);
-  assert.ok(c.notes.some((n) => /Ignored unrecognized family override/.test(n)));
+// IAM-1103 (11C): a NON-EMPTY unrecognized/typo family token must FAIL CLOSED
+// with INVALID_FAMILY - never fall through to auto-detect and get analyzed as an
+// identity policy (the DEF-05-style fail-OPEN). Whitespace is trimmed and case is
+// canonicalized BEFORE matching, so "banana", "scpp", "identityx", and "SCP "
+// (trailing space that would otherwise miss the scp alias) are each rejected as
+// invalid, EXCEPT "SCP " which trims to the recognized scp synonym.
+test('an unrecognized/typo family token fails closed with INVALID_FAMILY (never auto-detect)', () => {
+  for (const bad of ['nonsense', 'banana', 'scpp', 'identityx', 'roletrust', 'IDENTITYX']) {
+    const c = familyOf({ Statement: [{ Effect: 'Allow', Action: 's3:*', Resource: '*' }] }, { family: bad });
+    assert.equal(c.override, null, `${bad}: garbage token not recorded as an override`);
+    assert.equal(c.family, null, `${bad}: no family resolved`);
+    assert.equal(c.detected, FAMILIES.UNKNOWN, `${bad}: detected UNKNOWN, never guessed identity`);
+    assert.equal(c.blocked, true, `${bad}: fails closed`);
+    assert.equal(c.supported, false, `${bad}: unsupported`);
+    assert.ok(
+      c.blockingCodes.some((b) => b.code === COVERAGE_CODES.INVALID_FAMILY),
+      `${bad}: blocks with INVALID_FAMILY`,
+    );
+  }
+});
+
+// IAM-1103: whitespace is trimmed BEFORE alias matching, so a recognized synonym
+// with stray surrounding whitespace still canonicalizes (it is NOT treated as an
+// invalid token). "SCP " -> scp -> scp-rcp -> fails closed as an unmodeled family.
+test('a recognized family with stray whitespace is trimmed, not rejected as invalid', () => {
+  const idShape = { Statement: [{ Effect: 'Allow', NotAction: 'iam:*', Resource: '*' }] };
+  for (const token of ['SCP ', '  scp', ' rcp ', 'identity ']) {
+    const c = familyOf(idShape, { family: token });
+    assert.ok(
+      !c.blockingCodes.some((b) => b.code === COVERAGE_CODES.INVALID_FAMILY),
+      `${JSON.stringify(token)}: trimmed to a recognized family, not INVALID_FAMILY`,
+    );
+  }
+});
+
+// An empty / whitespace-only selection is "no selection" (paste-and-go
+// auto-detect), NOT an invalid token - it must never block with INVALID_FAMILY.
+test('an empty or whitespace-only family is no-selection (auto-detect), not INVALID_FAMILY', () => {
+  for (const token of ['', '   ', undefined]) {
+    const c = familyOf({ Statement: [{ Effect: 'Allow', Action: 's3:*', Resource: '*' }] }, { family: token });
+    assert.ok(
+      !c.blockingCodes.some((b) => b.code === COVERAGE_CODES.INVALID_FAMILY),
+      `${JSON.stringify(token)}: no-selection auto-detects, never INVALID_FAMILY`,
+    );
+    assert.equal(c.family, FAMILIES.IDENTITY, `${JSON.stringify(token)}: auto-detect prevails`);
+    assert.equal(c.blocked, false);
+  }
+});
+
+// IAM-1103 (11C) regression guard: a RECOGNIZED family synonym for an unmodeled
+// control-policy family ("scp" / "rcp", the aliases of the canonical scp-rcp)
+// must NOT slip through the "unrecognized token -> auto-detect" path and get
+// analyzed as an identity policy (the DEF-05 fail-OPEN, where an SCP run through
+// identity rules would emit confident capability findings on a grant-nothing
+// document). It canonicalizes to scp-rcp and fails closed, never analyzing as
+// identity. A genuinely unknown token ("nonsense") now ALSO fails closed - with
+// INVALID_FAMILY (asserted above) - so neither a known control-family synonym nor
+// an unknown token can fall through to the identity auto-detect fail-open.
+test('IAM-1103: recognized control-family synonyms (scp/rcp/trust) canonicalize and fail closed - never analyze as identity', () => {
+  const idShape = { Statement: [{ Effect: 'Allow', NotAction: 'iam:*', Resource: '*' }] };
+  for (const alias of ['scp', 'rcp', 'SCP', 'Rcp']) {
+    const c = familyOf(idShape, { family: alias });
+    assert.equal(c.family, FAMILIES.SCP_RCP, `${alias} canonicalizes to scp-rcp`);
+    assert.equal(c.override, FAMILIES.SCP_RCP, `${alias} recorded as an scp-rcp override, not ignored`);
+    assert.equal(c.blocked, true, `${alias} fails closed (unmodeled control family)`);
+    assert.equal(c.supported, false, `${alias} is unsupported`);
+    assert.ok(
+      c.blockingCodes.some((b) => b.code === COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY),
+      `${alias} blocks with UNSUPPORTED_POLICY_FAMILY`,
+    );
+  }
+  // "trust" is the role-trust synonym; on an identity shape it fails closed on the
+  // shape mismatch (the shape wins), never analyzing the identity grant.
+  const t = familyOf(idShape, { family: 'trust' });
+  assert.equal(t.family, FAMILIES.ROLE_TRUST, 'trust canonicalizes to role-trust');
+  assert.equal(t.blocked, true, 'role-trust forced onto an identity shape fails closed');
+});
+
+// IAM-1103: end-to-end through analyze() - the DEF-05 case. A caller driving
+// analyze() directly with family:'scp' must get a BLOCKED result with zero
+// findings and zero capability edges, not identity findings.
+test('IAM-1103: analyze() with family "scp" fails closed - no findings, no edges (DEF-05)', () => {
+  const scpPolicy = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', NotAction: 'iam:*', Resource: '*' }],
+  });
+  const res = analyze(scpPolicy, { family: 'scp' });
+  assert.equal(res.coverage.blocked, true, 'scp fails closed');
+  assert.equal(res.findings.length, 0, 'no capability findings on an unmodeled control policy');
+  const edgeCount = res.graph ? (res.graph.edges || []).length : 0;
+  assert.equal(edgeCount, 0, 'no capability edges leak from a blocked family');
 });
 
 // ---------------------------------------------------------------------------

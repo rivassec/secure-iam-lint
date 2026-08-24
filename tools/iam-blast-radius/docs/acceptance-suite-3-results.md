@@ -18,19 +18,39 @@ enforced by the dedicated harnesses (`acceptance-suite-3-fixtures.test.js`,
 Generated against the working-tree engine (build SHA `dev`, rule version `1`,
 action catalog `2026.08.22`).
 
-## Post-release correction (2026-08-24) - honest tally
+## T91 resolved (Phase 11B / IAM-1102, 2026-08-24) - honest tally
 
-Corrected release tally: **38/39 engine cases pass, one known conservative
-FALSE POSITIVE (T91); 7 procedural/UI cases covered by named acceptance tests.**
+Release tally: **39/39 engine cases pass, no known false positive; 7
+procedural/UI cases covered by named acceptance tests.**
 
-T91 (cross-account PassRole) is reclassified from COMPLETE to a **known
-conservative false positive**, not merely a caveated pass. A cross-account-only
+The 2026-08-24 post-release correction reclassified T91 (cross-account PassRole)
+from COMPLETE to a **known conservative FALSE POSITIVE**: a cross-account-only
 `iam:PassRole` target cannot support the reported same-account EC2 execution
-path, so reporting `PASSROLE-EC2:critical` is analytically incorrect even though
-it errs on the safe (over-claim) side. FIX SPEC (queued, Phase 11): when the
-subject account is known and differs from the exact role-ARN account, SUPPRESS
-the compound path and report an ineffective/incompatible PassRole grant; without
-subject-account context, mark viability UNKNOWN rather than critical.
+path, so emitting `PASSROLE-EC2:critical` was analytically incorrect even though
+it erred on the safe (over-claim) side.
+
+**Phase 11B (IAM-1102) fixes it in the engine.** `analyze()` now accepts a
+subject-account context (`options.subjectAccount` + `options.partition`) and
+makes PassRole path viability account/partition-aware, because `iam:PassRole`
+passes a role only to a service in the SAME account AND partition as the role:
+
+- Subject account KNOWN and no passable role reaches it -> the compound path is
+  NOT reported critical; it is downgraded and carries a machine-readable warning
+  code (`PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE`, or `PARTITION_MISMATCH` when only
+  the partition differs). A same-account `Allow *` fenced to foreign-only by an
+  explicit `Deny` on the subject's own roles is the same non-viability.
+- Subject account UNKNOWN -> viability is UNKNOWN, never `critical`:
+  `pathExploitability` is capped at `low` and `subjectAccount` is recorded as a
+  required-unknown (silent suppression is forbidden - the subject could be the
+  pinned account; threat-model T8).
+- Same-account, account-wildcard (`*:role/*`), and mixed targets that reach the
+  subject account stay viable/critical, with foreign-only targets removed from
+  the reachable set (`excludedTargets`) rather than the whole path dropped.
+
+Frozen truth: all 9 `T91-*` cases in `docs/record-tests/cases/analyzer-cases.json`
+are driven through the real engine by `tests/t91-passrole-viability.test.js`, and
+suite-3 test 91 (`fixtures/acceptance-3/test-91-cross-account-passrole-target.json`)
+now derives COMPLETE. T91 is a genuine pass, no longer a caveated over-claim.
 
 ## Verdict legend (docs/acceptance-suite-3.md "Result states")
 
@@ -115,7 +135,7 @@ No suite-3 test currently returns a false or overstated result.
 | 88 | Only execution role is passable | COMPLETE | `PASSROLE-SERVICE`; execution-role influence only, not application credentials |
 | 89 | Only task role is passable | COMPLETE | `PASSROLE-SERVICE` task-role execution path; target perms unknown |
 | 90 | RegisterTaskDefinition without RunTask | COMPLETE | `PASSROLE-SERVICE` staging capability; no confirmed launch (RunTask absent) |
-| 91 | Cross-account PassRole target | KNOWN FALSE POSITIVE (conservative) | emits `PASSROLE-EC2:critical` with a same-account-service caveat in prose, but a cross-account-only PassRole cannot support the same-account EC2 path - analytically incorrect. Fix queued Phase 11 (subject-account-aware suppression / UNKNOWN viability). |
+| 91 | Cross-account PassRole target | COMPLETE | with `subjectAccount=123456789012`, the foreign-account (`999900001111`) PassRole target does not reach the subject's own account, so `PASSROLE-EC2` is reported but downgraded (not critical, low path-exploitability) with `PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE`; the path is neither over-claimed nor silently dropped (IAM-1102). |
 
 ## Campaign F - false-positive control, state isolation, rendering safety, limits
 
