@@ -1,0 +1,41 @@
+{
+  "id": "suite3-test-65-boundary-selected-for-an-allow-heavy-policy",
+  "suite3Test": 65,
+  "title": "Boundary selected for an Allow-heavy policy",
+  "note": "IAM-1002 / suite-3 test 65: under an explicit Permissions-boundary selection, report a broad maximum-permissions envelope with NO can-read/can-write/can-delete/data-exfil graph edge. Exported family is permissions-boundary. Switching the same bytes to Identity must produce a materially different result.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "MaximumPermissions",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "dynamodb:*"
+        ],
+        "Resource": "*"
+      }
+    ]
+  },
+  "options": {
+    "family": "permissions-boundary",
+    "requireExplicitFamily": true
+  },
+  "envelopeExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "permissions-boundary",
+    "override": "permissions-boundary",
+    "status": "ok",
+    "findingIds": [
+      "PERMISSIONS-BOUNDARY-ENVELOPE"
+    ],
+    "severities": {
+      "PERMISSIONS-BOUNDARY-ENVELOPE": "high"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesIntersection": true,
+    "differsFromIdentity": true
+  }
+}

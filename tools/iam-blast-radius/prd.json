@@ -1045,6 +1045,161 @@
         "docs/acceptance-suite-2-results.md scoreboard written + progress.md updated",
         "full node --test green; no regression to suite 1 or either negative corpus"
       ]
+    },
+    {
+      "id": "IAM-1001",
+      "title": "Phase 10 (P0): mandatory policy-family selection contract",
+      "priority": 31,
+      "phase": 10,
+      "status": "pending",
+      "maximumIterations": 6,
+      "requirements": [
+        "Make policy-family selection MANDATORY (docs/acceptance-suite-3.md Campaign B, tests 64/67/68/69/70/71; release gate 2). The UI must NOT analyze until the user picks a family: default the selector to no selection and keep the Analyze control disabled (or return BLOCKED with a POLICY_FAMILY_REQUIRED code) until an explicit family is chosen. NEVER default to identity based on shape. Add a CSP-clean labeled <select> in index.html wired via addEventListener in app.js (no inline handlers). Options: Identity, Resource, Role trust, Permissions boundary, Session, SCP/RCP, and an explicit 'Auto-detect' choice (auto-detect is now an opt-in the user selects, not a silent default).",
+        "Engine: analyze() takes an explicit family (an options arg). Keep it back-compatible for the existing 956 unit tests + suite-1/suite-2 fixtures (an unspecified family may still auto-detect at the ENGINE api so those tests do not need mass rewrites) - the MANDATORY behavior is the UI contract. The UI passing no family yields POLICY_FAMILY_REQUIRED. An explicitly selected family drives semantics and overrides detection.",
+        "Family-shape guards under an explicit selection: Identity + a Principal -> BLOCKED UNSUPPORTED_PRINCIPAL (do not drop Principal and analyze the rest, test 67); Role trust + a Resource -> trust-policy Resource syntax error/block (test 68); Resource / SCP-RCP selected -> fail closed UNSUPPORTED_POLICY_FAMILY naming the selected family, input preserved (test 69).",
+        "State + export: changing the family selector INVALIDATES prior findings/summary/selected-edge/evidence/export immediately (reanalyze required or auto-reanalyze) - no identity result left visible under a boundary label (test 70). Every JSON + Markdown export records the selected family, analysis status, catalog version, and warnings; browser/JSON/Markdown status values agree; a blocked export is never labeled authoritative (test 71). Update Playwright specs."
+      ],
+      "acceptance": [
+        "no analysis result appears until a family is explicitly selected; no shape-based identity default (test 64); Analyze disabled or POLICY_FAMILY_REQUIRED",
+        "Identity+Principal / Trust+Resource / Resource / SCP-RCP fail closed with the right code, input preserved (tests 67/68/69)",
+        "family switch invalidates prior analysis (test 70); family+status+catalog-version+warnings in every export, statuses agree across surfaces (test 71)",
+        "existing 956 node tests + suite-1/suite-2 fixtures still green (engine back-compat); full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1002",
+      "title": "Phase 10 (P0): permissions-boundary + session family semantics (envelope/restriction, no capability edges)",
+      "priority": 32,
+      "phase": 10,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Under an explicit Permissions-boundary selection (suite-2 test 30, suite-3 test 65): treat Allows as a MAXIMUM-PERMISSIONS ENVELOPE - report broad breadth but emit NO positive capability edges (no can-read/can-write/can-delete/can-assign/can-pass/can-destroy/data-exfil) and NO escalation findings. State identity policies must independently allow an action and effective permissions are the INTERSECTION with the boundary. Switching the same bytes to Identity must produce a materially different result (test 65).",
+        "Under an explicit Session selection (suite-2 test 31, suite-3 test 66): treat as a session RESTRICTION/ceiling; no positive capability edge unless parent role/identity context is also supplied and modeled; do not silently relabel as Identity because the bytes are compatible; report a session ceiling or block as unsupported.",
+        "Exported family reflects the explicit selection (permissions-boundary / session).",
+        "Add acceptance fixtures for suite-2 30/31 and suite-3 65/66 (boundary: broad envelope, zero capability edges; session: ceiling, no standalone edge)."
+      ],
+      "acceptance": [
+        "permissions-boundary selection: envelope breadth, ZERO positive capability edges, no escalation; intersection semantics stated; Identity on same bytes differs (suite-2 30, suite-3 65)",
+        "session selection: ceiling framing, no capability/exfil edge without parent context (suite-2 31, suite-3 66)",
+        "fixtures present; full node --test green; identity/trust behavior unchanged"
+      ]
+    },
+    {
+      "id": "IAM-1003",
+      "title": "Phase 10 (P1): role-takeover correlation hardening (overlap + condition compatibility)",
+      "priority": 33,
+      "phase": 10,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "docs/acceptance-suite-3.md Campaign C. Test 74: a wildcard modifier resource (role/deployment/*) that OVERLAPS an exact assumable role (role/deployment/Prod) must correlate into a critical/high takeover on the concrete intersecting role; evidence names deployment/Prod; do not generalize beyond deployment/*. (Current engine misses this - correlation requires exact match.)",
+        "Test 75: statements with SIMULTANEOUSLY-UNSATISFIABLE conditions (contradictory aws:PrincipalAccount on the modify vs assume statements) must NOT correlate into a compound takeover; report the modification capability and mark the assumption grant non-matching for the supplied context; preserve both condition expressions. (Current engine over-claims a critical here.)",
+        "Regression (must stay correct): 72 exact same-role -> one critical; 73 different roles -> no correlation; 76 Deny removes a prerequisite -> no full path but keep the rest, not counted in risk; 77 AttachRolePolicy alternative; 78 modify-without-assume -> no self-assumption path; 80 duplicate modify statements -> one path, no duplicate edges. Test 79 cross-statement evidence integrity: PutRolePolicy/UpdateAssumeRolePolicy map only to stmt 0, AssumeRole only to stmt 1, across finding/graph/JSON/Markdown.",
+        "Add acceptance fixtures for 74 and 75 (positive overlap; negative contradictory-conditions)."
+      ],
+      "acceptance": [
+        "wildcard-overlap takeover correlates on the concrete intersecting role, not generalized (test 74)",
+        "contradictory-condition statements do NOT produce a compound takeover (test 75); both conditions preserved",
+        "regression 72/73/76/77/78/79/80 all still correct; fixtures for 74/75 present; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1004",
+      "title": "Phase 10 (P1): principal validation hardening (arrays, globs, condition wildcards)",
+      "priority": 34,
+      "phase": 10,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "docs/acceptance-suite-3.md Campaign D. Test 83: a Principal AWS ARRAY where one member has a partial wildcard (role/invalid-*) must block/flag the statement and identify array index 1 - do NOT silently drop the invalid member and report a complete result for only the valid one.",
+        "Confirm both * and ? partial wildcards in a Principal ARN are rejected/flagged (tests 81, 82). Confirm a short-form 12-digit account principal (111122223333) stays VALID cross-account delegation, not misclassified as an invalid ARN (test 84).",
+        "Test 85: a wildcard in an aws:PrincipalArn CONDITION VALUE must NOT be rejected as a partial Principal wildcard; under a Resource-policy selection it fails closed (family deferred), but the condition wildcard itself is never mis-flagged.",
+        "Add acceptance fixtures for 83 (array poisoning), 84 (short-form valid), 85 (condition wildcard not rejected)."
+      ],
+      "acceptance": [
+        "invalid Principal array member flagged with array-index-1 location; valid member not silently reported as complete (test 83)",
+        "* and ? in a Principal ARN flagged (81/82); short-form account principal stays valid (84); PrincipalArn condition wildcard never mis-flagged (85)",
+        "fixtures present; full node --test green; trust suite + trust negative corpus not regressed"
+      ]
+    },
+    {
+      "id": "IAM-1005",
+      "title": "Phase 10 (P2): IAM + ECS semantic precision",
+      "priority": 35,
+      "phase": 10,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Group membership (suite-2 test 36, suite-3 test 86): iam:AddUserToGroup on a group ARN -> a dedicated group-membership privilege-assignment finding (not generic DIRECT-IAM-ADMIN / AttachUserPolicy / PutUserPolicy); group privilege INFERRED from name at medium confidence; explain the API request selects the user while the Resource scopes the group.",
+        "ECS task vs execution role (suite-2 test 38, suite-3 tests 87/88/89): separate graph nodes + evidence for task role vs execution role, never merged. Both passable (87): application-credential path targets the TASK role; execution-role discussion limited to ECS startup/pull/logs/secrets, not application creds. Only execution role passable (88): report execution-role influence, do NOT claim app code gets execution-role creds, do not invent an absent task-role edge. Only task role passable (89): critical/high task-role execution, target perms unknown. Preserve ecs:RegisterTaskDefinition + ecs:RunTask as jointly relevant.",
+        "Test 90: iam:PassRole + ecs:RegisterTaskDefinition WITHOUT ecs:RunTask -> HIGH task-definition staging capability, NOT a confirmed critical code-execution path; explain another actor/scheduler could later run it, without claiming it will.",
+        "Test 91: iam:PassRole to a FOREIGN-account role (arn:aws:iam::999900001111:role/...) + ec2:RunInstances -> do NOT report a viable PassRole-to-EC2 path (PassRole passes roles only to services in the SAME account as the role); warn/lower confidence about the account mismatch. Add acceptance fixtures for 86/87/88/89/90/91."
+      ],
+      "acceptance": [
+        "AddUserToGroup -> dedicated group-membership finding (medium-confidence inferred privilege), not generic admin (test 86)",
+        "ECS task vs execution role kept distinct across findings + graph in all three shapes (87/88/89); RegisterTaskDefinition+RunTask joint",
+        "RegisterTaskDefinition without RunTask -> high staging, not critical execution (90); cross-account PassRole not reported viable, account-mismatch warned (91)",
+        "fixtures present; full node --test green; suite-2 37/39 (CloudFormation/CodeBuild) not regressed"
+      ]
+    },
+    {
+      "id": "IAM-1006",
+      "title": "Phase 10 (P2): condition + false-positive precision",
+      "priority": 36,
+      "phase": 10,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "ForAllValues/Null (suite-2 test 41, suite-3 test 96): ForAllValues:StringEquals on a multivalued key WITHOUT a Null presence check -> warn it may be vacuously true when the key is absent/empty and recommend Null:{key:false}; but WITH an explicit Null:{key:false} presence check (test 96) SUPPRESS that warning and treat both conditions as jointly required; never claim it controls tag VALUES (it controls keys).",
+        "Empty set condition (suite-3 test 97): ForAnyValue:StringEquals with an EMPTY array never matches -> report the statement ineffective/no-match (or a validation warning); do NOT create a capability or wildcard-resource finding; handle empty-array before graph generation.",
+        "Per-action resource evaluation (suite-3 test 95, suite-2 test 50): in a statement mixing an action that REQUIRES Resource:* (iam:ListRoles) with one where wildcard is dangerous (iam:PassRole), treat * as required/normal for ListRoles and remediable only for PassRole; only PassRole contributes to delegation/escalation; do not assign one resource-scope conclusion to the whole statement. Test 50: s3:GetObject on a bucket-only ARN -> action/resource-type mismatch coverage warning, no confirmed object-read, bucket-vs-object remediation.",
+        "Regression false-positive controls (suite-3 tests 92/93/94): iam:ListRoles / ec2:DescribeInstances / s3:ListAllMyBuckets on Resource:* -> informational enumeration only, NO remediable wildcard-resource finding and NO impossible ARN remediation. Add fixtures for 41/96/97/95/50 (+ regression 92/93/94)."
+      ],
+      "acceptance": [
+        "ForAllValues without Null -> vacuous-truth warning; WITH Null -> warning suppressed, both jointly required (tests 41, 96)",
+        "empty ForAnyValue array -> ineffective/no-match, no capability/wildcard finding (test 97)",
+        "mixed statement: * required for ListRoles, dangerous only for PassRole, per-action (test 95); bucket-ARN/object-action mismatch warned (test 50); 92/93/94 stay finding-free",
+        "fixtures present; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1007",
+      "title": "Phase 10 (P2/P3): parser hardening + rendering/export safety + limits",
+      "priority": 37,
+      "phase": 10,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "docs/acceptance-suite-3.md Campaign A + F. Case-insensitive duplicate condition keys (test 59): aws:PrincipalOrgID vs AWS:PrincipalOrgId in the same condition block are the SAME IAM key -> block/high-confidence validation error, not two independent AND conditions; preserve original spellings. Duplicate Sids (test 60): flag non-unique Sids; keep statement indexes + graph/finding/DOM/export IDs distinct so they never overwrite. UTF-8 BOM (test 62): accept by stripping exactly one leading BOM OR reject with a clear error - document + regression-test; do not strip embedded U+FEFF elsewhere. Ingestion parity (test 63): paste, .json import, and the harness entrypoint yield identical status/code/location/findings; filename never affects family. (Regression: 55/56/57/58 dup-keys + 61 JSONC still block.)",
+        "Rendering + export injection (test 99): policy-controlled strings containing <img onerror>, javascript: links, and fenced <script> must render as TEXT (safe-DOM, already enforced); Markdown export must escape/fence untrusted values so they cannot create active links or executable HTML; JSON export preserves exact strings; a validation-error rendering is itself injection-safe. Add a positive-witness fixture and assert inert handling.",
+        "State isolation (test 98): re-analysis fully replaces prior findings/graph/edge-selection/evidence/summary/exports; no stale critical state resurrected via repeat runs. Covered by determinism + a state-reset test.",
+        "Limits/determinism/early-abort ordering (test 100): for every configured limit generate limit-1 / limit / limit+1; over-limit returns TOO_LARGE or a specific complexity code BEFORE rule matching + graph layout; byte-size rejection precedes JSON parsing; an early parser error precedes semantic findings; same input+family is semantically deterministic; no partial 'analysis complete'. Add boundary fixtures where expressible as unit tests."
+      ],
+      "acceptance": [
+        "case-insensitive duplicate condition keys blocked (59); duplicate Sids flagged, IDs stay distinct (60); BOM behavior documented + tested (62); ingestion parity holds (63)",
+        "injection witnesses render inert in UI + safe in Markdown export, exact in JSON (99); re-analysis leaves no stale state (98)",
+        "limit-1/limit/limit+1 boundary behavior deterministic + early-abort ordering correct, no partial success (100)",
+        "fixtures/tests present; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1008",
+      "title": "Phase 10: fixturize all three suites + re-run all three + scoreboard",
+      "priority": 38,
+      "phase": 10,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Ensure every applicable case in docs/acceptance-suite.md (1-24), docs/acceptance-suite-2.md (25-54), and docs/acceptance-suite-3.md (55-100) has a committed fixture (or a documented reason it is a procedure/UI-only case) and is driven from engine/analyze.js output. Procedure/UI cases (paste/import parity, browser state, network monitor) covered by Playwright/unit where possible; no silent skips.",
+        "Re-run all THREE suites end to end + node --test. Confirm: suite 1 = 24/24; suite 2 targeted fixes (30/31/36/38/41/44/34/48/50) pass; suite 3 campaigns A-F pass per the release gate; the ONLY remaining honest fail-closed set is the full resource-policy family (S3/SNS/KMS) + RCP analysis (suite-2 26/27/28/32/33/49/51/53, 52), which stay BLOCKED with designBlocked markers naming the resource-policy-family follow-up.",
+        "Write docs/acceptance-suite-3-results.md (per-test verdict for 55-100) + update progress.md. Confirm no regression to suites 1/2, the identity negative corpus, or the trust negative corpus."
+      ],
+      "acceptance": [
+        "all three suites fixturized/driven, no silent skips; suite 1 24/24; suite 2 fixes intact; suite 3 A-F pass per release gate",
+        "resource-policy + RCP remain honest fail-closed with designBlocked markers (documented next tranche)",
+        "docs/acceptance-suite-3-results.md + progress.md updated; full node --test green; no regression to suites 1/2 or either negative corpus"
+      ]
     }
   ]
 }

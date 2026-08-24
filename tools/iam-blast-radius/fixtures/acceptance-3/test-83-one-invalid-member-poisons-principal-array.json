@@ -1,0 +1,40 @@
+{
+  "name": "Acceptance suite-3 test 83 - one invalid member poisons a Principal AWS array",
+  "note": "IAM-1004 (Phase 10) Campaign D: a Principal AWS array mixing a valid role ARN (index 0) with a partial-wildcard ARN (index 1, role/invalid-*) must identify the invalid member by its ARRAY INDEX (Principal.AWS[1]) and must NOT silently drop it and report a complete result for only ValidRole. The invalid member fails closed (TRUST-INVALID-PRINCIPAL + INVALID_PRINCIPAL_WILDCARD_ARN, coverage incomplete); the valid ValidRole is still analyzed (TRUST-CROSS-ACCOUNT) but the overall result is explicitly incomplete, never presented as clean.",
+  "phase": 10,
+  "story": "IAM-1004",
+  "suite": 3,
+  "acceptanceTest": 83,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": [
+            "arn:aws:iam::123456789012:role/ValidRole",
+            "arn:aws:iam::123456789012:role/invalid-*"
+          ]
+        },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-INVALID-PRINCIPAL"],
+    "preservesStrings": [
+      "arn:aws:iam::123456789012:role/ValidRole",
+      "arn:aws:iam::123456789012:role/invalid-*"
+    ],
+    "coverage": {
+      "incomplete": true,
+      "codesInclude": ["INVALID_PRINCIPAL_WILDCARD_ARN"]
+    },
+    "invalidPrincipal": {
+      "pathsInclude": ["Statement[0].Principal.AWS[1]"],
+      "whyIncludes": "Principal.AWS[1]"
+    }
+  }
+}

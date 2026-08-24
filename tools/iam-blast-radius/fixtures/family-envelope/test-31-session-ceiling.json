@@ -1,0 +1,38 @@
+{
+  "id": "suite2-test-31-session-policy-allow-is-a-session-restriction",
+  "suite2Test": 31,
+  "title": "Session-policy Allow is a session restriction",
+  "note": "IAM-1002: an EXPLICIT session selection reports a session ceiling, not a grant. No positive capability edge unless the parent role/identity context is also supplied and modeled (it is not). Effective access is the INTERSECTION of the parent policy and this ceiling.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SessionScope",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::incident-evidence/*"
+      }
+    ]
+  },
+  "options": {
+    "family": "session",
+    "requireExplicitFamily": true
+  },
+  "envelopeExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "session",
+    "override": "session",
+    "status": "ok",
+    "findingIds": [
+      "SESSION-CEILING"
+    ],
+    "severities": {
+      "SESSION-CEILING": "info"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesIntersection": true,
+    "differsFromIdentity": true
+  }
+}

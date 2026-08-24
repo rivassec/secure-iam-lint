@@ -155,6 +155,52 @@ test('boundary: a wildcard role scope is not expanded into "the same role"', () 
   assert.ok(res.findings.some((f) => f.id === 'ASSUME-ROLE-EXPANSION'), 'the broad assume is still its own expansion finding');
 });
 
+test('IAM-1006 mirror of test 74: a BOUNDED wildcard ASSUME scope covering a concrete modify/trust role -> one critical takeover anchored on the concrete role', () => {
+  // The exact MIRROR of the test-74 shape (wildcard modify + concrete assume):
+  // here the permission-grant/trust-modify legs name a CONCRETE role and the
+  // assume leg is a bounded, account-pinned wildcard (role/deployment/*) that
+  // provably covers it. All three legs reach the same concrete role, so the
+  // compound must yield the SAME single critical ROLE-TAKEOVER as its forward
+  // mirror. (Anchors are now harvested from ANY contributing leg, not only assume
+  // legs - a role named solely by a modify/trust leg used to be missed.)
+  const mirror = {
+    Version: '2012-10-17',
+    Statement: [
+      { Sid: 'ModifyProd', Effect: 'Allow', Action: ['iam:PutRolePolicy', 'iam:UpdateAssumeRolePolicy'], Resource: 'arn:aws:iam::123456789012:role/deployment/Prod' },
+      { Sid: 'AssumeDeployment', Effect: 'Allow', Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::123456789012:role/deployment/*' },
+    ],
+  };
+  const res = run(mirror);
+  const takeovers = res.findings.filter((f) => f.id === 'ROLE-TAKEOVER');
+  assert.equal(takeovers.length, 1, 'exactly one takeover, anchored on the concrete role');
+  assert.equal(takeovers[0].severity, 'critical');
+  assert.deepEqual(
+    takeovers[0].resources,
+    ['arn:aws:iam::123456789012:role/deployment/Prod'],
+    'anchored on the concrete role the modify/trust legs name, not generalized to the wildcard',
+  );
+  assert.ok(!takeovers[0].actions.includes('iam:PassRole'), 'no iam:PassRole needed');
+  // The bounded wildcard assume ALSO stands as its own expansion finding.
+  assert.ok(res.findings.some((f) => f.id === 'ASSUME-ROLE-EXPANSION'), 'the wildcard assume scope is still its own expansion');
+});
+
+test('IAM-1006 boundary preserved: a MAXIMALLY-BROAD assume (*:role/*) with a concrete modify/trust role stays expansion-only, never a same-role takeover', () => {
+  // Regression guard for role-takeover test 142 after the anchor-derivation change:
+  // even though the concrete modify/trust role is now a candidate anchor, a
+  // maximally-broad *:role/* assume scope must NOT confirm it into a same-role
+  // takeover - that scope stays the ASSUME-ROLE-EXPANSION shape.
+  const wild = {
+    Version: '2012-10-17',
+    Statement: [
+      { Sid: 'ModifyOne', Effect: 'Allow', Action: ['iam:PutRolePolicy', 'iam:UpdateAssumeRolePolicy'], Resource: ROLE },
+      { Sid: 'AssumeAny', Effect: 'Allow', Action: 'sts:AssumeRole', Resource: 'arn:aws:iam::*:role/*' },
+    ],
+  };
+  const res = run(wild);
+  assert.ok(!res.findings.some((f) => f.id === 'ROLE-TAKEOVER'), 'maximally-broad assume is not a same-role takeover');
+  assert.ok(res.findings.some((f) => f.id === 'ASSUME-ROLE-EXPANSION'), 'it stays its own expansion finding');
+});
+
 test('graph shows the same-role modify-then-assume linkage with typed edges', () => {
   const res = run(test34);
   const roleId = `role:${ROLE}`;

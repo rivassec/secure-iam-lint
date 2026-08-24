@@ -1,0 +1,21 @@
+{
+  "name": "iam:AddUserToGroup on a privileged-named group (positive)",
+  "note": "IAM-1005 (suite-2 test 36 / suite-3 test 86): adding a user to a group is an INDIRECT privilege assignment. It must produce the dedicated GROUP-MEMBERSHIP finding at high severity, NOT generic DIRECT-IAM-ADMIN / AttachUserPolicy / PutUserPolicy. The group's real privilege is inferred from its name (PlatformAdmins) at medium confidence only.",
+  "story": "IAM-1005",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ManageAdminGroupMembership",
+        "Effect": "Allow",
+        "Action": "iam:AddUserToGroup",
+        "Resource": "arn:aws:iam::123456789012:group/PlatformAdmins"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["GROUP-MEMBERSHIP"],
+    "notFindingIds": ["DIRECT-IAM-ADMIN", "ATTACH-POLICY", "PUT-INLINE-POLICY"]
+  }
+}

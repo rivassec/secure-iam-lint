@@ -387,14 +387,19 @@ export function classifyPrincipals(principal) {
   const byType = principal.byType || {};
   for (const key of Object.keys(byType)) {
     const values = Array.isArray(byType[key]) ? byType[key] : [];
+    // IAM-1004: carry the principal-type key + the member's ARRAY INDEX on every
+    // entry so an INVALID member of a Principal AWS array (e.g. array index 1) can
+    // be located precisely (Principal.AWS[1]) rather than silently dropped or
+    // reported without its position. Index is the position within THIS key's
+    // normalized array (a scalar Principal normalizes to a 1-element array -> 0).
     if (key === 'AWS') {
-      for (const v of values) add(out, awsPrincipalType(v), v);
+      values.forEach((v, i) => add(out, awsPrincipalType(v), v, key, i));
     } else if (key === 'Service') {
-      for (const v of values) add(out, 'service', v);
+      values.forEach((v, i) => add(out, serviceType(v), v, key, i));
     } else if (key === 'Federated') {
-      for (const v of values) add(out, federatedType(v), v);
+      values.forEach((v, i) => add(out, federatedType(v), v, key, i));
     } else if (key === 'CanonicalUser') {
-      for (const v of values) add(out, 'canonical-user', v);
+      values.forEach((v, i) => add(out, 'canonical-user', v, key, i));
     } else {
       out.unknownTypes.push(key);
     }
@@ -402,13 +407,18 @@ export function classifyPrincipals(principal) {
   return out;
 }
 
-function add(out, type, value) {
+function add(out, type, value, key, index) {
   out.categories.add(type);
   // "*" under the AWS key is equivalent to Principal "*" - anonymous/public
   // access (trust-policy-semantics.md 2.1). Surface it on the anonymous flag so
   // it is treated as public trust, not as a specific AWS principal.
   if (type === 'anonymous') out.anonymous = true;
-  out.entries.push({ type, value: String(value) });
+  // IAM-1004: key ('AWS'/'Service'/...) + index (position in that key's array)
+  // give every entry a precise location so an invalid member is identifiable.
+  const entry = { type, value: String(value) };
+  if (key !== undefined) entry.key = key;
+  if (index !== undefined) entry.index = index;
+  out.entries.push(entry);
 }
 
 // AWS principal string -> typed form. '*' is anonymous/public; a bare 12-digit
@@ -444,10 +454,32 @@ function awsPrincipalType(v) {
   return 'aws-principal-arn';
 }
 
+// Service principal -> typed form. IAM-1006: a partial wildcard ('*'/'?') in a
+// Service principal member is INVALID and fails closed exactly like a
+// wildcard AWS Principal ARN. An AWS Service principal is an EXACT service
+// identifier (e.g. lambda.amazonaws.com); the Principal element does NOT
+// wildcard-match service names, so a member such as ec2-*.amazonaws.com matches
+// no service and grants no service-role relationship. Typing it distinctly
+// ('service-wildcard') routes it through the fail-closed handling in
+// findingsForStatement instead of presenting a never-matching member as a
+// normal, complete service trust.
+function serviceType(v) {
+  return hasGlob(String(v)) ? 'service-wildcard' : 'service';
+}
+
 // Federated principal -> OIDC vs SAML (section 2.6/2.7). The four built-in OIDC
 // providers are bare hostnames (not ARNs) and are treated as OIDC.
+//
+// IAM-1006: a partial wildcard ('*'/'?') in a Federated principal member (e.g.
+// arn:aws:iam::123456789012:oidc-provider/*) is INVALID and fails closed like a
+// wildcard AWS Principal ARN. A Federated principal is a SPECIFIC identity-
+// provider ARN (an IAM OIDC/SAML provider) or a built-in OIDC hostname; the
+// Principal element does not wildcard-match provider ARNs, so a globbed member
+// matches no provider and establishes no federated trust. Type it distinctly
+// ('federated-wildcard') so it is failed closed, not shown as a complete trust.
 function federatedType(v) {
   const s = String(v).toLowerCase();
+  if (hasGlob(String(v))) return 'federated-wildcard';
   if (s.includes('saml-provider')) return 'federated-saml';
   return 'federated-oidc';
 }
@@ -688,7 +720,13 @@ function makeFinding(stmt, principals, { id, severity, title, why, remediation, 
     resources: [],
     condition: stmt.condition === undefined ? null : stmt.condition,
     // The typed principals this statement trusts (inert data; display evidence).
-    principals: principals.entries.map((e) => Object.freeze({ type: e.type, value: e.value })),
+    // IAM-1004: carry the member's principal key + array index so a consumer
+    // (coverage/export) can reconstruct the exact location Principal.<key>[<i>].
+    principals: principals.entries.map((e) => Object.freeze(
+      e.key !== undefined
+        ? { type: e.type, value: e.value, key: e.key, index: e.index }
+        : { type: e.type, value: e.value },
+    )),
     note: null,
   })];
   return {
@@ -782,6 +820,47 @@ function subsetPrincipals(principals, types) {
   return { anonymous, categories, entries, unknownTypes: [] };
 }
 
+// IAM-903 / IAM-1006: build the fail-closed TRUST-INVALID-PRINCIPAL finding for a
+// SUBSET of invalid partial-wildcard principal members (an AWS Principal ARN
+// wildcard, or a Service/Federated member carrying a '*'/'?'). Computes the exact
+// per-member JSON path (Statement[N].Principal.<key>[<i>]) and attaches
+// invalidPrincipalPaths so analyze() raises the INVALID_PRINCIPAL_WILDCARD_ARN
+// coverage warning and the trusted set is reported UNDETERMINED, never as a
+// complete, valid trust. `buildWhy(invalidWho, invalidPaths)` lets each key emit
+// its own accurate prose while sharing one deterministic finding shape.
+function makeInvalidPrincipalFinding(stmt, invalid, { title, buildWhy, remediation }) {
+  const invalidPaths = invalid.entries.map((e) => (
+    e.key !== undefined && e.index !== undefined
+      ? `Statement[${stmt.index}].Principal.${e.key}[${e.index}]`
+      : `Statement[${stmt.index}].Principal`
+  ));
+  const invalidWho = invalid.entries.map((e) => (
+    e.key !== undefined && e.index !== undefined
+      ? `${e.value} (at Principal.${e.key}[${e.index}])`
+      : e.value
+  )).join(', ') || '(none)';
+  const finding = makeFinding(stmt, invalid, {
+    id: 'TRUST-INVALID-PRINCIPAL',
+    severity: 'high',
+    title,
+    why: buildWhy(invalidWho, invalidPaths),
+    remediation,
+    docRef: DOC_PRINCIPAL,
+    pathExploitability: 'low',
+  });
+  // IAM-1004: expose the precise machine-readable location(s) of the invalid
+  // member(s) so the error path names the array index (not just a dropped value).
+  finding.invalidPrincipalPaths = Object.freeze(
+    invalid.entries.map((e, i) => Object.freeze({
+      path: invalidPaths[i],
+      value: e.value,
+      key: e.key !== undefined ? e.key : null,
+      index: e.index !== undefined ? e.index : null,
+    })),
+  );
+  return finding;
+}
+
 // Emit the trust finding(s) for a single trust statement, following the
 // documented severity model (trust-policy-semantics.md section 5). Returns an
 // array (usually one finding; a statement mixing e.g. an external account AND a
@@ -804,40 +883,120 @@ function findingsForStatement(stmt) {
   // aws:PrincipalArn CONDITION value is a different, valid construct and is left
   // untouched (it is handled in conditionSignals, not here).
   let principals = allPrincipals;
-  if (allPrincipals.categories.has('aws-principal-arn-wildcard')) {
-    const invalid = subsetPrincipals(allPrincipals, ['aws-principal-arn-wildcard']);
-    const invalidWho = principalSummary(invalid);
-    found.push(makeFinding(stmt, invalid, {
-      id: 'TRUST-INVALID-PRINCIPAL',
-      severity: 'high',
-      title: 'Invalid wildcard Principal ARN (fail closed)',
-      why:
-        `The trust policy names an AWS Principal ARN that uses a partial wildcard ` +
-        `to denote multiple principals (${invalidWho}). This is NOT a valid IAM ` +
-        'Principal element: a principal ARN cannot use a partial "*"/"?" wildcard to ' +
-        'match multiple user/role principals (AWS rejects such a policy at save ' +
-        'time), and the standalone Principal "*" is the ONLY wildcard the element ' +
-        'accepts. The trusted set is therefore UNDETERMINED from this document: it ' +
-        'is not a single specific principal, and it must NOT be read as trust for ' +
-        'every role the pattern appears to match. This statement is fail-closed and ' +
-        'is surfaced as a coverage warning rather than an ordinary cross-account ' +
-        'trust finding.',
-      remediation:
-        'A principal ARN wildcard is invalid here. If the intent is to trust one ' +
-        'specific role/user, name its exact ARN as the Principal. If the intent is ' +
-        'to trust a SET of principals matching a pattern (and that is appropriate ' +
-        'for the threat model), use Principal: "*" together with an aws:PrincipalArn ' +
-        'condition (e.g. ArnLike aws:PrincipalArn arn:aws:iam::123456789012:role/' +
-        'application/*) plus a confused-deputy constraint where a third party is ' +
-        'involved - the wildcard is valid in that condition value, not in the ' +
-        'Principal element itself.',
-      docRef: DOC_PRINCIPAL,
-      pathExploitability: 'low',
-    }));
+  // IAM-903 + IAM-1006: fail closed on any INVALID partial-wildcard Principal
+  // member, whichever key it appears under. A partial wildcard is invalid in the
+  // AWS ARN, the Service, and the Federated Principal keys alike: the element does
+  // not wildcard-match, so a globbed member matches NOTHING and the trusted set is
+  // UNDETERMINED (threat-model T8 - never present a never-matching wildcard as a
+  // complete, valid trust). Each invalid member is removed before the substantive
+  // branches so no downstream branch (org-expansion / public / cross-account /
+  // breadth / TRUST-SERVICE / TRUST-FEDERATED) ever reasons about it, and every
+  // invalid member is surfaced as a caveated finding + coverage warning. A wildcard
+  // in a CONDITION value (aws:PrincipalArn, OIDC :sub, ...) is a different, valid
+  // construct handled in conditionSignals, not here.
+  const INVALID_WILDCARD_TYPES = ['aws-principal-arn-wildcard', 'service-wildcard', 'federated-wildcard'];
+  if (INVALID_WILDCARD_TYPES.some((t) => allPrincipals.categories.has(t))) {
+    // IAM-1004: locate each invalid member precisely. When the Principal value is
+    // an ARRAY, one poisoned member (e.g. index 1) must be identified by its
+    // position - never silently dropped so only the valid member(s) are reported
+    // as a complete result. Location follows the coverage path convention
+    // (Statement[N].Principal.<key>[<i>]). A scalar Principal normalizes to a
+    // 1-element array, so a single invalid value reads Principal.<key>[0].
+    if (allPrincipals.categories.has('aws-principal-arn-wildcard')) {
+      found.push(makeInvalidPrincipalFinding(
+        stmt,
+        subsetPrincipals(allPrincipals, ['aws-principal-arn-wildcard']),
+        {
+          title: 'Invalid wildcard Principal ARN (fail closed)',
+          buildWhy: (invalidWho, invalidPaths) =>
+            `The trust policy names an AWS Principal ARN that uses a partial wildcard ` +
+            `to denote multiple principals (${invalidWho}). This is NOT a valid IAM ` +
+            'Principal element: a principal ARN cannot use a partial "*"/"?" wildcard to ' +
+            'match multiple user/role principals (AWS rejects such a policy at save ' +
+            'time), and the standalone Principal "*" is the ONLY wildcard the element ' +
+            'accepts. The trusted set is therefore UNDETERMINED from this document: it ' +
+            'is not a single specific principal, and it must NOT be read as trust for ' +
+            'every role the pattern appears to match. This statement is fail-closed and ' +
+            'is surfaced as a coverage warning rather than an ordinary cross-account ' +
+            'trust finding. The invalid element is located at ' +
+            `${invalidPaths.join(', ')}: when a Principal AWS array mixes valid and ` +
+            'invalid members, the invalid member is identified by its array index and ' +
+            'the statement is NOT reported as a complete result for only the valid ' +
+            'member(s).',
+          remediation:
+            'A principal ARN wildcard is invalid here. If the intent is to trust one ' +
+            'specific role/user, name its exact ARN as the Principal. If the intent is ' +
+            'to trust a SET of principals matching a pattern (and that is appropriate ' +
+            'for the threat model), use Principal: "*" together with an aws:PrincipalArn ' +
+            'condition (e.g. ArnLike aws:PrincipalArn arn:aws:iam::123456789012:role/' +
+            'application/*) plus a confused-deputy constraint where a third party is ' +
+            'involved - the wildcard is valid in that condition value, not in the ' +
+            'Principal element itself.',
+        },
+      ));
+    }
+    // IAM-1006: a partial wildcard in a Service principal member.
+    if (allPrincipals.categories.has('service-wildcard')) {
+      found.push(makeInvalidPrincipalFinding(
+        stmt,
+        subsetPrincipals(allPrincipals, ['service-wildcard']),
+        {
+          title: 'Invalid wildcard Service principal (fail closed)',
+          buildWhy: (invalidWho, invalidPaths) =>
+            `The trust policy names a Service principal that contains a partial ` +
+            `wildcard (${invalidWho}). This is NOT a valid Principal element: an AWS ` +
+            'Service principal is an EXACT service identifier (e.g. lambda.amazonaws.com) ' +
+            'and the Principal element does not wildcard-match service names, so a member ' +
+            'carrying a "*"/"?" matches NO service and grants no service-role ' +
+            'relationship. It must NOT be read as a normal, complete service trust. The ' +
+            'trusted set is UNDETERMINED from this document: this statement is ' +
+            'fail-closed and surfaced as a coverage warning rather than a valid service ' +
+            `trust. The invalid element is located at ${invalidPaths.join(', ')}: when a ` +
+            'Service array mixes valid and invalid members, the invalid member is ' +
+            'identified by its array index and the statement is NOT reported as a ' +
+            'complete result for only the valid member(s).',
+          remediation:
+            'A wildcard is invalid in a Service principal. Name each exact service ' +
+            'identifier you intend to trust (e.g. lambda.amazonaws.com, ' +
+            'ec2.amazonaws.com), one per member; the Service principal element does not ' +
+            'support "*"/"?" wildcard matching.',
+        },
+      ));
+    }
+    // IAM-1006: a partial wildcard in a Federated principal member.
+    if (allPrincipals.categories.has('federated-wildcard')) {
+      found.push(makeInvalidPrincipalFinding(
+        stmt,
+        subsetPrincipals(allPrincipals, ['federated-wildcard']),
+        {
+          title: 'Invalid wildcard Federated principal (fail closed)',
+          buildWhy: (invalidWho, invalidPaths) =>
+            `The trust policy names a Federated principal that contains a partial ` +
+            `wildcard (${invalidWho}). This is NOT a valid Principal element: a Federated ` +
+            'principal is a SPECIFIC identity-provider ARN (an IAM OIDC/SAML provider, ' +
+            'e.g. arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent' +
+            '.com) or a built-in OIDC hostname, and the Principal element does not ' +
+            'wildcard-match provider ARNs, so a member carrying a "*"/"?" matches NO ' +
+            'provider and establishes no federated trust. It must NOT be read as a ' +
+            'normal, complete federated trust. The trusted set is UNDETERMINED from this ' +
+            'document: this statement is fail-closed and surfaced as a coverage warning. ' +
+            `The invalid element is located at ${invalidPaths.join(', ')}: when a ` +
+            'Federated array mixes valid and invalid members, the invalid member is ' +
+            'identified by its array index and the statement is NOT reported as a ' +
+            'complete result for only the valid member(s).',
+          remediation:
+            'A wildcard is invalid in a Federated principal. Name the exact identity-' +
+            'provider ARN you intend to trust (e.g. arn:aws:iam::123456789012:oidc-' +
+            'provider/<provider-host>); the Federated principal element does not support ' +
+            '"*"/"?" wildcard matching. Scope which workloads may assume the role with a ' +
+            "condition on the provider's :sub / :aud claim instead.",
+        },
+      ));
+    }
     // Continue with only the VALID principals (a statement may legitimately name a
-    // concrete account/root alongside the invalid wildcard); if none remain, the
-    // invalid finding is the whole story for this statement.
-    const validTypes = [...allPrincipals.categories].filter((t) => t !== 'aws-principal-arn-wildcard');
+    // concrete account/root/service alongside an invalid wildcard); if none remain,
+    // the invalid finding(s) are the whole story for this statement.
+    const validTypes = [...allPrincipals.categories].filter((t) => !INVALID_WILDCARD_TYPES.includes(t));
     principals = subsetPrincipals(allPrincipals, validTypes);
     if (principals.entries.length === 0) return found;
   }

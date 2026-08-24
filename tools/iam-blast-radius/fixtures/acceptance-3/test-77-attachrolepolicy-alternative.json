@@ -1,0 +1,41 @@
+{
+  "name": "Acceptance suite-3 test 77 - AttachRolePolicy alternative to PutRolePolicy (regression)",
+  "note": "IAM-1003 regression: iam:AttachRolePolicy (with an AdministratorAccess iam:PolicyARN condition) is an equally valid permission-grant primitive alongside iam:UpdateAssumeRolePolicy + sts:AssumeRole on the same role. The compound ROLE-TAKEOVER must fire critical without requiring iam:PutRolePolicy; the iam:PolicyARN evidence is preserved.",
+  "phase": 10,
+  "story": "IAM-1003",
+  "suite": 3,
+  "acceptanceTest": 77,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AttachAdministratorPolicy",
+        "Effect": "Allow",
+        "Action": "iam:AttachRolePolicy",
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole",
+        "Condition": {
+          "ArnEquals": {"iam:PolicyARN": "arn:aws:iam::aws:policy/AdministratorAccess"}
+        }
+      },
+      {
+        "Sid": "ControlAndAssumeRole",
+        "Effect": "Allow",
+        "Action": ["iam:UpdateAssumeRolePolicy", "sts:AssumeRole"],
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["ROLE-TAKEOVER"],
+    "takeover": {
+      "count": 1,
+      "severityOneOf": ["critical"],
+      "resources": ["arn:aws:iam::123456789012:role/DeploymentRole"],
+      "subsumes": ["ATTACH-POLICY", "TRUST-POLICY-MODIFY"]
+    },
+    "preservesStrings": ["arn:aws:iam::aws:policy/AdministratorAccess"]
+  }
+}

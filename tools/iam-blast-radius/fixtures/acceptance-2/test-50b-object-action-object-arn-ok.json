@@ -1,0 +1,28 @@
+{
+  "name": "Acceptance suite-2 test 50b (control) - object action on an object ARN raises no mismatch",
+  "note": "IAM-1006 (F3) false-positive boundary: s3:GetObject scoped to an OBJECT ARN (arn:aws:s3:::documents/*) is correctly scoped, so there is NO action/resource-type mismatch. A statement that also lists the bucket-only ARN for a sibling bucket action (s3:ListBucket) still must NOT warn, because an object-capable resource is present. Guards against the mismatch warning firing on the routine least-privilege pattern.",
+  "phase": 10,
+  "story": "IAM-1006",
+  "suite": 2,
+  "acceptanceTest": 50,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "CorrectObjectReadScope",
+        "Effect": "Allow",
+        "Action": ["s3:GetObject", "s3:ListBucket"],
+        "Resource": ["arn:aws:s3:::documents", "arn:aws:s3:::documents/*"]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["DATA-EXFIL", "DATA-READ", "WILDCARD-RESOURCE"],
+    "coverage": {
+      "incomplete": false,
+      "codesExclude": ["ACTION_RESOURCE_TYPE_MISMATCH"]
+    }
+  }
+}

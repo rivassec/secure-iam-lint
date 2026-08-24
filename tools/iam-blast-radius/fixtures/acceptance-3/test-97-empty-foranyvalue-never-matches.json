@@ -1,0 +1,32 @@
+{
+  "name": "Acceptance suite-3 test 97 - empty ForAnyValue set never matches (no phantom capability)",
+  "note": "docs/acceptance-suite-3.md Campaign F. A ForAnyValue:StringEquals on aws:TagKeys with an EMPTY array can never match any request value, so the statement is structurally ineffective. The engine must not manufacture an ec2:CreateTags capability or a WILDCARD-RESOURCE finding from an unmatchable statement; empty-array handling happens before graph generation.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 97,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "ec2:CreateTags",
+        "Resource": "*",
+        "Condition": {
+          "ForAnyValue:StringEquals": { "aws:TagKeys": [] }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIdsAnywhere": ["WILDCARD-RESOURCE", "WILDCARD-ACTION"],
+    "coverage": {
+      "incomplete": true
+    }
+  },
+  "rationale": "ForAnyValue is true when AT LEAST ONE request value is in the policy's set. An empty policy set has no member to match, so the condition is false for every request and the Allow can never take effect. Emitting a capability or broad-resource finding from an unmatchable statement would overstate risk. The statement is reported as ineffective/no-match (coverage incomplete rather than a confident grant). Ref: IAM set operators ForAnyValue/ForAllValues (single-valued vs multivalued context keys)."
+}

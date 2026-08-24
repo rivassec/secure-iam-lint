@@ -1,0 +1,21 @@
+{
+  "name": "Acceptance suite-3 test 56 - duplicate Action key, dangerous value LAST -> BLOCKED",
+  "note": "docs/acceptance-suite-3.md Campaign A. Order-independence control for test 55: the dangerous iam:* value now appears LAST. The engine must still fail closed with DUPLICATE_JSON_KEY - it must NOT continue merely because the retained value would generate a high-risk finding. Duplicate rejection is a syntax invariant, not a risk-dependent heuristic.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 56,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policyRaw": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"DangerousLast\",\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Action\":\"iam:*\",\"Resource\":\"*\"}]}",
+  "expect": {
+    "valid": false,
+    "status": "blocked",
+    "findingIds": []
+  },
+  "errorExpect": {
+    "errorCodes": ["DUPLICATE_JSON_KEY"],
+    "pathIncludes": ["Statement[0].Action"]
+  },
+  "rationale": "Duplicate-key rejection must be independent of which value survives a last-key-wins parse. If the engine only blocked when the retained value looked benign, an attacker could bypass the guard by ordering the dangerous value last. The block is a structural JSON invariant applied before any risk evaluation. Ref: RFC 8259 section 4 + IAM JSON policy grammar."
+}

@@ -1,0 +1,33 @@
+{
+  "name": "Acceptance suite-3 test 75 (NotEquals twin) - == A / != A across legs prevent correlation",
+  "note": "IAM-1006 iteration-3 (F1): the modify leg pins aws:PrincipalAccount == 123456789012 while the assume leg requires aws:PrincipalAccount != 123456789012. A single principal cannot be both == A and != A, so the chain is unsatisfiable. The engine must model the exact-equality NEGATION (StringNotEquals) in the satisfiability check - harvesting only the positive == pin would leave the account key with a single constraint and fabricate a false CRITICAL ROLE-TAKEOVER no principal can execute. The standalone modification capabilities remain (reported, not hidden), and both condition expressions are preserved.",
+  "phase": 10,
+  "story": "IAM-1006",
+  "suite": 3,
+  "acceptanceTest": 75,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole",
+        "Condition": {"StringEquals": {"aws:PrincipalAccount": "123456789012"}}
+      },
+      {
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole",
+        "Condition": {"StringNotEquals": {"aws:PrincipalAccount": "123456789012"}}
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["PUT-INLINE-POLICY", "TRUST-POLICY-MODIFY"],
+    "notFindingIdsAnywhere": ["ROLE-TAKEOVER"],
+    "preservesStrings": ["123456789012"]
+  }
+}

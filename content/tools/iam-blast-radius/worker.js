@@ -18,10 +18,14 @@ self.addEventListener('message', (event) => {
   // IAM-501: optional manual family override forwarded from the UI. Only a
   // string family token is honored; anything else falls back to auto-detect.
   const family = data && typeof data.family === 'string' ? data.family : undefined;
+  // IAM-1001: the mandatory-selection flag. When the UI sets it and no family was
+  // chosen, analyze() fails closed with POLICY_FAMILY_REQUIRED rather than
+  // auto-detecting - the same contract the synchronous path enforces.
+  const requireExplicitFamily = !!(data && data.requireExplicitFamily);
 
   let result;
   try {
-    result = analyze(text, family ? { family } : undefined);
+    result = analyze(text, { family, requireExplicitFamily });
   } catch (e) {
     // analyze() already backstops, but never let the worker die silently.
     result = {

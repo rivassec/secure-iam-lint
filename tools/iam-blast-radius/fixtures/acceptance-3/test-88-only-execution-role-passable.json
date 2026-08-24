@@ -1,0 +1,28 @@
+{
+  "name": "Acceptance suite-3 test 88 - only execution role is passable",
+  "note": "IAM-1005: only the ECS execution role is passable. Report potential ECS task execution + execution-role influence (startup/pull/logs/secrets); do NOT claim application code receives execution-role credentials; do NOT invent a task-role edge. High, not critical (no application task-role credential path).",
+  "phase": 10,
+  "story": "IAM-1005",
+  "suite": 3,
+  "acceptanceTest": 88,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::123456789012:role/ecs/AppExecutionRole"
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["ecs:RegisterTaskDefinition", "ecs:RunTask"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-SERVICE"]
+  }
+}

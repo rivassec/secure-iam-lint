@@ -1,0 +1,25 @@
+{
+  "name": "Acceptance suite-3 test 78 - role modification without AssumeRole (regression)",
+  "note": "IAM-1003 regression: the principal can grant permissions to and rewrite the trust of the role but has NO sts:AssumeRole leg. Without the assume prerequisite there is no complete self-assumption path, so no ROLE-TAKEOVER; the standalone high role-control/persistence capabilities (PUT-INLINE-POLICY + TRUST-POLICY-MODIFY) remain, because another principal or service could later use the modified role.",
+  "phase": 10,
+  "story": "IAM-1003",
+  "suite": 3,
+  "acceptanceTest": 78,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["PUT-INLINE-POLICY", "TRUST-POLICY-MODIFY"],
+    "notFindingIdsAnywhere": ["ROLE-TAKEOVER"]
+  }
+}

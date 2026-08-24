@@ -1,0 +1,37 @@
+{
+  "name": "Acceptance suite-3 test 85 - a wildcard in an aws:PrincipalArn condition value is not a partial Principal wildcard",
+  "note": "IAM-1004 (Phase 10) Campaign D: Principal \"*\" narrowed by an ArnLike aws:PrincipalArn condition whose VALUE contains a wildcard (arn:aws:iam::123456789012:role/deployment/*). A wildcard in a CONDITION value is a different, valid construct and must NEVER be mis-flagged as an invalid partial Principal-element wildcard. This document is a resource-based policy (every statement names a Principal), which this analyzer does not yet model, so it fails closed with UNSUPPORTED_POLICY_FAMILY - the condition wildcard is left untouched, and the bucket is not called anonymous/public without accounting for the condition. (Resource-policy family is the deferred later tranche.)",
+  "phase": 10,
+  "story": "IAM-1004",
+  "suite": 3,
+  "acceptanceTest": 85,
+  "family": "resource",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::deployments/*",
+        "Condition": {
+          "ArnLike": {
+            "aws:PrincipalArn": "arn:aws:iam::123456789012:role/deployment/*"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIdsAnywhere": ["TRUST-INVALID-PRINCIPAL"],
+    "coverage": {
+      "blocked": true,
+      "supported": false,
+      "codesExclude": ["INVALID_PRINCIPAL_WILDCARD_ARN"],
+      "blockingCodesInclude": ["UNSUPPORTED_POLICY_FAMILY"]
+    },
+    "notMisflaggedAsInvalidPrincipal": true
+  }
+}

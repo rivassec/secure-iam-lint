@@ -12,7 +12,7 @@
 
 import { analyze, findingToRow, FINDING_COLUMNS, FINDING_DETAIL_FIELDS, CATALOG_VERSION, summarize } from './engine/analyze.js';
 import { LIMITS } from './engine/validate.js';
-import { toJSON, toMarkdown } from './engine/report.js';
+import { toJSON, toMarkdown, analysisStatus } from './engine/report.js';
 import { createGraphRenderer } from './engine/render-graph.js';
 import { noFindingsMessage } from './engine/coverage.js';
 import { checkVersionCoherence } from './engine/version.js';
@@ -172,11 +172,41 @@ function renderVersionBlock(coherence) {
   els.findings.appendChild(wrap);
 }
 
-// IAM-501: the optional manual family override. Empty string ("Auto-detect")
-// means no override - the engine auto-detects the family from shape.
-function selectedFamily() {
-  const v = els.family && typeof els.family.value === 'string' ? els.family.value : '';
-  return v || undefined;
+// IAM-1001: the raw family selector value. '' means NO selection (mandatory
+// selection not yet made); 'auto' is the explicit Auto-detect choice; anything
+// else is an explicit family. Never coerces '' to auto-detect - that silent
+// default is exactly what the mandatory-selection contract removes.
+function familySelectionValue() {
+  return els.family && typeof els.family.value === 'string' ? els.family.value : '';
+}
+
+// IAM-1001: is an explicit family (including Auto-detect) currently selected?
+function hasFamilySelection() {
+  return familySelectionValue().length > 0;
+}
+
+// IAM-1001: the analyze() options for the current selection. requireExplicitFamily
+// is ALWAYS set from the UI, so a run with no selection fails closed at the engine
+// with POLICY_FAMILY_REQUIRED (defense in depth behind the disabled button). A
+// concrete/auto selection is forwarded as `family`.
+function analyzeOptions() {
+  const v = familySelectionValue();
+  return { family: v.length > 0 ? v : undefined, requireExplicitFamily: true };
+}
+
+// IAM-1001: the Analyze control is enabled only when a policy family is selected
+// (and the version-coherence gate has not blocked). This is the primary
+// mandatory-selection mechanism; the engine POLICY_FAMILY_REQUIRED block backs it.
+function updateAnalyzeEnabled() {
+  if (!els.analyzeBtn) return;
+  els.analyzeBtn.disabled = !!versionBlock || !hasFamilySelection();
+}
+
+// IAM-1001: set the machine-readable analysis status on the status element as a
+// data attribute, so the browser surface reports the SAME status token the JSON
+// and Markdown exports do (test 71). Kept separate from the human status text.
+function setResultStatus(result) {
+  if (els.status) els.status.setAttribute('data-status', analysisStatus(result));
 }
 
 // IAM-501: a compact blocking-coverage notice. When the policy shape is one the
@@ -188,6 +218,12 @@ function selectedFamily() {
 // JSON paths / messages ride through as inert textContent. The full coverage
 // panel is IAM-502; this is the minimum so a blocked shape is never silent.
 function renderCoverageNotice(coverage) {
+  const codesList = Array.isArray(coverage.blockingCodes) ? coverage.blockingCodes : [];
+  // IAM-1001: the mandatory-selection block is a DIFFERENT state from an
+  // unsupported shape - it means the user has not picked a family yet, not that
+  // the analyzer failed closed on a shape it understood. Word it accordingly.
+  const familyRequired = codesList.some((b) => b && b.code === 'POLICY_FAMILY_REQUIRED');
+
   const section = document.createElement('section');
   section.className = 'coverage-blocked';
   section.setAttribute('role', 'alert');
@@ -195,7 +231,9 @@ function renderCoverageNotice(coverage) {
 
   const heading = document.createElement('h3');
   heading.id = 'coverage-blocked-h';
-  heading.textContent = 'Analysis stopped - policy shape not supported';
+  heading.textContent = familyRequired
+    ? 'Select a policy family to analyze'
+    : 'Analysis stopped - policy shape not supported';
   section.appendChild(heading);
 
   const dl = document.createElement('dl');
@@ -205,10 +243,13 @@ function renderCoverageNotice(coverage) {
   section.appendChild(dl);
 
   const intro = document.createElement('p');
-  intro.textContent =
-    'This analyzer models identity-policy semantics only. It stopped before ' +
-    'evaluating rules rather than present findings on a shape it does not ' +
-    'understand. Unsupported does NOT mean safe - it means no conclusion.';
+  intro.textContent = familyRequired
+    ? 'Choose the policy family (or Auto-detect) before analyzing. The tool does ' +
+      'not guess the family from the document shape, because analyzing one family ' +
+      'as another would produce confident but wrong findings.'
+    : 'This analyzer models identity-policy semantics only. It stopped before ' +
+      'evaluating rules rather than present findings on a shape it does not ' +
+      'understand. Unsupported does NOT mean safe - it means no conclusion.';
   section.appendChild(intro);
 
   const codes = Array.isArray(coverage.blockingCodes) ? coverage.blockingCodes : [];
@@ -337,6 +378,30 @@ function renderCoveragePanel(coverage) {
           path.className = 'coverage-path';
           path.textContent = ` at ${String(e.path)}`;
           li.appendChild(path);
+        }
+        ul.appendChild(li);
+      }
+      section.appendChild(ul);
+    }
+
+    // IAM-1006 (test 50): action/resource-type mismatches (e.g. an S3 object
+    // action scoped to a bucket-only ARN). Rendered as inert textContent so the
+    // bucket-vs-object remediation is visible in the UI, never a silent
+    // complete/empty result. Safe DOM only (createElement + textContent).
+    if (Array.isArray(s.actionResourceMismatches) && s.actionResourceMismatches.length > 0) {
+      const ul = document.createElement('ul');
+      ul.className = 'coverage-mismatches';
+      for (const m of s.actionResourceMismatches) {
+        const li = document.createElement('li');
+        const note = document.createElement('span');
+        note.className = 'coverage-mismatch-note';
+        note.textContent = String(m.note || '');
+        li.appendChild(note);
+        if (m.remediation) {
+          const rem = document.createElement('span');
+          rem.className = 'coverage-mismatch-remediation';
+          rem.textContent = ` Remediation: ${String(m.remediation)}`;
+          li.appendChild(rem);
         }
         ul.appendChild(li);
       }
@@ -675,6 +740,9 @@ function renderGraph(graph, counts, findings) {
 
 function handleResult(result) {
   state.lastAnalysis = result;
+  // IAM-1001: publish the machine-readable status on the browser surface so it
+  // agrees with the JSON/Markdown exports (test 71).
+  setResultStatus(result);
 
   if (!result || !result.ok) {
     clearChildren(els.coverage);
@@ -726,13 +794,13 @@ function workerSupported() {
   return typeof Worker !== 'undefined';
 }
 
-function runSync(text, family) {
+function runSync(text, options) {
   // No-Worker fallback (architecture invariant 5). This path is reached ONLY
   // when a Web Worker cannot be constructed BEFORE analysis starts (Worker
   // undefined, or `new Worker(...)` throws). It is NEVER used to recover from a
   // worker that failed AFTER dispatch - that would re-run the engine on hostile
   // input on the main thread, which IAM-503 forbids (see failClosed).
-  const result = analyze(text, family ? { family } : undefined);
+  const result = analyze(text, options);
   handleResult(result);
 }
 
@@ -776,7 +844,8 @@ function resetOutputForNewJob() {
   resetEvidence();
 }
 
-function runInWorker(text, family) {
+function runInWorker(text, options) {
+  const opts = options || {};
   // Newer submission wins: supersede any in-flight job first (terminates the
   // prior worker so its result can never land after this one).
   invalidateCurrentJob();
@@ -789,7 +858,7 @@ function runInWorker(text, family) {
   } catch (e) {
     // Worker construction unavailable BEFORE analysis started -> the ONLY
     // permitted synchronous fallback (architecture invariant 5).
-    runSync(text, family);
+    runSync(text, opts);
     return;
   }
 
@@ -865,7 +934,10 @@ function runInWorker(text, family) {
   });
 
   setBusy(true);
-  worker.postMessage({ id, text, family });
+  // IAM-1001: forward the family selection AND the requireExplicitFamily flag so
+  // the worker's analyze() enforces the mandatory-selection contract identically
+  // to the sync path.
+  worker.postMessage({ id, text, family: opts.family, requireExplicitFamily: !!opts.requireExplicitFamily });
 }
 
 function analyzeText(text) {
@@ -888,9 +960,47 @@ function analyzeText(text) {
   // previous run's findings while it is in flight.
   resetOutputForNewJob();
   setStatus('Analyzing locally in your browser...');
-  const family = selectedFamily();
-  if (workerSupported()) runInWorker(text, family);
-  else runSync(text, family);
+  // IAM-1001: always carry requireExplicitFamily; a run with no selection fails
+  // closed at the engine (POLICY_FAMILY_REQUIRED) rather than defaulting to a
+  // shape-based family.
+  const options = analyzeOptions();
+  if (workerSupported()) runInWorker(text, options);
+  else runSync(text, options);
+}
+
+// IAM-1001: changing the policy family INVALIDATES any prior analysis
+// immediately (test 70): no identity result may remain visible under a boundary
+// label. We tear down the retained result + rendered findings/coverage/graph/
+// evidence/export, then either auto-reanalyze under the new family (when input is
+// present and a family is selected) or prompt for the next step. This keeps the
+// displayed conclusion and the selected family in lockstep.
+function onFamilyChange() {
+  updateAnalyzeEnabled();
+
+  if (versionBlock) return; // analysis is disabled entirely; nothing to invalidate
+
+  const text = els.input ? els.input.value : '';
+  if (!hasFamilySelection()) {
+    // Back to no selection: drop any prior result and require a selection again.
+    invalidateCurrentJob();
+    setBusy(false);
+    resetOutputForNewJob();
+    if (els.status) els.status.removeAttribute('data-status');
+    setStatus('Select a policy family to analyze.');
+    return;
+  }
+
+  if (typeof text === 'string' && text.trim().length > 0) {
+    // Re-run under the newly selected family. analyzeText clears prior output
+    // first, so the previous family's findings never linger under a new label.
+    analyzeText(text);
+  } else {
+    invalidateCurrentJob();
+    setBusy(false);
+    resetOutputForNewJob();
+    if (els.status) els.status.removeAttribute('data-status');
+    setStatus('Policy family selected. Paste or import a policy, then analyze.');
+  }
 }
 
 // --- Built-in samples (IAM-505) ----------------------------------------------
@@ -908,7 +1018,12 @@ function loadSample(sample) {
   const text = JSON.stringify(sample.policy, null, 2);
   if (els.input) els.input.value = text;
   if (els.file) els.file.value = '';
-  if (els.family) els.family.value = '';
+  // IAM-1001: a sample must satisfy the mandatory-selection contract. Load it
+  // under explicit Auto-detect so it reproduces its intended auto-detected
+  // behavior (e.g. the NotPrincipal sample must auto-detect the resource family
+  // and fail closed), which is exactly what the engine sample fixtures assert.
+  if (els.family) els.family.value = 'auto';
+  updateAnalyzeEnabled();
   analyzeText(text);
 }
 
@@ -1014,7 +1129,11 @@ function clearAnalysis(announce) {
   state.lastAnalysis = null;
   if (els.input) els.input.value = '';
   if (els.file) els.file.value = '';
+  // IAM-1001: Clear resets the selector to no selection (mandatory again) and
+  // disables Analyze until the user re-selects a family.
   if (els.family) els.family.value = '';
+  updateAnalyzeEnabled();
+  if (els.status) els.status.removeAttribute('data-status');
   clearChildren(els.coverage);
   clearChildren(els.findings);
   clearChildren(els.graph);
@@ -1087,6 +1206,12 @@ function init() {
   }
   if (els.exportJson) els.exportJson.addEventListener('click', exportJson);
   if (els.exportMd) els.exportMd.addEventListener('click', exportMd);
+
+  // IAM-1001: mandatory family selection. React to selector changes (invalidate
+  // prior analysis; auto-reanalyze under the new family) and set the initial
+  // Analyze enabled-state from the current selection (disabled with none).
+  if (els.family) els.family.addEventListener('change', onFamilyChange);
+  updateAnalyzeEnabled();
 
   window.addEventListener('pagehide', onPageHide);
 }

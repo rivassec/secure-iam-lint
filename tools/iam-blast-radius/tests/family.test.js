@@ -213,13 +213,40 @@ test('manual override: selecting an unmodeled family blocks even a clean identit
   // IAM-801: role-trust is now a SUPPORTED family, so it is no longer in this
   // "unmodeled" list; forcing it onto an identity shape is a shape mismatch,
   // asserted separately below.
-  for (const fam of ['resource', 'permissions-boundary', 'scp-rcp', 'session']) {
+  // IAM-1002: permissions-boundary and session are now SUPPORTED families (the
+  // envelope/restriction evaluator) on an identity-shaped document, so they are
+  // no longer in this "unmodeled" list either (asserted supported below). Only
+  // resource + scp-rcp remain unmodeled and fail closed.
+  for (const fam of ['resource', 'scp-rcp']) {
     assert.ok(OVERRIDE_FAMILIES.has(fam), `${fam} is a selectable override`);
     const c = familyOf(idPolicy, { family: fam });
     assert.equal(c.override, fam, `${fam} recorded as override`);
     assert.equal(c.family, fam, `${fam} is the effective family`);
     assert.equal(c.blocked, true, `${fam} override blocks (no evaluator)`);
     assert.ok(c.blockingCodes.some((b) => b.code === COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY));
+  }
+});
+
+test('IAM-1002: permissions-boundary / session override on an identity shape is SUPPORTED (envelope evaluator)', () => {
+  const idPolicy = { Statement: [{ Effect: 'Allow', Action: 's3:*', Resource: '*' }] };
+  for (const fam of ['permissions-boundary', 'session']) {
+    assert.ok(OVERRIDE_FAMILIES.has(fam), `${fam} is a selectable override`);
+    assert.ok(SUPPORTED_FAMILIES.has(fam), `${fam} is now a supported family`);
+    const c = familyOf(idPolicy, { family: fam });
+    assert.equal(c.override, fam, `${fam} recorded as override`);
+    assert.equal(c.family, fam, `${fam} is the effective family`);
+    assert.equal(c.blocked, false, `${fam} on an identity-shaped document is NOT blocked`);
+    assert.equal(c.supported, true, `${fam} is supported`);
+    assert.equal(c.blockingCodes.length, 0, `${fam} emits no blocking codes on an identity shape`);
+  }
+});
+
+test('IAM-1002: permissions-boundary / session override on a Principal-bearing shape fails closed', () => {
+  const resPolicy = { Statement: [{ Effect: 'Allow', Principal: { AWS: '*' }, Action: 's3:*', Resource: 'arn:aws:s3:::b/*' }] };
+  for (const fam of ['permissions-boundary', 'session']) {
+    const c = familyOf(resPolicy, { family: fam });
+    assert.equal(c.blocked, true, `${fam} cannot apply to a Principal-bearing shape`);
+    assert.equal(c.supported, false, `${fam} on a resource shape is unsupported`);
   }
 });
 
@@ -230,13 +257,21 @@ test('manual override "role-trust" on an identity shape fails closed (shape wins
   assert.ok(c.blockingCodes.some((b) => b.code === COVERAGE_CODES.OVERRIDE_SHAPE_MISMATCH));
 });
 
-test('manual override "identity" on a non-identity shape fails closed (shape wins)', () => {
+test('manual override "identity" on a Principal-bearing shape fails closed UNSUPPORTED_PRINCIPAL (IAM-1001 test 67)', () => {
   const c = familyOf(
     { Statement: [{ Effect: 'Allow', Principal: { AWS: '*' }, Action: 's3:*', Resource: 'arn:aws:s3:::b/*' }] },
     { family: 'identity' },
   );
-  assert.equal(c.blocked, true, 'cannot force identity rules onto a resource shape');
-  assert.ok(c.blockingCodes.some((b) => b.code === COVERAGE_CODES.OVERRIDE_SHAPE_MISMATCH));
+  assert.equal(c.blocked, true, 'cannot force identity rules onto a Principal-bearing shape');
+  // IAM-1001: the family-shape guard names the offending Principal (with its JSON
+  // path) rather than a generic mismatch, and never drops it to analyze the rest.
+  const hit = c.blockingCodes.find((b) => b.code === COVERAGE_CODES.UNSUPPORTED_PRINCIPAL);
+  assert.ok(hit, 'UNSUPPORTED_PRINCIPAL emitted');
+  assert.equal(hit.path, 'Statement[0].Principal', 'exact JSON path of the Principal');
+  assert.ok(
+    !c.blockingCodes.some((b) => b.code === COVERAGE_CODES.OVERRIDE_SHAPE_MISMATCH),
+    'the specific Principal guard supersedes the generic shape mismatch',
+  );
 });
 
 test('manual override "identity" on an identity shape analyzes normally', () => {

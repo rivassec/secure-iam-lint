@@ -1,0 +1,32 @@
+{
+  "name": "Acceptance suite-3 test 96 - ForAllValues with explicit Null presence check (no vacuous-truth warning)",
+  "note": "docs/acceptance-suite-3.md Campaign F. Companion negative control to suite-2 test 41: a ForAllValues:StringEquals on aws:TagKeys PLUS a sibling Null:{aws:TagKeys:false} presence check. The Null guard means the set condition cannot be vacuously true on an absent key, so the 'may evaluate true when the key is absent' warning from test 41 must be SUPPRESSED here. Both conditions are jointly required; the policy controls tag KEYS, not tag values. ec2:CreateTags on Resource:* still carries its broad-resource finding (CreateTags supports resource-level scoping, unlike the required-wildcard cases 92-94).",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 96,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "ec2:CreateTags",
+        "Resource": "*",
+        "Condition": {
+          "ForAllValues:StringEquals": { "aws:TagKeys": ["environment", "cost-center"] },
+          "Null": { "aws:TagKeys": "false" }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["WILDCARD-RESOURCE"],
+    "coverage": {
+      "incomplete": true
+    }
+  },
+  "rationale": "ForAllValues set operators are vacuously TRUE when the request context key is absent or empty (a classic footgun, flagged in test 41). Adding \"Null\": {\"aws:TagKeys\": \"false\"} requires the key to be PRESENT, closing the vacuous-truth gap, so the absent-key warning must not fire here. The two conditions are AND-ed and jointly required; neither controls tag VALUES, only which tag KEYS may be set. The engine still records aws:TagKeys as a modelled-but-context-required condition (coverage incomplete: an unknown runtime request context is never credited as making the policy 'safe'). The suite-2 test 41 vs test 96 distinction is asserted in tests/acceptance-suite-3.test.js. Ref: IAM multivalued context keys + Null condition operator."
+}

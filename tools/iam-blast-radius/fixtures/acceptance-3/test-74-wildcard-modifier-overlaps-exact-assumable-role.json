@@ -1,0 +1,43 @@
+{
+  "name": "Acceptance suite-3 test 74 - wildcard modifier resource overlaps an exact assumable role",
+  "note": "IAM-1003 (Phase 10): the modify legs (iam:PutRolePolicy + iam:UpdateAssumeRolePolicy) are scoped to a role-path WILDCARD (role/deployment/*) while sts:AssumeRole names the CONCRETE role/deployment/Prod. The wildcard subsumes the concrete role, so the compound role-takeover chain is viable and MUST correlate - anchored on the concrete intersecting role deployment/Prod, NOT generalized to deployment/*. Correlation is by overlap, not exact-string match.",
+  "phase": 10,
+  "story": "IAM-1003",
+  "suite": 3,
+  "acceptanceTest": 74,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::123456789012:role/deployment/*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/deployment/Prod"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["ROLE-TAKEOVER"],
+    "absentTopLevel": ["PUT-INLINE-POLICY", "TRUST-POLICY-MODIFY"],
+    "takeover": {
+      "count": 1,
+      "severityOneOf": ["critical", "high"],
+      "resources": ["arn:aws:iam::123456789012:role/deployment/Prod"],
+      "subsumes": ["PUT-INLINE-POLICY", "TRUST-POLICY-MODIFY"],
+      "evidence": {
+        "grant-permissions": {"statementIndex": 0, "actions": ["iam:PutRolePolicy"]},
+        "modify-trust": {"statementIndex": 0, "actions": ["iam:UpdateAssumeRolePolicy"]},
+        "assume": {"statementIndex": 1, "actions": ["sts:AssumeRole"]}
+      },
+      "whyIncludes": ["deployment/Prod"],
+      "whyExcludes": ["deployment/*"]
+    }
+  }
+}

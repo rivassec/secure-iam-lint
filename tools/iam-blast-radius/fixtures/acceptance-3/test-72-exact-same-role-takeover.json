@@ -1,0 +1,44 @@
+{
+  "name": "Acceptance suite-3 test 72 - exact same-role takeover (regression)",
+  "note": "IAM-1003 regression: a permission-grant primitive + iam:UpdateAssumeRolePolicy + sts:AssumeRole all on the SAME concrete role correlate into ONE critical ROLE-TAKEOVER. The two standalone modify capabilities are folded in as subsumed risk factors (evidence preserved, not duplicated top-level). Per-statement provenance (test 79): the two modify actions map to statement 0, sts:AssumeRole to statement 1 - no action attributed to a statement that does not grant it.",
+  "phase": 10,
+  "story": "IAM-1003",
+  "suite": 3,
+  "acceptanceTest": 72,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ModifyRole",
+        "Effect": "Allow",
+        "Action": ["iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole"
+      },
+      {
+        "Sid": "AssumeRole",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["ROLE-TAKEOVER"],
+    "absentTopLevel": ["PUT-INLINE-POLICY", "TRUST-POLICY-MODIFY"],
+    "takeover": {
+      "count": 1,
+      "severityOneOf": ["critical"],
+      "resources": ["arn:aws:iam::123456789012:role/DeploymentRole"],
+      "subsumes": ["PUT-INLINE-POLICY", "TRUST-POLICY-MODIFY"],
+      "requiresPassRole": false,
+      "evidence": {
+        "grant-permissions": {"statementIndex": 0, "actions": ["iam:PutRolePolicy"]},
+        "modify-trust": {"statementIndex": 0, "actions": ["iam:UpdateAssumeRolePolicy"]},
+        "assume": {"statementIndex": 1, "actions": ["sts:AssumeRole"]}
+      }
+    }
+  }
+}

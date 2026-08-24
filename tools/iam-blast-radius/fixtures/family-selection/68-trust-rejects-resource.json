@@ -1,0 +1,31 @@
+{
+  "name": "Role-trust family selected on a statement carrying a Resource -> UNSUPPORTED_TRUST_RESOURCE",
+  "note": "IAM-1001 suite-3 test 68. A trust policy applies to the role it is attached to and has no Resource element. With Role trust explicitly selected, a Resource is a trust-policy syntax error: block with UNSUPPORTED_TRUST_RESOURCE at the Resource path; the supplied Resource must not become a second role target.",
+  "phase": 10,
+  "story": "IAM-1001",
+  "suite3Test": 68,
+  "options": { "family": "role-trust", "requireExplicitFamily": true },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "AWS": "111122223333" },
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/Target"
+      }
+    ]
+  },
+  "phase10Expect": {
+    "ok": true,
+    "blocked": true,
+    "detected": "resource",
+    "family": "role-trust",
+    "status": "blocked",
+    "blockingCodes": [
+      { "code": "UNSUPPORTED_TRUST_RESOURCE", "path": "Statement[0].Resource" }
+    ],
+    "notBlockingCodes": ["OVERRIDE_SHAPE_MISMATCH"],
+    "noFindings": true
+  }
+}

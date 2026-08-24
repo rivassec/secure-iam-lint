@@ -48,7 +48,7 @@ for (const { file, data } of loadDir(suite2Dir)) {
     let vres;
     assert.doesNotThrow(() => { vres = validate(text); }, `validate() threw on ${file}`);
     let res;
-    assert.doesNotThrow(() => { res = analyze(text); }, `analyze() threw on ${file}`);
+    assert.doesNotThrow(() => { res = analyze(text, data.options || {}); }, `analyze() threw on ${file}`);
 
     const exp = data.expect || {};
     const errExp = data.errorExpect || {};
@@ -109,6 +109,24 @@ for (const { file, data } of loadDir(suite2Dir)) {
       const present = res.findings.some((f) => f.id === id ||
         (Array.isArray(f.subsumed) && f.subsumed.some((s) => s.id === id)));
       assert.ok(!present, `${file}: finding ${id} must NOT be present`);
+    }
+
+    // IAM-1006 (test 50): analysis-coverage contract. A fixture may assert the
+    // coverage summary's incomplete flag and machine-readable codes so a
+    // non-blocking coverage WARNING (e.g. an action/resource-type mismatch) is
+    // verified, not just the finding set.
+    if (exp.coverage) {
+      const s = res.coverage && res.coverage.summary;
+      assert.ok(s, `${file}: expected an enriched coverage summary`);
+      if (typeof exp.coverage.incomplete === 'boolean') {
+        assert.equal(s.incomplete, exp.coverage.incomplete, `${file}: coverage incomplete mismatch`);
+      }
+      for (const code of (exp.coverage.codesInclude || [])) {
+        assert.ok(s.codes.includes(code), `${file}: coverage codes must include ${code} (got ${s.codes.join(',')})`);
+      }
+      for (const code of (exp.coverage.codesExclude || [])) {
+        assert.ok(!s.codes.includes(code), `${file}: coverage codes must NOT include ${code}`);
+      }
     }
   });
 }

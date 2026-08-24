@@ -1,0 +1,43 @@
+{
+  "name": "Acceptance suite-3 test 80 - duplicate permission statements do not duplicate paths (regression)",
+  "note": "IAM-1003 regression: two byte-identical modify statements (ModifyOne / ModifyTwo) plus one assume statement, all on the same role. Exactly ONE primary ROLE-TAKEOVER path is emitted (no duplicate critical rows), and the graph carries no duplicate can-modify/can-assume edges. Both equivalent modification statements are preserved as subsumed evidence alternatives - deduplication must not discard statement-level evidence.",
+  "phase": 10,
+  "story": "IAM-1003",
+  "suite": 3,
+  "acceptanceTest": 80,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ModifyOne",
+        "Effect": "Allow",
+        "Action": ["iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole"
+      },
+      {
+        "Sid": "ModifyTwo",
+        "Effect": "Allow",
+        "Action": ["iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole"
+      },
+      {
+        "Sid": "Assume",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["ROLE-TAKEOVER"],
+    "takeover": {
+      "count": 1,
+      "severityOneOf": ["critical"],
+      "resources": ["arn:aws:iam::123456789012:role/DeploymentRole"]
+    },
+    "graphNoDuplicateEdges": true
+  }
+}

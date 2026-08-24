@@ -1,0 +1,22 @@
+{
+  "name": "Acceptance suite-3 test 94 - s3:ListAllMyBuckets legitimately uses Resource:* (no remediable wildcard)",
+  "note": "docs/acceptance-suite-3.md Campaign F (false-positive control). s3:ListAllMyBuckets is an account-level enumeration action that only supports Resource:*. The engine must not call this object-read, data exfiltration, or destructive access, and must not suggest an S3 bucket ARN as remediation. Informational account-level S3 enumeration only.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 94,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "s3:ListAllMyBuckets", "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIdsAnywhere": ["WILDCARD-RESOURCE", "DATA-EXFIL", "DESTRUCTIVE-ACTION"]
+  },
+  "rationale": "s3:ListAllMyBuckets returns the list of bucket names for the account and supports only Resource:* (no resource-level permissions), so the wildcard is required. It reveals no object contents, deletes nothing, and exfiltrates no data; treating it as object-read/exfil or recommending a bucket ARN would be both a false positive and impossible remediation. Ref: AWS Service Authorization Reference, 'Actions, resources, and condition keys for Amazon S3' (ListAllMyBuckets: resource types = none)."
+}

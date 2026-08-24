@@ -1,0 +1,31 @@
+{
+  "name": "Acceptance suite-3 test 81 - asterisk inside a role Principal ARN is invalid",
+  "note": "IAM-1004 (Phase 10) Campaign D: the IAM Principal element cannot use a partial '*' wildcard to match multiple principal ARNs (AWS rejects it at save time); only the standalone Principal \"*\" is a valid wildcard. arn:aws:iam::123456789012:role/application/* must fail closed to TRUST-INVALID-PRINCIPAL (located at Principal.AWS[0]), never a plain TRUST-CROSS-ACCOUNT expansion, and coverage carries INVALID_PRINCIPAL_WILDCARD_ARN.",
+  "phase": 10,
+  "story": "IAM-1004",
+  "suite": 3,
+  "acceptanceTest": 81,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {"AWS": "arn:aws:iam::123456789012:role/application/*"},
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-INVALID-PRINCIPAL"],
+    "notFindingIdsAnywhere": ["TRUST-CROSS-ACCOUNT"],
+    "coverage": {
+      "incomplete": true,
+      "codesInclude": ["INVALID_PRINCIPAL_WILDCARD_ARN"]
+    },
+    "invalidPrincipal": {
+      "pathsInclude": ["Statement[0].Principal.AWS[0]"]
+    }
+  }
+}

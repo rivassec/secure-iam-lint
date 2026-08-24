@@ -12,13 +12,14 @@
 // structured { ok:false, errors[] } result.
 
 import { modelFromText } from './model.js';
-import { analyzeRules, ruleFindingDenySuppressed } from './rules.js';
+import { analyzeRules, ruleFindingDenySuppressed, actionResourceTypeMismatches } from './rules.js';
 import { analyzeEscalations } from './escalation.js';
 import { analyzeTrust, trustFindingDenyState, summarizeTrustDeny } from './trust.js';
+import { analyzeEnvelope } from './envelope.js';
 import { correlateFindings } from './correlate.js';
 import { buildGraph, buildTrustGraph, GRAPH_LIMITS } from './graph.js';
 import { detectFamily, FAMILIES } from './family.js';
-import { enrichCoverage } from './coverage.js';
+import { enrichCoverage, duplicateSids } from './coverage.js';
 import { classifyConditions, unsupportedConditionKeys } from './conditions.js';
 import { defaultCatalog, unrecognizedActions } from './catalog.js';
 
@@ -410,11 +411,20 @@ function trustResult(model, coverage, effectiveFamily) {
   // evaluator fails closed to). A clean parse is not complete coverage: an invalid
   // principal element makes the trusted set undetermined, so coverage is flagged
   // incomplete rather than presented as a confident cross-account conclusion.
+  // IAM-1004: carry the exact JSON path of each invalid Principal member into the
+  // coverage element (Statement[N].Principal.<key>[<i>]) so a poisoned array member
+  // (e.g. array index 1) is located, not just listed by value. Falls back to the
+  // value-only shape when a finding predates the enriched location fields.
   const invalidPrincipals = trust.findings
     .filter((f) => f.id === 'TRUST-INVALID-PRINCIPAL')
-    .flatMap((f) => (f.evidence && f.evidence[0] && Array.isArray(f.evidence[0].principals)
-      ? f.evidence[0].principals.map((p) => p.value)
-      : []));
+    .flatMap((f) => {
+      if (Array.isArray(f.invalidPrincipalPaths) && f.invalidPrincipalPaths.length > 0) {
+        return f.invalidPrincipalPaths.map((p) => ({ value: p.value, path: p.path }));
+      }
+      return f.evidence && f.evidence[0] && Array.isArray(f.evidence[0].principals)
+        ? f.evidence[0].principals.map((p) => p.value)
+        : [];
+    });
 
   const enriched = enrichCoverage(coverage, {
     model,
@@ -424,6 +434,58 @@ function trustResult(model, coverage, effectiveFamily) {
     unrecognizedActions: unrecognizedActions(model, defaultCatalog),
     trustDeny: summarizeTrustDeny(model, trust.findings),
     invalidPrincipals,
+    // IAM-1007 (test 60): non-unique Sids are an evidence-identity advisory on
+    // any family; the trust path surfaces them too.
+    duplicateSids: duplicateSids(model),
+  });
+
+  return Object.freeze({
+    ok: true,
+    errors: Object.freeze([]),
+    findings,
+    model,
+    graph: Object.freeze(graph),
+    catalogVersion: CATALOG_VERSION,
+    counts: Object.freeze({
+      findings: findings.length,
+      edges: graph.edges.length,
+      nodes: graph.nodes.length,
+    }),
+    family: enriched.family,
+    coverage: enriched,
+  });
+}
+
+// IAM-1002 (Phase 10): an EXPLICIT permissions-boundary / session selection is
+// routed to the family-aware ENVELOPE/RESTRICTION evaluator (engine/envelope.js),
+// NEVER to the identity rules/escalation engine. A boundary Allow is a
+// maximum-permissions CEILING and a session Allow is a session RESTRICTION -
+// neither grants anything - so the identity engine would emit spurious positive
+// capability findings and edges (can-read/can-write/can-pass/data-exfil/
+// escalation) that a ceiling can never establish (threat-model T8). The graph is
+// EMPTY by construction: no positive capability edges for these families. Every
+// finding states the intersection semantics (effective permissions are the
+// intersection with the identity/parent policy, not supplied here).
+function envelopeResult(model, coverage, effectiveFamily) {
+  const env = analyzeEnvelope(model, effectiveFamily);
+  if (!env.ok) return fail(env.errors);
+
+  const stamped = env.findings.map((f) => stampFamily(f, effectiveFamily));
+  const findings = Object.freeze(sortFindings(stamped));
+
+  // No positive capability edges for an envelope/restriction family - the graph
+  // is empty. The findings table (ceiling breadth + intersection caveat) is the
+  // authoritative and only representation.
+  const graph = emptyGraph();
+
+  const enriched = enrichCoverage(coverage, {
+    model,
+    graph,
+    catalogVersion: defaultCatalog.version,
+    unsupportedConditions: unsupportedConditionKeys(model),
+    unrecognizedActions: unrecognizedActions(model, defaultCatalog),
+    // IAM-1007 (test 60): non-unique Sids advisory (envelope/session family).
+    duplicateSids: duplicateSids(model),
   });
 
   return Object.freeze({
@@ -479,8 +541,18 @@ export function analyze(text, options) {
       return trustResult(m.model, coverage, effectiveFamily);
     }
 
+    // IAM-1002 (Phase 10): an explicit permissions-boundary / session selection
+    // is a CEILING/RESTRICTION, not a grant. Route it to the envelope evaluator
+    // (no positive capability edges, no escalation) rather than the identity
+    // engine. Auto-detect never reaches here (it cannot distinguish these from
+    // identity); only an explicit override selects them.
+    if (effectiveFamily === FAMILIES.PERMISSIONS_BOUNDARY
+      || effectiveFamily === FAMILIES.SESSION) {
+      return envelopeResult(m.model, coverage, effectiveFamily);
+    }
+
     const rules = analyzeRules(m.model);
-    const esc = analyzeEscalations(m.model);
+    const esc = analyzeEscalations(m.model, options || {});
     const errors = [
       ...(rules.ok ? [] : rules.errors),
       ...(esc.ok ? [] : esc.errors),
@@ -540,6 +612,14 @@ export function analyze(text, options) {
       catalogVersion: defaultCatalog.version,
       unsupportedConditions: unsupportedConditionKeys(m.model),
       unrecognizedActions: unrecognizedActions(m.model, defaultCatalog),
+      // IAM-1006 (test 50): object-action vs bucket-only-ARN mismatches - a
+      // non-blocking coverage warning so an ineffective grant is never reported
+      // as a complete, empty analysis.
+      actionResourceMismatches: actionResourceTypeMismatches(m.model),
+      // IAM-1007 (test 60): non-unique Sids across statements - a non-blocking
+      // evidence-identity advisory (statements stay keyed on their distinct
+      // index; the collision is named, never allowed to overwrite a record).
+      duplicateSids: duplicateSids(m.model),
     });
 
     return Object.freeze({

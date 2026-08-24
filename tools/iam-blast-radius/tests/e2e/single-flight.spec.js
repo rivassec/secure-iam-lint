@@ -44,6 +44,9 @@ test.beforeEach(async ({ page }) => {
     throw new Error(`Unexpected dialog (possible XSS): ${d.message()}`);
   });
   await page.goto(PAGE);
+  // IAM-1001: policy-family selection is mandatory; opt into explicit Auto-detect
+  // so the Analyze control is enabled for these single-flight tests.
+  await page.selectOption('#policy-family', 'auto');
 });
 
 // --- Single-flight: newer result wins -------------------------------------

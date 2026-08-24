@@ -1,0 +1,33 @@
+{
+  "name": "Acceptance suite-3 test 75 - mutually exclusive conditions prevent correlation (no false critical)",
+  "note": "IAM-1003 (Phase 10): the modify legs are gated on aws:PrincipalAccount 123456789012 while the assume leg is gated on aws:PrincipalAccount 999900001111. A single principal cannot satisfy both same-key StringEquals pins at once, so no one principal can execute the whole chain. The engine must NOT correlate a compound ROLE-TAKEOVER here; the standalone modification capabilities remain (reported, not hidden), and both condition expressions are preserved in the model.",
+  "phase": 10,
+  "story": "IAM-1003",
+  "suite": 3,
+  "acceptanceTest": 75,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole",
+        "Condition": {"StringEquals": {"aws:PrincipalAccount": "123456789012"}}
+      },
+      {
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole",
+        "Condition": {"StringEquals": {"aws:PrincipalAccount": "999900001111"}}
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["PUT-INLINE-POLICY", "TRUST-POLICY-MODIFY"],
+    "notFindingIdsAnywhere": ["ROLE-TAKEOVER"],
+    "preservesStrings": ["123456789012", "999900001111"]
+  }
+}

@@ -198,15 +198,24 @@ function findDuplicateKeys(text) {
     i++; // consume '{'
     skipWs();
     if (text[i] === '}') { i++; return; }
-    const seen = new Set();
+    // IAM condition KEYS are case-insensitive (suite-3 test 59): inside a
+    // Condition operator block - a path ending `...Condition.<Operator>` - two
+    // keys that differ only in case (aws:PrincipalOrgID vs AWS:PrincipalOrgId)
+    // are the SAME key and must be flagged as a duplicate, not evaluated as two
+    // independent AND conditions. Everywhere else JSON keys stay case-sensitive
+    // (IAM element names like Effect/Action are exact). We fold case only within
+    // condition operator blocks and preserve both original spellings in dups.
+    const foldCase = /(^|\.)Condition\.[^.]+$/.test(path);
+    const seen = new Map(); // comparison-key -> first original spelling
     while (i < n) {
       skipWs();
       if (text[i] !== '"') return; // unexpected
       const key = parseString();
-      if (seen.has(key)) {
-        dups.push({ key, path });
+      const cmp = foldCase ? key.toLowerCase() : key;
+      if (seen.has(cmp)) {
+        dups.push({ key, path, firstKey: seen.get(cmp) });
       } else {
-        seen.add(key);
+        seen.set(cmp, key);
       }
       skipWs();
       if (text[i] !== ':') return; // unexpected
@@ -368,6 +377,22 @@ export function validate(text) {
       return { ok: false, errors, raw: null };
     }
 
+    // IAM-1007 (suite-3 test 62): UTF-8 byte-order mark. A file saved as
+    // "UTF-8 with BOM" begins with the bytes EF BB BF (decoded to a single
+    // leading U+FEFF). JSON.parse rejects a leading BOM, so pasting such a policy
+    // would otherwise fail as INVALID_JSON. DOCUMENTED BEHAVIOR: accept the file
+    // by stripping EXACTLY ONE leading U+FEFF, then validate normally. This also
+    // gives paste/import PARITY (test 63): a browser's FileReader.readAsText
+    // strips a leading BOM during UTF-8 decoding, so the paste path must converge
+    // on the same rule. Only the FIRST code unit is removed - an embedded U+FEFF
+    // anywhere else in the text (e.g. inside a Sid/ARN string) is PRESERVED
+    // verbatim and never silently mutated (privacy-invariants: hostile Unicode
+    // rides through as inert data). All downstream scans (byte length, depth,
+    // duplicate-key, JSON.parse) operate on the BOM-stripped text.
+    if (text.charCodeAt(0) === 0xfeff) {
+      text = text.slice(1);
+    }
+
     if (text.trim().length === 0) {
       errors.push(err('EMPTY_INPUT', 'Input is empty.'));
       return { ok: false, errors, raw: null };
@@ -409,12 +434,22 @@ export function validate(text) {
     if (duplicateKeys.length > 0) {
       for (const d of duplicateKeys) {
         const location = d.path ? d.path : '(top-level object)';
+        // When the duplicate was detected by case-folding a condition key, name
+        // BOTH original spellings so the report shows they are the same IAM key
+        // (suite-3 test 59: "preserve original spellings in the error").
+        const caseVariant = d.firstKey !== undefined && d.firstKey !== d.key;
+        const message = caseVariant
+          ? `Duplicate condition key "${d.key}" (same IAM key as "${d.firstKey}"; ` +
+            `condition keys are case-insensitive) in object at ${location}; the two ` +
+            'entries would otherwise be evaluated as independent AND conditions. ' +
+            'Remove the duplicate before analysis.'
+          : `Duplicate key "${d.key}" in object at ${location}; ` +
+            'JSON parsers keep only the last value, so a grant would be silently ' +
+            'dropped. Remove the duplicate before analysis.';
         errors.push(
           err(
             'DUPLICATE_JSON_KEY',
-            `Duplicate key "${d.key}" in object at ${location}; ` +
-              'JSON parsers keep only the last value, so a grant would be silently ' +
-              'dropped. Remove the duplicate before analysis.',
+            message,
             d.path ? `${d.path}.${d.key}` : d.key,
           ),
         );

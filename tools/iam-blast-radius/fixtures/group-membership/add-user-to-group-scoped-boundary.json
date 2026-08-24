@@ -1,0 +1,30 @@
+{
+  "name": "iam:AddUserToGroup scoped to a non-privileged group, MFA-conditioned, with an unrelated Deny (boundary)",
+  "note": "IAM-1005 boundary: exercises the GROUP-MEMBERSHIP decision boundary - a non-privileged group name (Developers, no privileged token), a narrowing Condition (MFA), and a same-policy Deny on an UNRELATED action. GROUP-MEMBERSHIP still fires (the grant is present), and the finding is Condition-aware. Witnesses the boundary + condition + deny matrix cells at once.",
+  "story": "IAM-1005",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AddToTeamGroup",
+        "Effect": "Allow",
+        "Action": "iam:AddUserToGroup",
+        "Resource": "arn:aws:iam::123456789012:group/Developers",
+        "Condition": {
+          "Bool": { "aws:MultiFactorAuthPresent": "true" }
+        }
+      },
+      {
+        "Sid": "DenyUnrelated",
+        "Effect": "Deny",
+        "Action": "s3:DeleteBucket",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["GROUP-MEMBERSHIP"],
+    "notFindingIds": ["DIRECT-IAM-ADMIN"]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "Acceptance suite-2 test 36 - add a user to a privileged group",
+  "note": "IAM-1005: iam:AddUserToGroup on a group ARN is an INDIRECT privilege assignment. It yields the dedicated GROUP-MEMBERSHIP finding (high), NOT generic DIRECT-IAM-ADMIN / AttachUserPolicy / PutUserPolicy. Group privilege is inferred from the name (PlatformAdmins) at medium confidence only; the added user is a request parameter, not resource-scoped by this ARN.",
+  "phase": 10,
+  "story": "IAM-1005",
+  "suite": 2,
+  "acceptanceTest": 36,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ManageAdminGroupMembership",
+        "Effect": "Allow",
+        "Action": "iam:AddUserToGroup",
+        "Resource": "arn:aws:iam::123456789012:group/PlatformAdmins"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["GROUP-MEMBERSHIP"],
+    "notFindingIds": ["DIRECT-IAM-ADMIN", "ATTACH-POLICY", "PUT-INLINE-POLICY"]
+  }
+}

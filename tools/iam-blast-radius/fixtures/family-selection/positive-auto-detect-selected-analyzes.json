@@ -1,0 +1,22 @@
+{
+  "name": "Auto-detect explicitly selected -> analyzes via shape auto-detect",
+  "note": "IAM-1001. Auto-detect is now an explicit menu choice (not a silent default). Selecting it satisfies the mandatory contract and infers the family from shape (identity here), so paste-and-go remains available as an opt-in.",
+  "phase": 10,
+  "story": "IAM-1001",
+  "options": { "family": "auto", "requireExplicitFamily": true },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "*", "Resource": "*" }
+    ]
+  },
+  "phase10Expect": {
+    "ok": true,
+    "blocked": false,
+    "detected": "identity",
+    "family": "identity",
+    "override": null,
+    "status": "ok",
+    "hasFindings": true
+  }
+}

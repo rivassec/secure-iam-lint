@@ -1,0 +1,31 @@
+{
+  "name": "Identity family selected on a Principal-bearing statement -> UNSUPPORTED_PRINCIPAL",
+  "note": "IAM-1001 suite-3 test 67. An identity policy attaches to a principal and never CONTAINS a Principal element. With Identity explicitly selected, the engine must block with UNSUPPORTED_PRINCIPAL naming the exact JSON path, and must NOT drop the Principal and analyze the remainder (s3:GetObject on a public bucket) as an identity grant.",
+  "phase": 10,
+  "story": "IAM-1001",
+  "suite3Test": 67,
+  "options": { "family": "identity", "requireExplicitFamily": true },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::public/*"
+      }
+    ]
+  },
+  "phase10Expect": {
+    "ok": true,
+    "blocked": true,
+    "detected": "resource",
+    "family": "identity",
+    "status": "blocked",
+    "blockingCodes": [
+      { "code": "UNSUPPORTED_PRINCIPAL", "path": "Statement[0].Principal" }
+    ],
+    "notBlockingCodes": ["OVERRIDE_SHAPE_MISMATCH"],
+    "noFindings": true
+  }
+}

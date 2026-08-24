@@ -1,0 +1,30 @@
+{
+  "name": "Resource family explicitly selected (deferred) -> UNSUPPORTED_POLICY_FAMILY, input preserved",
+  "note": "IAM-1001 suite-3 test 69. Full resource-policy analysis is a deferred tranche. Selecting Resource must fail closed with UNSUPPORTED_POLICY_FAMILY naming the family; no public-access finding may be presented as a supported result. The input is preserved (the engine never mutates it) so the user can re-select.",
+  "phase": 10,
+  "story": "IAM-1001",
+  "suite3Test": 69,
+  "options": { "family": "resource", "requireExplicitFamily": true },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::public/*"
+      }
+    ]
+  },
+  "phase10Expect": {
+    "ok": true,
+    "blocked": true,
+    "detected": "resource",
+    "family": "resource",
+    "status": "blocked",
+    "blockingCodes": [
+      { "code": "UNSUPPORTED_POLICY_FAMILY" }
+    ],
+    "noFindings": true
+  }
+}

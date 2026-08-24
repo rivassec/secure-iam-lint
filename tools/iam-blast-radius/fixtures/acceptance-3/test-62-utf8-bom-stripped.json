@@ -1,0 +1,16 @@
+{
+  "name": "Acceptance suite-3 test 62 - a single leading UTF-8 BOM is stripped, then the policy validates",
+  "note": "docs/acceptance-suite-3.md Campaign A. Documented preprocessing: exactly ONE leading UTF-8 BOM (U+FEFF) is stripped, then the policy parses normally. A second leading BOM is NOT stripped (would fail as invalid JSON), and an embedded U+FEFF inside a string is PRESERVED. Paste and file import use the same rule. policyRaw begins with a literal BOM character.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 62,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policyRaw": "﻿{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"BomPrefixed\",\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::reports/*\"}]}",
+  "expect": {
+    "valid": true,
+    "findingIds": []
+  },
+  "rationale": "A leading UTF-8 BOM is a common artifact of Windows editors and some file exports; JSON.parse rejects it, but a single leading BOM carries no semantic content, so stripping exactly one and then parsing is safe and documented. Stripping more than one, or stripping embedded U+FEFF inside string values, would be data loss - so only the single leading occurrence is removed. Ref: RFC 8259 section 8.1 (implementations MAY ignore a leading BOM) + Unicode U+FEFF."
+}

@@ -38,6 +38,20 @@ defense in depth on top of that.
 - No service worker caching analyzed content.
 - No localStorage/IndexedDB/cookies for policy content.
 
+## Input preprocessing (documented behaviors)
+- **UTF-8 BOM (IAM-1007 / suite-3 test 62):** `validate()` strips EXACTLY ONE
+  leading `U+FEFF` byte-order mark, then validates normally. A file saved as
+  "UTF-8 with BOM" (bytes `EF BB BF`) is therefore accepted on the paste path,
+  matching the import path (a browser's `FileReader.readAsText` already consumes
+  a leading BOM during UTF-8 decoding). Only the first code unit is removed; a
+  `U+FEFF` embedded anywhere else in the text is preserved verbatim (never
+  silently mutated). A second consecutive leading BOM is NOT stripped and falls
+  through to the normal `INVALID_JSON` rejection. Regression-tested in
+  `tests/phase10-parser-hardening.test.js`.
+- **Ingestion parity (test 63):** paste, `.json` import, and the programmatic
+  test harness all funnel through the same `validate()` + `analyze()`; the
+  imported filename never influences policy-family selection or any finding.
+
 ## Release flow
 Ralph loop -> review branch + local preview -> human review -> Oliver merges
 and adds the Cloudflare header. Never auto-publish.

@@ -1,0 +1,32 @@
+{
+  "name": "Acceptance suite-3 test 87 - ECS task role and execution role are separate nodes",
+  "note": "IAM-1005: both roles passable + RegisterTaskDefinition + RunTask -> critical. Task role = application-credential path; execution role = startup/pull/logs/secrets influence only, distinct graph node, never merged.",
+  "phase": 10,
+  "story": "IAM-1005",
+  "suite": 3,
+  "acceptanceTest": 87,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": [
+          "arn:aws:iam::123456789012:role/ecs/AppTaskRole",
+          "arn:aws:iam::123456789012:role/ecs/AppExecutionRole"
+        ],
+        "Condition": { "StringEquals": { "iam:PassedToService": "ecs-tasks.amazonaws.com" } }
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["ecs:RegisterTaskDefinition", "ecs:RunTask"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-SERVICE"]
+  }
+}

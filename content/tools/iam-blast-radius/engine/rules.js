@@ -63,6 +63,7 @@ import {
   denyActionApplies,
   hasNonEmptyCondition,
 } from './escalation.js';
+import { statementNeverMatches } from './conditions.js';
 
 // --- Shared capability caveat (mirrors evaluator.js wording) -----------------
 // Kept as one constant so every finding's `limit` field carries identical,
@@ -198,10 +199,46 @@ const IAM_ADMIN_ACTIONS = Object.freeze([
   'iam:CreateLoginProfile',
   'iam:UpdateLoginProfile',
   'iam:UpdateAssumeRolePolicy',
-  'iam:AddUserToGroup',
+  // NOTE: iam:AddUserToGroup is deliberately NOT here. Adding a user to a group
+  // is an INDIRECT privilege assignment (the group's attached policies decide the
+  // effect), not a direct self-policy edit like Put/Attach*Policy. It has its own
+  // dedicated GROUP-MEMBERSHIP rule (IAM-1005, suite-2 test 36 / suite-3 test 86)
+  // so it is not mislabeled as generic direct-IAM administration.
   'iam:DeleteUserPolicy',
   'iam:DeleteRolePolicy',
 ]);
+
+// IAM-1005: group-membership privilege assignment. iam:AddUserToGroup adds a user
+// (named in the API request, NOT resource-scoped by this ARN) to the group named
+// by the Resource. Its blast radius is whatever policies that group carries -
+// inferred, at best, from the group NAME, never confirmed from this policy alone.
+const GROUP_MEMBERSHIP_ACTIONS = Object.freeze(['iam:AddUserToGroup']);
+
+// Group-name tokens that SUGGEST (never confirm) elevated privilege. Matched
+// case-insensitively as substrings of the group name. Used only to phrase an
+// inferred, medium-confidence note - the group's real permissions are unknown.
+const PRIVILEGED_GROUP_NAME_TOKENS = Object.freeze([
+  'admin', 'administrator', 'poweruser', 'power-user', 'root', 'superuser',
+  'privileged', 'infra', 'infrastructure', 'security', 'devops', 'sre',
+  'operator', 'billing', 'finance',
+]);
+
+// Extract the group name (last path segment) from an IAM group ARN, e.g.
+// arn:aws:iam::123456789012:group/team/PlatformAdmins -> "PlatformAdmins".
+// Returns null for a non-group / wildcard-only resource.
+function groupNameFromArn(resource) {
+  const s = String(resource == null ? '' : resource);
+  const m = /:group\/(.+)$/.exec(s);
+  if (!m) return null;
+  const name = m[1].split('/').pop();
+  return name && name !== '*' ? name : null;
+}
+
+function groupNameSuggestsPrivilege(name) {
+  if (!name) return false;
+  const lower = name.toLowerCase();
+  return PRIVILEGED_GROUP_NAME_TOKENS.some((t) => lower.includes(t));
+}
 
 // Sensitive READ actions (data / secret exfiltration). These fire regardless of
 // resource breadth because reading a secret is the exfil act itself; severity
@@ -379,6 +416,18 @@ export const RULES = Object.freeze({
     docRef:
       'https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_variables.html',
   }),
+  // IAM-1005: indirect privilege assignment via group membership. Distinct from
+  // DIRECT-IAM-ADMIN (a direct self-policy edit): iam:AddUserToGroup grants only
+  // whatever the target group already carries, which this single policy cannot
+  // establish. Ordered last so it never displaces the established rules.
+  'GROUP-MEMBERSHIP': Object.freeze({
+    id: 'GROUP-MEMBERSHIP',
+    order: 9,
+    title: 'Group-membership privilege assignment (iam:AddUserToGroup)',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_groups_manage_add-remove-users.html',
+  }),
 });
 
 export const RULE_IDS = Object.freeze(Object.keys(RULES));
@@ -482,19 +531,41 @@ function resourceIsBroad(stmt) {
   return stmt.resources.includes('*') || stmt.notResources.length > 0;
 }
 
+// Is a single action pattern a non-read (mutating/privileged) action - the kind
+// for which a wildcard resource is a meaningful, remediable risk? A read/
+// enumeration verb (get/list/describe/...) is treated as read; anything else -
+// including a wildcard or an unknown/malformed verb - is the safe
+// over-approximation "write". Enumeration actions (iam:ListRoles,
+// ec2:DescribeInstances, s3:ListAllMyBuckets) are reads: many legitimately
+// REQUIRE Resource:* because they have no resource-level scoping, so a wildcard
+// on them is normal, not remediable (suite-3 tests 92/93/94).
+function isNonReadAction(p) {
+  if (isFullWildcard(p)) return true;
+  if (isServiceWildcard(p)) return true;
+  const verb = actionVerb(p);
+  if (verb === '' || verb === '*') return true; // unknown scope -> treat as write
+  return !READ_VERB.test(verb);
+}
+
 // Does the statement grant at least one non-read (mutating/privileged) action?
 // Used to decide whether a wildcard resource is a meaningful risk vs. a routine
 // read-only wildcard (e.g. ec2:Describe* on "*").
 function grantsNonReadAction(stmt) {
   if (stmt.notActions.length > 0) return true; // Allow NotAction => includes writes
-  for (const p of stmt.actions) {
-    if (isFullWildcard(p)) return true;
-    if (isServiceWildcard(p)) return true;
-    const verb = actionVerb(p);
-    if (verb === '' || verb === '*') return true; // unknown scope -> treat as write
-    if (!READ_VERB.test(verb)) return true;
-  }
-  return false;
+  return stmt.actions.some(isNonReadAction);
+}
+
+// The explicit actions in a statement for which a wildcard resource is actually
+// dangerous and remediable, i.e. the non-read (mutating/privileged) subset. In a
+// statement mixing a required-wildcard enumeration action with a dangerous one -
+// e.g. ["iam:ListRoles", "iam:PassRole"] on Resource "*" (suite-3 test 95) - only
+// iam:PassRole belongs in the WILDCARD-RESOURCE finding: recommending "scope
+// Resource to specific ARNs" for iam:ListRoles is impossible remediation, since
+// ListRoles has no resource-level scoping. Per-action, not one conclusion for the
+// whole statement. Only reached when grantsNonReadAction(stmt) is already true,
+// so the result is non-empty for the explicit-actions path.
+function remediableWildcardActions(stmt) {
+  return stmt.actions.filter(isNonReadAction);
 }
 
 // --- Same-policy explicit-Deny precedence (IAM-302) --------------------------
@@ -642,7 +713,11 @@ function ruleWildcardResource(stmt, out) {
     makeFinding('WILDCARD-RESOURCE', stmt, {
       severity: broadStar ? 'high' : 'medium',
       policyEvidence: 'high',
-      actions: stmt.notActions.length > 0 ? stmt.notActions : stmt.actions,
+      // Per-action (suite-3 test 95): for the explicit-actions path list ONLY the
+      // remediable non-read actions, so a required-wildcard enumeration action
+      // (iam:ListRoles) is not presented with impossible "scope the ARN"
+      // remediation. The NotAction path keeps its excluded-set semantics.
+      actions: stmt.notActions.length > 0 ? stmt.notActions : remediableWildcardActions(stmt),
       resources: resourceScope(stmt),
       why: broadStar
         ? 'Resource "*" leaves the granted action(s) broadly resource-scoped: ' +
@@ -906,6 +981,60 @@ function ruleNotActionAllow(stmt, out) {
   );
 }
 
+// IAM-1005 (suite-2 test 36 / suite-3 test 86): dedicated group-membership
+// finding. Fires on a CONCRETE grant of iam:AddUserToGroup (or a partial wildcard
+// like iam:Add*) - never on a bare "iam:*" / "*", which DIRECT-IAM-ADMIN and
+// WILDCARD-ACTION already own (matchPatterns with includeServiceWildcards=false).
+function ruleGroupMembership(stmt, out) {
+  const matched = matchPatterns(stmt, GROUP_MEMBERSHIP_ACTIONS, false);
+  if (matched.length === 0) return;
+  // Infer (never confirm) the group's privilege from the Resource group name(s).
+  const groupNames = [];
+  let anyPrivilegedName = false;
+  for (const r of stmt.resources) {
+    const name = groupNameFromArn(r);
+    if (name) {
+      groupNames.push(name);
+      if (groupNameSuggestsPrivilege(name)) anyPrivilegedName = true;
+    }
+  }
+  const namePhrase = groupNames.length
+    ? `the group name (${groupNames.join(', ')})`
+    : 'the group name';
+  out.push(
+    makeFinding('GROUP-MEMBERSHIP', stmt, {
+      // High: the ability to add a user to a POTENTIALLY privileged group is a
+      // real privilege-assignment primitive. It is NOT critical: whether it
+      // elevates depends on the group's (unknown) attached policies.
+      severity: 'high',
+      // The grant itself is plainly present (evidence high); whether it elevates
+      // depends on the target group's unknown permissions - so exploitability is
+      // MEDIUM, the inferred-privilege confidence the requirement calls for.
+      policyEvidence: 'high',
+      pathExploitability: 'medium',
+      actions: matched,
+      resources: resourceScope(stmt),
+      why:
+        'Grants iam:AddUserToGroup: the principal can add a user to the IAM group ' +
+        'named by the Resource. The user to add is supplied in the API request and ' +
+        'is NOT scoped by this ARN, so any user reachable by the request can be ' +
+        'placed into the group; the Resource scopes only WHICH group. The blast ' +
+        'radius is whatever policies that group carries - ' +
+        (anyPrivilegedName
+          ? `${namePhrase} suggests it may be privileged (inferred from the name at ` +
+            'medium confidence only), '
+          : `inferred at medium confidence from ${namePhrase} alone, `) +
+        'which this single policy does not establish. Not equivalent to ' +
+        'iam:AttachUserPolicy / iam:PutUserPolicy (a direct policy edit): this ' +
+        'assigns privilege only indirectly, through the group.',
+      remediation:
+        'Scope iam:AddUserToGroup to the specific non-privileged group ARNs it ' +
+        'must manage, keep privileged groups out of self-service membership, and ' +
+        'review the target group\'s attached policies to confirm its actual reach.',
+    }),
+  );
+}
+
 const RULE_FUNCTIONS = [
   ruleWildcardAction,
   ruleWildcardResource,
@@ -916,6 +1045,7 @@ const RULE_FUNCTIONS = [
   ruleDestructive,
   ruleDetectionImpairment,
   ruleNotActionAllow,
+  ruleGroupMembership,
 ];
 
 // --- Public entry points -----------------------------------------------------
@@ -940,6 +1070,10 @@ export function analyzeRules(model) {
     for (const stmt of model.statements) {
       // Only Allow statements grant blast radius; a Deny restricts access.
       if (stmt.effect !== 'Allow') continue;
+      // suite-3 test 97: a structurally never-match Allow (e.g. an empty
+      // ForAnyValue set) grants nothing, so it produces no capability or
+      // wildcard-resource finding.
+      if (statementNeverMatches(stmt)) continue;
       for (const fn of RULE_FUNCTIONS) fn(stmt, findings);
     }
 
@@ -955,6 +1089,93 @@ export function analyzeRules(model) {
     errors.push({ code: 'INTERNAL', message: 'Rule analysis failed unexpectedly.', path: null });
     return Object.freeze({ ok: false, errors: Object.freeze(errors), findings: Object.freeze([]) });
   }
+}
+
+// A concrete S3 OBJECT-level action ARN must name objects (a key or key prefix),
+// e.g. arn:aws:s3:::bucket/* or arn:aws:s3:::bucket/prefix/*. Every S3 action with
+// "Object" in its name (GetObject, PutObject, DeleteObjectVersion, ...) operates on
+// objects; bucket-level actions (ListBucket, GetBucketPolicy) and the account-level
+// ListAllMyBuckets do not. Wildcard action patterns (s3:*, s3:Get*) are owned by
+// the WILDCARD-ACTION rule and are not treated as object-level here.
+function isS3ObjectAction(pattern) {
+  if (isFullWildcard(pattern) || isServiceWildcard(pattern)) return false;
+  if (actionService(pattern) !== 's3') return false;
+  const verb = actionVerb(pattern);
+  if (verb.includes('*')) return false; // a verb wildcard is not a concrete action
+  return /object/i.test(verb);
+}
+
+// A concrete S3 BUCKET-only resource ARN: arn:aws:s3:::<bucket> with NO key path
+// and no wildcard. This identifies the bucket, not any object inside it, so an
+// object-level action scoped to it matches no object-read/write request. A bare
+// "*", an all-buckets "arn:aws:s3:::*", or an object ARN ("bucket/*") is NOT
+// bucket-only and is intentionally excluded (fail closed: only a clear mismatch).
+function isS3BucketOnlyArn(resource) {
+  return /^arn:aws:s3:::[^/*]+$/.test(String(resource == null ? '' : resource));
+}
+
+// A resource an S3 OBJECT-level action can actually match: the bare "*" (all
+// resources) or an S3 object ARN carrying a key path (arn:aws:s3:::bucket/...,
+// including bucket/*). If a statement offers at least one of these, the object
+// action IS effectively scoped and no mismatch exists - the common least-privilege
+// pair {s3:GetObject+s3:ListBucket on [bucket, bucket/*]} must stay finding-free.
+function isObjectCapableResource(resource) {
+  const r = String(resource == null ? '' : resource);
+  if (r === '*') return true;
+  return /^arn:aws:s3:::[^/]+\/.*/.test(r);
+}
+
+/**
+ * IAM-1006 (suite-2 test 50): detect object-action vs bucket-only-ARN mismatches.
+ * The engine has no full action-to-resource-type catalog, so - rather than
+ * silently reporting a complete, empty analysis of a grant that matches nothing -
+ * it surfaces the specific, sound case it CAN determine: a concrete S3 object-level
+ * action (s3:GetObject family) scoped to a concrete bucket-only ARN. The result
+ * feeds a non-blocking COVERAGE warning (marks coverage incomplete; lowers
+ * confidence) with bucket-vs-object remediation; it never fabricates a confirmed
+ * object-read finding. One entry per Allow statement that mixes >=1 object action
+ * with >=1 bucket-only resource. Deterministic; never throws.
+ *
+ * @param {object} model normalized, frozen model from buildModel()
+ * @returns {Array<{statementIndex:number, statementSid:string, actions:string[],
+ *            resources:string[], code:string, note:string, remediation:string}>}
+ */
+export function actionResourceTypeMismatches(model) {
+  const out = [];
+  if (!model || !Array.isArray(model.statements)) return out;
+  for (const stmt of model.statements) {
+    if (!stmt || stmt.effect !== 'Allow') continue;
+    if (!Array.isArray(stmt.actions) || !Array.isArray(stmt.resources)) continue;
+    const objectActions = stmt.actions.filter(isS3ObjectAction);
+    if (objectActions.length === 0) continue;
+    const bucketOnly = stmt.resources.filter(isS3BucketOnlyArn);
+    if (bucketOnly.length === 0) continue;
+    // If the statement ALSO offers an object-capable resource (bucket/* or "*"),
+    // the object action is effectively scoped and there is no mismatch - the
+    // bucket-only ARN is legitimately present for a sibling bucket action
+    // (e.g. s3:ListBucket). Only warn when NO resource can serve the object action.
+    if (stmt.resources.some(isObjectCapableResource)) continue;
+    const example = `${bucketOnly[0]}/*`;
+    out.push({
+      statementIndex: stmt.index,
+      statementSid: statementSid(stmt),
+      actions: objectActions.slice(),
+      resources: bucketOnly.slice(),
+      code: 'ACTION_RESOURCE_TYPE_MISMATCH',
+      note:
+        `Object-level S3 action(s) ${objectActions.join(', ')} are scoped to the ` +
+        `bucket-only ARN(s) ${bucketOnly.join(', ')}, which identify the bucket, ` +
+        'not the objects inside it. Object actions require an object-key resource ' +
+        `ARN (e.g. ${example}), so as written this grant matches no object request. ` +
+        'This is a coverage warning, not a confirmed object-read capability.',
+      remediation:
+        'Distinguish bucket actions from object actions: object actions ' +
+        `(s3:GetObject, s3:PutObject, ...) need an object ARN such as ${example} ` +
+        '(or a specific key prefix); bucket actions (s3:ListBucket, ' +
+        's3:GetBucketPolicy) use the bucket ARN itself.',
+    });
+  }
+  return out;
 }
 
 /**

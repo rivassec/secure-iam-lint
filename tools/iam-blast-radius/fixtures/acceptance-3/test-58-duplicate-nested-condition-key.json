@@ -1,0 +1,21 @@
+{
+  "name": "Acceptance suite-3 test 58 - duplicate nested Condition key -> BLOCKED at exact path",
+  "note": "docs/acceptance-suite-3.md Campaign A. Duplicate detection must cover EVERY object depth, not just top-level statement members. aws:PrincipalOrgID is repeated inside Condition.StringEquals; the engine must fail closed with DUPLICATE_JSON_KEY and locate it at Statement[0].Condition.StringEquals.aws:PrincipalOrgID. No org-constrained finding may be emitted.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 58,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policyRaw": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::reports/*\",\"Condition\":{\"StringEquals\":{\"aws:PrincipalOrgID\":\"o-approved\",\"aws:PrincipalOrgID\":\"o-attacker\"}}}]}",
+  "expect": {
+    "valid": false,
+    "status": "blocked",
+    "findingIds": []
+  },
+  "errorExpect": {
+    "errorCodes": ["DUPLICATE_JSON_KEY"],
+    "pathIncludes": ["Statement[0].Condition.StringEquals.aws:PrincipalOrgID"]
+  },
+  "rationale": "A duplicate condition key is as dangerous as a duplicate Action: last-key-wins would let an attacker override an org restriction (o-approved) with a permissive value (o-attacker) that survives the parse. Recursive duplicate detection at the exact JSON path is required so the guard cannot be bypassed by nesting. Ref: RFC 8259 section 4 + IAM condition block grammar."
+}

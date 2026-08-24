@@ -1,0 +1,40 @@
+{
+  "id": "test-99-rendering-export-injection",
+  "acceptanceTest": 99,
+  "suite": 3,
+  "title": "Rendering and export injection (suite-3 test 99)",
+  "description": "A firing identity policy whose Sid and Resource values are attacker-controlled injection witnesses: an <img onerror> HTML payload, a javascript: markdown link, a fenced <script> block, and bare-URL/www autolink triggers. The UI must render every value as inert text (safe DOM), the Markdown export must escape/fence them so no active link or executable HTML forms, and the JSON export must preserve the exact bytes. This is the positive-witness fixture: it MUST produce findings so the witnesses reach the findings section of every surface.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "[click](javascript:alert(1))",
+        "Effect": "Allow",
+        "Action": "*",
+        "Resource": [
+          "*",
+          "arn:aws:s3:::example/<img src=x onerror=alert(1)>",
+          "arn:aws:s3:::example/[click](javascript:alert(1))",
+          "arn:aws:s3:::example/```html<script>alert(1)</script>```",
+          "https://evil.example.com/leak",
+          "http://evil.example.com/x",
+          "ftp://evil.example.com/y",
+          "www.evil.com/track"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["WILDCARD-ACTION"],
+    "preservesStrings": [
+      "arn:aws:s3:::example/<img src=x onerror=alert(1)>",
+      "arn:aws:s3:::example/[click](javascript:alert(1))",
+      "https://evil.example.com/leak",
+      "www.evil.com/track"
+    ]
+  },
+  "rationale": "AWS policy grammar allows arbitrary strings in Sid and Resource; those strings are attacker-controlled and hostile (threat-model T1/T6). JSON export must round-trip them verbatim (JSON.stringify escapes control chars but keeps the exact string); Markdown export must neutralize active-link/HTML metacharacters and bare-URL autolink triggers so a downloaded/shared report cannot execute or phish."
+}

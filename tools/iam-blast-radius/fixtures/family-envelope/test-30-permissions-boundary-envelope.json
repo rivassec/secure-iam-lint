@@ -1,0 +1,41 @@
+{
+  "id": "suite2-test-30-permissions-boundary-allow-is-a-ceiling-not-a-grant",
+  "suite2Test": 30,
+  "title": "Permissions boundary Allow is a ceiling, not a grant",
+  "note": "IAM-1002: an EXPLICIT permissions-boundary selection reports the maximum-permissions envelope breadth but emits NO positive capability edges and NO escalation findings. Effective permissions are the INTERSECTION of this boundary and an identity policy (not supplied). Compare with the identity family-gap baseline in fixtures/acceptance-2-deferred/test-30 (no selection -> auto-detect identity).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "MaximumApplicationPermissions",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "dynamodb:*"
+        ],
+        "Resource": "*"
+      }
+    ]
+  },
+  "options": {
+    "family": "permissions-boundary",
+    "requireExplicitFamily": true
+  },
+  "envelopeExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "permissions-boundary",
+    "override": "permissions-boundary",
+    "status": "ok",
+    "findingIds": [
+      "PERMISSIONS-BOUNDARY-ENVELOPE"
+    ],
+    "severities": {
+      "PERMISSIONS-BOUNDARY-ENVELOPE": "high"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesIntersection": true,
+    "differsFromIdentity": true
+  }
+}

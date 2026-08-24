@@ -94,6 +94,61 @@ test('hostile policy fields serialize as inert text (no markup execution vector)
   assert.equal(typeof md, 'string');
 });
 
+test('bare URLs / www. hosts in policy fields cannot become active links (autolink break)', () => {
+  // A firing wildcard grant so the hostile Resource strings reach the findings.
+  const policy = {
+    Version: '2012-10-17',
+    Statement: [{
+      Sid: 'https://evil.example.com/sid',
+      Effect: 'Allow',
+      Action: '*',
+      Resource: [
+        '*',
+        'https://evil.example.com/leak',
+        'HTTP://Evil.Example.com/upper',
+        'ftp://evil.example.com/y',
+        'www.evil.com/track',
+      ],
+    }],
+  };
+  const md = toMarkdown(analyze(JSON.stringify(policy)));
+  // The autolink-eligible scheme tokens (http/https/ftp/www.) are broken so no
+  // GFM/CommonMark-autolink/pandoc autolink fires on the attacker host.
+  assert.ok(!md.includes('https://evil'), 'https:// broken');
+  assert.ok(!md.includes('http://Evil') && !md.includes('HTTP://Evil'), 'http:// (any case) broken');
+  assert.ok(!md.includes('ftp://evil'), 'ftp:// broken');
+  assert.ok(!md.includes('www.evil'), 'www. broken');
+  // ...but the value survives as readable, inert text (host + path present).
+  assert.ok(md.includes('evil.example.com/leak'), 'URL text preserved');
+  assert.ok(md.includes('evil.com/track'), 'www host text preserved');
+  // A legitimate colon (ARN) and single-slash paths are untouched.
+  const arnPolicy = {
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Action: '*', Resource: 'arn:aws:s3:::my-bucket/*' }],
+  };
+  assert.ok(toMarkdown(analyze(JSON.stringify(arnPolicy))).includes('arn:aws:s3:::my-bucket/*'),
+    'ARNs (no "://") are not altered');
+});
+
+test('breakAutolinks stays linear on a large no-colon value (no quadratic hang)', () => {
+  // Regression: breakAutolinks used a greedy `[A-Za-z0-9+.-]*://` regex that
+  // backtracked quadratically, so a long scheme-char value with NO "://" (a
+  // hostile Sid/Action reachable through real analyze) took tens of seconds to
+  // serialize. The scan is now O(n); a 50KB no-colon value must serialize well
+  // under a second. Bound is deliberately generous (was ~33s) so it is not flaky.
+  const bigNoColon = 'a'.repeat(50 * 1024);
+  const policy = {
+    Version: '2012-10-17',
+    Statement: [{ Sid: bigNoColon, Effect: 'Allow', Action: 's3:GetObject', Resource: '*' }],
+  };
+  const t0 = Date.now();
+  const md = toMarkdown(analyze(JSON.stringify(policy)));
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed < 2000, `toMarkdown on a 50KB no-colon value took ${elapsed}ms (expected < 2000ms)`);
+  // The value still survives verbatim as inert text (no "://" means no break).
+  assert.ok(md.includes(bigNoColon), 'no-colon value is carried through unaltered');
+});
+
 test('report serializers never throw on a failed analysis', () => {
   const result = analyze('not valid json');
   assert.equal(result.ok, false);

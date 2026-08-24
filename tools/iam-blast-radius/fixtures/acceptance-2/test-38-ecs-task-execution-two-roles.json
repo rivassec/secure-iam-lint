@@ -1,0 +1,37 @@
+{
+  "name": "Acceptance suite-2 test 38 - ECS task-role execution with two passable roles",
+  "note": "IAM-1005: iam:PassRole for BOTH the ECS task role and the execution role + ecs:RegisterTaskDefinition + ecs:RunTask. Critical: the application-credential path targets the TASK role; the execution role is separate (startup/pull/logs/secrets), never merged into application credentials. RegisterTaskDefinition + RunTask stay jointly relevant.",
+  "phase": 10,
+  "story": "IAM-1005",
+  "suite": 2,
+  "acceptanceTest": 38,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassEcsRoles",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": [
+          "arn:aws:iam::123456789012:role/ecs/AppTaskRole",
+          "arn:aws:iam::123456789012:role/ecs/AppExecutionRole"
+        ],
+        "Condition": {
+          "StringEquals": { "iam:PassedToService": "ecs-tasks.amazonaws.com" }
+        }
+      },
+      {
+        "Sid": "DefineAndRunTasks",
+        "Effect": "Allow",
+        "Action": ["ecs:RegisterTaskDefinition", "ecs:RunTask"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["PASSROLE-SERVICE"]
+  }
+}

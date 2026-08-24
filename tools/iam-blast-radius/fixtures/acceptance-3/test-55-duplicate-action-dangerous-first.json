@@ -1,0 +1,21 @@
+{
+  "name": "Acceptance suite-3 test 55 - duplicate Action key, dangerous value FIRST -> BLOCKED",
+  "note": "docs/acceptance-suite-3.md Campaign A. A statement with two Action members (iam:* then s3:GetObject) must fail closed with DUPLICATE_JSON_KEY at Statement[0].Action, regardless of which value a last-key-wins JSON parser would keep. No IAM/S3 finding, score, summary or graph may be produced. Duplicate rejection is a syntax invariant, not a risk-dependent heuristic (paired with test 56, dangerous value LAST).",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 55,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policyRaw": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"DangerousFirst\",\"Effect\":\"Allow\",\"Action\":\"iam:*\",\"Action\":\"s3:GetObject\",\"Resource\":\"*\"}]}",
+  "expect": {
+    "valid": false,
+    "status": "blocked",
+    "findingIds": []
+  },
+  "errorExpect": {
+    "errorCodes": ["DUPLICATE_JSON_KEY"],
+    "pathIncludes": ["Statement[0].Action"]
+  },
+  "rationale": "The JSON object grammar permits repeated member names, and standard parsers silently keep only one (typically the last). A policy analyzer that inherits last-key-wins would evaluate a benign s3:GetObject and hide the iam:* grant an attacker wrote first. Rejecting any duplicate member name before evaluation is the only safe behavior. Ref: RFC 8259 section 4 (object member names SHOULD be unique; behavior is unpredictable otherwise) + IAM JSON policy grammar."
+}

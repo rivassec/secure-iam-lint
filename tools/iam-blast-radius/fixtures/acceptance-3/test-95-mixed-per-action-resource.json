@@ -1,0 +1,30 @@
+{
+  "name": "Acceptance suite-3 test 95 - mixed actions require per-action resource evaluation",
+  "note": "IAM-1006 (F2): a statement mixing iam:ListRoles (a required-wildcard enumeration action with NO resource-level scoping) with iam:PassRole (where a wildcard resource is dangerous and remediable) on Resource '*'. The WILDCARD-RESOURCE finding fires because of the dangerous sibling, but its remediable action list must contain ONLY iam:PassRole - presenting iam:ListRoles with impossible 'scope the ARN' remediation is exactly what test 92 / requirement #3 forbid. Per-action, not one resource-scope conclusion for the whole statement.",
+  "phase": 10,
+  "story": "IAM-1006",
+  "suite": 3,
+  "acceptanceTest": 95,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["iam:ListRoles", "iam:PassRole"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["WILDCARD-RESOURCE"],
+    "findingActions": {
+      "WILDCARD-RESOURCE": {
+        "include": ["iam:PassRole"],
+        "exclude": ["iam:ListRoles"]
+      }
+    }
+  }
+}

@@ -38,6 +38,8 @@ async function runAnalysis(page, text) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto(PAGE);
+  // IAM-1001: policy-family selection is mandatory; opt into explicit Auto-detect.
+  await page.selectOption('#policy-family', 'auto');
 });
 
 test('no app-initiated network requests after the initial asset load', async ({ page }) => {

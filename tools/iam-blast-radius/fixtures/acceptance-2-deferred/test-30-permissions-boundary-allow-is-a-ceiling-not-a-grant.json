@@ -2,7 +2,7 @@
   "id": "suite2-test-30-permissions-boundary-allow-is-a-ceiling-not-a-grant",
   "suite2Test": 30,
   "title": "Permissions boundary Allow is a ceiling, not a grant",
-  "designBlocked": "Permissions-boundary family tranche. A boundary Allow is a permissions CEILING, not a grant. Flip when a boundary-aware evaluator ships (it must report a max-permission envelope and must NOT emit positive capability edges). Today there is no family selector, so the shape is analyzed as identity.",
+  "designBlocked": "Permissions-boundary family tranche. A boundary Allow is a permissions CEILING, not a grant. The EXPLICIT-selection boundary-aware envelope evaluator SHIPPED in IAM-1002 (engine/envelope.js; positive coverage in fixtures/family-envelope/test-30 + test-65: max-permission envelope, ZERO positive capability edges, no escalation). This deferred fixture documents ONLY the no-selection AUTO-DETECT path, which cannot distinguish a boundary from an identity policy by shape and therefore still analyzes as identity - the honest family-gap for paste-and-go with no explicit family chosen.",
   "expect": {
     "deferred": "family-gap",
     "familyBlocked": false,

@@ -2,7 +2,7 @@
   "id": "suite2-test-31-session-policy-allow-is-a-session-restriction",
   "suite2Test": 31,
   "title": "Session-policy Allow is a session restriction",
-  "designBlocked": "Session-policy family tranche. A session Allow caps a session; effective access is the intersection with the parent identity/role policy. Flip when a session-aware evaluator ships. Today there is no family selector, so the shape is analyzed as identity.",
+  "designBlocked": "Session-policy family tranche. A session Allow caps a session; effective access is the intersection with the parent identity/role policy. The EXPLICIT-selection session-aware ceiling evaluator SHIPPED in IAM-1002 (engine/envelope.js; positive coverage in fixtures/family-envelope/test-31 + test-66: session ceiling, no positive capability edge without parent context). This deferred fixture documents ONLY the no-selection AUTO-DETECT path, which cannot distinguish a session policy from an identity policy by shape and therefore still analyzes as identity - the honest family-gap for paste-and-go with no explicit family chosen.",
   "expect": {
     "deferred": "family-gap",
     "familyBlocked": false,

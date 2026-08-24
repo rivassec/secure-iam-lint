@@ -1,0 +1,21 @@
+{
+  "name": "Acceptance suite-3 test 57 - escaped key \\u0041ction decodes to Action -> BLOCKED",
+  "note": "docs/acceptance-suite-3.md Campaign A. The member name \\u0041ction JSON-escape-decodes to 'Action', colliding with the literal Action member. Duplicate detection must compare DECODED member names, not raw source spelling, so a regex-only duplicate check that compares raw spans would miss this. Must fail closed with DUPLICATE_JSON_KEY at Statement[0].Action.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 57,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policyRaw": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"\\u0041ction\":\"iam:*\",\"Resource\":\"*\"}]}",
+  "expect": {
+    "valid": false,
+    "status": "blocked",
+    "findingIds": []
+  },
+  "errorExpect": {
+    "errorCodes": ["DUPLICATE_JSON_KEY"],
+    "pathIncludes": ["Statement[0].Action"]
+  },
+  "rationale": "JSON string escapes are semantically transparent: \\u0041 IS the character 'A', so \"\\u0041ction\" and \"Action\" are the same member name. Duplicate detection has to run on the post-decode name to resist an evasion that hides a second Action behind an escape sequence. Ref: RFC 8259 section 7 (string escapes) + section 4 (member uniqueness)."
+}

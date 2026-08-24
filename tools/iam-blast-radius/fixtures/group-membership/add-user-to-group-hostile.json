@@ -1,0 +1,22 @@
+{
+  "name": "iam:AddUserToGroup on a group ARN carrying a hostile string (payload rides through inert)",
+  "note": "IAM-1005 hostile-string rendering: the group ARN and Sid embed an HTML/JS payload. GROUP-MEMBERSHIP fires and the payload survives verbatim in the finding's resources/Sid as inert DATA (never parsed as markup); the renderer places it via textContent.",
+  "story": "IAM-1005",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "<img src=x onerror=alert(1)>",
+        "Effect": "Allow",
+        "Action": "iam:AddUserToGroup",
+        "Resource": "arn:aws:iam::123456789012:group/<script>alert(1)</script>"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["GROUP-MEMBERSHIP"],
+    "hostile": true,
+    "hostileFor": ["GROUP-MEMBERSHIP"]
+  }
+}

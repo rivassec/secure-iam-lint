@@ -78,6 +78,7 @@
 // same model -> same findings, same order, every run (no Date/Math.random).
 
 import { modelFromText } from './model.js';
+import { statementNeverMatches, parseOperator } from './conditions.js';
 
 // --- Shared caveat language --------------------------------------------------
 // One constant so every escalation's `limit` carries identical, non-overstated
@@ -275,6 +276,46 @@ const PASS_ROLE_SERVICES = Object.freeze([
 ]);
 
 const PASS_ROLE_ACTION = 'iam:PassRole';
+
+// IAM-1005: ECS distinguishes two roles a task can carry, and they must never be
+// merged (suite-2 test 38, suite-3 tests 87/88/89):
+//   - the TASK role is the application's own credentials (what the container's
+//     code obtains via the task metadata endpoint) - the credential-exposure path;
+//   - the EXECUTION role is what the ECS agent uses to pull images, write logs,
+//     and inject secrets at startup - infrastructure influence, NOT application
+//     credentials. Passing only the execution role must NOT be presented as the
+//     application obtaining that role's credentials.
+// Classification is inferred from the role NAME (medium confidence): a name that
+// says "task" is a task role, one that says "exec"/"execution" is an execution
+// role, anything else is unclassified (kept conservative).
+function classifyEcsRole(resource) {
+  const s = String(resource == null ? '' : resource).toLowerCase();
+  const name = /:role\/(.+)$/.exec(s);
+  const n = name ? name[1] : s;
+  const hasExec = n.includes('exec'); // covers "exec" and "execution"
+  const hasTask = n.includes('task');
+  if (hasTask && !hasExec) return 'task';
+  if (hasExec && !hasTask) return 'execution';
+  return 'unknown';
+}
+
+// IAM-1005: only ecs:RunTask / ecs:StartTask actually LAUNCH a task (run code);
+// ecs:RegisterTaskDefinition only STAGES a definition. PassRole + a launch action
+// is a confirmed code-execution path (critical); PassRole + staging ALONE is a
+// high staging capability (another actor/scheduler must still run it) - suite-3
+// test 90.
+const ECS_LAUNCH_ACTIONS = Object.freeze(['ecs:RunTask', 'ecs:StartTask']);
+
+// Bucket a set of passed role ARNs by ECS role class (task / execution / unknown),
+// preserving order within each bucket.
+function ecsRoleClasses(resources) {
+  const out = { task: [], execution: [], unknown: [] };
+  for (const r of Array.isArray(resources) ? resources : []) {
+    const cls = classifyEcsRole(r);
+    out[cls].push(String(r));
+  }
+  return out;
+}
 
 // --- Single-action / broad-scope escalation catalogs -------------------------
 
@@ -943,7 +984,8 @@ const LAMBDA_CODE_ONLY_ACTIONS = Object.freeze(['lambda:UpdateFunctionCode']);
 
 // --- PassRole + service-execution family -------------------------------------
 
-function detectPassRolePaths(allows, out, denies) {
+function detectPassRolePaths(allows, out, denies, ctx) {
+  const subjectAccount = ctx && ctx.subjectAccount ? String(ctx.subjectAccount) : null;
   // Gather the Allow statements that grant iam:PassRole (concrete or via iam:*).
   const passStmts = [];
   for (const stmt of allows) {
@@ -1020,6 +1062,21 @@ function detectPassRolePaths(allows, out, denies) {
 
     const denyNarrowed = passNarrowed || execNarrowed;
 
+    // suite-3 test 91: when the PassRole grant pins a specific account, warn that
+    // the direct path is same-account-only and that its viability depends on the
+    // (unsupplied) workload/principal account - never assert a foreign-account
+    // path as fully viable. Honest and always-correct; it does not change
+    // severity/confidence (that would require subject-account context this
+    // single-policy analyzer does not have).
+    const passedRoleAccounts = specificAccountsInRoleArns(passStmt.resources);
+    const crossAccountNote = passedRoleAccounts.length > 0
+      ? ' Note: iam:PassRole can pass a role only to a service in the SAME account as ' +
+        `the role (here account ${passedRoleAccounts.join(', ')}), so this direct ` +
+        'path is viable only if the workload/principal runs in that same account - ' +
+        'which this single policy does not establish; if the principal is in a ' +
+        'different account, the direct PassRole path does not apply.'
+      : '';
+
     // Confidence: an explicit PassedToService that matches this service confirms
     // the path (high). An unpinned PassRole can feed any service (also high, the
     // primitive exists). A Condition on the execution statement (not the
@@ -1027,6 +1084,108 @@ function detectPassRolePaths(allows, out, denies) {
     const execConditioned = hasNonEmptyCondition(execStmt);
     const anchor = passStmt.index <= execStmt.index ? passStmt : execStmt;
     const combinedActions = [PASS_ROLE_ACTION].concat(effectiveExecActions);
+
+    // IAM-1005: per-path severity + framing overrides. Default is the compound
+    // critical PassRole->service path; ECS staging-only, ECS execution-role-only,
+    // and a hard cross-account account mismatch adjust it deterministically.
+    let severity = 'critical';
+    let pathExploitability = 'medium';
+    let ecsMeta = null;
+    let extraWhy = '';
+
+    // --- ECS: task vs execution role, launch vs staging (tests 38/87/88/89/90) -
+    if (svc.service === 'ecs') {
+      const classes = ecsRoleClasses(passStmt.resources);
+      const hasTaskRole = classes.task.length > 0;
+      const hasExecRole = classes.execution.length > 0;
+      const hasUnknownRole = classes.unknown.length > 0;
+      // effectiveExecActions holds the granted PATTERNS (which may be "*" / "ecs:*",
+      // not the concrete action), so test grant-membership, not string equality: a
+      // wildcard that covers ecs:RunTask DOES have launch capability.
+      const hasLaunch = ECS_LAUNCH_ACTIONS.some(
+        (la) => effectiveExecActions.some((p) => actionGrants(p, la)),
+      );
+      ecsMeta = {
+        taskRoles: classes.task.slice(),
+        executionRoles: classes.execution.slice(),
+        unknownRoles: classes.unknown.slice(),
+        hasLaunch,
+      };
+      if (!hasLaunch) {
+        // Only ecs:RegisterTaskDefinition (staging) - no RunTask/StartTask to
+        // launch it. A definition can be STAGED but not run by this principal;
+        // another actor or a scheduler would still have to launch it (test 90).
+        severity = 'high';
+        pathExploitability = 'low';
+        extraWhy =
+          ' This grant STAGES a task definition (ecs:RegisterTaskDefinition) but ' +
+          'does NOT include a launch action (ecs:RunTask / ecs:StartTask), so this ' +
+          'principal cannot itself run the definition and obtain the passed role; ' +
+          'another actor or scheduler that later runs the definition could - which ' +
+          'this policy does not establish. Reported as a task-definition staging ' +
+          'capability, not a confirmed code-execution path.';
+      } else if (hasTaskRole || hasUnknownRole) {
+        // A passable TASK role (or an unclassified role that could be one) is the
+        // application-credential path: code in the task obtains the task role's
+        // credentials -> critical (tests 87/89).
+        severity = 'critical';
+        extraWhy =
+          ' The application-credential path targets the ECS TASK role' +
+          (hasTaskRole ? ` (${classes.task.join(', ')})` : '') +
+          ': container code obtains the task role\'s credentials via the task ' +
+          'metadata endpoint; the role\'s actual permissions are unknown here.' +
+          (hasExecRole
+            ? ` The passable EXECUTION role (${classes.execution.join(', ')}) is ` +
+              'separate: ECS uses it for image pulls, log delivery, and secret ' +
+              'injection at startup - infrastructure influence, NOT application ' +
+              'credentials, and it is not presented as such.'
+            : '');
+      } else if (hasExecRole) {
+        // ONLY an execution role is passable (test 88): the attacker can run a
+        // task using that execution role - influencing image pulls, logging, and
+        // secret injection - but the application code does NOT receive the
+        // execution role's credentials, and no task-role edge is invented.
+        severity = 'high';
+        pathExploitability = 'low';
+        extraWhy =
+          ` Only an ECS EXECUTION role is passable (${classes.execution.join(', ')}), ` +
+          'not a task role. Running a task with it lets the actor influence image ' +
+          'pulls, log delivery, and secret injection at startup (execution-role ' +
+          'influence), but the application code does NOT receive the execution ' +
+          'role\'s credentials. No application task-role credential path is claimed, ' +
+          'and no task-role edge is invented from absent context.';
+      }
+    }
+
+    // --- Cross-account PassRole target (suite-3 test 91) ---------------------
+    // iam:PassRole passes a role only to a service in the SAME account as the
+    // role; ec2:RunInstances (and peer service launches) run in the CALLER's
+    // account. If a subject/principal account is known and EVERY passed-role
+    // resource PINS a specific account, none of which equals the subject, the
+    // direct path is NOT viable: report it, but do not assert viability - lower
+    // confidence and warn about the account mismatch.
+    //
+    // CRITICAL guard (everyPassResourcePinsSpecificAccount): the downgrade fires
+    // only when NO resource can reach the subject's own account. A bare "*" or an
+    // account-wildcard role ARN (arn:aws:iam::*:role/...) coexisting with a
+    // foreign-account ARN still lets the principal pass a role in its OWN account
+    // to the service - a fully viable, wildcard-broad critical path - so the
+    // mismatch must NOT fire and must NOT emit a "not viable across accounts"
+    // claim in that case (severity stays critical).
+    let accountMismatch = false;
+    if (subjectAccount && passedRoleAccounts.length > 0
+      && everyPassResourcePinsSpecificAccount(passStmt.resources)
+      && passedRoleAccounts.every((a) => a !== subjectAccount)) {
+      accountMismatch = true;
+      severity = severity === 'critical' ? 'medium' : 'low';
+      pathExploitability = 'low';
+      extraWhy +=
+        ` Account mismatch: the passed role(s) are in account ` +
+        `${passedRoleAccounts.join(', ')} but the analyzed principal is in account ` +
+        `${subjectAccount}. iam:PassRole can pass a role only to a service in the ` +
+        'SAME account as the role, so this is NOT a viable direct ' +
+        `PassRole-to-${svc.service} path across accounts.`;
+    }
 
     // IAM-105 risk-factor checklist: the present/absent grants + scope
     // conditions that make up THIS compound path. Deterministic order. A
@@ -1102,19 +1261,20 @@ function detectPassRolePaths(allows, out, denies) {
       }
     }
 
-    out.push(
-      makeEscalation(svc.id, anchor, {
-        // Critical (IAM-102): a compound PassRole + service-execution path lets
-        // the principal reach execution under a DIFFERENT role's credentials -
-        // a plausible privilege-boundary crossing, not a standalone capability.
-        severity: 'critical',
+    const escalationFinding = makeEscalation(svc.id, anchor, {
+        // Severity (IAM-102 / IAM-1005): the compound PassRole + service-execution
+        // path is normally critical (execution under a DIFFERENT role's
+        // credentials, a plausible privilege-boundary crossing). ECS staging-only,
+        // ECS execution-role-only, and a hard cross-account mismatch lower it.
+        severity,
         // Both iam:PassRole and the service-execution action are present in the
         // policy -> strong policy evidence. But whether launching under the
         // passed role actually elevates depends on that role's UNKNOWN
         // permissions (and instance-profile / service runtime behavior), so
-        // exploitability is medium, not high. (IAM-104 canonical example.)
+        // exploitability is medium by default (lower for staging/exec-only/
+        // account-mismatch). (IAM-104 canonical example.)
         policyEvidence: 'high',
-        pathExploitability: 'medium',
+        pathExploitability,
         conditioned: execConditioned,
         denyNarrowed,
         passUncertain,
@@ -1143,7 +1303,8 @@ function detectPassRolePaths(allows, out, denies) {
               'excludes.'
             : 'The PassRole grant does not use iam:PassedToService to restrict ' +
               'which supported AWS services may receive the role (AWS still ' +
-              'enforces which services a role can be passed to).'),
+              'enforces which services a role can be passed to).') +
+          crossAccountNote + extraWhy,
         remediation: pinned
           ? // Already pinned to this service - do NOT recommend adding the
             // iam:PassedToService restriction that is already present (IAM-703,
@@ -1157,8 +1318,20 @@ function detectPassRolePaths(allows, out, denies) {
             `pin iam:PassedToService to ${svc.principal}; separate role-passing ` +
             `from ${svc.service} workload-creation duties, and constrain the ` +
             'passable roles with a permission boundary.',
-      }),
-    );
+      });
+    // IAM-1005: carry ECS task/execution-role classification and the
+    // cross-account mismatch flag on the escalation enrichment so the graph can
+    // draw distinct task/execution role nodes and exports can record the mismatch.
+    // Mutated before analyzeEscalations() deep-freezes the finding.
+    if (ecsMeta) escalationFinding.escalation.ecs = ecsMeta;
+    if (accountMismatch) {
+      escalationFinding.escalation.accountMismatch = {
+        subjectAccount,
+        passedRoleAccounts: passedRoleAccounts.slice(),
+        viable: false,
+      };
+    }
+    out.push(escalationFinding);
   }
 }
 
@@ -1478,6 +1651,253 @@ function isConcreteRoleArn(r) {
   return s.includes(':role/');
 }
 
+// suite-3 test 74: does a modify-leg resource COVER the concrete assumable role
+// `role`? True for an exact match, or for a role-ARN wildcard pattern
+// (arn:...:role/deployment/*) that subsumes the concrete role
+// (arn:...:role/deployment/Prod). Only role-ARN patterns subsume roles - a bare
+// "*" or a non-role ARN pattern is NOT treated as a same-role modify grant here
+// (it stays the broader wildcard/expansion shape), so the takeover is never
+// generalized to roles the modify leg does not actually name. ARN matching is
+// case-sensitive (IAM resource ARNs are), so globMatch is used directly.
+function resourceCoversRole(resource, role) {
+  const s = String(resource == null ? '' : resource);
+  if (s === role) return true;
+  if (!s.includes(':role/')) return false;
+  if (!s.includes('*') && !s.includes('?')) return false;
+  return globMatch(s, role);
+}
+
+// role-takeover test 142: a MAXIMALLY-BROAD assume scope ("all roles across
+// arbitrary accounts") is the ASSUME-ROLE-EXPANSION shape, NOT a same-role
+// takeover confirmation - even though it glob-covers any concrete role. Both axes
+// must be fully open: the account field is arbitrary (wildcarded/empty) AND the
+// role-name segment is exactly "*" (or the bare "*" / "role/*" shorthands). A
+// scope pinned to a concrete account (arn:aws:iam::123456789012:role/deployment/*)
+// or a specific role-name path is BOUNDED and DOES confirm an anchor a
+// permission-grant/trust-modify leg names concretely (the C2 wildcard-assume
+// mirror of test 74). Mirrors assumeScopeIsAllRoles(), evaluated per-resource so a
+// concrete member in the same statement still confirms.
+function isAllRolesAssumeScope(resource) {
+  const s = String(resource == null ? '' : resource);
+  if (s === '*') return true;
+  if (s === 'role/*') return true; // bare shorthand
+  const marker = ':role/';
+  const idx = s.lastIndexOf(marker);
+  if (idx === -1) return false;
+  if (s.slice(idx + marker.length) !== '*') return false; // role-name not fully open
+  const parts = s.split(':');
+  if (parts.length < 6) return false;
+  const account = parts[4];
+  return account === '' || account.includes('*') || account.includes('?'); // arbitrary account
+}
+
+// suite-3 test 91: the specific (non-wildcard) AWS account IDs a set of role
+// ARNs pins in the account field of arn:aws:iam::<account>:role/... . Used to
+// caveat a PassRole path: iam:PassRole passes a role only to a service in the
+// SAME account as the role, so a path through an account-pinned role is viable
+// only when the workload/principal runs in that same account - which a single
+// identity policy does not establish. A wildcarded account segment yields no
+// specific account and no caveat.
+function specificAccountsInRoleArns(resources) {
+  const accts = [];
+  for (const r of Array.isArray(resources) ? resources : []) {
+    const s = String(r == null ? '' : r);
+    const m = /^arn:aws:iam::([0-9]{1,20}):role\//.exec(s);
+    if (m && !accts.includes(m[1])) accts.push(m[1]);
+  }
+  return accts.sort();
+}
+
+// suite-3 test 91 hardening: does EVERY resource in a PassRole grant pin a
+// SPECIFIC (non-wildcard) AWS account in a role ARN? Only when that holds can we
+// be certain no resource reaches a role in the subject's OWN account. A bare
+// "*", an account-wildcard role ARN (arn:aws:iam::*:role/...), or any non-pinned
+// resource means a SAME-account pass is possible, so the cross-account mismatch
+// downgrade must NOT fire - firing it would understate a viable, wildcard-broad
+// same-account PassRole path (false negative). Empty list -> false (nothing to
+// pin), which combines with the passedRoleAccounts.length guard.
+function everyPassResourcePinsSpecificAccount(resources) {
+  const list = Array.isArray(resources) ? resources : [];
+  if (list.length === 0) return false;
+  return list.every(
+    (r) => /^arn:aws:iam::[0-9]{1,20}:role\//.test(String(r == null ? '' : r)),
+  );
+}
+
+// A single principal has ONE value for each principal-scoped request key for the
+// life of its credentials, so these keys are INVARIANT across the legs of a
+// takeover chain the same principal would execute (suite-3 test 75).
+const PRINCIPAL_INVARIANT_KEYS = new Set([
+  'aws:principalaccount',
+  'aws:principalorgid',
+  'aws:principalorgpaths',
+  'aws:principalarn',
+  'aws:userid',
+]);
+
+// Exact-equality operators that pin a principal-invariant key to a HARD literal
+// value (base form, after parseOperator). These are the operators for which a
+// single principal must carry exactly one of the listed values, so two legs that
+// pin the SAME key to disjoint values can never be satisfied by one principal.
+// This MUST mirror the exact-equality members of conditions.js
+// POSITIVE_STRING_MATCH_OPERATORS - crucially aws:PrincipalArn's idiomatic exact
+// operator is ArnEquals, NOT StringEquals (suite-3 test 75 ArnEquals twin /
+// release-gate #3). Like-family operators (StringLike / ArnLike) admit wildcards
+// and so do NOT pin a single literal - they are intentionally excluded, matching
+// the documented decision that wildcard-match operators create no hard
+// contradiction. StringEqualsIgnoreCase is exact but case-insensitive (tracked
+// per-pin so a case-only variance is not mistaken for a contradiction).
+const EXACT_EQUALITY_PIN_OPERATORS = new Set([
+  'stringequals',
+  'stringequalsignorecase',
+  'arnequals',
+]);
+// The exact-equality NEGATIONS of the operators above. StringNotEquals /
+// ArnNotEquals (and the IgnoreCase form) pin the principal-invariant key to
+// "anything EXCEPT the listed literal(s)". A single principal that must be == X
+// on one leg and != X on another leg cannot exist, so a negated pin is just as
+// load-bearing as a positive pin for the cross-leg satisfiability check (suite-3
+// test 75 negation twin / release-gate #3): ignoring it manufactures a false
+// critical takeover no single principal can execute. Like-family negations
+// (StringNotLike / ArnNotLike) admit wildcards and pin no single literal, so -
+// mirroring the positive-side exclusion of StringLike / ArnLike - they are
+// intentionally excluded and create no hard contradiction.
+const NEGATED_EQUALITY_PIN_OPERATORS = new Set([
+  'stringnotequals',
+  'stringnotequalsignorecase',
+  'arnnotequals',
+]);
+const CASE_INSENSITIVE_PIN_OPERATORS = new Set([
+  'stringequalsignorecase',
+  'stringnotequalsignorecase',
+]);
+
+// Extract the exact-equality pins a statement's Condition places on any
+// principal-invariant key: keyLower -> array of { values:Set, ci:boolean,
+// negated:boolean }, one entry per constraining operator block (AND-ed within the
+// statement). Only an exact-equality operator (positive == or its exact-negation
+// !=) with NO set-operator prefix and NO ...IfExists suffix pins a hard
+// constraint every principal must satisfy: an IfExists pin is skipped when the
+// key is absent, and a ForAllValues/ForAnyValue set qualifier changes the match
+// semantics, so neither creates a dependable cross-leg contradiction and both are
+// intentionally ignored. Like-family operators (StringLike / ArnLike and their
+// Not- forms) admit wildcards and pin no single literal, so they are ignored.
+// Condition keys are case-insensitive, so keys are lowercased.
+function principalPinsOf(stmt) {
+  const pins = new Map();
+  const cond = stmt && stmt.condition;
+  if (!cond || typeof cond !== 'object') return pins;
+  for (const op of Object.keys(cond)) {
+    const { base, setOperator, ifExists } = parseOperator(op);
+    if (setOperator !== null || ifExists) continue;
+    const positive = EXACT_EQUALITY_PIN_OPERATORS.has(base);
+    const negated = NEGATED_EQUALITY_PIN_OPERATORS.has(base);
+    if (!positive && !negated) continue;
+    const ci = CASE_INSENSITIVE_PIN_OPERATORS.has(base);
+    const block = cond[op];
+    if (!block || typeof block !== 'object') continue;
+    for (const key of Object.keys(block)) {
+      if (!PRINCIPAL_INVARIANT_KEYS.has(key.toLowerCase())) continue;
+      const raw = block[key];
+      const vals = Array.isArray(raw) ? raw.map((v) => String(v)) : [String(raw)];
+      const list = pins.get(key.toLowerCase()) || [];
+      list.push({ values: new Set(vals), ci, negated });
+      pins.set(key.toLowerCase(), list);
+    }
+  }
+  return pins;
+}
+
+// Does the constraint's value set contain `cand` (case-sensitively, or
+// case-insensitively for the IgnoreCase operators)?
+function constraintContains(c, cand, candLc) {
+  if (c.ci) {
+    for (const v of c.values) if (v.toLowerCase() === candLc) return true;
+    return false;
+  }
+  return c.values.has(cand);
+}
+
+// Can a single principal value satisfy EVERY constraint on one key at once?
+// A POSITIVE constraint (==) requires the principal's single value to be one of a
+// finite set; a NEGATED constraint (!=) requires it to be NONE of a finite set.
+//
+// A satisfying value must be a member of every positive set, so it can only be
+// one of the literals a positive constraint lists - that finite pool is the only
+// place a satisfying candidate can live. Each candidate is then checked against
+// ALL constraints (positive: must be in; negated: must be out).
+//
+// When there is NO positive constraint the domain is effectively unbounded (any
+// account id / ARN / userid), and a finite list of "!=" exclusions can always be
+// avoided by some other value, so an all-negated key is satisfiable. This keeps
+// the satisfiable control (both legs pin the SAME key with !=A) FIRING - only a
+// genuine == X / != X (or two disjoint ==) contradiction reads as unsatisfiable.
+// Kept conservative so a case-only variance is NOT mistaken for a contradiction.
+function keyConstraintsSatisfiable(constraints) {
+  const positives = constraints.filter((c) => !c.negated);
+  if (positives.length === 0) return true;
+  const candidates = new Set();
+  for (const c of positives) for (const v of c.values) candidates.add(v);
+  for (const cand of candidates) {
+    const candLc = cand.toLowerCase();
+    let ok = true;
+    for (const c of constraints) {
+      const inSet = constraintContains(c, cand, candLc);
+      // positive => must be in the set; negated => must be out of the set.
+      if (c.negated ? inSet : !inSet) { ok = false; break; }
+    }
+    if (ok) return true;
+  }
+  return false;
+}
+
+// Given a chosen SET of statements the one principal must satisfy jointly (an
+// AND across these statements), can a single principal meet every
+// principal-invariant pin at once? For each invariant key constrained by two or
+// more of the chosen statements, the principal's single value must satisfy every
+// one of those constraints simultaneously. An unsatisfiable key means no
+// principal can satisfy this exact combination.
+function pinsJointlySatisfiable(stmts) {
+  const perKey = new Map(); // keyLower -> array of { values:Set, ci:boolean }
+  for (const stmt of stmts) {
+    for (const [k, list] of principalPinsOf(stmt)) {
+      if (!perKey.has(k)) perKey.set(k, []);
+      for (const c of list) perKey.get(k).push(c);
+    }
+  }
+  for (const constraints of perKey.values()) {
+    if (constraints.length < 2) continue; // only one stmt constrains it -> no contradiction
+    if (!keyConstraintsSatisfiable(constraints)) return false;
+  }
+  return true;
+}
+
+// suite-3 test 75 (+ iteration-2 alternative-statement fix): can ONE principal
+// execute the whole modify-then-assume chain? The chain needs the principal to
+// satisfy SOME grant statement AND SOME trust statement AND SOME assume
+// statement - only ONE statement per leg-group is required to obtain that
+// capability. Statements WITHIN a group are therefore ALTERNATIVES (an OR), not
+// a conjunction: a principal in account A that satisfies grant-A, trust-A and
+// one of several assume statements (assume-A) executes a real takeover even
+// though a *different* assume statement pins account B. Satisfiability is thus
+// EXISTENTIAL across the choice of one statement per group: viable iff there
+// exists (grant, trust, assume) whose principal-invariant pins share a
+// non-empty intersection. It is unsatisfiable (test 75) only when NO such
+// combination exists - e.g. the single modify leg pins account 123456789012 and
+// the single assume leg pins 999900001111, so every triple contradicts.
+// Alternatives are never AND-ed together, which would fabricate a contradiction
+// out of statements the principal never needs to satisfy at the same time.
+function principalConditionsSatisfiable(grantLegs, trustLegs, assumeLegs) {
+  for (const g of grantLegs) {
+    for (const t of trustLegs) {
+      for (const a of assumeLegs) {
+        if (pinsJointlySatisfiable([g.stmt, t.stmt, a.stmt])) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // IAM-902: correlate the modify-then-assume ROLE-TAKEOVER chain. A principal that,
 // on the SAME concrete role, is granted (a) a permission-grant primitive
 // (iam:PutRolePolicy / iam:AttachRolePolicy), (b) iam:UpdateAssumeRolePolicy, and
@@ -1490,47 +1910,73 @@ function isConcreteRoleArn(r) {
 // contribute). A PARTIAL set (only 2 of 3) or the actions spread across DIFFERENT
 // roles does NOT fire - that is the boundary the correlation must respect.
 function detectRoleTakeover(allows, out, denies) {
-  // Per concrete role ARN, the surviving contributing (stmt, actions) for each leg.
-  const legs = {
-    grant: new Map(), // role ARN -> [{ stmt, actions }]
-    trust: new Map(),
-    assume: new Map(),
-  };
-  const record = (legName, stmt, actions) => {
-    for (const r of stmt.resources) {
-      if (!isConcreteRoleArn(r)) continue;
-      const m = legs[legName];
-      if (!m.has(r)) m.set(r, []);
-      m.get(r).push({ stmt, actions });
-    }
-  };
+  // Surviving contributing (stmt, actions, resources) for each leg. Resources are
+  // retained per statement so a WILDCARD modify grant can be matched against a
+  // concrete assumable role (suite-3 test 74) rather than requiring an exact
+  // per-role bucketing up front.
+  const grantLegsAll = [];
+  const trustLegsAll = [];
+  const assumeLegsAll = [];
+  const collect = (arr, stmt, actions) => arr.push({ stmt, actions, resources: stmt.resources });
   for (const stmt of allows) {
     const g = grantedPatternsFor(stmt, ROLE_TAKEOVER_GRANT_ACTIONS);
     if (g.length > 0) {
       const d = applyDenyToActions(denies, g, stmt);
-      if (!d.blocked) record('grant', stmt, d.actions);
+      if (!d.blocked) collect(grantLegsAll, stmt, d.actions);
     }
     const t = grantedPatternsFor(stmt, TRUST_MODIFY_ACTIONS);
     if (t.length > 0) {
       const d = applyDenyToActions(denies, t, stmt);
-      if (!d.blocked) record('trust', stmt, d.actions);
+      if (!d.blocked) collect(trustLegsAll, stmt, d.actions);
     }
     const a = grantedPatternsFor(stmt, ROLE_TAKEOVER_ASSUME_ACTIONS);
     if (a.length > 0) {
       const d = applyDenyToActions(denies, a, stmt);
-      if (!d.blocked) record('assume', stmt, d.actions);
+      if (!d.blocked) collect(assumeLegsAll, stmt, d.actions);
     }
   }
 
-  // A role qualifies only when ALL THREE legs name it. Deterministic order.
-  const roles = [...legs.grant.keys()]
-    .filter((r) => legs.trust.has(r) && legs.assume.has(r))
-    .sort();
+  // A takeover is only ever asserted against a CONCRETE role the principal can
+  // assume. A concrete anchor role may be named by ANY contributing leg - the
+  // permission-grant, the trust-modify, OR the assume leg - because the compound
+  // is symmetric: whichever leg happens to be concrete pins the role, and the
+  // other legs may be wildcards that provably subsume it. Test 74 is the forward
+  // case (wildcard modify + concrete assume); its mirror (concrete modify/trust +
+  // a bounded wildcard assume such as role/deployment/*) reaches the SAME concrete
+  // role and must yield the SAME one takeover. Harvesting anchors only from assume
+  // legs missed that mirror (a false negative on a critical compound path). A
+  // WILDCARD assume scope still names no concrete role itself; the anchor comes
+  // from the concrete modify/trust leg and is CONFIRMED below only if an assume leg
+  // covers it. Deterministic order.
+  const anchorRoles = [];
+  for (const leg of [...grantLegsAll, ...trustLegsAll, ...assumeLegsAll]) {
+    for (const r of leg.resources) {
+      if (isConcreteRoleArn(r) && !anchorRoles.includes(r)) anchorRoles.push(r);
+    }
+  }
+  anchorRoles.sort();
 
-  for (const role of roles) {
-    const grantLegs = legs.grant.get(role);
-    const trustLegs = legs.trust.get(role);
-    const assumeLegs = legs.assume.get(role);
+  for (const role of anchorRoles) {
+    // A leg contributes to THIS role when one of its resources covers the
+    // concrete role (exact, or a role-ARN wildcard that subsumes it).
+    const grantLegs = grantLegsAll.filter((l) => l.resources.some((r) => resourceCoversRole(r, role)));
+    const trustLegs = trustLegsAll.filter((l) => l.resources.some((r) => resourceCoversRole(r, role)));
+    // The assume leg CONFIRMS the anchor: the principal must actually be able to
+    // assume this concrete role. A bounded wildcard (account-pinned or path-scoped)
+    // that covers the role confirms it; a MAXIMALLY-BROAD "*"/"*:role/*" assume
+    // scope does NOT - it stays the ASSUME-ROLE-EXPANSION shape (test 142), never a
+    // same-role takeover, even though it glob-covers the role.
+    const assumeLegs = assumeLegsAll.filter((l) => l.resources.some(
+      (r) => resourceCoversRole(r, role) && !isAllRolesAssumeScope(r),
+    ));
+    // All three legs must reach the same concrete role, or there is no chain.
+    if (grantLegs.length === 0 || trustLegs.length === 0 || assumeLegs.length === 0) continue;
+
+    // suite-3 test 75: reject the correlation when the legs carry mutually
+    // exclusive same-key conditions on a principal-invariant key - no single
+    // principal could execute the whole chain. The standalone modify capability
+    // findings (PUT-INLINE-POLICY / TRUST-POLICY-MODIFY) remain, un-subsumed.
+    if (!principalConditionsSatisfiable(grantLegs, trustLegs, assumeLegs)) continue;
 
     // Per-statement evidence: one record per contributing statement/leg, each
     // carrying ONLY the actions that statement grants toward this chain (IAM-701
@@ -1662,7 +2108,7 @@ const DETECTORS = [
  *            findings:Array<object>}} frozen result; findings in deterministic
  *            order (anchor statement index, then escalation order, then id).
  */
-export function analyzeEscalations(model) {
+export function analyzeEscalations(model, options) {
   const errors = [];
   try {
     if (!model || typeof model !== 'object' || !Array.isArray(model.statements)) {
@@ -1682,11 +2128,18 @@ export function analyzeEscalations(model) {
     // ASSUME-ROLE-EXPANSION. normalizePrincipal() returns null iff no Principal.
     // (Found via real-policy corpus QA, 2026-08-21.)
     const isIdentityStmt = (s) => s.principal == null;
-    const allows = model.statements.filter((s) => s.effect === 'Allow' && isIdentityStmt(s));
+    // suite-3 test 97: a structurally never-match statement (empty ForAnyValue
+    // set) grants nothing, so it never contributes to an escalation path.
+    const allows = model.statements.filter(
+      (s) => s.effect === 'Allow' && isIdentityStmt(s) && !statementNeverMatches(s),
+    );
     const denies = model.statements.filter((s) => s.effect === 'Deny' && isIdentityStmt(s));
 
     const findings = [];
-    for (const detect of DETECTORS) detect(allows, findings, denies);
+    // IAM-1005: an optional analysis context (e.g. subjectAccount) flows to the
+    // detectors; only detectPassRolePaths reads it (cross-account PassRole).
+    const ctx = { subjectAccount: (options && options.subjectAccount) || null };
+    for (const detect of DETECTORS) detect(allows, findings, denies, ctx);
 
     // Deterministic order: by anchor statement index, then escalation order,
     // then id (stable tiebreak for two findings sharing an anchor + order, e.g.

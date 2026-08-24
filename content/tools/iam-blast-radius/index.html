@@ -86,9 +86,10 @@
       <div class="controls">
         <label for="policy-file" class="file-label">or import a .json file</label>
         <input id="policy-file" type="file" accept="application/json,.json">
-        <label for="policy-family" class="family-label">Policy family</label>
-        <select id="policy-family">
-          <option value="">Auto-detect (default)</option>
+        <label for="policy-family" class="family-label">Policy family (required)</label>
+        <select id="policy-family" required aria-describedby="family-hint">
+          <option value="" selected>Select a policy family...</option>
+          <option value="auto">Auto-detect</option>
           <option value="identity">Identity policy</option>
           <option value="resource">Resource-based policy</option>
           <option value="role-trust">Role trust policy</option>
@@ -96,9 +97,12 @@
           <option value="scp-rcp">SCP / RCP (organizations)</option>
           <option value="session">Session policy</option>
         </select>
-        <button id="analyze-btn" type="button">Analyze locally</button>
+        <button id="analyze-btn" type="button" disabled>Analyze locally</button>
         <button id="clear-btn" type="button">Clear analysis</button>
       </div>
+      <p id="family-hint" class="hint">Pick the policy family before analyzing. The tool does not guess it from the
+      document shape - an identity policy and a resource-based policy can look alike, and analyzing one as the
+      other would produce confident but wrong findings. Choose Auto-detect to detect the family from shape.</p>
       <p id="status" class="status" role="status" aria-live="polite"></p>
 
       <div class="samples" aria-labelledby="samples-h">
@@ -146,20 +150,23 @@
       as static files in a modern web browser with JavaScript enabled.</p>
 
       <h3>Supported policy families</h3>
-      <p>The analyzer auto-detects the policy family from the document shape (paste-and-go; you can also
-      set the family manually). This phase fully evaluates <strong>identity-based policies</strong>.
+      <p>Choosing the policy family is <strong>required</strong> before analysis - the tool does not guess it
+      from the document shape, because an identity policy and a resource-based policy can look structurally
+      alike and analyzing one as the other would produce confident but wrong findings. <strong>Auto-detect</strong>
+      is offered as an explicit menu choice (not a silent default) that infers the family from shape. This phase
+      fully evaluates <strong>identity-based policies</strong>.
       Auto-detect keys off the presence of a <code>Principal</code> or <code>NotPrincipal</code> element:
       <strong>resource-based</strong> and <strong>role-trust</strong> shapes (and any <code>NotPrincipal</code>,
       ambiguous, or mixed shape) carry that element, so they are detected and <strong>fail closed</strong> -
       the tool reports a coverage state rather than presenting findings for a shape it does not yet model.
       <strong>Permissions-boundary, SCP, and session policies</strong> carry no <code>Principal</code>
-      and are indistinguishable from an identity policy by shape alone; on the paste-and-go path they are
-      labeled <em>Identity policy</em> and evaluated with identity rules, unless you set that family manually
-      in the selector, which then fails closed. A <strong>resource control policy (RCP)</strong> is the
+      and are indistinguishable from an identity policy by shape alone; under Auto-detect they are
+      labeled <em>Identity policy</em> and evaluated with identity rules, unless you select that family
+      explicitly, which then fails closed. A <strong>resource control policy (RCP)</strong> is the
       exception in that group: like a resource-based policy, an RCP carries a <code>Principal</code> element
       (the default <code>RCPFullAWSAccess</code> uses <code>"Principal": "*"</code>), so by shape it is
       detected as a resource policy and <strong>fails closed</strong> - it is never labeled an identity
-      policy on paste-and-go. <code>NotPrincipal</code> and other recognized-but-unmodeled
+      policy under Auto-detect. <code>NotPrincipal</code> and other recognized-but-unmodeled
       elements are rejected with a machine-readable code and the exact JSON path, never silently ignored.</p>
 
       <h3>Coverage behavior</h3>

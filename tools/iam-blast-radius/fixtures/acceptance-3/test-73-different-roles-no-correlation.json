@@ -1,0 +1,30 @@
+{
+  "name": "Acceptance suite-3 test 73 - different target roles must not correlate (regression)",
+  "note": "IAM-1003 regression: the modify legs target role/RoleA and sts:AssumeRole targets role/RoleB. No single concrete role receives all three primitives, so there is NO compound takeover. The engine must not correlate solely because both resources are IAM roles in the same account. Separate modification capabilities remain.",
+  "phase": 10,
+  "story": "IAM-1003",
+  "suite": 3,
+  "acceptanceTest": 73,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::123456789012:role/RoleA"
+      },
+      {
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/RoleB"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["PUT-INLINE-POLICY", "TRUST-POLICY-MODIFY"],
+    "notFindingIdsAnywhere": ["ROLE-TAKEOVER"]
+  }
+}

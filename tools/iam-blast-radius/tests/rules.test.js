@@ -182,6 +182,7 @@ test('every rule family has at least one positive and one negative fixture', () 
     'DESTRUCTIVE-ACTION': ['destructive'],
     'DETECTION-IMPAIRMENT': ['detection'],
     'NOTACTION-ALLOW': ['notaction-allow'],
+    'GROUP-MEMBERSHIP': ['group-membership'],
   };
   for (const id of RULE_IDS) {
     const cats = positiveByRule[id] || [];

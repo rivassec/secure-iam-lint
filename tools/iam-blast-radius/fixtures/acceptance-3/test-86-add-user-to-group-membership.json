@@ -1,0 +1,25 @@
+{
+  "name": "Acceptance suite-3 test 86 - AddUserToGroup targets group membership, not direct policy administration",
+  "note": "IAM-1005: dedicated GROUP-MEMBERSHIP finding (group privilege inferred from name at medium confidence); the API request selects the user and the Resource scopes the group. Never labeled AttachUserPolicy / PutUserPolicy / DIRECT-IAM-ADMIN.",
+  "phase": 10,
+  "story": "IAM-1005",
+  "suite": 3,
+  "acceptanceTest": 86,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AddMembers",
+        "Effect": "Allow",
+        "Action": "iam:AddUserToGroup",
+        "Resource": "arn:aws:iam::123456789012:group/PlatformAdmins"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["GROUP-MEMBERSHIP"],
+    "notFindingIdsAnywhere": ["DIRECT-IAM-ADMIN", "ATTACH-POLICY", "PUT-INLINE-POLICY"]
+  }
+}

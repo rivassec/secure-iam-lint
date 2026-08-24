@@ -1,0 +1,30 @@
+{
+  "name": "Acceptance suite-3 test 76 - exact Deny removes one prerequisite (regression)",
+  "note": "IAM-1003 regression: all three primitives are granted on the role in one Allow, but an explicit Deny on iam:UpdateAssumeRolePolicy (same role) removes the trust-rewrite leg. With the trust-modify prerequisite suppressed there is NO full ROLE-TAKEOVER path and no TRUST-POLICY-MODIFY capability, but the remaining iam:PutRolePolicy capability is NOT hidden. The suppressed critical path must not be counted in the risk summary.",
+  "phase": 10,
+  "story": "IAM-1003",
+  "suite": 3,
+  "acceptanceTest": 76,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy", "sts:AssumeRole"],
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole"
+      },
+      {
+        "Effect": "Deny",
+        "Action": "iam:UpdateAssumeRolePolicy",
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["PUT-INLINE-POLICY"],
+    "notFindingIdsAnywhere": ["ROLE-TAKEOVER", "TRUST-POLICY-MODIFY"]
+  }
+}

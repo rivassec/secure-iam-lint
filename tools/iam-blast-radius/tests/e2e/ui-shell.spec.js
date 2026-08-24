@@ -29,6 +29,12 @@ test.beforeEach(async ({ page }) => {
     throw new Error(`Unexpected dialog (possible XSS): ${d.message()}`);
   });
   await page.goto(PAGE);
+  // IAM-1001: policy-family selection is mandatory and Analyze starts disabled.
+  // Most tests here exercise identity behavior, so default to explicit
+  // Auto-detect (reproduces the pre-Phase-10 paste-and-go behavior). The
+  // mandatory-selection tests below override this (they reset the selector to
+  // no selection, or pick a concrete family).
+  await page.selectOption('#policy-family', 'auto');
 });
 
 test('prominent not-effective-permissions disclaimer is present', async ({ page }) => {
@@ -122,6 +128,27 @@ test('IAM-506: an unmodelled condition key surfaces in the coverage panel as uns
   await expect(panel).toContainText('Unsupported does NOT mean safe');
   // Unsupported does NOT mean safe: the broad read still fires.
   await expect(page.locator('#findings table')).toBeVisible();
+});
+
+test('IAM-1006: an object action on a bucket-only ARN surfaces a mismatch coverage warning', async ({ page }) => {
+  await page.selectOption('#policy-family', 'identity');
+  await page.fill('#policy-input', JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{
+      Sid: 'IncorrectObjectReadScope', Effect: 'Allow',
+      Action: 's3:GetObject', Resource: 'arn:aws:s3:::documents',
+    }],
+  }));
+  await page.click('#analyze-btn');
+  const panel = page.locator('#coverage .coverage-summary');
+  await expect(panel).toBeVisible();
+  // The mismatch flips the panel to the incomplete/warning state instead of a
+  // silent complete/empty analysis, and shows bucket-vs-object remediation.
+  await expect(panel).toHaveClass(/coverage-incomplete/);
+  await expect(panel).toContainText('Unsupported does NOT mean safe');
+  await expect(panel.locator('.coverage-mismatches')).toContainText('s3:GetObject');
+  await expect(panel.locator('.coverage-mismatches')).toContainText('arn:aws:s3:::documents/*');
+  await expect(panel.locator('.coverage-mismatch-remediation')).toContainText('object actions');
 });
 
 test('IAM-101: compact findings table - prose is out of the row and rows are short', async ({ page }) => {
@@ -295,15 +322,8 @@ test('Clear wipes the input and findings and retains nothing in storage', async 
 });
 
 // ---------------------------------------------------------------------------
-// IAM-501: policy-family auto-detect + fail-closed coverage in the UI.
+// IAM-501: policy-family fail-closed coverage in the UI.
 // ---------------------------------------------------------------------------
-
-test('an optional manual family override selector is present (auto-detect default)', async ({ page }) => {
-  const select = page.locator('#policy-family');
-  await expect(select).toBeVisible();
-  // Auto-detect is the default selection (paste-and-go preserved).
-  await expect(select).toHaveValue('');
-});
 
 test('a resource-based policy fails closed with a visible blocking coverage notice', async ({ page }) => {
   await page.fill('#policy-input', fixture('family/resource-policy-blocked.json'));
@@ -342,9 +362,165 @@ test('manual override to an unmodeled family blocks even a clean identity policy
   await expect(notice).toContainText('UNSUPPORTED_POLICY_FAMILY');
   await expect(page.locator('#findings table')).toHaveCount(0);
 
-  // Clearing resets the override back to auto-detect.
+  // Clearing resets the selector back to no selection (mandatory again).
   await page.click('#clear-btn');
   await expect(page.locator('#policy-family')).toHaveValue('');
+});
+
+// ---------------------------------------------------------------------------
+// IAM-1001 (Phase 10) Campaign B: MANDATORY policy-family selection.
+// ---------------------------------------------------------------------------
+
+test('the family selector defaults to NO selection and Analyze is disabled (test 64)', async ({ page }) => {
+  // Reset the beforeEach Auto-detect back to the true initial state.
+  await page.selectOption('#policy-family', '');
+  const select = page.locator('#policy-family');
+  await expect(select).toBeVisible();
+  await expect(select).toHaveValue(''); // "Select a policy family..." placeholder
+  // Mandatory-selection mechanism: Analyze is disabled until a family is chosen.
+  await expect(page.locator('#analyze-btn')).toBeDisabled();
+  // An explicit Auto-detect option is offered as an opt-in choice.
+  await expect(select.locator('option[value="auto"]')).toHaveCount(1);
+});
+
+test('choosing a family enables Analyze; no shape-based identity default (test 64)', async ({ page }) => {
+  await page.selectOption('#policy-family', '');
+  await page.fill('#policy-input', fixture('wildcard/admin-star.json'));
+  // With no family selected there is no findings table and no coverage result.
+  await expect(page.locator('#analyze-btn')).toBeDisabled();
+  await expect(page.locator('#findings table')).toHaveCount(0);
+  await expect(page.locator('#coverage .coverage-summary')).toHaveCount(0);
+
+  // Selecting a family enables Analyze and (auto-reanalyzes) produces the
+  // findings table for this wildcard-admin identity policy.
+  await page.selectOption('#policy-family', 'identity');
+  await expect(page.locator('#analyze-btn')).toBeEnabled();
+  await expect(page.locator('#findings table')).toBeVisible();
+});
+
+test('Identity selected on a Principal-bearing statement is rejected UNSUPPORTED_PRINCIPAL (test 67)', async ({ page }) => {
+  await page.fill('#policy-input', JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Principal: '*', Action: 's3:GetObject', Resource: 'arn:aws:s3:::public/*' }],
+  }, null, 2));
+  await page.selectOption('#policy-family', 'identity');
+  await page.click('#analyze-btn');
+
+  const notice = page.locator('#findings .coverage-blocked');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('UNSUPPORTED_PRINCIPAL');
+  await expect(notice).toContainText('Statement[0].Principal');
+  await expect(page.locator('#findings table')).toHaveCount(0);
+});
+
+test('Role-trust selected on a statement with a Resource is a trust-policy syntax block (test 68)', async ({ page }) => {
+  await page.fill('#policy-input', JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{
+      Effect: 'Allow',
+      Principal: { AWS: '111122223333' },
+      Action: 'sts:AssumeRole',
+      Resource: 'arn:aws:iam::123456789012:role/Target',
+    }],
+  }, null, 2));
+  await page.selectOption('#policy-family', 'role-trust');
+  await page.click('#analyze-btn');
+
+  const notice = page.locator('#findings .coverage-blocked');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('UNSUPPORTED_TRUST_RESOURCE');
+  await expect(notice).toContainText('Statement[0].Resource');
+  await expect(page.locator('#findings table')).toHaveCount(0);
+});
+
+test('Resource family selected fails closed UNSUPPORTED_POLICY_FAMILY, input preserved (test 69)', async ({ page }) => {
+  const text = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Principal: '*', Action: 's3:GetObject', Resource: 'arn:aws:s3:::public/*' }],
+  }, null, 2);
+  await page.fill('#policy-input', text);
+  await page.selectOption('#policy-family', 'resource');
+  await page.click('#analyze-btn');
+
+  await expect(page.locator('#findings .coverage-blocked')).toContainText('UNSUPPORTED_POLICY_FAMILY');
+  await expect(page.locator('#findings table')).toHaveCount(0);
+  // Input is preserved so the user can re-select a supported family.
+  await expect(page.locator('#policy-input')).toHaveValue(text);
+});
+
+test('switching the family invalidates the prior analysis immediately (test 70)', async ({ page }) => {
+  // 1) Analyze an Allow-heavy policy as Identity -> broad capability findings.
+  await page.fill('#policy-input', JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{ Sid: 'MaximumPermissions', Effect: 'Allow', Action: ['s3:*', 'dynamodb:*'], Resource: '*' }],
+  }, null, 2));
+  await page.selectOption('#policy-family', 'identity');
+  await page.click('#analyze-btn');
+  await expect(page.locator('#findings table')).toBeVisible();
+
+  // Capture the identity finding titles so we can prove they disappear.
+  const identityTitles = await page.locator('#findings table tbody tr').allInnerTexts();
+  expect(identityTitles.join(' ')).toMatch(/Wildcard/i);
+
+  // 2) Change ONLY the selector to Permissions boundary (do not edit the text).
+  await page.selectOption('#policy-family', 'permissions-boundary');
+
+  // 3) No Identity result remains visible beneath a Boundary label. IAM-1002
+  // ships the permissions-boundary ENVELOPE evaluator, so the re-analysis under
+  // the new family produces the maximum-permissions envelope finding (status ok),
+  // NOT the prior identity WILDCARD capability rows. The prior findings are gone
+  // and the coverage/exports now name permissions-boundary.
+  await expect(page.locator('#findings table')).toBeVisible();
+  await expect(page.locator('#findings table')).toContainText(/envelope/i);
+  await expect(page.locator('#findings table')).not.toContainText(/Wildcard/i);
+  await expect(page.locator('#status')).toHaveAttribute('data-status', 'ok');
+});
+
+// ---------------------------------------------------------------------------
+// IAM-1002 (Phase 10): permissions-boundary + session ENVELOPE/RESTRICTION
+// families render a ceiling finding with NO positive capability graph edges.
+// Engine semantics are asserted under node in tests/phase10-envelope.test.js;
+// these specs assert the UI wiring. The browser matrix is CI's job.
+// ---------------------------------------------------------------------------
+
+test('permissions-boundary selection renders a maximum-permissions envelope, no capability graph (suite-2 30 / suite-3 65)', async ({ page }) => {
+  await page.fill('#policy-input', JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{ Sid: 'MaximumPermissions', Effect: 'Allow', Action: ['s3:*', 'dynamodb:*'], Resource: '*' }],
+  }, null, 2));
+  await page.selectOption('#policy-family', 'permissions-boundary');
+  await page.click('#analyze-btn');
+
+  // The findings table shows the envelope ceiling, not identity capability rows.
+  await expect(page.locator('#findings table')).toBeVisible();
+  await expect(page.locator('#findings table')).toContainText(/envelope/i);
+  await expect(page.locator('#status')).toHaveAttribute('data-status', 'ok');
+  // ZERO positive capability edges: the graph has no rendered edges.
+  await expect(page.locator('#graph .graph-edge')).toHaveCount(0);
+});
+
+test('session selection renders a session ceiling, no standalone capability edge (suite-2 31 / suite-3 66)', async ({ page }) => {
+  await page.fill('#policy-input', JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{ Sid: 'SessionScope', Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::incident-evidence/*' }],
+  }, null, 2));
+  await page.selectOption('#policy-family', 'session');
+  await page.click('#analyze-btn');
+
+  await expect(page.locator('#findings table')).toBeVisible();
+  await expect(page.locator('#findings table')).toContainText(/ceiling/i);
+  await expect(page.locator('#status')).toHaveAttribute('data-status', 'ok');
+  await expect(page.locator('#graph .graph-edge')).toHaveCount(0);
+});
+
+test('the analysis status data attribute agrees with the exported status (test 71)', async ({ page }) => {
+  await page.fill('#policy-input', fixture('wildcard/admin-star.json'));
+  await page.selectOption('#policy-family', 'identity');
+  await page.click('#analyze-btn');
+  await expect(page.locator('#findings table')).toBeVisible();
+  // The browser surface publishes a machine-readable status that the JSON/MD
+  // exports mirror (asserted in tests/phase10-family-selection.test.js).
+  await expect(page.locator('#status')).toHaveAttribute('data-status', /^(ok|warned)$/);
 });
 
 // ---------------------------------------------------------------------------

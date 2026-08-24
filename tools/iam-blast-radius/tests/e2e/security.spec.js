@@ -18,6 +18,8 @@ test.beforeEach(async ({ page }) => {
   // Any dialog during analysis means an injected payload executed -> fail hard.
   page.on('dialog', async (d) => { throw new Error(`Unexpected dialog (XSS executed): ${d.message()}`); });
   await page.goto(PAGE);
+  // IAM-1001: policy-family selection is mandatory; opt into explicit Auto-detect.
+  await page.selectOption('#policy-family', 'auto');
 });
 
 // A policy that triggers findings (Action "*") so the payload fields render.

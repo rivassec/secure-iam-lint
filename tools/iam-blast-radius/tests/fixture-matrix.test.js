@@ -83,6 +83,12 @@ const APPLICABILITY = Object.freeze({
   // the DATA-EXFIL/WILDCARD-RESOURCE shape, not a scoped read whose NAME infers
   // sensitivity).
   'DATA-READ': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
+  // IAM-1005: group-membership privilege assignment (iam:AddUserToGroup). A single
+  // concrete privilege-assignment action, so notAction/notResource are excluded for
+  // the same reason as DATA-READ: an Allow-NotAction inversion is the
+  // DIRECT-IAM-ADMIN/WILDCARD shape (not a specific AddUserToGroup expression), and
+  // a NotResource complement of a group ARN is not a realistic scoping of this rule.
+  'GROUP-MEMBERSHIP': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
   'DESTRUCTIVE-ACTION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   'DETECTION-IMPAIRMENT': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   'NOTACTION-ALLOW': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],

@@ -1,0 +1,24 @@
+{
+  "name": "iam:RemoveUserFromGroup / iam:GetGroup - NOT a group-membership privilege assignment (negative)",
+  "note": "IAM-1005 negative: removing a user from a group or reading a group does NOT assign privilege, so GROUP-MEMBERSHIP must not fire. Only iam:AddUserToGroup is the privilege-assignment primitive.",
+  "story": "IAM-1005",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GroupReadAndRemove",
+        "Effect": "Allow",
+        "Action": ["iam:GetGroup", "iam:RemoveUserFromGroup", "iam:ListGroups"],
+        "Resource": "arn:aws:iam::123456789012:group/Developers"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["GROUP-MEMBERSHIP"]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["GROUP-MEMBERSHIP"]
+  }
+}

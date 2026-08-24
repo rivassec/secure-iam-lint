@@ -1,0 +1,23 @@
+{
+  "name": "Acceptance suite-3 test 90 - RegisterTaskDefinition without RunTask",
+  "note": "IAM-1005: iam:PassRole + ecs:RegisterTaskDefinition WITHOUT ecs:RunTask/StartTask -> HIGH task-definition staging capability, NOT a confirmed critical code-execution path. Another actor or scheduler could later run the definition, which this policy does not establish.",
+  "phase": 10,
+  "story": "IAM-1005",
+  "suite": 3,
+  "acceptanceTest": 90,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["iam:PassRole", "ecs:RegisterTaskDefinition"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-SERVICE"]
+  }
+}

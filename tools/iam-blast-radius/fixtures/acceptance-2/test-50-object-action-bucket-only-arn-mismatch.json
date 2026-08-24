@@ -1,0 +1,29 @@
+{
+  "name": "Acceptance suite-2 test 50 - object action on a bucket-only ARN (action/resource-type mismatch)",
+  "note": "IAM-1006 (F3): s3:GetObject is an OBJECT-level action but the Resource is a bucket-only ARN (arn:aws:s3:::documents, no key path). The bucket ARN identifies the bucket, not its objects, so this grant matches no object-read request. The engine must NOT report a confirmed object-read finding (no DATA-EXFIL / DATA-READ) AND must NOT report a complete, empty analysis: it surfaces a non-blocking coverage WARNING (code ACTION_RESOURCE_TYPE_MISMATCH, coverage incomplete) carrying bucket-vs-object remediation. Fail closed on the honest signal instead of a silent complete/empty result.",
+  "phase": 10,
+  "story": "IAM-1006",
+  "suite": 2,
+  "acceptanceTest": 50,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "IncorrectObjectReadScope",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::documents"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIds": ["DATA-EXFIL", "DATA-READ", "WILDCARD-RESOURCE"],
+    "coverage": {
+      "incomplete": true,
+      "codesInclude": ["ACTION_RESOURCE_TYPE_MISMATCH"]
+    }
+  }
+}

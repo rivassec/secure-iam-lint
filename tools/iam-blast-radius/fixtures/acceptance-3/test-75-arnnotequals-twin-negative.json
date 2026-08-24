@@ -1,0 +1,33 @@
+{
+  "name": "Acceptance suite-3 test 75 (ArnNotEquals twin) - ArnEquals Alice / ArnNotEquals Alice prevent correlation",
+  "note": "IAM-1006 iteration-3 (F1): the modify leg pins aws:PrincipalArn (ArnEquals) to role/Alice while the assume leg excludes that same principal with ArnNotEquals. No single principal is both == Alice and != Alice, so the chain is unsatisfiable and the engine must NOT emit a compound ROLE-TAKEOVER. This mirrors the ArnEquals positive twin but with the exact-equality negation - the idiomatic exact operator for aws:PrincipalArn. Standalone modify capabilities remain; the principal ARN is preserved.",
+  "phase": 10,
+  "story": "IAM-1006",
+  "suite": 3,
+  "acceptanceTest": 75,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy"],
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole",
+        "Condition": {"ArnEquals": {"aws:PrincipalArn": "arn:aws:iam::123456789012:role/Alice"}}
+      },
+      {
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/DeploymentRole",
+        "Condition": {"ArnNotEquals": {"aws:PrincipalArn": "arn:aws:iam::123456789012:role/Alice"}}
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["PUT-INLINE-POLICY", "TRUST-POLICY-MODIFY"],
+    "notFindingIdsAnywhere": ["ROLE-TAKEOVER"],
+    "preservesStrings": ["arn:aws:iam::123456789012:role/Alice"]
+  }
+}

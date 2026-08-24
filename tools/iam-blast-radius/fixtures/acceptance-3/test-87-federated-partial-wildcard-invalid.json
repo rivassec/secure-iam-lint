@@ -1,0 +1,32 @@
+{
+  "name": "Acceptance suite-3 test 87 - partial wildcard in a Federated principal is invalid (fail closed)",
+  "note": "IAM-1006 (Phase 10, iteration 4) adversarial finding: partial-wildcard fail-closed was scoped to the AWS Principal key only, so a never-matching Federated member (arn:aws:iam::123456789012:oidc-provider/*) was presented as a complete federated trust with coverage.incomplete=false. A Federated principal is a SPECIFIC identity-provider ARN (an IAM OIDC/SAML provider) or built-in OIDC hostname; the element does not wildcard-match provider ARNs, so the globbed member matches no provider and must fail closed exactly like a wildcard AWS Principal ARN. It is located at Principal.Federated[0], produces no TRUST-FEDERATED trust, and marks coverage incomplete with INVALID_PRINCIPAL_WILDCARD_ARN.",
+  "phase": 10,
+  "story": "IAM-1006",
+  "suite": 3,
+  "acceptanceTest": 87,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "Federated": "arn:aws:iam::123456789012:oidc-provider/*" },
+        "Action": "sts:AssumeRoleWithWebIdentity"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-INVALID-PRINCIPAL"],
+    "notFindingIdsAnywhere": ["TRUST-FEDERATED", "TRUST-PUBLIC", "TRUST-CROSS-ACCOUNT", "TRUST-ORG-EXPANSION"],
+    "coverage": {
+      "incomplete": true,
+      "codesInclude": ["INVALID_PRINCIPAL_WILDCARD_ARN"]
+    },
+    "invalidPrincipal": {
+      "pathsInclude": ["Statement[0].Principal.Federated[0]"],
+      "whyIncludes": "arn:aws:iam::123456789012:oidc-provider/*"
+    }
+  }
+}

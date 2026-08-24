@@ -675,6 +675,26 @@ const RULE_MAP = {
       lane: LANES.SCOPE,
     });
   },
+  // IAM-1005: adding a user to a group assigns privilege INDIRECTLY through the
+  // group. The edge targets the group Resource node (the group is what the ARN
+  // scopes; the added user is a request parameter, not resource-scoped), and its
+  // certainty stays potential - the group's real permissions are unknown.
+  'GROUP-MEMBERSHIP': (f, b) => {
+    const key = firstResource(f);
+    b.addEdge({
+      toId: `resource:${key}`,
+      toType: NODE_TYPES.RESOURCE,
+      toLabel: `Group: ${key}`,
+      type: EDGE_TYPES.CAN_MODIFY,
+      // A group whose actual policies are unknown -> the assignment's reach is a
+      // potential, name-inferred one, never confirmed from this policy.
+      certainty: CERTAINTY.POTENTIALLY_REACHABLE,
+      finding: f,
+      statementIndex: f.statementIndex,
+      label: 'can add a user to this group',
+      lane: LANES.PRIVILEGE_ESCALATION,
+    });
+  },
 };
 
 // Escalation (escalation.js) mappings.
@@ -871,8 +891,17 @@ function wildcardResourceEdges(f, b, certainty, model) {
   }
 
   // Group the granted actions by capability, preserving order + determinism.
+  // Type edges from the STATEMENT's full action set, not the finding's `actions`:
+  // IAM-1006 narrows the WILDCARD-RESOURCE finding row to the remediable (non-read)
+  // actions, but the graph is the full per-action capability view and must still
+  // draw the can-read edge for an enumeration/read action in the same statement
+  // (acceptance test 24). Falls back to the finding actions if the statement is
+  // unavailable. The NotAction complement path returned above.
+  const typedActions = stmt && Array.isArray(stmt.actions)
+    ? stmt.actions
+    : (Array.isArray(f.actions) ? f.actions : []);
   const groups = { read: [], destroy: [], decrypt: [], delegation: [], write: [] };
-  for (const a of Array.isArray(f.actions) ? f.actions : []) {
+  for (const a of typedActions) {
     groups[classifyCapability(a)].push(a);
   }
 
@@ -983,6 +1012,17 @@ function passRoleEdges(f, b) {
   const execEv = Array.isArray(f.evidence) ? f.evidence.find((e) => e && e.role === 'execute') : null;
   const passFinding = edgeEvidenceCarrier(f, passEv);
   const execFinding = edgeEvidenceCarrier(f, execEv);
+  // IAM-1005: ECS renders the task role and the execution role as SEPARATE nodes
+  // (never merged). The task role is the application-credential path (can-pass ->
+  // task role -> can-execute-as -> ECS execution); the execution role is startup/
+  // pull/logs/secrets influence only (a can-pass edge, NO application can-execute-as
+  // edge, no invented task-role node when only the execution role is passable).
+  if (svc === 'ecs' && f.escalation && f.escalation.ecs
+    && (f.escalation.ecs.taskRoles.length > 0 || f.escalation.ecs.executionRoles.length > 0
+      || f.escalation.ecs.hasLaunch === false)) {
+    ecsPassRoleEdges(f, b, svc, svcId, certainty, passEv, execEv, passFinding, execFinding);
+    return;
+  }
   // Hop 1 (KNOWN): the principal can pass a role to the service.
   b.addEdge({
     toId: roleId,
@@ -1012,6 +1052,76 @@ function passRoleEdges(f, b) {
     label: `executes as the passed role (potential privilege-boundary crossing)`,
     lane: LANES.PRIVILEGE_ESCALATION,
   });
+}
+
+// IAM-1005: ECS-specific transition edges keeping the task role and execution role
+// as distinct nodes (suite-2 test 38, suite-3 tests 87/88/89/90). The application
+// task role is the credential-exposure path (can-pass -> task role -> can-execute-as
+// -> ECS execution, only when a launch action is present); the execution role gets
+// a can-pass edge only (startup/pull/logs/secrets influence), never an application
+// can-execute-as edge, and no task-role node is invented when only the execution
+// role is passable.
+function ecsPassRoleEdges(f, b, svc, svcId, certainty, passEv, execEv, passFinding, execFinding) {
+  const ecs = f.escalation.ecs;
+  const hasLaunch = ecs.hasLaunch !== false;
+  const passStmtIndex = passEv ? passEv.statementIndex : f.statementIndex;
+  const execStmtIndex = execEv ? execEv.statementIndex : f.statementIndex;
+  // The application-credential path uses the TASK role; an unclassified role is
+  // treated conservatively as a possible task role (same as the finding severity).
+  const taskCapable = ecs.taskRoles.length > 0 || ecs.unknownRoles.length > 0;
+  const hasExec = ecs.executionRoles.length > 0;
+
+  if (taskCapable) {
+    const taskRoleId = 'role:passable:ecs:task';
+    b.addEdge({
+      toId: taskRoleId,
+      toType: NODE_TYPES.ROLE,
+      toLabel: 'Passable ECS task role [unknown privileges]',
+      toExtra: { unknownPrivileges: true, ecsRole: 'task' },
+      type: EDGE_TYPES.CAN_PASS,
+      certainty,
+      finding: passFinding,
+      statementIndex: passStmtIndex,
+      label: 'can pass the application task role to ECS',
+      lane: LANES.PRIVILEGE_ESCALATION,
+    });
+    // Only a launch action (RunTask/StartTask) actually runs the task and yields
+    // the task role's credentials. Staging alone (RegisterTaskDefinition) draws no
+    // execution edge - this principal cannot launch it (test 90).
+    if (hasLaunch) {
+      b.addEdge({
+        fromId: taskRoleId,
+        toId: svcId,
+        toType: NODE_TYPES.SERVICE,
+        toLabel: `Service: ${svc} execution`,
+        toExtra: { boundaryCrossing: true },
+        type: EDGE_TYPES.CAN_EXECUTE_AS,
+        certainty,
+        finding: execFinding,
+        statementIndex: execStmtIndex,
+        label: 'application code obtains the task role (potential privilege-boundary crossing)',
+        lane: LANES.PRIVILEGE_ESCALATION,
+      });
+    }
+  }
+
+  if (hasExec) {
+    // Execution-role influence only: image pulls, log delivery, secret injection at
+    // startup. NO application can-execute-as edge (the app does not receive these
+    // credentials), so the node is distinct from the task-role credential path.
+    b.addEdge({
+      toId: 'role:passable:ecs:execution',
+      toType: NODE_TYPES.ROLE,
+      toLabel: 'Passable ECS execution role [startup: image pull / logs / secrets]',
+      toExtra: { unknownPrivileges: true, ecsRole: 'execution' },
+      type: EDGE_TYPES.CAN_PASS,
+      certainty,
+      finding: passFinding,
+      statementIndex: passStmtIndex,
+      label: 'can pass the ECS execution role (startup influence, not application credentials)',
+      lane: LANES.PRIVILEGE_ESCALATION,
+    });
+  }
 }
 
 // IAM-701: build a finding-shaped evidence carrier for ONE transition edge from a

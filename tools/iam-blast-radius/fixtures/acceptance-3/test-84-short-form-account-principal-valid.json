@@ -1,0 +1,28 @@
+{
+  "name": "Acceptance suite-3 test 84 - short-form 12-digit account principal stays valid",
+  "note": "IAM-1004 (Phase 10) Campaign D: a bare 12-digit account id (111122223333) is the short form of arn:aws:iam::111122223333:root and delegates trust to the whole account - a VALID cross-account delegation. It carries no glob, so it must NOT be misclassified as an invalid ARN (no TRUST-INVALID-PRINCIPAL, no INVALID_PRINCIPAL_WILDCARD_ARN). The original short form is preserved in evidence.",
+  "phase": 10,
+  "story": "IAM-1004",
+  "suite": 3,
+  "acceptanceTest": 84,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {"AWS": "111122223333"},
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-CROSS-ACCOUNT"],
+    "notFindingIdsAnywhere": ["TRUST-INVALID-PRINCIPAL"],
+    "preservesStrings": ["111122223333"],
+    "coverage": {
+      "codesExclude": ["INVALID_PRINCIPAL_WILDCARD_ARN"]
+    }
+  }
+}

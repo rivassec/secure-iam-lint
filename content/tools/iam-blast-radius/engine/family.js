@@ -42,12 +42,30 @@ export const FAMILIES = Object.freeze({
 // family here (plus its rules), without touching this gate's control flow.
 // IAM-801 (Phase 8): ROLE_TRUST joins IDENTITY as a supported family - it now
 // has a dedicated, family-aware evaluator (engine/trust.js) that the
-// orchestrator routes trust statements to instead of the identity rules. The
-// remaining families (resource / permissions-boundary / scp-rcp / session) stay
-// fail-closed until each grows its own evaluator.
+// orchestrator routes trust statements to instead of the identity rules.
+// IAM-1002 (Phase 10): PERMISSIONS_BOUNDARY and SESSION join as supported
+// families via the family-aware ENVELOPE/RESTRICTION evaluator (engine/
+// envelope.js). They report ceiling breadth but emit NO positive capability
+// edges and NO escalation findings (a boundary/session grants nothing). The
+// remaining families (resource / scp-rcp) stay fail-closed until each grows its
+// own evaluator.
 export const SUPPORTED_FAMILIES = Object.freeze(new Set([
   FAMILIES.IDENTITY,
   FAMILIES.ROLE_TRUST,
+  FAMILIES.PERMISSIONS_BOUNDARY,
+  FAMILIES.SESSION,
+]));
+
+// IAM-1002: permissions-boundary and session policies are STRUCTURALLY identical
+// to an identity policy (no Principal element) - they cannot be told apart from
+// shape. So an EXPLICIT boundary/session selection is valid ONLY on an
+// identity-shaped (no-Principal) document; on a Principal-bearing / SCP /
+// ambiguous shape it fails closed. Auto-detect never resolves to these families
+// (it cannot distinguish them from identity); they are reachable only via an
+// explicit manual selection.
+const ENVELOPE_FAMILIES = Object.freeze(new Set([
+  FAMILIES.PERMISSIONS_BOUNDARY,
+  FAMILIES.SESSION,
 ]));
 
 // The Principal type keys the role-trust evaluator models (trust-policy-
@@ -95,6 +113,21 @@ export const COVERAGE_CODES = Object.freeze({
   // as a non-blocking coverage warning (the statement is fail-closed to a
   // TRUST-INVALID-PRINCIPAL finding, never a plain TRUST-CROSS-ACCOUNT high).
   INVALID_PRINCIPAL_WILDCARD_ARN: 'INVALID_PRINCIPAL_WILDCARD_ARN',
+  // IAM-1001 (Phase 10): the UI contract now REQUIRES an explicit policy-family
+  // selection before analysis. When a caller demands an explicit selection
+  // (requireExplicitFamily) and none was made, analysis fails closed with this
+  // code BEFORE any shape classification - the family is never guessed from shape.
+  POLICY_FAMILY_REQUIRED: 'POLICY_FAMILY_REQUIRED',
+  // IAM-1001: an EXPLICIT Identity selection on a document that carries a
+  // Principal element. Identity policies never contain a Principal, so this is a
+  // family-shape error; the Principal is never dropped so the rest can be analyzed
+  // as an identity grant (test 67).
+  UNSUPPORTED_PRINCIPAL: 'UNSUPPORTED_PRINCIPAL',
+  // IAM-1001: an EXPLICIT Role-trust selection on a trust-shaped document that
+  // carries a Resource. A trust policy applies to the role it is attached to and
+  // has no Resource element, so a Resource here is a trust-policy syntax error
+  // (test 68).
+  UNSUPPORTED_TRUST_RESOURCE: 'UNSUPPORTED_TRUST_RESOURCE',
 });
 
 // The set of families a caller may select via the optional manual override.
@@ -311,7 +344,13 @@ function classifyShape(statements) {
  * recorded. Never throws.
  *
  * @param {object} model normalized, frozen model (from buildModel/modelFromText)
- * @param {{family?: string}} [options] optional manual family override
+ * @param {{family?: string, requireExplicitFamily?: boolean}} [options]
+ *   family: an explicit family selection - an OVERRIDE_FAMILIES token, or
+ *     'auto'/'auto-detect' for explicit shape auto-detect. Absent/empty means no
+ *     selection.
+ *   requireExplicitFamily: when true (the UI contract), an absent selection fails
+ *     closed with POLICY_FAMILY_REQUIRED instead of auto-detecting. Omit it (the
+ *     default) to preserve back-compatible auto-detect for existing callers.
  * @returns {Readonly<{
  *   detected: string, override: (string|null), family: string,
  *   supported: boolean, blocked: boolean,
@@ -323,6 +362,41 @@ export function detectFamily(model, options) {
   const opts = options || {};
   const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
   const notes = [];
+
+  // IAM-1001: resolve the family SELECTION before touching the shape. "auto"
+  // (and its alias "auto-detect") is now an EXPLICIT opt-in choice - distinct
+  // from an ABSENT selection - so paste-and-go auto-detect remains available but
+  // is no longer a silent default. An OVERRIDE_FAMILIES token is an explicit pick
+  // of a concrete family; anything else (empty / garbage) is "no selection".
+  const rawSelection = typeof opts.family === 'string' ? opts.family : '';
+  const isAuto = rawSelection === 'auto' || rawSelection === 'auto-detect';
+  const hasExplicitSelection = isAuto || OVERRIDE_FAMILIES.has(rawSelection);
+
+  // IAM-1001: MANDATORY family selection (the UI contract). When the caller
+  // demands an explicit selection and none was made, fail closed with
+  // POLICY_FAMILY_REQUIRED BEFORE classifying the shape - the family is NEVER
+  // defaulted from shape (detected stays UNKNOWN so nothing implies an identity
+  // default). Back-compat: callers that omit requireExplicitFamily (the existing
+  // unit tests + suite-1/suite-2 fixtures) still auto-detect below.
+  if (opts.requireExplicitFamily && !hasExplicitSelection) {
+    return Object.freeze({
+      detected: FAMILIES.UNKNOWN,
+      override: null,
+      family: null,
+      supported: false,
+      blocked: true,
+      blockingCodes: Object.freeze([Object.freeze(code(
+        COVERAGE_CODES.POLICY_FAMILY_REQUIRED,
+        'Select a policy family before analyzing. This tool does not guess the ' +
+          'policy family from the document shape: an identity policy and a ' +
+          'resource-based policy can look structurally similar, and analyzing one ' +
+          'as the other would produce confident but wrong findings. Choose a ' +
+          'family (or Auto-detect) and analyze again.',
+        null,
+      ))]),
+      notes: Object.freeze([]),
+    });
+  }
 
   const { detected, blockingCodes } = classifyShape(statements);
 
@@ -343,51 +417,127 @@ export function detectFamily(model, options) {
     ));
   }
 
-  // Optional manual override. It NEVER relaxes a shape-mandated block (you
-  // cannot force a NotPrincipal / resource document to evaluate as identity),
-  // and selecting an unmodeled family blocks even a clean identity shape.
+  // Resolve the explicit override. It NEVER relaxes a shape-mandated block (you
+  // cannot force a NotPrincipal / resource document to evaluate as identity), and
+  // selecting an unmodeled family blocks even a clean identity shape. "auto" is
+  // an explicit selection but carries NO override (pure shape auto-detect).
   let override = null;
-  if (typeof opts.family === 'string' && opts.family.length > 0) {
-    if (OVERRIDE_FAMILIES.has(opts.family)) {
-      override = opts.family;
+  if (isAuto) {
+    notes.push('Policy family explicitly set to Auto-detect.');
+  } else if (rawSelection.length > 0) {
+    if (OVERRIDE_FAMILIES.has(rawSelection)) {
+      override = rawSelection;
     } else {
       // An unrecognized override token is ignored (auto-detect wins) but noted.
-      notes.push(`Ignored unrecognized family override "${opts.family}"; used auto-detect.`);
+      notes.push(`Ignored unrecognized family override "${rawSelection}"; used auto-detect.`);
     }
   }
 
   const family = override || detected;
 
   if (override) {
+    // IAM-1001 family-shape guards for an EXPLICIT selection. These are more
+    // specific than the generic OVERRIDE_SHAPE_MISMATCH: they name the exact
+    // element that does not belong in the selected family, with its JSON path,
+    // and they NEVER drop that element to analyze the remainder.
+    let shapeGuardFired = false;
+    if (override === FAMILIES.IDENTITY) {
+      // An identity policy attaches to a principal and never CONTAINS a Principal
+      // element; a Principal here means the document is a resource-based (or
+      // trust) policy (test 67). (NotPrincipal is already rejected by
+      // classifyShape with UNSUPPORTED_NOTPRINCIPAL.)
+      for (const s of statements.filter((x) => x && x.principal != null)) {
+        blockingCodes.push(code(
+          COVERAGE_CODES.UNSUPPORTED_PRINCIPAL,
+          'Identity policy selected, but this statement names a Principal. Identity ' +
+            'policies attach to a principal and never contain a Principal element, ' +
+            'so a Principal here means this is a resource-based or trust policy. ' +
+            'Analysis stops rather than drop the Principal and analyze the remainder ' +
+            'as an identity grant.',
+          `Statement[${s.index}].Principal`,
+        ));
+        shapeGuardFired = true;
+      }
+    } else if (override === FAMILIES.ROLE_TRUST) {
+      // A role-trust policy names WHO may assume the role and carries no Resource;
+      // a Resource in a trust-shaped document is a syntax error (test 68). Only
+      // guard a genuinely trust-shaped document (one that names a Principal): a
+      // plain identity shape forced to role-trust is a generic shape mismatch, not
+      // a trust-Resource syntax error.
+      if (statements.some(hasPrincipalElement)) {
+        for (const s of statements.filter((x) => x && (x.resources.length > 0 || x.notResources.length > 0))) {
+          blockingCodes.push(code(
+            COVERAGE_CODES.UNSUPPORTED_TRUST_RESOURCE,
+            'Role trust policy selected, but this statement names a Resource. A trust ' +
+              'policy applies to the role it is attached to and has no Resource ' +
+              'element; the supplied Resource must not become a second role target. ' +
+              'Analysis stops on the trust-policy syntax error.',
+            `Statement[${s.index}].Resource`,
+          ));
+          shapeGuardFired = true;
+        }
+      }
+    }
+
     if (!SUPPORTED_FAMILIES.has(override)) {
-      // User asked us to treat it as a family we do not model -> fail closed.
+      // Selected a family we do not model (resource / scp-rcp) -> fail closed
+      // NAMING the selected family; the input is preserved so the user can
+      // re-select (test 69).
       if (!blockingCodes.some((b) => b.code === COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY)) {
         blockingCodes.push(code(
           COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY,
-          `Manual override selected "${FAMILY_LABELS[override] || override}", a ` +
+          `Policy family "${FAMILY_LABELS[override] || override}" was selected, a ` +
             'family this analyzer does not yet model. Analysis stops before rule ' +
-            'evaluation.',
+            'evaluation; your input is preserved so you can re-select a supported ' +
+            'family.',
           null,
         ));
       }
-      notes.push(`Family manually overridden to "${override}".`);
+      notes.push(`Policy family selected: "${override}".`);
+    } else if (ENVELOPE_FAMILIES.has(override)) {
+      // IAM-1002: an EXPLICIT permissions-boundary / session selection. These
+      // shapes are indistinguishable from an identity policy, so the selection is
+      // valid ONLY on an identity-shaped (no-Principal) document. On any other
+      // shape it fails closed - a Principal-bearing / SCP / ambiguous document
+      // already carries a shape block from classifyShape (authoritative); a
+      // role-trust shape carries none, so add the generic mismatch there.
+      if (detected === FAMILIES.IDENTITY) {
+        notes.push(
+          `Policy family "${override}" selected; the document is structurally ` +
+            'identity-shaped and analyzed as a ceiling/envelope, not as a grant.',
+        );
+      } else {
+        if (blockingCodes.length === 0) {
+          blockingCodes.push(code(
+            COVERAGE_CODES.OVERRIDE_SHAPE_MISMATCH,
+            `Selected family "${FAMILY_LABELS[override] || override}" requires an ` +
+              `identity-shaped (no-Principal) document, but the detected shape is ` +
+              `${FAMILY_LABELS[detected] || detected}. The shape wins; analysis ` +
+              'stops rather than evaluate a ceiling on a document of another family.',
+            null,
+          ));
+        }
+        notes.push(`Selected family "${override}" did not match the detected shape.`);
+      }
+    } else if (shapeGuardFired) {
+      // A specific family-shape guard already blocked (Principal / Resource); the
+      // generic mismatch would be redundant and less precise.
+      notes.push(`Policy family "${override}" selected; it conflicts with the document shape.`);
     } else if (override !== detected) {
-      // User forced a SUPPORTED family (identity or role-trust) onto a shape that
-      // is not that family. The SHAPE always wins: fail closed with a mismatch
-      // rather than force one family's evaluator onto a document of another shape
-      // (e.g. identity rules onto a trust policy, or the trust evaluator onto an
-      // identity policy).
+      // A SUPPORTED family (identity or role-trust) forced onto a shape that is a
+      // different family. The SHAPE always wins: fail closed rather than run one
+      // family's evaluator on a document of another shape.
       blockingCodes.push(code(
         COVERAGE_CODES.OVERRIDE_SHAPE_MISMATCH,
-        `Manual override "${FAMILY_LABELS[override] || override}" conflicts with ` +
+        `Selected family "${FAMILY_LABELS[override] || override}" conflicts with ` +
           `the detected ${FAMILY_LABELS[detected] || detected}. The shape wins; ` +
           'analysis stops rather than force one family\'s rules onto a document ' +
           'whose shape is a different family.',
         null,
       ));
-      notes.push(`Manual override "${override}" did not match the detected shape.`);
+      notes.push(`Selected family "${override}" did not match the detected shape.`);
     } else {
-      notes.push(`Family manually overridden to "${override}" (matches detected shape).`);
+      notes.push(`Policy family "${override}" selected (matches the detected shape).`);
     }
   }
 

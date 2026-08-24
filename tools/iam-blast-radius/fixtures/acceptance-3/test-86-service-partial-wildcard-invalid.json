@@ -1,0 +1,32 @@
+{
+  "name": "Acceptance suite-3 test 86 - partial wildcard in a Service principal is invalid (fail closed)",
+  "note": "IAM-1006 (Phase 10, iteration 4) adversarial finding: partial-wildcard fail-closed was scoped to the AWS Principal key only, so a never-matching Service member (ec2-*.amazonaws.com) was presented as a normal, complete service trust with coverage.incomplete=false. An AWS Service principal is an EXACT identifier; the element does not wildcard-match, so the globbed member matches no service and must fail closed exactly like a wildcard AWS Principal ARN. The valid member (lambda.amazonaws.com) still stands as an informational TRUST-SERVICE; the invalid member is located at Principal.Service[1] and marks coverage incomplete with INVALID_PRINCIPAL_WILDCARD_ARN.",
+  "phase": 10,
+  "story": "IAM-1006",
+  "suite": 3,
+  "acceptanceTest": 86,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "Service": ["lambda.amazonaws.com", "ec2-*.amazonaws.com"] },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-INVALID-PRINCIPAL", "TRUST-SERVICE"],
+    "notFindingIdsAnywhere": ["TRUST-PUBLIC", "TRUST-CROSS-ACCOUNT", "TRUST-ORG-EXPANSION", "TRUST-FEDERATED"],
+    "coverage": {
+      "incomplete": true,
+      "codesInclude": ["INVALID_PRINCIPAL_WILDCARD_ARN"]
+    },
+    "invalidPrincipal": {
+      "pathsInclude": ["Statement[0].Principal.Service[1]"],
+      "whyIncludes": "ec2-*.amazonaws.com"
+    }
+  }
+}

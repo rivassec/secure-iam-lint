@@ -1,0 +1,25 @@
+{
+  "name": "No family selected -> POLICY_FAMILY_REQUIRED (mandatory selection)",
+  "note": "IAM-1001 suite-3 test 64. With the mandatory-selection contract the UI passes requireExplicitFamily but no family. The engine must FAIL CLOSED before shape classification with POLICY_FAMILY_REQUIRED - it must NOT default to identity based on shape, and no risk result may appear. detected stays 'unknown' so nothing implies an identity default.",
+  "phase": 10,
+  "story": "IAM-1001",
+  "suite3Test": 64,
+  "options": { "requireExplicitFamily": true },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" }
+    ]
+  },
+  "phase10Expect": {
+    "ok": true,
+    "blocked": true,
+    "detected": "unknown",
+    "family": null,
+    "status": "blocked",
+    "blockingCodes": [
+      { "code": "POLICY_FAMILY_REQUIRED", "path": null }
+    ],
+    "noFindings": true
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "Acceptance suite-3 test 82 - question-mark wildcard inside a user Principal ARN is invalid",
+  "note": "IAM-1004 (Phase 10) Campaign D: validation must cover both '*' and '?'. arn:aws:iam::123456789012:user/deployer? uses a single-character '?' glob inside the Principal-element ARN, which the IAM Principal element does not support - same blocked/failed outcome as test 81 (TRUST-INVALID-PRINCIPAL located at Principal.AWS[0], INVALID_PRINCIPAL_WILDCARD_ARN in coverage, no plain cross-account expansion).",
+  "phase": 10,
+  "story": "IAM-1004",
+  "suite": 3,
+  "acceptanceTest": 82,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {"AWS": "arn:aws:iam::123456789012:user/deployer?"},
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-INVALID-PRINCIPAL"],
+    "notFindingIdsAnywhere": ["TRUST-CROSS-ACCOUNT"],
+    "coverage": {
+      "incomplete": true,
+      "codesInclude": ["INVALID_PRINCIPAL_WILDCARD_ARN"]
+    },
+    "invalidPrincipal": {
+      "pathsInclude": ["Statement[0].Principal.AWS[0]"]
+    }
+  }
+}

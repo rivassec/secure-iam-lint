@@ -1,0 +1,25 @@
+{
+  "name": "SCP/RCP family explicitly selected (deferred) -> UNSUPPORTED_POLICY_FAMILY",
+  "note": "IAM-1001 suite-3 test 69 (SCP-RCP arm). SCP/RCP control-policy analysis is a deferred tranche. Selecting SCP/RCP must fail closed naming the family, even on an otherwise clean identity-shaped policy; input preserved.",
+  "phase": 10,
+  "story": "IAM-1001",
+  "suite3Test": 69,
+  "options": { "family": "scp-rcp", "requireExplicitFamily": true },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" }
+    ]
+  },
+  "phase10Expect": {
+    "ok": true,
+    "blocked": true,
+    "detected": "identity",
+    "family": "scp-rcp",
+    "status": "blocked",
+    "blockingCodes": [
+      { "code": "UNSUPPORTED_POLICY_FAMILY", "path": null }
+    ],
+    "noFindings": true
+  }
+}

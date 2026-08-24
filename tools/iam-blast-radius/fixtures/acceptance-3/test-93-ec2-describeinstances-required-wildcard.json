@@ -1,0 +1,22 @@
+{
+  "name": "Acceptance suite-3 test 93 - ec2:DescribeInstances legitimately uses Resource:* (no remediable wildcard)",
+  "note": "docs/acceptance-suite-3.md Campaign F (false-positive control). ec2:DescribeInstances does not support resource-level permissions; Resource:* is required. The engine must not emit a broad-write edge or a remediable WILDCARD-RESOURCE finding, and must not recommend a wildcard-resource fix AWS cannot implement for this action. Informational enumeration/read only.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 93,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "ec2:DescribeInstances", "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIdsAnywhere": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION"]
+  },
+  "rationale": "The EC2 Describe* family (including ec2:DescribeInstances) lists resource type '*' with no resource-level permissions in the Service Authorization Reference, so AWS mandates Resource:*. It is read-only enumeration carrying no escalation, and the mandatory wildcard must not be penalized as an avoidable over-scope. Mirrors fixtures/negative/aws-required-wildcard-resource-not-penalized.json. Ref: AWS Service Authorization Reference, 'Actions, resources, and condition keys for Amazon EC2'."
+}

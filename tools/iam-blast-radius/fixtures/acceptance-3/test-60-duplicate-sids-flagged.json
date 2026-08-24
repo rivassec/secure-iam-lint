@@ -1,0 +1,25 @@
+{
+  "name": "Acceptance suite-3 test 60 - non-unique Sids flagged; statement identity stays distinct",
+  "note": "docs/acceptance-suite-3.md Campaign A. Two statements share the Sid 'RepeatedSid'. Colliding Sids are legal JSON (distinct array members), so analysis proceeds, but the DUPLICATE_SID coverage flag is raised and the two statements keep DISTINCT indexes/identity - graph IDs, finding IDs and export records must not overwrite one another. The second statement's iam:PassRole on Resource:* still produces its wildcard finding.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 60,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "RepeatedSid", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::one/*" },
+      { "Sid": "RepeatedSid", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["WILDCARD-RESOURCE"],
+    "coverage": {
+      "codesInclude": ["DUPLICATE_SID"]
+    }
+  },
+  "rationale": "Sid is display evidence, not a stable identity key (architecture note: 'Sid is display evidence, not stable identity'). Duplicate Sids are valid JSON and valid IAM, so the tool must not block, but it must warn (DUPLICATE_SID) and key every internal record on the statement INDEX so two RepeatedSid statements never collapse into one row/node/export entry. Ref: IAM JSON policy grammar (Sid uniqueness is only enforced within a single statement's scope, not across statements)."
+}

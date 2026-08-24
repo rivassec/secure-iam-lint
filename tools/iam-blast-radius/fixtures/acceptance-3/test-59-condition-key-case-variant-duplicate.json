@@ -1,0 +1,22 @@
+{
+  "name": "Acceptance suite-3 test 59 - condition keys differing only in case are one duplicate -> BLOCKED",
+  "note": "docs/acceptance-suite-3.md Campaign A. IAM condition keys are case-insensitive, so aws:PrincipalOrgID and AWS:PrincipalOrgId are the SAME key. They must not be evaluated as two independent AND conditions; the engine fails closed with DUPLICATE_JSON_KEY and preserves both original spellings in the error.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 59,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policyRaw": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::reports/*\",\"Condition\":{\"StringEquals\":{\"aws:PrincipalOrgID\":\"o-one\",\"AWS:PrincipalOrgId\":\"o-two\"}}}]}",
+  "expect": {
+    "valid": false,
+    "status": "blocked",
+    "findingIds": []
+  },
+  "errorExpect": {
+    "errorCodes": ["DUPLICATE_JSON_KEY"],
+    "pathIncludes": ["Statement[0].Condition.StringEquals.AWS:PrincipalOrgId"],
+    "messageIncludes": ["aws:PrincipalOrgID", "AWS:PrincipalOrgId"]
+  },
+  "rationale": "AWS matches condition keys case-insensitively, so two case-variant spellings of aws:PrincipalOrgID collapse to one key at request-evaluation time. Treating them as distinct AND-ed conditions would let an attacker smuggle a second value (o-two) past a same-key guard, or make the analyzer report a narrower constraint than AWS enforces. The block preserves both spellings so the collision is visible. Ref: IAM condition keys are case-insensitive (AWS global condition context keys reference)."
+}

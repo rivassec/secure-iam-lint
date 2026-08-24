@@ -1,0 +1,30 @@
+{
+  "name": "Acceptance suite-3 test 91b - cross-account PassRole target coexisting with a bare * resource",
+  "note": "IAM-1005 near-miss (F1 regression guard): iam:PassRole to a FOREIGN-account role (999900001111) BUT the same statement ALSO grants Resource \"*\", analyzed with subject account 123456789012. Unlike test 91, the bare \"*\" lets the principal pass a role in its OWN account (123456789012) to EC2 - a fully viable, wildcard-broad, critical same-account path. The cross-account account-mismatch downgrade must NOT fire here (it would understate the blast radius): severity stays critical, no accountMismatch metadata, and NO 'NOT a viable direct ... across accounts' assertion.",
+  "phase": 10,
+  "story": "IAM-1005",
+  "suite": 3,
+  "acceptanceTest": 91,
+  "family": "identity",
+  "options": { "subjectAccount": "123456789012" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": ["arn:aws:iam::999900001111:role/ForeignRole", "*"]
+      },
+      {
+        "Effect": "Allow",
+        "Action": "ec2:RunInstances",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-EC2"],
+    "preservesStrings": ["999900001111"]
+  }
+}

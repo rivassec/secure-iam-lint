@@ -1,0 +1,22 @@
+{
+  "name": "Acceptance suite-3 test 92 - iam:ListRoles legitimately requires Resource:* (no remediable wildcard)",
+  "note": "docs/acceptance-suite-3.md Campaign F (false-positive control). iam:ListRoles does not support resource-level permissions, so Resource:* is REQUIRED, not an avoidable over-grant. The engine must not emit a remediable WILDCARD-RESOURCE finding and must not recommend replacing * with a role ARN (impossible remediation). This is at most informational IAM enumeration.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 92,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "iam:ListRoles", "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": [],
+    "notFindingIdsAnywhere": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DIRECT-IAM-ADMIN"]
+  },
+  "rationale": "iam:ListRoles is an account-level List action with resource type '*' only (no resource-level permissions in the Service Authorization Reference), so AWS requires Resource:*. Flagging the mandatory wildcard as a tightenable over-scope would be a false positive whose remediation ('scope the ARN') AWS cannot honor. Ref: AWS Service Authorization Reference, 'Actions, resources, and condition keys for AWS Identity and Access Management' (ListRoles: resource types = none)."
+}

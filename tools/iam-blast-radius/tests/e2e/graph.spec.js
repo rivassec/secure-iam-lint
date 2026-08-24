@@ -30,6 +30,10 @@ test.beforeEach(async ({ page }) => {
     throw new Error(`Unexpected dialog (possible XSS): ${d.message()}`);
   });
   await page.goto(PAGE);
+  // IAM-1001: policy-family selection is mandatory; Analyze is disabled until a
+  // family is chosen. These graph tests exercise identity behavior, so opt into
+  // explicit Auto-detect (reproduces the pre-Phase-10 paste-and-go behavior).
+  await page.selectOption('#policy-family', 'auto');
 });
 
 test('renders the attack path as an inline SVG with styled edges', async ({ page }) => {
@@ -184,6 +188,7 @@ test('reduced-motion is honored: no entrance-animation class on the SVG', async 
   const page = await context.newPage();
   page.on('dialog', async (d) => { throw new Error(`Unexpected dialog: ${d.message()}`); });
   await page.goto(PAGE);
+  await page.selectOption('#policy-family', 'auto'); // IAM-1001: mandatory family selection
   await page.fill('#policy-input', fixture('wildcard/admin-star.json'));
   await page.click('#analyze-btn');
   const svg = page.locator('#graph svg');

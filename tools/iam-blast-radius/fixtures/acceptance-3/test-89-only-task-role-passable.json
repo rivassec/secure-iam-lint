@@ -1,0 +1,28 @@
+{
+  "name": "Acceptance suite-3 test 89 - only task role is passable",
+  "note": "IAM-1005: only the ECS task role is passable + RegisterTaskDefinition + RunTask -> critical/high application task-role execution; target permissions unknown. Do not require an execution role (the workload may not need one); the missing execution-role context is explicit, never invented.",
+  "phase": 10,
+  "story": "IAM-1005",
+  "suite": 3,
+  "acceptanceTest": 89,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::123456789012:role/ecs/AppTaskRole"
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["ecs:RegisterTaskDefinition", "ecs:RunTask"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-SERVICE"]
+  }
+}

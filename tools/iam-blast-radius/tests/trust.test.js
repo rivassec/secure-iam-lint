@@ -202,6 +202,72 @@ test('IAM-903 boundary: concrete :root ARN and bare account id stay valid whole-
     'no glob present -> not the invalid wildcard form');
 });
 
+// IAM-1006 (Phase 10, iteration 4): the partial-wildcard fail-closed handling was
+// scoped to the AWS Principal key ONLY. A never-matching wildcard in a Service or
+// Federated principal member was presented as a normal, COMPLETE trust
+// (coverage.incomplete=false). AWS Service principals are exact identifiers and
+// Federated principals are specific provider ARNs - neither element wildcard-
+// matches - so a globbed member matches NOTHING and must fail closed to
+// TRUST-INVALID-PRINCIPAL with coverage incomplete, exactly like a wildcard AWS
+// Principal ARN. A never-matching wildcard principal must not read as a valid trust.
+test('IAM-1006: a partial wildcard in a Service principal is INVALID -> TRUST-INVALID-PRINCIPAL, coverage incomplete; the valid member stays an info service trust', () => {
+  const r = trust([{
+    Effect: 'Allow',
+    Principal: { Service: ['lambda.amazonaws.com', 'ec2-*.amazonaws.com'] },
+    Action: 'sts:AssumeRole',
+  }]);
+  const inv = r.findings.find((x) => x.id === 'TRUST-INVALID-PRINCIPAL');
+  assert.ok(inv, 'the wildcard Service member fails closed to TRUST-INVALID-PRINCIPAL');
+  assert.match(inv.why, /Service principal|invalid|exact service/i, 'explains the Service wildcard is invalid');
+  assert.match(inv.why, /ec2-\*\.amazonaws\.com/, 'names the offending member');
+  assert.doesNotMatch(inv.why, /normal service-role relationship/i, 'never calls a never-matching wildcard a normal service trust');
+  const paths = (inv.invalidPrincipalPaths || []).map((p) => p.path);
+  assert.ok(paths.includes('Statement[0].Principal.Service[1]'), 'locates the invalid member at its array index');
+  // The valid lambda member is still a normal informational service trust.
+  const svc = r.findings.find((x) => x.id === 'TRUST-SERVICE');
+  assert.ok(svc, 'the valid lambda member remains an informational TRUST-SERVICE');
+  assert.equal(svc.severity, 'info');
+  assert.deepEqual(svc.evidence[0].principals.map((p) => p.value), ['lambda.amazonaws.com'], 'TRUST-SERVICE covers only the valid member');
+  // Coverage fails closed: a never-matching member makes the trust incomplete.
+  assert.equal(r.coverage.summary.incomplete, true, 'wildcard Service member -> coverage incomplete');
+  assert.ok(r.coverage.summary.codes.includes('INVALID_PRINCIPAL_WILDCARD_ARN'), 'coverage carries the machine-readable warning code');
+});
+
+test('IAM-1006: a partial wildcard in a Federated principal is INVALID -> TRUST-INVALID-PRINCIPAL, coverage incomplete, never a complete TRUST-FEDERATED', () => {
+  const r = trust([{
+    Effect: 'Allow',
+    Principal: { Federated: 'arn:aws:iam::123456789012:oidc-provider/*' },
+    Action: 'sts:AssumeRoleWithWebIdentity',
+  }]);
+  const inv = r.findings.find((x) => x.id === 'TRUST-INVALID-PRINCIPAL');
+  assert.ok(inv, 'the wildcard Federated member fails closed to TRUST-INVALID-PRINCIPAL');
+  assert.match(inv.why, /Federated principal|identity-provider|invalid/i, 'explains the Federated wildcard is invalid');
+  assert.ok(!findingIds(r).includes('TRUST-FEDERATED'), 'a never-matching wildcard provider is NOT a complete federated trust');
+  const paths = (inv.invalidPrincipalPaths || []).map((p) => p.path);
+  assert.ok(paths.includes('Statement[0].Principal.Federated[0]'), 'locates the invalid member at its array index');
+  assert.equal(r.coverage.summary.incomplete, true, 'wildcard Federated member -> coverage incomplete');
+  assert.ok(r.coverage.summary.codes.includes('INVALID_PRINCIPAL_WILDCARD_ARN'), 'coverage carries the machine-readable warning code');
+});
+
+test('IAM-1006 boundary: a concrete (no-glob) Service / Federated principal stays a normal, COMPLETE trust', () => {
+  const svc = trust([{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }]);
+  assert.ok(!findingIds(svc).includes('TRUST-INVALID-PRINCIPAL'), 'a concrete service identifier is valid');
+  assert.ok(findingIds(svc).includes('TRUST-SERVICE'), 'a concrete service is a normal service trust');
+  assert.equal(svc.coverage.summary.incomplete, false, 'a concrete service trust is complete');
+
+  const fed = trust([{
+    Effect: 'Allow',
+    Principal: { Federated: 'arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com' },
+    Action: 'sts:AssumeRoleWithWebIdentity',
+    Condition: {
+      StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
+      StringLike: { 'token.actions.githubusercontent.com:sub': 'repo:example-org/repo:ref:refs/heads/main' },
+    },
+  }]);
+  assert.ok(!findingIds(fed).includes('TRUST-INVALID-PRINCIPAL'), 'a concrete provider ARN is valid (the glob is in the sub condition, not the principal)');
+  assert.ok(findingIds(fed).includes('TRUST-FEDERATED'), 'a concrete provider ARN is a normal federated trust');
+});
+
 test('IAM-805 breadth invariant preserved on the VALID unbounded principal: Principal "*" + sts:ExternalId stays CRITICAL public (a correlation value does not bound a public principal)', () => {
   const r = trust([{
     Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole',

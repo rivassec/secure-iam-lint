@@ -1,0 +1,22 @@
+{
+  "name": "Identity explicitly selected on an identity policy -> analyzes normally",
+  "note": "IAM-1001. The mandatory selection is satisfied by an explicit Identity pick that matches the shape; analysis runs and produces the same findings the back-compat auto-detect path does. Confirms the mandatory contract does not block a correct explicit selection.",
+  "phase": 10,
+  "story": "IAM-1001",
+  "options": { "family": "identity", "requireExplicitFamily": true },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "*", "Resource": "*" }
+    ]
+  },
+  "phase10Expect": {
+    "ok": true,
+    "blocked": false,
+    "detected": "identity",
+    "family": "identity",
+    "override": "identity",
+    "status": "ok",
+    "hasFindings": true
+  }
+}

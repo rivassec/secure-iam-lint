@@ -94,6 +94,42 @@ export function noFindingsMessage(coverage) {
 }
 
 /**
+ * IAM-1007 (suite-3 test 60): detect non-unique Sids across a policy's
+ * statements. AWS does NOT require Sids to be unique within a policy, and
+ * JSON.parse keeps colliding-Sid statements as DISTINCT array members (they are
+ * different objects, not a duplicate object key - so validate()'s duplicate-key
+ * gate does not and must not fire on them). A repeated Sid is nonetheless an
+ * evidence-identity hazard: any consumer that keys a finding/graph/DOM/export
+ * record on the Sid instead of the 0-based statement INDEX would overwrite one
+ * statement's evidence with another's. This engine keys everything on the stable
+ * statement index, so the records stay distinct; we still surface the collision
+ * as a non-blocking coverage warning so the report names it and a downstream
+ * consumer is never misled by a duplicated Sid.
+ *
+ * Returns a deterministic array of { sid, statementIndexes[] } for every Sid that
+ * appears on more than one statement, in first-seen order. Statements with no Sid
+ * (null/empty) are never grouped together (an absent Sid is not a collision).
+ *
+ * @param {object|null} model normalized model
+ * @returns {Array<{sid:string, statementIndexes:number[]}>}
+ */
+export function duplicateSids(model) {
+  const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
+  const byId = new Map(); // sid -> [statementIndex, ...] (insertion order = first-seen)
+  for (const s of statements) {
+    if (!s || s.sid == null || s.sid === '') continue;
+    const key = String(s.sid);
+    if (!byId.has(key)) byId.set(key, []);
+    byId.get(key).push(typeof s.index === 'number' ? s.index : null);
+  }
+  const out = [];
+  for (const [sid, indexes] of byId) {
+    if (indexes.length > 1) out.push({ sid, statementIndexes: indexes.slice() });
+  }
+  return out;
+}
+
+/**
  * Enrich a family-gate coverage object into the full analysis-coverage summary.
  *
  * Returns a NEW frozen coverage object that is a SUPERSET of the input (every
@@ -137,14 +173,21 @@ export function enrichCoverage(coverage, context) {
   // trust path). Each is a recognized-but-unmodeled element that makes the trusted
   // set undetermined - a non-blocking coverage warning (analysis continues on any
   // valid principals) that still flips `incomplete` and the zero-findings wording.
+  // IAM-1004: an invalid principal may arrive as a bare string (value only) or as
+  // { value, path } carrying the exact array-member location (Principal.AWS[1]).
+  // Normalize both so the coverage element records the location when known.
   const invalidPrincipals = Array.isArray(ctx.invalidPrincipals)
-    ? ctx.invalidPrincipals.map(String)
+    ? ctx.invalidPrincipals.map((p) => (
+      p && typeof p === 'object'
+        ? { value: String(p.value), path: p.path != null ? String(p.path) : null }
+        : { value: String(p), path: null }
+    ))
     : [];
-  const invalidPrincipalElements = invalidPrincipals.map((v) => Object.freeze({
+  const invalidPrincipalElements = invalidPrincipals.map((p) => Object.freeze({
     element: 'Principal',
     code: COVERAGE_CODES.INVALID_PRINCIPAL_WILDCARD_ARN,
-    value: v,
-    path: null,
+    value: p.value,
+    path: p.path,
   }));
 
   const unsupportedElements = notPrincipalElements.concat(invalidPrincipalElements);
@@ -158,6 +201,40 @@ export function enrichCoverage(coverage, context) {
     : [];
   const unsupportedConditions = Array.isArray(ctx.unsupportedConditions)
     ? ctx.unsupportedConditions.map((c) => String(c))
+    : [];
+
+  // IAM-1006 (suite-2 test 50): action/resource-type mismatches - a supplied
+  // grant whose action operates on a resource type the supplied ARN cannot
+  // identify (an S3 object action scoped to a bucket-only ARN). Each is a
+  // non-blocking coverage WARNING that flips `incomplete` (a "complete" analysis
+  // must not silently absorb a grant that matches nothing) and carries
+  // bucket-vs-object remediation. Never a confirmed-capability finding.
+  const actionResourceMismatches = Array.isArray(ctx.actionResourceMismatches)
+    ? ctx.actionResourceMismatches.map((m) => Object.freeze({
+      statementIndex: Number.isFinite(m && m.statementIndex) ? m.statementIndex : null,
+      statementSid: m && m.statementSid != null ? String(m.statementSid) : null,
+      actions: Object.freeze(Array.isArray(m && m.actions) ? m.actions.map((a) => String(a)) : []),
+      resources: Object.freeze(Array.isArray(m && m.resources) ? m.resources.map((r) => String(r)) : []),
+      code: m && m.code ? String(m.code) : 'ACTION_RESOURCE_TYPE_MISMATCH',
+      note: m && m.note != null ? String(m.note) : '',
+      remediation: m && m.remediation != null ? String(m.remediation) : '',
+    }))
+    : [];
+
+  // IAM-1007 (test 60): non-unique Sids across statements. A NON-BLOCKING
+  // advisory - it does not reduce analytical completeness (every colliding
+  // statement is still fully analyzed and keyed on its distinct statement index),
+  // so it does NOT flip `incomplete`; it is surfaced as a stable code + a
+  // structured summary entry so the report can name the collision.
+  const duplicateSidsList = Array.isArray(ctx.duplicateSids)
+    ? ctx.duplicateSids.map((d) => Object.freeze({
+      sid: String(d && d.sid),
+      statementIndexes: Object.freeze(
+        Array.isArray(d && d.statementIndexes)
+          ? d.statementIndexes.map((n) => (typeof n === 'number' ? n : null))
+          : [],
+      ),
+    }))
     : [];
 
   const represented = FAMILY_LAYERS[cov.family] || FAMILY_LAYERS[cov.detected] || [];
@@ -189,6 +266,7 @@ export function enrichCoverage(coverage, context) {
     || unsupportedElements.length > 0
     || unrecognizedActions.length > 0
     || unsupportedConditions.length > 0
+    || actionResourceMismatches.length > 0
     || trustDeny.unmodeled;
 
   // Stable machine-readable codes carried into exports. Today this mirrors the
@@ -196,9 +274,14 @@ export function enrichCoverage(coverage, context) {
   // (a clean parse is still not proof of complete coverage).
   const codes = blockingCodes.map((b) => String(b && b.code));
   if (trustDeny.unmodeled) codes.push('TRUST_DENY_UNMODELED');
+  // IAM-1006: one stable code when any action/resource-type mismatch is present.
+  if (actionResourceMismatches.length > 0) codes.push('ACTION_RESOURCE_TYPE_MISMATCH');
   // IAM-903: a stable, machine-readable code for the invalid-principal coverage
   // warning, emitted once when any invalid wildcard Principal ARN is present.
   if (invalidPrincipalElements.length > 0) codes.push(COVERAGE_CODES.INVALID_PRINCIPAL_WILDCARD_ARN);
+  // IAM-1007 (test 60): one stable code when any Sid is non-unique across
+  // statements (non-blocking advisory; does not flip `incomplete`).
+  if (duplicateSidsList.length > 0) codes.push('DUPLICATE_SID');
 
   const summary = Object.freeze({
     detectedFamily: cov.detected || 'unknown',
@@ -212,6 +295,8 @@ export function enrichCoverage(coverage, context) {
     unrecognizedActions: Object.freeze(unrecognizedActions),
     unsupportedConditions: Object.freeze(unsupportedConditions),
     unsupportedElements: Object.freeze(unsupportedElements),
+    actionResourceMismatches: Object.freeze(actionResourceMismatches),
+    duplicateSids: Object.freeze(duplicateSidsList),
     missingLayers: Object.freeze(missingLayers),
     trustDeny,
     graph: Object.freeze({ complete: !truncated, truncated }),

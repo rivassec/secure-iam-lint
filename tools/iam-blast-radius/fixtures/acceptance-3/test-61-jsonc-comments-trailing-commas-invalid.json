@@ -1,0 +1,20 @@
+{
+  "name": "Acceptance suite-3 test 61 - comments + trailing commas remain invalid JSON -> BLOCKED",
+  "note": "docs/acceptance-suite-3.md Campaign A. JSONC (// comments, trailing commas) is NOT JSON. The engine must reject it with INVALID_JSON and must NOT silently strip comments/commas unless it advertises JSONC support (it does not). Paste and file import behave identically.",
+  "phase": 10,
+  "story": "IAM-1008",
+  "suite": 3,
+  "acceptanceTest": 61,
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policyRaw": "{\n  // This is JSONC, not JSON.\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [{\n    \"Effect\": \"Allow\",\n    \"Action\": \"s3:GetObject\",\n    \"Resource\": \"*\",\n  }]\n}",
+  "expect": {
+    "valid": false,
+    "status": "blocked",
+    "findingIds": []
+  },
+  "errorExpect": {
+    "errorCodes": ["INVALID_JSON"]
+  },
+  "rationale": "AWS accepts strict JSON for IAM policies; comments and trailing commas are not part of RFC 8259 JSON. A lenient parser that repaired JSONC could change the document's meaning silently. Failing closed with a syntax error - identically on paste and import - is the correct, predictable behavior. Ref: RFC 8259 (no comments; no trailing commas) + IAM JSON policy grammar."
+}

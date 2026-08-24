@@ -1,0 +1,30 @@
+{
+  "name": "Acceptance suite-3 test 91 - cross-account PassRole target",
+  "note": "IAM-1005: iam:PassRole to a FOREIGN-account role (999900001111) + ec2:RunInstances, analyzed with subject account 123456789012. iam:PassRole passes a role only to a service in the SAME account as the role, so this is NOT a viable direct PassRole-to-EC2 path across accounts: the finding is reported but downgraded (not critical, low path-exploitability) with an explicit account-mismatch warning rather than asserting viability.",
+  "phase": 10,
+  "story": "IAM-1005",
+  "suite": 3,
+  "acceptanceTest": 91,
+  "family": "identity",
+  "options": { "subjectAccount": "123456789012" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::999900001111:role/ForeignRole"
+      },
+      {
+        "Effect": "Allow",
+        "Action": "ec2:RunInstances",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["PASSROLE-EC2"],
+    "preservesStrings": ["999900001111", "123456789012"]
+  }
+}

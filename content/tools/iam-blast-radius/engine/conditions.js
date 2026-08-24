@@ -186,6 +186,42 @@ function toValueArray(value) {
   return [String(value)];
 }
 
+/**
+ * suite-3 test 97: a ForAnyValue condition with an EMPTY policy value set can
+ * never be satisfied - AWS ForAnyValue returns false when the policy specifies
+ * no values, so at least one request value can never match "at least one of
+ * nothing". The entry is therefore always false, and because a statement's
+ * Condition block ANDs its entries together, the whole statement can NEVER match
+ * any request: it grants nothing. Detect this structurally so rules/escalation/
+ * graph skip the statement (no phantom capability or wildcard-resource finding
+ * for an ineffective grant) BEFORE any rule/graph generation.
+ *
+ * NOTE: an empty ForAllValues set is NOT never-match - ForAllValues is vacuously
+ * TRUE when the key is absent from the request, so an empty-set ForAllValues is
+ * satisfiable and must NOT be suppressed (suppressing it would understate blast
+ * radius, threat-model T8). Only ForAnyValue-empty is a hard never-match.
+ *
+ * @param {object} stmt normalized statement
+ * @returns {boolean} true iff the statement can never match any request
+ */
+export function statementNeverMatches(stmt) {
+  const cond = stmt && stmt.condition;
+  if (!cond || typeof cond !== 'object') return false;
+  for (const operator of Object.keys(cond)) {
+    const { setOperator } = parseOperator(operator);
+    if (setOperator !== 'ForAnyValue') continue;
+    const block = cond[operator];
+    if (!block || typeof block !== 'object') continue;
+    for (const key of Object.keys(block)) {
+      const raw = block[key];
+      // Only an explicitly EMPTY array is a structural never-match. A missing
+      // value or a scalar is not this case.
+      if (Array.isArray(raw) && toValueArray(raw).length === 0) return true;
+    }
+  }
+  return false;
+}
+
 // A value that does not constrain: the bare wildcard "*". (We deliberately do
 // NOT try to interpret "0.0.0.0/0" or other value-level all-encompassing forms -
 // that is request-context reasoning we do not claim.)
@@ -368,9 +404,18 @@ function appearsFor(cls) {
  * @param {string} operator the condition operator as written
  * @param {string} key the condition key as written
  * @param {*} value the operator/key value (string | array | other)
+ * @param {Set<string>|null} presenceCheckedKeys lowercased keys that a SIBLING
+ *   Null:{key:"false"} presence check (in the same statement's Condition block)
+ *   requires to be PRESENT. When a ForAllValues set-operator constrains such a
+ *   key, the "vacuously true when the key is absent" caveat does not apply - the
+ *   presence check forecloses the omitted-key path - so it is annotated rather
+ *   than warned about (suite-3 test 96 vs suite-2 test 41). Optional; when
+ *   omitted (direct callers), no sibling context is assumed and the ForAllValues
+ *   caveat is emitted as before. Never affects `credited` (fail-safe: an
+ *   uncredited footgun is not re-credited by a sibling presence check).
  * @returns {object} frozen classification record
  */
-export function classifyConditionEntry(operator, key, value) {
+export function classifyConditionEntry(operator, key, value, presenceCheckedKeys = null) {
   const { base, setOperator, ifExists } = parseOperator(operator);
   const keyStr = String(key);
   const keyLower = keyStr.toLowerCase();
@@ -493,7 +538,20 @@ export function classifyConditionEntry(operator, key, value) {
     notes.push(`operator uses ...IfExists, so a request that lacks "${keyStr}" is NOT constrained`);
   }
   if (setOperator === 'ForAllValues') {
-    notes.push('ForAllValues matches when the key is absent, so it may not constrain a request that omits the key');
+    // ForAllValues is vacuously TRUE when the key is absent from the request, so
+    // on its own it "may not constrain a request that omits the key". But a
+    // SIBLING Null:{key:"false"} presence check in the same Condition block
+    // REQUIRES the key to be present: a request that omits it is denied and can
+    // never reach that vacuous-when-absent branch. In that case the absent-key
+    // caveat is factually wrong (suite-3 test 96 vs suite-2 test 41), so annotate
+    // that the presence check forecloses the omitted-key path instead of warning
+    // about it. We still do NOT credit the guardrail (fail-safe: credited stays
+    // false above), we only stop emitting the false caveat.
+    if (presenceCheckedKeys && presenceCheckedKeys.has(keyLower)) {
+      notes.push('ForAllValues applies to the supplied values; a sibling Null presence check requires the key to be present, so the vacuous-when-absent path is foreclosed');
+    } else {
+      notes.push('ForAllValues matches when the key is absent, so it may not constrain a request that omits the key');
+    }
   } else if (setOperator === 'ForAnyValue') {
     notes.push('ForAnyValue requires at least one supplied value to match');
   }
@@ -537,12 +595,29 @@ export function classifyConditions(condition) {
   const entries = [];
   if (condition && typeof condition === 'object' && !Array.isArray(condition)) {
     const operators = Object.keys(condition).sort();
+    // First pass: collect the lowercased keys that a Null:{key:"false"} presence
+    // check (anywhere in THIS statement's Condition block) requires to be
+    // PRESENT. A ForAllValues set-operator on such a key does not have its
+    // "vacuously true when absent" footgun, because a request omitting the key is
+    // denied by the presence check (suite-3 test 96 vs suite-2 test 41). Scoped to
+    // one statement's condition - never cross-statement.
+    const presenceCheckedKeys = new Set();
+    for (const op of operators) {
+      if (parseOperator(op).base !== 'null') continue;
+      const block = condition[op];
+      if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
+      for (const key of Object.keys(block)) {
+        if (nullTestKind(toValueArray(block[key])) === 'present') {
+          presenceCheckedKeys.add(String(key).toLowerCase());
+        }
+      }
+    }
     for (const op of operators) {
       const block = condition[op];
       if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
       const keys = Object.keys(block).sort();
       for (const key of keys) {
-        entries.push(classifyConditionEntry(op, key, block[key]));
+        entries.push(classifyConditionEntry(op, key, block[key], presenceCheckedKeys));
       }
     }
   }
