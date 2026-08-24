@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rivassec.com/schemas/critic-result.schema.json",
+  "title": "Critic result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["criticId", "status", "attempt", "completedAt"],
+  "properties": {
+    "criticId": {"type": "string", "minLength": 1},
+    "status": {"enum": ["PASS", "BLOCKER", "ERROR", "TIMEOUT", "INVALID_RESPONSE"]},
+    "attempt": {"type": "integer", "minimum": 1},
+    "completedAt": {"type": "string", "format": "date-time"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "message"],
+        "properties": {
+          "severity": {"enum": ["blocker", "high", "medium", "low", "info"]},
+          "message": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1},
+        "httpStatus": {"type": "integer", "minimum": 100, "maximum": 599}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "PASS"}}},
+      "then": {"required": ["findings"], "properties": {"findings": {"maxItems": 0}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "BLOCKER"}}},
+      "then": {"required": ["findings"], "properties": {"findings": {"minItems": 1}}}
+    },
+    {
+      "if": {"properties": {"status": {"enum": ["ERROR", "TIMEOUT", "INVALID_RESPONSE"]}}},
+      "then": {"required": ["error"]}
+    }
+  ]
+}

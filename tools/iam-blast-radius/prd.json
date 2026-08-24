@@ -1200,6 +1200,65 @@
         "resource-policy + RCP remain honest fail-closed with designBlocked markers (documented next tranche)",
         "docs/acceptance-suite-3-results.md + progress.md updated; full node --test green; no regression to suites 1/2 or either negative corpus"
       ]
+    },
+    {
+      "id": "IAM-1101",
+      "title": "Phase 11A: critic fail-closed review-decision model + 15-case fault-injection gate",
+      "priority": 40,
+      "phase": 11,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Implement the fail-closed critic-outcome model as a testable repo module (e.g. ralph/review-decision.mjs): given an array of critic results, classify each as PASS | BLOCKER | ERROR | TIMEOUT | INVALID_RESPONSE and return {decision, accepted, ledgerEntry}. Acceptance requires ALL critics PASS. Any BLOCKER -> re-impl; any ERROR/TIMEOUT/INVALID_RESPONSE/null/missing -> fail closed (never accepted). Conform to docs/record-tests/schemas/critic-result.schema.json and review-ledger-entry.schema.json.",
+        "Control-failure handling: a non-PASS critic triggers bounded retry (criticMaxRetry default 2) of only that critic; if still non-PASS the story is HELD (accepted=false) and a ledger entry is written recording story id, iteration, per-critic outcome, retry attempts, and failure reason. An empty/missing/rejected critic result is NEVER equivalent to approval.",
+        "Add tests/critic-fail-closed.test.js (adapt templates/critic-fail-closed.test.template.mjs) driving ALL 15 cases in docs/record-tests/cases/workflow-cases.json; each case's expect (decision, accepted, ledgerRows) must match. This is the empirical fix for the IAM-1005 529-storm auto-accept.",
+        "Update the ralph/phase*-workflow.js arbiter authoring standard to call/mirror this module so future phases (12/13) inherit the fail-closed behavior; document it in docs/phases-11-13-execution-plan.md."
+      ],
+      "acceptance": [
+        "all 15 workflow-cases.json fault-injection cases pass; ERROR/TIMEOUT/INVALID_RESPONSE/null never yield accepted=true; every fault writes a schema-valid ledger entry",
+        "review-decision module is unit-tested and conforms to both bundle schemas",
+        "future-phase workflow arbiter standard updated to use the model",
+        "full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1102",
+      "title": "Phase 11B: T91 subject-account-aware PassRole viability + 9-case gate",
+      "priority": 41,
+      "phase": 11,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Fix the T91 known conservative false positive. Add subject-account context (explicit input, or inferred from the policy's own ARNs when unambiguous). When a PassRole target role-ARN account differs from a KNOWN subject account, SUPPRESS the same-account-service compound path and report an ineffective/incompatible cross-account PassRole grant (iam:PassRole passes roles only to services in the same account as the role). When the subject account is UNKNOWN, mark viability UNKNOWN (record subjectAccount as a required-unknown) rather than emitting PASSROLE-EC2:critical.",
+        "Preserve viable cases: same-account PassRole->EC2 stays critical/high (T91-02/04); wildcard/overlap same-account targets stay reported (T91-05/08); do not suppress on ambiguous-but-plausibly-same-account context.",
+        "Drive ALL 9 cases in docs/record-tests/cases/analyzer-cases.json with id prefix T91-* (map the bundle rule-id PASSROLE-EC2 to the engine's canonical id; the semantic expectation is authoritative). Commit them as acceptance fixtures.",
+        "Update docs/acceptance-suite-3-results.md: T91 flips from known-FP to pass; honest tally becomes 39/39 engine + 7 procedural."
+      ],
+      "acceptance": [
+        "cross-account-only PassRole target no longer yields a critical EC2 path; reported ineffective/incompatible (known-subject) or UNKNOWN viability (unknown-subject) - T91-01/03/06/07/09",
+        "same-account and wildcard-overlap viable paths preserved (T91-02/04/05/08)",
+        "all 9 T91 bundle cases pass; suite-3 T91 passes; scoreboard updated to 39/39",
+        "full node --test green; no regression to suites 1/2 or the negative corpora"
+      ]
+    },
+    {
+      "id": "IAM-1103",
+      "title": "Phase 11C: invalid/unknown family selection fails closed + record-test regression fixtures",
+      "priority": 42,
+      "phase": 11,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Fix the DEF-05 fail-OPEN found by the record-test bundle: an unrecognized policy-family value (e.g. 'scp', 'rcp') passed to analyze() is currently IGNORED and silently falls back to auto-detect identity analysis, emitting capability findings. An invalid/unknown family selection must FAIL CLOSED with a machine-readable code (e.g. INVALID_FAMILY) and produce no findings/graph - never analyze as identity. Canonicalize the family vocabulary (document the accepted set: identity, resource, role-trust, permissions-boundary, session, scp-rcp) and accept documented aliases ('scp'/'rcp' -> 'scp-rcp') OR reject them explicitly; either way, never fail open.",
+        "Commit the remaining engine-drivable record-test analyzer cases as regression fixtures: the 8 BND-* (boundary/family-switch semantics) and 10 DEF-* (deferred-family fail-closed) cases from docs/record-tests/cases/analyzer-cases.json, driven from analyze(). ADAPTER NAME-MAP (behavior is authoritative, not the literal label): BOUNDARY-ENVELOPE -> PERMISSIONS-BOUNDARY-ENVELOPE; UNSUPPORTED_OR_INVALID_NOTPRINCIPAL -> UNSUPPORTED_NOTPRINCIPAL; MIXED_OR_INVALID_POLICY_FAMILY -> AMBIGUOUS_POLICY_SHAPE. Keep the engine's canonical ids/codes (shipped + covered by 1208 tests); map at the fixture layer.",
+        "The UI-only record cases (family-switch state isolation, browser/export parity, diagnostics: BND-02..08, DEF-09/10) become Playwright e2e assertions where not already covered; no silent skips - anything genuinely UI-only is named and asserted to exist."
+      ],
+      "acceptance": [
+        "an unknown/invalid family value fails closed (INVALID_FAMILY, no findings/graph); documented aliases resolve or are rejected, never analyzed as identity (DEF-05)",
+        "8 BND-* + 10 DEF-* record cases committed as regression fixtures and passing under the documented name-map",
+        "UI-only record cases covered by named Playwright/e2e assertions",
+        "full node --test green; no regression to suites 1/2/3 or the negative corpora"
+      ]
     }
   ]
 }

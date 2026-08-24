@@ -1,0 +1,28 @@
+{
+  "bundle": "iam-blast-radius-record-tests",
+  "schemaVersion": 1,
+  "createdDate": "2026-08-24",
+  "caseCounts": {
+    "boundaryAssertion": 8,
+    "criticWorkflow": 15,
+    "crossAccountPassRole": 9,
+    "deferredFamilies": 10,
+    "total": 42
+  },
+  "files": [
+    "README.md",
+    "TEST_PLAN.md",
+    "cases/analyzer-cases.json",
+    "cases/workflow-cases.json",
+    "schemas/critic-result.schema.json",
+    "schemas/review-ledger-entry.schema.json",
+    "templates/family-switch.spec.template.mjs",
+    "templates/critic-fail-closed.test.template.mjs"
+  ],
+  "validation": {
+    "jsonSyntax": "passed",
+    "caseIdUniqueness": "passed",
+    "templateJavaScriptSyntax": "passed",
+    "archiveIntegrity": "passed"
+  }
+}

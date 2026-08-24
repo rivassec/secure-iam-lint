@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "requiredCritics": ["security", "correctness", "evidence"],
+  "cases": [
+    {"id": "CRT-01", "responses": [529, 529, 529], "expect": {"decision": "review_error", "accepted": false, "ledgerRows": 1}},
+    {"id": "CRT-02", "responses": [{"status": "PASS", "findings": []}, 529, {"status": "PASS", "findings": []}], "expect": {"decision": "review_error", "accepted": false}},
+    {"id": "CRT-03", "responses": [{"findings": null}], "expect": {"criticStatus": "INVALID_RESPONSE", "accepted": false}},
+    {"id": "CRT-04", "responses": [{"status": "PASS", "findings": [], "criticId": "security", "attempt": 1, "completedAt": "2026-08-24T00:00:00Z"}], "expect": {"criticStatus": "PASS"}},
+    {"id": "CRT-05", "attempts": [529, {"status": "PASS", "findings": []}], "expect": {"acceptedOnlyAfterAttempt": 2, "ledgerAttempts": 2}},
+    {"id": "CRT-06", "attempts": [529, 529, 529], "retryLimit": 3, "expect": {"decision": "review_error", "errorCode": "CRITIC_RETRY_EXHAUSTED"}},
+    {"id": "CRT-07", "responses": ["TIMEOUT"], "expect": {"criticStatus": "TIMEOUT", "accepted": false}},
+    {"id": "CRT-08", "responses": [{"httpStatus": 200, "error": {"code": "provider_overloaded"}}], "expect": {"criticStatus": "ERROR", "accepted": false}},
+    {"id": "CRT-09", "responses": ["{not-json"], "expect": {"criticStatus": "INVALID_RESPONSE", "accepted": false}},
+    {"id": "CRT-10", "responsesByCritic": {"security": {"status": "PASS"}, "correctness": {"status": "PASS"}}, "expect": {"missingCritics": ["evidence"], "accepted": false}},
+    {"id": "CRT-11", "responses": [{"status": "PASS"}], "ledgerWrite": "FAIL", "expect": {"accepted": false, "decision": "review_error"}},
+    {"id": "CRT-12", "responses": [{"status": "PASS"}], "crashPoint": "after-review-before-ledger", "expect": {"recovery": "idempotent", "finalLedgerRows": 1}},
+    {"id": "CRT-13", "duplicateDelivery": true, "expect": {"deduplicated": true, "finalLedgerRows": 1}},
+    {"id": "CRT-14", "requiredCritics": [], "responses": [], "expect": {"configurationError": true, "accepted": false}},
+    {"id": "CRT-15", "terminalStates": ["PASS", "BLOCKER", "ERROR", "TIMEOUT", "INVALID_RESPONSE", "RETRY_EXHAUSTED"], "expect": {"ledgerRowForEveryState": true}}
+  ]
+}

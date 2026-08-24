@@ -114,14 +114,35 @@ trusted only after I (the orchestrator) spot-verify it against the engine.
 11A must land before Phase 12 so a control failure cannot silently pass an
 unreviewed story in the large build.
 
+Acceptance is now anchored to the external **record-test bundle**
+(`docs/record-tests/`, 2026-08-24): 42 cases across boundary regression (8),
+critic workflow robustness (15), T91 (9), and deferred families (10), plus the
+`critic-result` + `review-ledger-entry` schemas.
+
 | Story | Scope | maxIter |
 |---|---|---|
-| **IAM-1101** | **Critic fail-closed harness upgrade** (workflow infra, not the shipped tool): implement the Section-1 outcome model in the `ralph/phaseN-workflow.js` template - explicit PASS/BLOCKER/ERROR/TIMEOUT/INVALID_RESPONSE, all-PASS acceptance, bounded critic retry, mandatory ledger row, hold-not-promote on unresolved non-PASS. | 3 |
-| **IAM-1102** | **T91 subject-account-aware PassRole viability**: add subject-account context (explicit input, or inferred from the policy's own ARNs when unambiguous). Target-role account != subject account (known) -> suppress the same-account-service compound path, report an ineffective/incompatible PassRole grant. Subject account unknown -> viability UNKNOWN, never `critical`. | 4 |
+| **IAM-1101 (11A)** | **Critic fail-closed** (workflow infra, not the shipped tool): a testable `ralph/review-decision.mjs` implementing the Section-1 outcome model (PASS/BLOCKER/ERROR/TIMEOUT/INVALID_RESPONSE, all-PASS acceptance, bounded critic retry, mandatory ledger, hold-not-promote). **Gate: all 15 `docs/record-tests/cases/workflow-cases.json` fault-injection cases pass** (adapt `templates/critic-fail-closed.test.template.mjs`), conforming to both bundle schemas. Future-phase arbiters call/mirror it. | 5 |
+| **IAM-1102 (11B)** | **T91 subject-account-aware PassRole viability**: subject-account context (explicit or inferred). Target-role account != known subject account -> suppress the compound path, report ineffective/incompatible. Unknown subject -> viability UNKNOWN, never `critical`. **Gate: all 9 `T91-*` bundle cases pass** (same-account/wildcard viable cases preserved). Flip the scoreboard to 39/39. | 5 |
+| **IAM-1103 (11C)** | **Invalid-family fail-closed + record regression fixtures** (NEW, from the bundle's DEF-05 fail-OPEN): an unknown family value (`scp`/`rcp`) currently falls back to identity analysis and emits capability findings; must fail closed (`INVALID_FAMILY`), never analyze as identity. Canonicalize the family vocabulary. Commit the 8 `BND-*` + 10 `DEF-*` cases as regression fixtures under the adapter name-map (below). UI-only record cases -> named Playwright assertions. | 4 |
 
-**Tests:** deterministic gate (S4.1) + new fixtures `test-91-cross-account-known-subject` (suppressed), `passrole-ec2-same-account-positive` (still critical), `passrole-cross-account-unknown-subject` (UNKNOWN); re-run suite-3 T91 -> passes as suppressed/ineffective; full `node --test` green; no regression to suites 1/2.
+**Adapter name-map (behavior authoritative, not the literal label; engine ids
+are shipped + covered by 1208 tests, so map at the fixture layer):**
+`BOUNDARY-ENVELOPE` -> `PERMISSIONS-BOUNDARY-ENVELOPE`;
+`UNSUPPORTED_OR_INVALID_NOTPRINCIPAL` -> `UNSUPPORTED_NOTPRINCIPAL`;
+`MIXED_OR_INVALID_POLICY_FAMILY` -> `AMBIGUOUS_POLICY_SHAPE`.
 
-*Closes: both release-record corrections (T91 -> 39/39, and the review control).*
+**Baseline against the current engine (2026-08-24 record-test run):** analyzer
+cases = 13 behavior-correct (incl. the 3 name-mapped), 4 expected-fail (T91, fix
+= 11B), 1 new bug (DEF-05, fix = 11C), 9 UI/procedure skips. Workflow cases =
+15, all failing today by design (current harness has no fail-closed model - the
+IAM-1005 incident) -> 11A's gate.
+
+**Tests:** deterministic gate (S4.1) + the bundle cases as committed fixtures +
+the two bundle schemas enforced + re-run all three suites; full `node --test`
+green; no regression to suites 1/2/3 or the negative corpora.
+
+*Closes: both release-record corrections (T91 -> 39/39; the review control), plus
+the DEF-05 invalid-family fail-open.*
 
 ### Phase 12 - Resource-based policy family (the big one)
 

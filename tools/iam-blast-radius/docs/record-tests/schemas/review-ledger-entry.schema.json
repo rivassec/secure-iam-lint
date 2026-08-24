@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rivassec.com/schemas/review-ledger-entry.schema.json",
+  "title": "Review ledger entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "workItemId",
+    "workflowRunId",
+    "artifactId",
+    "requiredCriticIds",
+    "criticAttempts",
+    "decision",
+    "startedAt",
+    "completedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "workItemId": {"type": "string", "minLength": 1},
+    "workflowRunId": {"type": "string", "minLength": 1},
+    "artifactId": {"type": "string", "minLength": 1},
+    "requiredCriticIds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "criticAttempts": {"type": "array", "minItems": 1, "items": {"$ref": "critic-result.schema.json"}},
+    "decision": {"enum": ["approved", "blocked", "review_error"]},
+    "errorCodes": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "startedAt": {"type": "string", "format": "date-time"},
+    "completedAt": {"type": "string", "format": "date-time"},
+    "idempotencyKey": {"type": "string", "minLength": 1}
+  }
+}
