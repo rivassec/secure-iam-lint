@@ -1,0 +1,37 @@
+{
+  "name": "Resource family selected without an attached-resource context fails closed",
+  "note": "IAM-1201: the resource-policy context is EXPLICIT and required. Selecting family=resource on a resource-policy shape but supplying NO attached-resource context (no type + ARN) fails closed with RESOURCE_CONTEXT_REQUIRED - a blocking coverage state with zero findings. The analyzer never guesses which resource the policy is attached to.",
+  "phase": 12,
+  "story": "IAM-1201",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PublicRead",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::public-downloads/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": true,
+    "supported": false,
+    "family": "resource",
+    "status": "blocked",
+    "incomplete": true,
+    "codes": ["RESOURCE_CONTEXT_REQUIRED"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY"],
+    "noFindings": true
+  }
+}

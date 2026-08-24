@@ -46,14 +46,14 @@ No suite-2 test currently returns a *false* or *overstated* result (no `fail`).
 | # | Test | Family | Verdict | Engine result |
 |---|------|--------|---------|---------------|
 | 25 | AWS account principal is account delegation | role-trust | pass | `TRUST-CROSS-ACCOUNT` high; delegates to account `111122223333`, not "root user only"; target-role perms out of scope |
-| 26 | Service principal without confused-deputy constraints | resource | blocked-by-design | fail-closed `UNSUPPORTED_POLICY_FAMILY` (Statement[0].Principal) |
-| 27 | Properly source-bound service principal | resource | blocked-by-design | fail-closed `UNSUPPORTED_POLICY_FAMILY` |
-| 28 | TLS-only Deny does not make public S3 private | resource | blocked-by-design | fail-closed `UNSUPPORTED_POLICY_FAMILY` |
+| 26 | Service principal without confused-deputy constraints | resource | pass (IAM-1203, flipped IAM-1207) | `RESOURCE-CONFUSED-DEPUTY` medium; names the missing `aws:SourceArn`/`aws:SourceAccount`, explicitly NOT public write; graph origin = EventBridge service node |
+| 27 | Properly source-bound service principal | resource | pass (IAM-1203, flipped IAM-1207) | `RESOURCE-CONFUSED-DEPUTY` info negative control; no missing-source-binding warning; does not infer whether the rule exists |
+| 28 | TLS-only Deny does not make public S3 private | resource | pass (IAM-1202, flipped IAM-1207) | `PUBLIC-ACCESS` critical; the `aws:SecureTransport` Deny recorded as transport-only, does NOT neutralize the public Allow; states BPA external-control dependency |
 | 29 | NotPrincipal Deny + permissions-boundary hazard | resource | blocked-by-design | fail-closed `UNSUPPORTED_NOTPRINCIPAL` (NotPrincipal trap caught before family eval) |
 | 30 | Permissions boundary Allow is a ceiling, not a grant | permissions-boundary | family-gap | analyzed as identity -> `WILDCARD-ACTION` + `WILDCARD-RESOURCE` high; no boundary-ceiling semantics yet |
 | 31 | Session-policy Allow is a session restriction | session | family-gap | analyzed as identity -> no findings (scoped `s3:GetObject`); no session-intersection semantics yet |
-| 32 | Same-account direct IAM-user resource grant | resource | blocked-by-design | fail-closed `UNSUPPORTED_POLICY_FAMILY` |
-| 33 | Direct role-session ARN grant | resource | blocked-by-design | fail-closed `UNSUPPORTED_POLICY_FAMILY` |
+| 32 | Same-account direct IAM-user resource grant | resource | pass (IAM-1204, flipped IAM-1207) | `RESOURCE-SAME-ACCOUNT-GRANT` medium; resource-vs-identity caveat (implicit deny does not limit; explicit deny still applies); typed as IAM user, not generalized; not cross-account, not public |
+| 33 | Direct role-session ARN grant | resource | pass (IAM-1204, flipped IAM-1207) | `RESOURCE-SAME-ACCOUNT-GRANT`; identified as ONE exact assumed-role session, session ARN preserved verbatim, never collapsed to the role ARN |
 | **34** | **Full IAM role takeover chain** | identity | **pass (IAM-902)** | **`ROLE-TAKEOVER` critical**; PutRolePolicy + UpdateAssumeRolePolicy + AssumeRole on the same role, per-statement evidence preserved (spans stmts 0/1), no `iam:PassRole` required |
 | 35 | Attach AdministratorAccess to a named user | identity | pass | `ATTACH-POLICY` high targeting `user/build-automation`; phrased "to itself or a principal it controls", not definite self-admin |
 | 36 | Add a user to a privileged group | identity | pass | `DIRECT-IAM-ADMIN` high (caught by the generic direct-IAM rule; group-privilege inference is a refinement, not modeled separately) |
@@ -69,22 +69,31 @@ No suite-2 test currently returns a *false* or *overstated* result (no `fail`).
 | 46 | Prototype-pollution property names | identity | pass | blocked `DANGEROUS_KEY`; no object acquires a `polluted` property; clean re-analysis unaffected |
 | 47 | GovCloud partition support | identity | pass | `PASSROLE-EC2` critical; `aws-us-gov` partition preserved verbatim in evidence |
 | 48 | **Wildcard inside a Principal ARN** | role-trust | **pass (IAM-903)** | **`TRUST-INVALID-PRINCIPAL` high** + coverage incomplete with `INVALID_PRINCIPAL_WILDCARD_ARN`; not a plain uncaveated `TRUST-CROSS-ACCOUNT` |
-| 49 | Multiple condition operators (AND/OR composition) | resource | blocked-by-design | fail-closed `UNSUPPORTED_POLICY_FAMILY` |
+| 49 | Multiple condition operators (AND/OR composition) | resource | pass (IAM-1202/1205, flipped IAM-1207) | `PUBLIC-ACCESS` high (narrowed, not critical); `*` recorded NARROWED by the principal-tag selector `aws:PrincipalTag/environment` (network selector `aws:SourceVpce` not credited as principal-scoping); OR-within-values / AND-across-keys preserved |
 | 50 | Action/resource type mismatch | identity | pass | no finding (correctly does NOT claim confirmed object-read from a bucket ARN); action/resource-type coverage warning is a documented refinement, not yet modeled |
-| 51 | KMS account-principal delegation statement | resource | blocked-by-design | fail-closed `UNSUPPORTED_POLICY_FAMILY` |
-| 52 | RCP confused-deputy guardrail | resource/RCP | blocked-by-design | fail-closed `UNSUPPORTED_POLICY_FAMILY` (Principal `*` shape detected as resource) |
-| 53 | Mismatched SourceArn and SourceAccount | resource | blocked-by-design | fail-closed `UNSUPPORTED_POLICY_FAMILY` |
+| 51 | KMS account-principal delegation statement | resource | pass (IAM-1205, flipped IAM-1207) | `RESOURCE-KMS-ACCOUNT-DELEGATION` medium; broad KMS authority delegated to the OWNING ACCOUNT - NOT public, NOT root-user-only; `Resource:*` = the attached key only (no per-key node explosion) |
+| 52 | RCP confused-deputy guardrail | resource/RCP | blocked-by-design | fail-closed `UNSUPPORTED_POLICY_FAMILY` (Principal `*` shape detected as resource; RCP/SCP families are Phase-13-deferred) |
+| 53 | Mismatched SourceArn and SourceAccount | resource | pass (IAM-1203, flipped IAM-1207) | `RESOURCE-CONFUSED-DEPUTY` medium; names both disagreeing accounts (`111122223333` vs `444455556666`), flagged internally inconsistent / likely ineffective, NOT praised as source-bound, NOT a public-write finding |
 | 54 | Client-side resource-exhaustion limits | identity | pass | blocked `TOO_LARGE` before expensive work; no hang, no truncate-and-call-complete, no server fallback |
 
-## Tally
+## Tally (updated for the Phase-12 resource-family flip, IAM-1207)
 
 - In-scope Phase-9 fixes: **3/3 pass** (34, 44, 48).
 - Supported-family (identity + role-trust) tests: **14/14 pass, no overstatement**
   (25, 34, 35, 36, 37, 38, 39, 40, 41, 42, 44, 45, 46, 47, 48, 50, 54 - counting
   the identity/trust set; nuance refinements noted inline, none producing a false
   or overstated claim).
-- blocked-by-design (resource / RCP / SCP / NotPrincipal, deferred tranche):
-  **11** (26, 27, 28, 29, 32, 33, 43, 49, 51, 52, 53).
+- Resource-family tests FLIPPED to real analysis in Phase 12 (IAM-1201..1206,
+  scoreboarded by IAM-1207): **8/8 pass** (26, 27, 28, 32, 33, 49, 51, 53) -
+  driven from `analyze()` with the explicit attached-resource context via
+  committed fixtures under `fixtures/resource/` (`tests/resource.test.js`), gated
+  by `tests/acceptance-resource-flip.test.js`. No overstatement: a service
+  principal is never called public, an account principal is never called
+  root-only, a transport Deny never neutralizes public read, `Resource:*` in a KMS
+  key policy is the attached key only.
+- blocked-by-design (deferred tranche, genuinely-unmodeled shapes only):
+  **3** - NotPrincipal Deny hazard (29, surfaced with the specific hazard),
+  SCP-shape (43), RCP (52). RCP/SCP families are Phase-13-deferred.
 - family-gap (permissions-boundary / session, deferred tranche): **2** (30, 31).
 
 ## Regression guard
@@ -93,15 +102,25 @@ No suite-2 test currently returns a *false* or *overstated* result (no `fail`).
   (`tests/acceptance-suite.test.js`, 28 subtests green).
 - Identity negative corpus (`fixtures/negative`) unchanged and green.
 - Trust negative corpus (`fixtures/negative-trust`) unchanged and green.
+- Resource negative corpus (`fixtures/negative-resource`, IAM-1207) green - the
+  frozen "does-not-fire / low" contracts proving the resource evaluator knows when
+  NOT to fire (`tests/negative-resource.test.js`).
 - Full `node --test "tests/**/*.test.js"` green.
 
 ## Deferred family tranche (follow-up, NOT Phase 9)
 
-Flipping any `blocked-by-design` / `family-gap` row above to its suite-2
+The resource-based policy family SHIPPED in Phase 12 (IAM-1201..1206), so tests
+26/27/28/32/33/49/51/53 flipped from `blocked-by-design` to `pass` (IAM-1207);
+their committed acceptance fixtures live under `fixtures/resource/`. Flipping any
+remaining `blocked-by-design` / `family-gap` row above to its suite-2
 Expected-result finding requires building the corresponding evaluator behind the
-family selector. Each deferred fixture's `designBlocked` field names its tranche:
+family selector. Each remaining deferred fixture's `designBlocked` field names its
+tranche:
 
-- **Resource-based / RCP policy family** - tests 26/27/28/29/32/33/49/51/52/53.
+- **NotPrincipal Deny hazard** - test 29 (fails closed `UNSUPPORTED_NOTPRINCIPAL`
+  but surfaces the specific permissions-boundary hazard + `ArnNotEquals`
+  recommendation; driven by `tests/acceptance-suite-2.test.js`).
+- **RCP policy family** - test 52 (Phase-13-deferred).
 - **SCP/RCP ceiling semantics** - test 43.
 - **Permissions-boundary family** (Allow = ceiling, not grant; no positive
   capability edges) - test 30.

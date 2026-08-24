@@ -1,0 +1,46 @@
+{
+  "name": "Deny + NotPrincipal surfaces the permissions-boundary hazard (suite-2 test 29)",
+  "note": "IAM-1206 / acceptance-suite-2 test 29. A resource policy that Denies s3:* to everyone EXCEPT a break-glass allow-list via NotPrincipal is a DOCUMENTED AWS trap, not an ordinary 'deny everyone except these' exclusion: a NotPrincipal + Deny statement ALWAYS denies any IAM principal that has a permissions boundary attached, regardless of the NotPrincipal list, so principals the author intended to EXEMPT can still be denied. The analyzer does not model NotPrincipal, so it FAILS CLOSED (UNSUPPORTED_NOTPRINCIPAL, empty graph - never a rendered ordinary-deny graph) BUT surfaces the SPECIFIC high-confidence hazard: the permissions-boundary caveat plus the recommended safe rewrite (Deny on Principal '*' with ArnNotEquals on aws:PrincipalArn instead of NotPrincipal). docs/resource-policy-semantics.md section 8.",
+  "phase": 12,
+  "story": "IAM-1206",
+  "suite2Test": 29,
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyEveryoneExceptBreakGlass",
+        "Effect": "Deny",
+        "NotPrincipal": {
+          "AWS": [
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/BreakGlass"
+          ]
+        },
+        "Action": "s3:*",
+        "Resource": [
+          "arn:aws:s3:::audit-archive",
+          "arn:aws:s3:::audit-archive/*"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "blocked": true,
+    "detectedFamily": "resource",
+    "noFindings": true,
+    "coverage": {
+      "incomplete": true,
+      "codesInclude": ["UNSUPPORTED_NOTPRINCIPAL"]
+    },
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
+    "notPrincipalHazard": {
+      "path": "Statement[0].NotPrincipal",
+      "messageIncludes": [
+        "permissions boundary",
+        "ArnNotEquals",
+        "aws:PrincipalArn",
+        "NotPrincipal"
+      ]
+    }
+  }
+}

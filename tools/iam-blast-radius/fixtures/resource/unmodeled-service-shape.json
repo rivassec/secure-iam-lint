@@ -1,0 +1,38 @@
+{
+  "name": "Resource family with an unmodeled service resource context fails closed",
+  "note": "IAM-1201: the attached-resource context parses to a valid ARN, but for a service whose resource-policy shape this analyzer does not yet model (a Lambda function). This tranche models S3, SNS, SQS, and KMS key policies only; anything else fails closed with UNSUPPORTED_RESOURCE_SHAPE rather than apply S3/KMS reasoning to an unmodeled service - unsupported does NOT mean safe.",
+  "phase": 12,
+  "story": "IAM-1201",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "other", "arn": "arn:aws:lambda:us-east-1:123456789012:function:report-runner" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowInvoke",
+        "Effect": "Allow",
+        "Principal": { "Service": "events.amazonaws.com" },
+        "Action": "lambda:InvokeFunction",
+        "Resource": "arn:aws:lambda:us-east-1:123456789012:function:report-runner"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": true,
+    "supported": false,
+    "family": "resource",
+    "status": "blocked",
+    "incomplete": true,
+    "codes": ["UNSUPPORTED_RESOURCE_SHAPE"],
+    "notCodes": ["RESOURCE_CONTEXT_REQUIRED", "UNSUPPORTED_POLICY_FAMILY"],
+    "noFindings": true
+  }
+}

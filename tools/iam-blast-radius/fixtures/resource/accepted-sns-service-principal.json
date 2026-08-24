@@ -1,0 +1,47 @@
+{
+  "name": "Service principal without confused-deputy constraints (suite-2 test 26)",
+  "note": "IAM-1203 / suite-2 test 26: an SNS topic access policy grants the EventBridge service principal (events.amazonaws.com) sns:Publish with NO source binding (aws:SourceArn / aws:SourceAccount / aws:SourceOrgID). AWS authorizes the SERVICE, not the actor who configured the calling service, so this is a cross-service confused-deputy EXPOSURE (RESOURCE-CONFUSED-DEPUTY, medium). It is NOT public write - the principal is a specific AWS service, not '*', so PUBLIC-ACCESS must NOT fire. The graph origin is the EventBridge Service node -> can-access-resource -> the attached SNS topic. Coverage stays INCOMPLETE (same-account / KMS / NotPrincipal families are IAM-1204..1206).",
+  "phase": 12,
+  "story": "IAM-1203",
+  "suite2Test": 26,
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sns", "arn": "arn:aws:sns:us-west-2:123456789012:security-events" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowEventBridgePublish",
+        "Effect": "Allow",
+        "Principal": { "Service": "events.amazonaws.com" },
+        "Action": "sns:Publish",
+        "Resource": "arn:aws:sns:us-west-2:123456789012:security-events"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "sns",
+    "principalTypes": ["service"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-CONFUSED-DEPUTY"],
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "medium" },
+    "whyIncludes": { "RESOURCE-CONFUSED-DEPUTY": ["events.amazonaws.com", "NO source binding", "confused-deputy", "NOT public"] },
+    "graphEdgeTypes": ["can-access-resource"],
+    "graphOriginTypes": ["Service"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT"]
+  }
+}

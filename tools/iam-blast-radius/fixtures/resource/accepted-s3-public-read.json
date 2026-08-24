@@ -1,0 +1,45 @@
+{
+  "name": "Resource family accepted with an S3 object attached-resource context",
+  "note": "IAM-1202: family=resource plus the explicit attached-resource context (an S3 object ARN) is ACCEPTED and routed to the resource evaluator, never the identity rules. Principal '*' on the Allow is anonymous/public, so a PUBLIC-ACCESS (critical) finding fires from the RESOURCE's perspective, and the graph draws an anonymous ExternalPrincipal -> can-access-resource -> attached-resource edge. Coverage stays INCOMPLETE (RESOURCE_ANALYSIS_INCOMPLETE): the remaining resource families (confused-deputy, same-account, KMS, NotPrincipal) are IAM-1203..1206. The identity WILDCARD/DATA-EXFIL findings that would fire if this were mis-analyzed as an identity policy must NOT appear.",
+  "phase": 12,
+  "story": "IAM-1202",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::public-downloads/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PublicRead",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::public-downloads/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "s3-object",
+    "principalTypes": ["anonymous"],
+    "anonymousPresent": true,
+    "findingIds": ["PUBLIC-ACCESS"],
+    "findingSeverities": { "PUBLIC-ACCESS": "critical" },
+    "graphEdgeTypes": ["can-access-resource"],
+    "graphOriginTypes": ["ExternalPrincipal"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "name": "Public S3 read plus a TLS-only Deny (suite-2 test 28): transport is not identity",
+  "note": "IAM-1202 / acceptance-suite-2 test 28. A PublicRead Allow (Principal '*') grants anonymous object read; a second statement Denies s3:* when aws:SecureTransport=false. That Deny is a TRANSPORT constraint (it forces HTTPS), NOT an identity constraint: it does NOT make the public read private - the object stays publicly readable over TLS. The PUBLIC-ACCESS finding must remain critical/high and NOT be suppressed by the transport Deny; the finding must state the transport-only nature and, for S3, that actual exposure also depends on Block Public Access (an external control not supplied). The graph origin is the anonymous ExternalPrincipal, not the policy subject.",
+  "phase": 12,
+  "story": "IAM-1202",
+  "suite2Test": 28,
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::public-downloads/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PublicRead",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::public-downloads/*"
+      },
+      {
+        "Sid": "DenyInsecureTransport",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": [
+          "arn:aws:s3:::public-downloads",
+          "arn:aws:s3:::public-downloads/*"
+        ],
+        "Condition": {
+          "Bool": {
+            "aws:SecureTransport": "false"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "s3-object",
+    "principalTypes": ["anonymous"],
+    "anonymousPresent": true,
+    "findingIds": ["PUBLIC-ACCESS"],
+    "findingSeverities": { "PUBLIC-ACCESS": "critical" },
+    "whyIncludes": { "PUBLIC-ACCESS": ["TRANSPORT constraint", "Block Public Access"] },
+    "graphEdgeTypes": ["can-access-resource"],
+    "graphOriginTypes": ["ExternalPrincipal"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  }
+}

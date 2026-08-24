@@ -98,7 +98,7 @@ No suite-3 test currently returns a false or overstated result.
 | 66 | Session policy selected | COMPLETE | `SESSION-CEILING` (info); session restriction, no positive capability edge without parent context |
 | 67 | Identity mode rejects Principal | BLOCKED | `UNSUPPORTED_PRINCIPAL` at `Statement[0].Principal`; Principal never dropped |
 | 68 | Trust mode rejects Resource | BLOCKED | `UNSUPPORTED_TRUST_RESOURCE` at `Statement[0].Resource` |
-| 69 | Resource policy selected (deferred) | BLOCKED | `UNSUPPORTED_POLICY_FAMILY` naming the family; input preserved |
+| 69 | Resource policy selected | COMPLETE_WITH_WARNINGS (flipped IAM-1207) | resource family shipped: with the explicit attached-resource context, Principal `*` -> `PUBLIC-ACCESS` critical, routed to the resource evaluator (not identity), coverage INCOMPLETE. The no-context path still fails closed `RESOURCE_CONTEXT_REQUIRED` (`fixtures/family-selection/69-resource-family-unsupported.json`). |
 | 70 | Family switching clears prior analysis | procedure | `tests/phase10-family-selection.test.js` + `tests/e2e/ui-shell.spec.js`: same bytes under two families differ; prior state invalidated |
 | 71 | Family + status survive every export | procedure | `tests/phase10-family-selection.test.js`: selected family + status + catalog version + warnings in JSON/MD; statuses agree; blocked export never authoritative |
 
@@ -124,7 +124,7 @@ No suite-3 test currently returns a false or overstated result.
 | 82 | Question-mark wildcard inside user Principal ARN | COMPLETE_WITH_WARNINGS | `TRUST-INVALID-PRINCIPAL`; validation covers `?` as well as `*` |
 | 83 | One invalid member poisons a Principal array | COMPLETE_WITH_WARNINGS | invalid member flagged at array index 1 (`TRUST-INVALID-PRINCIPAL`), valid member not silently dropped |
 | 84 | Short-form account principal remains valid | COMPLETE | `TRUST-CROSS-ACCOUNT`; 12-digit account id not misclassified as an invalid ARN |
-| 85 | Principal `*` narrowed by PrincipalArn condition | BLOCKED | resource-policy family deferred -> fail closed `UNSUPPORTED_POLICY_FAMILY`; the condition-value wildcard is not mis-flagged as an invalid Principal |
+| 85 | Principal `*` narrowed by PrincipalArn condition | COMPLETE_WITH_WARNINGS (flipped IAM-1207) | resource family shipped: `*` NARROWED by `ArnLike aws:PrincipalArn` -> `PUBLIC-ACCESS` high (not unconditioned-critical), scoping key recorded, condition-value wildcard preserved (not mis-flagged as an invalid Principal). |
 
 ## Campaign E - IAM and ECS semantic precision
 
@@ -172,11 +172,14 @@ No suite-3 test currently returns a false or overstated result.
 
 ## Deferred (honest fail-closed, next tranche)
 
-Full resource-policy analysis (S3 / SNS / KMS bucket-, topic-, key-policies) and
-RCP analysis remain deliberately unbuilt. In suite 3, test 85 (resource-policy
-Principal `*` + PrincipalArn condition) fails closed with
-`UNSUPPORTED_POLICY_FAMILY` rather than manufacturing a public-access result. The
-matching suite-2 resource-policy/RCP set (26/27/28/32/33/49/51/52/53) stays
+UPDATE (IAM-1207, Phase 12): resource-policy analysis (S3 / SNS / SQS / KMS
+bucket-, topic-, queue-, key-policies) SHIPPED (IAM-1201..1206). Suite-3 tests 69
+and 85 flipped from BLOCKED to real resource analysis (see the scoreboard above),
+driven from `analyze()` with the explicit attached-resource context via committed
+fixtures under `fixtures/resource/`. The matching suite-2 resource set
+(26/27/28/32/33/49/51/53) also flipped to `pass`. What REMAINS deferred: RCP/SCP
+families (suite-2 test 52 / 43, Phase-13) and the NotPrincipal Deny hazard
+(suite-2 test 29, fails closed but surfaces the specific hazard). Those stay
 BLOCKED with `designBlocked` markers under `fixtures/acceptance-2-deferred/`,
 driven by `tests/acceptance-suite-2-deferred.test.js`, so a future
 resource-policy-family tranche must flip them deliberately.

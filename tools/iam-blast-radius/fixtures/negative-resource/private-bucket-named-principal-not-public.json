@@ -1,0 +1,31 @@
+{
+  "name": "Private S3 bucket policy granting one named in-account user - NOT public, NOT cross-account",
+  "note": "IAM-1207 (private-bucket negative control, suite-2 test 32 shape). An S3 bucket policy grants s3:GetObject to a single named IAM user in the bucket owner's account (supplied explicitly, since S3 ARNs carry no account). A named principal is not anonymous, so PUBLIC-ACCESS must NOT fire; the owner account matches, so it is a direct same-account grant, not cross-account.",
+  "phase": 12,
+  "story": "IAM-1207",
+  "family": "resource",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::finance-reports/*", "account": "123456789012" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DirectUserGrant",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::123456789012:user/Alice" },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::finance-reports/*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["RESOURCE-SAME-ACCOUNT-GRANT"],
+    "mustNotFind": ["PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT", "RESOURCE-ACTION-RESOURCE-MISMATCH"],
+    "maxSeverity": { "RESOURCE-SAME-ACCOUNT-GRANT": "medium" },
+    "maxPathExploitability": { "RESOURCE-SAME-ACCOUNT-GRANT": "medium" }
+  },
+  "rationale": "A bucket policy that names one specific IAM user principal is a private, scoped grant - it is not the wildcard '*' public-access shape, so PUBLIC-ACCESS must never fire (AWS only treats a resource policy as public when access is granted to '*'/{AWS:'*'} or is otherwise not restricted to fixed principal/source values). S3 bucket and object ARNs carry no account id, so the owning account is supplied explicitly in the context; it equals the principal's account, making this a direct same-account grant (RESOURCE-SAME-ACCOUNT-GRANT, medium), not cross-account. The resource is object-scoped ('.../*') and the action is an object action (s3:GetObject), so there is no action/resource-type mismatch. The user's identity policies still govern effective access; an applicable explicit Deny still blocks. Ref: docs/resource-policy-semantics.md sec 2.1 / 5 / 7.2."
+}

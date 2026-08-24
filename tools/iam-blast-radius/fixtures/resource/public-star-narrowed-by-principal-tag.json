@@ -1,0 +1,56 @@
+{
+  "name": "Principal '*' scoped by aws:PrincipalTag + aws:SourceVpce (suite-2 test 49): principal-identity condition narrows, not public",
+  "note": "IAM-1202 + IAM-1205 / acceptance-suite-2 test 49 (adversarial-critic iteration 4). A Principal '*' Allow is gated by StringEquals on aws:SourceVpce (a network selector) AND aws:PrincipalTag/environment (a principal-IDENTITY selector). aws:PrincipalTag identifies the calling principal, so an anonymous/unauthenticated caller - who carries no principal tag - is excluded by the positive tag match: the grant is NARROWED to authenticated principals matching the tag, NOT unconditioned anonymous/public access. The PUBLIC-ACCESS finding must therefore be HIGH (broad '*' syntax narrowed by a principal condition), never CRITICAL 'any principal, including anonymous / anyone can perform'. Before iteration 4 aws:PrincipalTag was omitted from the principal-scoping key set, so this rendered as a false-critical unconditioned public grant. IAM-1205 adds the condition-composition requirement: the finding must model AND across the two distinct keys and OR within the two aws:SourceVpce values, naming BOTH the network selector and the principal-tag selector, and must NOT simplify the expression to 'VPCe OR tag'.",
+  "phase": 12,
+  "story": "IAM-1202+IAM-1205",
+  "suite2Test": 49,
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::release-artifacts/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "RestrictedArtifactRead",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::release-artifacts/*",
+        "Condition": {
+          "StringEquals": {
+            "aws:SourceVpce": [
+              "vpce-0123456789abcdef0",
+              "vpce-0fedcba9876543210"
+            ],
+            "aws:PrincipalTag/environment": "production"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "s3-object",
+    "principalTypes": ["anonymous"],
+    "anonymousPresent": true,
+    "findingIds": ["PUBLIC-ACCESS"],
+    "findingSeverities": { "PUBLIC-ACCESS": "high" },
+    "whyIncludes": { "PUBLIC-ACCESS": ["NARROWED", "aws:PrincipalTag/environment", "aws:SourceVpce", "logical AND", "logical OR", "network selector", "principal-identity selector", "NOT be simplified"] },
+    "graphEdgeTypes": ["can-access-resource"],
+    "graphOriginTypes": ["ExternalPrincipal"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  }
+}

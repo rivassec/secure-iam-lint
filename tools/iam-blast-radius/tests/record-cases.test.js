@@ -2,8 +2,14 @@
 // cases as a BLOCKING regression suite driven from analyze().
 //
 // The external record-test bundle (docs/record-tests/, 2026-08-24) enumerates 8
-// BND-* (boundary / family-switch semantics) and 10 DEF-* (deferred-family
-// fail-closed) analyzer cases. This suite is the durable engine-side gate for
+// BND-* (boundary / family-switch semantics) and 10 DEF-* (deferred-family)
+// analyzer cases. IAM-1201 (Phase 12) un-defers the RESOURCE family: DEF-01/02/03
+// carry the explicit attached-resource context the resource family now requires,
+// so they flip from BLOCKED to COMPLETE_WITH_WARNINGS (accepted + routed to the
+// resource evaluator, INCOMPLETE because the service-specific finding rules are
+// foundational). The remaining DEF-* cases (rcp / scp / trust-NotPrincipal /
+// resource-selected-on-a-non-resource-shape / mixed) stay fail-closed. This suite
+// is the durable engine-side gate for
 // them: every BND-*/DEF-* case in the bundle is accounted for here - the
 // ENGINE-DRIVABLE cases (those carrying an `input` policy + an `expect` block)
 // are driven through the real analyze() pipeline and asserted; the UI-only cases
@@ -89,7 +95,13 @@ test('IAM-1103: the record bundle exposes the 8 BND-* + 10 DEF-* analyzer cases'
 
 for (const c of recordCases.filter(isEngineDrivable)) {
   test(`IAM-1103 record case ${c.id}: analyze() matches the bundle expectation (name-mapped)`, () => {
-    const res = analyze(JSON.stringify(c.input), c.family ? { family: c.family } : {});
+    // IAM-1201: a resource-family case carries the explicit attached-resource
+    // context the resource family now requires; forward it so the resource
+    // evaluator can accept + route (the family gate fails closed without it).
+    const opts = {};
+    if (c.family) opts.family = c.family;
+    if (c.resourceContext) opts.resourceContext = c.resourceContext;
+    const res = analyze(JSON.stringify(c.input), opts);
 
     // analyze() NEVER throws: even a fail-closed shape returns ok:true with a
     // well-formed blocking coverage state the UI can render.
@@ -142,6 +154,61 @@ for (const c of recordCases.filter(isEngineDrivable)) {
       if (typeof exp.capabilityEdges === 'number') {
         assert.equal(capabilityEdgeCount(res.graph), exp.capabilityEdges,
           `${c.id}: capability-edge count`);
+      }
+    } else if (exp.status === 'COMPLETE_WITH_WARNINGS') {
+      // IAM-1201/1202: a supported family accepted to a well-formed but still
+      // INCOMPLETE conclusion. The resource family is ACCEPTED with its explicit
+      // attached-resource context and routed to the resource evaluator. IAM-1202
+      // adds the principal-centric findings (PUBLIC-ACCESS / RESOURCE-CROSS-
+      // ACCOUNT) + the external-origin resource graph; the remaining service-
+      // specific rules (confused-deputy, same-account, KMS, NotPrincipal) are
+      // IAM-1203..1206, so coverage stays INCOMPLETE (absence of a finding is
+      // never "safe"). No identity capability finding may appear on a resource
+      // policy, and the resource-access edge is NOT an identity capability edge.
+      assert.ok(cov && cov.blocked === false, `${c.id}: accepted (not blocked)`);
+      assert.ok(cov.summary && cov.summary.incomplete === true,
+        `${c.id}: coverage is incomplete (absence of a finding != safe)`);
+      const ids = res.findings.map((f) => f.id);
+      for (const f of exp.forbiddenRuleIds || []) {
+        assert.ok(!ids.includes(mapName(f)),
+          `${c.id}: forbidden identity rule ${mapName(f)} absent on a resource policy`);
+      }
+      for (const want of exp.expectedRuleIds || []) {
+        assert.ok(ids.includes(mapName(want)),
+          `${c.id}: expected resource finding ${mapName(want)} present (got [${ids.join(', ')}])`);
+      }
+      if (exp.warningCode) {
+        const codes = (cov.summary && cov.summary.codes) || [];
+        const want = mapName(exp.warningCode);
+        assert.ok(codes.includes(want),
+          `${c.id}: warning code ${want} present (got [${codes.join(', ')}])`);
+      }
+      if (exp.graph === null) {
+        assert.equal(res.graph.nodes.length, 0, `${c.id}: no graph nodes`);
+        assert.equal(res.graph.edges.length, 0, `${c.id}: no graph edges`);
+      }
+      if (typeof exp.capabilityEdges === 'number') {
+        assert.equal(capabilityEdgeCount(res.graph), exp.capabilityEdges,
+          `${c.id}: capability-edge count`);
+      }
+      // IAM-1202: the external-origin resource-access graph (can-access-resource
+      // edges from the anonymous/external principal to the attached resource node).
+      if (typeof exp.resourceAccessEdges === 'number') {
+        const accessEdges = res.graph.edges.filter((e) => e.type === 'can-access-resource');
+        assert.equal(accessEdges.length, exp.resourceAccessEdges,
+          `${c.id}: can-access-resource edge count`);
+        assert.ok(!res.graph.nodes.some((n) => n.id === 'principal'),
+          `${c.id}: resource graph must not root at the policy subject`);
+      }
+      if (Array.isArray(exp.resourceGraphOriginTypes)) {
+        const originTypes = [...new Set(res.graph.edges
+          .filter((e) => e.type === 'can-access-resource')
+          .map((e) => {
+            const n = res.graph.nodes.find((nn) => nn.id === e.from);
+            return n ? n.type : null;
+          }).filter(Boolean))].sort();
+        assert.deepEqual(originTypes, exp.resourceGraphOriginTypes.slice().sort(),
+          `${c.id}: resource-access origin node types`);
       }
     } else {
       assert.fail(`${c.id}: unhandled expect.status "${exp.status}"`);

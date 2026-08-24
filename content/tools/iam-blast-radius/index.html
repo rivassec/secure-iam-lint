@@ -103,6 +103,36 @@
       <p id="family-hint" class="hint">Pick the policy family before analyzing. The tool does not guess it from the
       document shape - an identity policy and a resource-based policy can look alike, and analyzing one as the
       other would produce confident but wrong findings. Choose Auto-detect to detect the family from shape.</p>
+
+      <div id="resource-context" class="resource-context" hidden>
+        <p id="resource-context-hint" class="hint">A resource-based policy is analyzed from the attached
+        resource's perspective (who may act on <em>this</em> resource), so the analyzer needs to know which
+        resource the policy is attached to. Supply the attached resource type and its ARN. This context is
+        required for resource-based policies and never guessed.</p>
+        <div class="controls">
+          <label for="resource-type" class="rc-label">Attached resource type</label>
+          <select id="resource-type" aria-describedby="resource-context-hint">
+            <option value="" selected>Select a resource type...</option>
+            <option value="s3-bucket">Amazon S3 bucket</option>
+            <option value="s3-object">Amazon S3 object</option>
+            <option value="sns">Amazon SNS topic</option>
+            <option value="sqs">Amazon SQS queue</option>
+            <option value="kms-key">AWS KMS key</option>
+            <option value="other">Other AWS resource</option>
+          </select>
+          <label for="resource-arn" class="rc-label">Attached resource ARN</label>
+          <input id="resource-arn" type="text" class="rc-arn" spellcheck="false" autocomplete="off"
+            placeholder="arn:aws:s3:::my-bucket" aria-describedby="resource-context-hint">
+          <label for="resource-account" class="rc-label">Owning account ID (optional)</label>
+          <input id="resource-account" type="text" class="rc-account" spellcheck="false" autocomplete="off"
+            inputmode="numeric" placeholder="123456789012" aria-describedby="resource-account-hint">
+          <p id="resource-account-hint" class="hint">The 12-digit account that owns this resource. S3
+          bucket and object ARNs carry no account id, so supply it here to let the analyzer tell a
+          same-account grant from a cross-account one. Optional; SNS, SQS, and KMS ARNs already carry
+          the owning account.</p>
+        </div>
+      </div>
+
       <p id="status" class="status" role="status" aria-live="polite"></p>
 
       <div class="samples" aria-labelledby="samples-h">

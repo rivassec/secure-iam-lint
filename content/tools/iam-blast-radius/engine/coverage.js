@@ -165,9 +165,20 @@ export function enrichCoverage(coverage, context) {
   // Unsupported ELEMENTS: recognized-but-unmodeled elements, derived from the
   // blocking codes. Today only NotPrincipal; kept generic so a future element
   // slots in by adding its coverage code here.
+  // IAM-1206: a Deny + NotPrincipal blocking code carries a high-confidence
+  // hazard marker + the specific hazard message (permissions-boundary trap +
+  // ArnNotEquals recommendation). Carry both onto the unsupported-element entry
+  // so the summary, the JSON/Markdown exports, and the UI can render it as a
+  // first-class security hazard, not a generic unmodeled element.
   const notPrincipalElements = blockingCodes
     .filter((b) => b && b.code === COVERAGE_CODES.UNSUPPORTED_NOTPRINCIPAL)
-    .map((b) => Object.freeze({ element: 'NotPrincipal', code: b.code, path: b.path || null }));
+    .map((b) => Object.freeze({
+      element: 'NotPrincipal',
+      code: b.code,
+      path: b.path || null,
+      hazard: b.hazard === true,
+      hazardMessage: b.hazard === true && typeof b.message === 'string' ? b.message : null,
+    }));
 
   // IAM-903: invalid partial-wildcard Principal-element ARNs (from analyze()'s
   // trust path). Each is a recognized-but-unmodeled element that makes the trusted
@@ -237,6 +248,34 @@ export function enrichCoverage(coverage, context) {
     }))
     : [];
 
+  // IAM-1201: the resource evaluator's coverage (detected service + attached ARN
+  // + enumerated principal types). An ACCEPTED resource family is routed to the
+  // resource evaluator, but the service-specific resource finding rules are not
+  // yet implemented in this tranche, so the analysis is INCOMPLETE (a resource
+  // policy accepted with zero findings must never read as proven-safe). Recorded
+  // for the panel/export and contributes to `incomplete` + a stable code.
+  const rcov = (ctx.resourceCoverage && typeof ctx.resourceCoverage === 'object')
+    ? ctx.resourceCoverage
+    : null;
+  const resourceContextSummary = rcov
+    ? Object.freeze({
+      service: rcov.service != null ? String(rcov.service) : null,
+      arn: rcov.arn != null ? String(rcov.arn) : null,
+      type: rcov.type != null ? String(rcov.type) : null,
+      principalTypes: Object.freeze(
+        Array.isArray(rcov.principalTypes) ? rcov.principalTypes.map((p) => String(p)) : [],
+      ),
+      anonymousPresent: !!rcov.anonymousPresent,
+      unknownPrincipalTypes: Object.freeze(
+        Array.isArray(rcov.unknownPrincipalTypes)
+          ? rcov.unknownPrincipalTypes.map((p) => String(p))
+          : [],
+      ),
+      incomplete: !!rcov.incomplete,
+      note: rcov.note != null ? String(rcov.note) : '',
+    })
+    : null;
+
   const represented = FAMILY_LAYERS[cov.family] || FAMILY_LAYERS[cov.detected] || [];
   const missingLayers = EVALUATION_LAYERS
     .filter((l) => !represented.includes(l.key))
@@ -267,7 +306,10 @@ export function enrichCoverage(coverage, context) {
     || unrecognizedActions.length > 0
     || unsupportedConditions.length > 0
     || actionResourceMismatches.length > 0
-    || trustDeny.unmodeled;
+    || trustDeny.unmodeled
+    // IAM-1201: an accepted resource policy whose service-specific rules are not
+    // yet implemented is INCOMPLETE (zero findings != proven safe).
+    || !!(resourceContextSummary && resourceContextSummary.incomplete);
 
   // Stable machine-readable codes carried into exports. Today this mirrors the
   // family gate's blocking codes; future non-blocking coverage codes append here
@@ -282,6 +324,11 @@ export function enrichCoverage(coverage, context) {
   // IAM-1007 (test 60): one stable code when any Sid is non-unique across
   // statements (non-blocking advisory; does not flip `incomplete`).
   if (duplicateSidsList.length > 0) codes.push('DUPLICATE_SID');
+  // IAM-1201: a stable code for the accepted-but-foundational resource analysis
+  // (service-specific resource rules not yet implemented in this tranche).
+  if (resourceContextSummary && resourceContextSummary.incomplete) {
+    codes.push(COVERAGE_CODES.RESOURCE_ANALYSIS_INCOMPLETE || 'RESOURCE_ANALYSIS_INCOMPLETE');
+  }
 
   const summary = Object.freeze({
     detectedFamily: cov.detected || 'unknown',
@@ -297,6 +344,10 @@ export function enrichCoverage(coverage, context) {
     unsupportedElements: Object.freeze(unsupportedElements),
     actionResourceMismatches: Object.freeze(actionResourceMismatches),
     duplicateSids: Object.freeze(duplicateSidsList),
+    // IAM-1201: the attached-resource context recorded for a resource-family
+    // analysis (null for every other family). Names the detected service, the
+    // attached ARN, and the principal types the policy names, as inert evidence.
+    resourceContext: resourceContextSummary,
     missingLayers: Object.freeze(missingLayers),
     trustDeny,
     graph: Object.freeze({ complete: !truncated, truncated }),

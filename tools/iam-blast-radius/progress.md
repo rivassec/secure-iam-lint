@@ -68,6 +68,14 @@ human-review.
 | IAM-1102 | Phase 11 (P0): required-critic panel id validation (fail closed on malformed critic id) | accepted | 2 | 0 | Accepted on iteration 2. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass). Per-critic outcome of the last (accepting) round: adversarial-review -> PASS; correctness/reliability -> PASS; security -> PASS; arbiter accepted on the all-PASS panel. Closes the IAM-1101 blocker: decide()/runReview (ralph/review-decision.mjs) now validate every required critic id is a non-empty string and FAIL CLOSED (configurationError INVALID_CRITIC_ID, accepted=false) on a number/object/empty-string id, exactly like the existing EMPTY_CRITIC_PANEL / DUPLICATE_CRITIC_IDS guards, so a malformed panel can never yield accepted=true nor commit a schema-invalid ledger row. |
 | IAM-1103 | Phase 11C: invalid-family fail-closed + record regression fixtures | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass). Per-critic outcome of the last (accepting) round: adversarial-review -> PASS; correctness/reliability -> PASS; security -> PASS; arbiter accepted on the all-PASS panel. Delivered the durable regression gate for the record-test bundle: tests/record-cases.test.js drives the 9 engine-drivable BND-*/DEF-* cases (BND-01 + DEF-01..08) through analyze() under the adapter name-map and asserts blocked shapes emit zero findings + empty graph, required/forbidden rule ids, required prose, capability-edge budget, plus two meta-tests proving no BND-*/DEF-* case is silently skipped; tests/e2e/record-cases.spec.js adds named [CASE-ID] Playwright assertions for the 9 UI-only cases (green in chromium 9/9; firefox/webkit via CI matrix). Engine already fails closed on unrecognized/aliased family (family.js INVALID_FAMILY + FAMILY_ALIASES), closing the DEF-05 fail-open. Full node --test 1279 pass / 0 fail (+12); gate:no-network + gate:no-unsafe-dom + csp_audit clean; no shipped HTML/JS/CSS changed; no regression to suites 1/2/3 or the identity/trust negative corpora. |
 | IAM-1101 | Phase 11 (P0): subject-account-aware PassRole viability | human-review | 4 | 1 | HELD ON A BLOCKING FINDING (not a critic non-pass): the adversarial critic RAN to completion and returned a verdict of BLOCKER with exactly 1 blocking finding in the last round - this is NOT a hold caused by a critic ERROR/TIMEOUT/INVALID_RESPONSE (no critic errored, timed out, or returned a malformed/null result; all critics produced valid results and the panel's outcome was PASS on two surfaces + BLOCKER on one). Per-critic outcome of the last round: adversarial-review critic across all three surfaces (11A/11B/11C) -> 11B (cross-account PassRole with ambiguous subject) SOLID/PASS; 11C (family-value fail-closed) SOLID/PASS; 11A (missing/null/errored/timed-out/malformed critic RESULTS - the primary surface the fix targets) ROBUST across ~24 hostile combinations (none reached accepted=true; every one wrote a durable ledger row except the two justified no-row classes: a true ledger-write failure, and the duplicate-id panel which cannot produce a schema-valid row) - PASS on the targeted surface, but the critic surfaced ONE fail-open in an adjacent under-guarded input = the 1 blocking finding => overall BLOCKER, story held. REASON FOR HOLD (the 1 blocking, medium): required-critic PANEL is under-guarded - decide()/runReview (ralph/review-decision.mjs:220 decide + :383-413 runReview panel guards) fail closed on an empty panel (EMPTY_CRITIC_PANEL) and a duplicate-id panel (DUPLICATE_CRITIC_IDS) but do NOT validate that each critic id is a non-empty string, so a panel with a number/object/empty-string critic id plus all-PASS responses returns accepted=true, decision='approved', and commits a SCHEMA-INVALID ledger row (review-ledger-entry requiredCriticIds.items {type:string,minLength:1}; critic-result criticId {type:string,minLength:1}), breaking the module's own invariant that every acceptance is durably AND validly recorded. Repro: runReview({requiredCritics:[123,'security'], responses:[{status:'PASS'},{status:'PASS'}]}) => accepted=true, ledgerRows[0].requiredCriticIds=[123,'security'], criticAttempts[0].criticId=123 (same accept+invalid-row for [{},'security'] and ['','security']). Reachability is limited to a caller passing a malformed requiredCritics array (NOT the attacker-controlled critic-response surface), so real-world exploitability is LOW - hence medium, not high - but it is a genuine accepted-review-on-a-malformed-panel fail-open. FIX DIRECTION (not applied - held for human review): decide()/runReview must validate every required critic id is a non-empty string and fail closed (configurationError, accepted=false, e.g. INVALID_CRITIC_ID) exactly like the empty-panel and duplicate-id paths, so a malformed panel never yields accepted=true nor commits a schema-violating ledger row. |
+| IAM-1200 | Phase 12 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1201 | Phase 12 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1202 | Phase 12 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1203 | Phase 12 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1204 | Phase 12: adversarial review (same-account / confused-deputy / S3-typing) | human-review | 1 | 1 | HELD ON A BLOCKING FINDING (last round = 1 blocking). VERDICT ON THE FIX ITSELF: SOUND - all 7 named suite cases pass through BOTH analyzeResource() direct and the real text -> analyze({family:'resource', requireExplicitFamily:true}) pipeline against on-disk fixtures: T26 RESOURCE-CONFUSED-DEPUTY medium/unbound (not public); T27 correct SourceArn+SourceAccount info/source-bound (negative-control praise, no exposure fire); T53 mismatched account medium/mismatched naming both accounts (warns, no praise), symmetry probes hold; T28 Principal '*'+TLS-only-Deny stays PUBLIC-ACCESS critical, transportOnlyDeny annotated (object-form + SecureTransport-Allow variants also critical); T51 KMS account-root same-account RESOURCE-SAME-ACCOUNT-GRANT only ("not the root user only" wording correct); T32 same-account IAM user RESOURCE-SAME-ACCOUNT-GRANT with resource-vs-identity caveat; T33 assumed-role session ARN kept verbatim, never collapsed to role ARN. Fail-closed on missing/null/empty/blank/non-ARN/truncated-ARN/unsupported-service (ok:false, 0 findings, RESOURCE_CONTEXT_REQUIRED / UNSUPPORTED_RESOURCE_SHAPE, no over-claim). No FP/FN/over/under-claim in the same-account / confused-deputy / S3-typing logic IAM-1204 introduced. Principal:['*'] array-form fails CLOSED (INVALID_PRINCIPAL); NotPrincipal Allow fails CLOSED (coverage.blocked=true) - neither a defect. BLOCKER (unresolved, high; outside the changed logic - IAM-1202-era principal router, none of the 7 suite cases affected): engine/resource.js:984 (externalTypes set) via the resourceFindings principal loop only handles anonymous / service / {aws-account, aws-root, aws-principal-arn}; any other classified principal type is SILENTLY DROPPED -> ok:true with ZERO findings. Verified: Principal {AWS:'arn:aws:iam::*:root'} (aws-principal-arn-wildcard) -> 0 findings; {AWS:'arn:aws:iam::123456789012:role/app-*'} -> 0; {Service:'ec2-*.amazonaws.com'} (service-wildcard) -> 0; {CanonicalUser:'<hash>'} -> 0. CanonicalUser is a VALID common S3 resource-policy principal, so a legit cross/same-account CanonicalUser grant yields no finding - the line-323 'fail closed toward surfacing' promise is broken (canonical-user never enters namedEntries). Trust family fails these same wildcard types CLOSED with a coverage-warning; resource family emits nothing. Partial mitigation only: pipeline coverage still carries the INCOMPLETE caveat and enumerates the principal type (not a clean bill of health). FIX DIRECTION (not applied): route unmodeled principal types (canonical-user, aws-principal-arn-wildcard, service-wildcard, federated-wildcard) to a fail-closed coverage-warning finding mirroring the trust family, so a CanonicalUser grant or over-broad/invalid wildcard-ARN principal always surfaces >=1 finding instead of reading as zero. Also found: one dead variable (minor). Repro via scratch harnesses under tools/iam-blast-radius/ (scratch-critic-1204-fresh.mjs + scratch-dbg-1204*.mjs), engine unedited. |
+| IAM-1205 | Phase 12 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1206 | Phase 12 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1207 | Phase 12 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
 
 ## Release-gate items requiring CI/browser (not the authoring loop)
 - [ ] Playwright Chromium/Firefox/WebKit matrix green
@@ -168,3 +176,72 @@ IAM-1101 HOLD RESOLVED after independent verification of its 2 findings:
 Both were the Phase-8 stale-ledger pattern (fixed by a later iteration / a one-line
 cleanup) - IAM-1101 is effectively complete. The FAIL-CLOSED ARBITER worked: it held
 1101 on a real blocker instead of auto-accepting, which is the whole point of 11A.
+
+## IAM-1207 (Phase 12) - resource negative corpus + fixturize + re-run all three suites (2026-08-24)
+DELIVERED. Two artifacts, no shipped-code change (the Phase-12 resource evaluator
+already shipped in IAM-1201..1206).
+
+1. Resource NEGATIVE corpus (the credibility artifact, like the identity + trust
+   corpora): fixtures/negative-resource/ - 5 frozen "does-not-fire / low" contracts
+   + rationale, each with the EXPLICIT attached-resource context:
+   - sourcebound-service-not-exposure (correctly SourceArn+SourceAccount-bound
+     service -> RESOURCE-CONFUSED-DEPUTY INFO negative control, never public)
+   - same-account-scoped-grant-not-crossaccount (same-account SQS role grant ->
+     RESOURCE-SAME-ACCOUNT-GRANT medium, not cross-account, not public)
+   - private-bucket-named-principal-not-public (bucket policy naming one in-account
+     user -> same-account grant, not PUBLIC-ACCESS)
+   - kms-account-delegation-not-public-not-rootonly (KMS account-root delegation ->
+     RESOURCE-KMS-ACCOUNT-DELEGATION, not public, not root-only, Resource:*=attached key)
+   - org-constrained-star-not-critical ('*' narrowed by positive aws:PrincipalOrgID
+     -> PUBLIC-ACCESS capped at HIGH, not unconditioned-critical)
+   Wired into tests/negative-resource.test.js (mirrors negative-trust.test.js):
+   present/absent/severity/exploitability caps, resource-only finding ids, the
+   not-effective-access caveat on every finding, source-bound-not-missing guard,
+   determinism.
+
+2. Fixturized the resource-family suite tests as committed acceptance fixtures
+   driven from analyze() (flip from fail-closed to real resource analysis):
+   - suite-2 26/27/28/32/33/49/51/53 already live under fixtures/resource/ (from
+     IAM-1201..1205, driven by tests/resource.test.js). Their blocked-by-design
+     deferred fixtures were REMOVED from fixtures/acceptance-2-deferred/ (that set
+     now holds only genuinely-unmodeled families: 30 boundary, 31 session, 43 SCP,
+     52 RCP).
+   - suite-3 69 + 85 added as new fixtures/resource/suite3-test-*.json (69 public
+     '*' -> PUBLIC-ACCESS critical; 85 '*' narrowed by ArnLike aws:PrincipalArn ->
+     PUBLIC-ACCESS high, condition-value wildcard preserved). Re-pointed
+     tests/acceptance-suite-3-results.test.js MANIFEST 69/85 from BLOCKED ->
+     COMPLETE_WITH_WARNINGS. The no-context fail-closed path (69) and identity-mode
+     no-misflag guard (85) stay covered by their original dedicated fixtures/tests.
+   - New tests/acceptance-resource-flip.test.js scoreboard: binds suite-2
+     {26,27,28,32,33,49,51,53} + suite-3 {69,85} to their committed fixtures,
+     asserts each analyzes (not fail-closed) with the expected resource finding,
+     and asserts the remaining deferred set is exactly {30,31,43,52}.
+   - Scoreboards updated: docs/acceptance-suite-2-results.md (8 rows flipped to
+     pass + tally), docs/acceptance-suite-3-results.md (69/85 rows), new
+     docs/acceptance-suite-2-resource-results.md (resource-results doc).
+
+Gates: full node --test 1358 pass / 0 fail (was 1356; +2 net after removing 8
+deferred subtests and adding negative-resource/flip/2-fixture subtests);
+gate:no-network + gate:no-unsafe-dom exit 0; NO shipped HTML/JS/CSS changed
+(shipped-tree-hygiene green). No regression to suites 1/2/3 or the identity/trust
+negative corpora. Only remaining fail-closed set = genuinely-unmodeled shapes
+(NotPrincipal hazard 29, RCP 52, SCP 43, boundary/session 30/31, unmodeled
+services, missing context).
+
+## Phase 12 close-out + IAM-1204 hold (2026-08-24)
+7/8 accepted; resource family works (Suite-2 flips 8/8, Suite-3 69/85 pass, node
+--test 1358/0, shipped-tree-hygiene clean - the Phase-11 gate held, no leak).
+IAM-1204 HELD by the fail-closed arbiter on real adversarial findings in the
+resource evaluator (from the IAM-1202/1203 principal + source-binding logic, NOT
+1204's own same-account/S3-typing logic, which the critic verified SOUND):
+  F1  Principal:"*" narrowed by aws:PrincipalArn / aws:PrincipalTag reported as
+      critical ANONYMOUS/public (tests 49, 85) - the condition blocks anonymous;
+      PRINCIPAL_SCOPING_KEYS omits PrincipalTag/userid/PrincipalOrgPaths.
+  CD/N1 multi-value SourceArn/SourceAccount mismatch (disjoint account SETS) not
+      detected -> wrongly "source-bound" info instead of "mismatched" medium.
+  N2  analyzeResource(rejected-context) returns ok:true + "context recorded" note
+      instead of failing closed (ok:false / RESOURCE_CONTEXT_REQUIRED).
+  984 unmodeled principal types (CanonicalUser, wildcard-ARN, service-wildcard)
+      silently dropped -> 0 findings; breaks "fail closed toward surfacing".
+RESOLUTION: fold into IAM-1208 (resource-family adversarial hardening), run before
+Phase 13. Core suite unaffected; these are edge over/under-claims + a fail-open.

@@ -1,0 +1,31 @@
+{
+  "name": "Same-account SQS grant to an in-account role - a direct same-account grant, NOT cross-account or public",
+  "note": "IAM-1207 (boundary of suite-2 test 32 semantics on SQS). An SQS queue in account 123456789012 grants sqs:SendMessage to a role in the SAME account. The account component of the queue ARN equals the principal's account, so this is a direct same-account resource grant (RESOURCE-SAME-ACCOUNT-GRANT, medium) with the resource-vs-identity caveat - it must NOT be flagged cross-account and must NOT be flagged public.",
+  "phase": 12,
+  "story": "IAM-1207",
+  "family": "resource",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sqs", "arn": "arn:aws:sqs:us-east-1:123456789012:app-events" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SameAccountApp",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::123456789012:role/AppRole" },
+        "Action": "sqs:SendMessage",
+        "Resource": "arn:aws:sqs:us-east-1:123456789012:app-events"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["RESOURCE-SAME-ACCOUNT-GRANT"],
+    "mustNotFind": ["PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT", "RESOURCE-CONFUSED-DEPUTY"],
+    "maxSeverity": { "RESOURCE-SAME-ACCOUNT-GRANT": "medium" },
+    "maxPathExploitability": { "RESOURCE-SAME-ACCOUNT-GRANT": "medium" }
+  },
+  "rationale": "The SQS queue ARN carries an owning account (123456789012) and the named principal is a role in that SAME account, so the account comparison is decisive: this is a direct same-account resource-policy grant, not a cross-account one. Within a single account AWS evaluates the union of identity- and resource-based permissions, so a same-account resource-policy Allow can grant even when the principal's identity policy is silent - materially different from a cross-account grant where BOTH accounts must allow. That distinction is why RESOURCE-SAME-ACCOUNT-GRANT (medium) is correct here and RESOURCE-CROSS-ACCOUNT is wrong. A named IAM role is not '*', so PUBLIC-ACCESS must not fire; a role is not a service, so RESOURCE-CONFUSED-DEPUTY must not fire. An applicable explicit Deny in any layer still blocks. Ref: docs/resource-policy-semantics.md sec 1.1 / 7.2."
+}

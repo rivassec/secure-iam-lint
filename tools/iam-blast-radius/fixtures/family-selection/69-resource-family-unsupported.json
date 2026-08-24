@@ -1,6 +1,6 @@
 {
-  "name": "Resource family explicitly selected (deferred) -> UNSUPPORTED_POLICY_FAMILY, input preserved",
-  "note": "IAM-1001 suite-3 test 69. Full resource-policy analysis is a deferred tranche. Selecting Resource must fail closed with UNSUPPORTED_POLICY_FAMILY naming the family; no public-access finding may be presented as a supported result. The input is preserved (the engine never mutates it) so the user can re-select.",
+  "name": "Resource family selected without an attached-resource context -> RESOURCE_CONTEXT_REQUIRED, input preserved",
+  "note": "IAM-1001 suite-3 test 69, updated for IAM-1201. The resource family is now ACCEPTED, but its context is explicit and required: 'who can act on this resource' is only meaningful relative to a known attached resource. Selecting Resource with NO attached-resource context (type + ARN) fails closed with RESOURCE_CONTEXT_REQUIRED - still a blocking coverage state with zero findings and no public-access finding, and the input is preserved so the user can supply the context and re-analyze.",
   "phase": 10,
   "story": "IAM-1001",
   "suite3Test": 69,
@@ -23,8 +23,9 @@
     "family": "resource",
     "status": "blocked",
     "blockingCodes": [
-      { "code": "UNSUPPORTED_POLICY_FAMILY" }
+      { "code": "RESOURCE_CONTEXT_REQUIRED" }
     ],
+    "notBlockingCodes": ["UNSUPPORTED_POLICY_FAMILY"],
     "noFindings": true
   }
 }

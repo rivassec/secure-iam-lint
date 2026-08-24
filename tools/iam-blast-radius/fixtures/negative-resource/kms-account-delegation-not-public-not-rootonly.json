@@ -1,0 +1,30 @@
+{
+  "name": "KMS 'Enable IAM User Permissions' account-root delegation - broad account authority, NOT public, NOT root-user-only",
+  "note": "IAM-1207 (properly-conditioned KMS negative control, suite-2 test 51). The standard KMS key-policy statement grants the account-root principal kms:* on Resource:* (the attached key). It delegates broad KMS authority to the OWNING ACCOUNT via IAM - it must NOT be classified as public access, must NOT be called root-user-only, and Resource:* must NOT explode into a per-key node.",
+  "phase": 12,
+  "story": "IAM-1207",
+  "family": "resource",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "kms-key", "arn": "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "EnableIAMUserPermissions",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::111122223333:root" },
+        "Action": "kms:*",
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["RESOURCE-KMS-ACCOUNT-DELEGATION"],
+    "mustNotFind": ["PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT", "WILDCARD-RESOURCE", "WILDCARD-ACTION"],
+    "maxSeverity": { "RESOURCE-KMS-ACCOUNT-DELEGATION": "high" }
+  },
+  "rationale": "The account-root ARN (arn:aws:iam::111122223333:root) delegates permissions to the whole account and its administrators - it is NOT the root user only, and it is NOT the public '*' principal, so neither a root-only claim nor PUBLIC-ACCESS is correct. The key is in the same account (111122223333), so this is not cross-account. In a KMS key policy, Resource:'*' means 'this KMS key' (the attached key), not every key in the account, so it must never be scored as an identity-style broad-resource wildcard (no WILDCARD-RESOURCE) and must never create a graph node per key. kms:* on the account principal enables the account to use IAM policies to delegate key access, so which individual principals are actually reachable is unknown without the account's identity policies. Ref: docs/resource-policy-semantics.md sec 6 / 7.1."
+}

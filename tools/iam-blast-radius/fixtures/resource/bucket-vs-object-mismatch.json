@@ -1,0 +1,47 @@
+{
+  "name": "S3 object action on a bucket-only ARN: action/resource-type mismatch (test 50 in the resource context)",
+  "note": "IAM-1204 / acceptance-suite-2 test 50 applied to a resource policy. An S3 bucket policy grants s3:GetObject (an OBJECT-level action) scoped to the BUCKET-only ARN arn:aws:s3:::documents (no '/*' and no key). A bucket ARN does not identify objects, so this does NOT confirm object read: it is an action/resource-type mismatch (RESOURCE-ACTION-RESOURCE-MISMATCH, low, policyEvidence low), never a confirmed object-read capability. Remediation distinguishes bucket actions (bucket ARN) from object actions (object ARN). The principal is a same-account role, so a RESOURCE-SAME-ACCOUNT-GRANT also fires for the direct grant - but the object-access claim stays unconfirmed via the mismatch finding.",
+  "phase": 12,
+  "story": "IAM-1204",
+  "suite2Test": 50,
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-bucket", "arn": "arn:aws:s3:::documents", "account": "123456789012" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "IncorrectObjectReadScope",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::123456789012:role/ReportReader"
+        },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::documents"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "s3-bucket",
+    "principalTypes": ["aws-principal-arn"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-ACTION-RESOURCE-MISMATCH", "RESOURCE-SAME-ACCOUNT-GRANT"],
+    "findingSeverities": { "RESOURCE-ACTION-RESOURCE-MISMATCH": "low", "RESOURCE-SAME-ACCOUNT-GRANT": "medium" },
+    "whyIncludes": { "RESOURCE-ACTION-RESOURCE-MISMATCH": ["OBJECT-level", "BUCKET-only", "does NOT confirm object read", "object-scoped resource"] },
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ", "PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT"]
+  }
+}

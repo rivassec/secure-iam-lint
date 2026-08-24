@@ -76,6 +76,24 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px
 #policy-family { font: inherit; padding: .4rem .5rem; border: 1px solid var(--border);
   border-radius: 4px; background: #14161a; color: var(--fg); }
 
+/* IAM-1201: the attached-resource context control, revealed (its `hidden`
+   attribute removed by app.js) only when the Resource-based family is selected.
+   The resource-policy context (attached resource type + ARN) is explicit and
+   required for a resource-based policy. No inline styles (CSP). */
+.resource-context { margin: .5rem 0; padding: .6rem .75rem; border: 1px solid var(--border);
+  border-left: 4px solid var(--accent); border-radius: 4px; background: var(--panel); }
+.resource-context .hint { margin: 0 0 .35rem; }
+.rc-label { color: var(--muted); }
+#resource-type { font: inherit; padding: .4rem .5rem; border: 1px solid var(--border);
+  border-radius: 4px; background: #14161a; color: var(--fg); }
+.rc-arn { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9rem;
+  padding: .4rem .5rem; border: 1px solid var(--border); border-radius: 4px;
+  background: #14161a; color: var(--fg); min-width: min(28rem, 100%); flex: 1 1 18rem; }
+/* IAM-1204: optional owning-account id (S3 same-vs-cross-account). */
+.rc-account { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9rem;
+  padding: .4rem .5rem; border: 1px solid var(--border); border-radius: 4px;
+  background: #14161a; color: var(--fg); min-width: min(12rem, 100%); flex: 0 1 12rem; }
+
 /* IAM-505: built-in sample loaders. Fictional policies loadable with one
    click/keypress; each button has a visible description associated via
    aria-describedby. Escalation vs neutralized samples are tinted differently so
@@ -108,6 +126,12 @@ ul.coverage-codes li { margin: .25rem 0; }
 .coverage-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 700;
   color: var(--crit); }
 .coverage-path { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); }
+
+/* IAM-1206: a Deny + NotPrincipal hazard still fails closed, but it is a
+   documented security TRAP, not a plain unsupported shape. Escalate the
+   left-border to the critical color so it reads as a hazard, never an ordinary
+   deny. Inherits every other .coverage-blocked rule. */
+.coverage-hazard { border-left-color: var(--crit); }
 
 /* IAM-502: compact "Analysis coverage" summary panel, rendered above the
    findings in DOM + visual order. Names what the analysis did / did not cover.
@@ -265,6 +289,10 @@ svg.iam-graph text { fill: var(--fg); font-family: "Source Sans Pro", -apple-sys
    is visually distinct from a plain data read (can-read, "reads sensitive
    data") regardless of certainty color. */
 .iam-graph .graph-edge.edge-type-can-decrypt .edge-label { fill: var(--edge-decrypt); font-style: italic; }
+
+/* IAM-1202 resource-access edge accent: an external/anonymous principal reaching
+   the ATTACHED resource reads distinctly from an identity capability edge. */
+.iam-graph .graph-edge.edge-type-can-access-resource .edge-label { fill: var(--cert-potential); font-style: italic; }
 
 /* Shared arrowhead marker. A neutral light fill guarantees it is visible on the
    dark theme; where supported, context-stroke tints it to match the edge color

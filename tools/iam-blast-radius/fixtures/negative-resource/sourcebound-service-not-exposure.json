@@ -1,0 +1,35 @@
+{
+  "name": "Correctly source-bound service principal (SNS) - a NEGATIVE control, not a confused-deputy exposure",
+  "note": "IAM-1207 (boundary of suite-2 test 27). An SNS topic access policy grants the EventBridge service principal sns:Publish, but ANDs aws:SourceArn (ArnEquals) with aws:SourceAccount (StringEquals). That is the AWS-documented confused-deputy mitigation, so the RESOURCE-CONFUSED-DEPUTY finding must drop to an INFORMATIONAL negative control - NOT an exposure, NOT public write. It must not report a missing source binding and must not infer whether the referenced rule exists.",
+  "phase": 12,
+  "story": "IAM-1207",
+  "family": "resource",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sns", "arn": "arn:aws:sns:us-west-2:123456789012:security-events" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowOneEventRule",
+        "Effect": "Allow",
+        "Principal": { "Service": "events.amazonaws.com" },
+        "Action": "sns:Publish",
+        "Resource": "arn:aws:sns:us-west-2:123456789012:security-events",
+        "Condition": {
+          "ArnEquals": { "aws:SourceArn": "arn:aws:events:us-west-2:123456789012:rule/security-alerts" },
+          "StringEquals": { "aws:SourceAccount": "123456789012" }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["RESOURCE-CONFUSED-DEPUTY"],
+    "mustNotFind": ["PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT", "RESOURCE-SAME-ACCOUNT-GRANT"],
+    "maxSeverity": { "RESOURCE-CONFUSED-DEPUTY": "info" },
+    "maxPathExploitability": { "RESOURCE-CONFUSED-DEPUTY": "low" }
+  },
+  "rationale": "A service principal is NOT a public principal, so PUBLIC-ACCESS must never fire on events.amazonaws.com. The confused-deputy problem is that a resource policy trusting a service principal authorizes the SERVICE, not the actor who configured it; the AWS-documented fix is aws:SourceArn and/or aws:SourceAccount, which scope the service to act only on behalf of a specific source. Here BOTH are present and ANDed (ArnEquals aws:SourceArn + StringEquals aws:SourceAccount), so the grant is a correctly source-bound relationship - an informational NEGATIVE control, not an exposure. The analyzer must not warn about a missing source binding and must not infer whether the referenced EventBridge rule actually exists. Effective access still depends on identity policies and other layers not supplied. Ref: docs/resource-policy-semantics.md sec 4; confused-deputy (aws:SourceArn / aws:SourceAccount)."
+}

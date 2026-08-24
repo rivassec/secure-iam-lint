@@ -1259,6 +1259,150 @@
         "UI-only record cases covered by named Playwright/e2e assertions",
         "full node --test green; no regression to suites 1/2/3 or the negative corpora"
       ]
+    },
+    {
+      "id": "IAM-1200",
+      "title": "Phase 12: AWS-verified resource-policy semantics grounding doc",
+      "priority": 50,
+      "phase": 12,
+      "status": "pending",
+      "maximumIterations": 3,
+      "requirements": [
+        "Research + write docs/resource-policy-semantics.md (AWS-verified, cite sources). Cover: resource-policy evaluation from the RESOURCE's perspective (who may act on THIS resource); per-service shapes (S3 bucket + object, SNS topic, SQS queue, KMS key, generic); Principal types in resource policies (AWS account id/root/user/role ARN, Service, Federated, CanonicalUser, anonymous '*'); confused-deputy for service principals (aws:SourceArn / aws:SourceAccount / aws:SourceOrgID); TRANSPORT constraints (aws:SecureTransport) vs IDENTITY constraints - a transport Deny does not make public access private; account-delegation semantics (S3 same-account, KMS 'Enable IAM User Permissions' root delegation - not public, not root-only); the resource-vs-identity evaluation difference (a resource-policy Allow can grant even when the identity policy is silent; an applicable explicit Deny still blocks); the Deny+NotPrincipal permissions-boundary hazard; and Resource:* in a KMS key policy = the attached key, not every key.",
+        "State the load-bearing invariants: resource-policy context (attached resource type + ARN) is explicit; a service principal is not a public principal; account principals are not root-user-only; Resource:* is contextual to the attached resource. No shipped-code change in this story."
+      ],
+      "acceptance": [
+        "docs/resource-policy-semantics.md present; covers every Principal type, per-service shape, confused-deputy, transport-vs-identity, account-delegation, NotPrincipal hazard, KMS Resource:* semantics",
+        "claims consistent with current AWS docs (aws-verifier confirms against cited sources)",
+        "no shipped-code change"
+      ]
+    },
+    {
+      "id": "IAM-1201",
+      "title": "Phase 12: resource-policy family acceptance + resource-context input",
+      "priority": 51,
+      "phase": 12,
+      "status": "pending",
+      "maximumIterations": 5,
+      "ui": true,
+      "requirements": [
+        "Accept the resource-policy family (currently fail-closed UNSUPPORTED_POLICY_FAMILY when family='resource'). Add a RESOURCE-CONTEXT input (attached resource type + ARN) - required when family=resource (the 'resource-policy context is explicit' invariant): CSP-clean UI control in index.html wired via app.js, plus an analyze() option. Detect the service (s3-bucket / s3-object / sns / sqs / kms-key / generic) from the resource ARN/type; route resource statements to a NEW resource evaluator, never identity rules.",
+        "Keep fail-closed on genuinely unmodeled resource shapes and on a missing required resource-context (RESOURCE_CONTEXT_REQUIRED). Every resource finding carries the limitation that effective access depends on identity policies + other layers not supplied. Read docs/resource-policy-semantics.md + docs/acceptance-suite-2.md (26/27/28/32/33/49/51/53) + suite-3 (69/85).",
+        "Add fixtures: resource-family accepted (with context), resource-context-required (fail-closed without it)."
+      ],
+      "acceptance": [
+        "family=resource with a resource-context is accepted and routed to the resource evaluator, not identity rules",
+        "missing required resource-context fails closed (RESOURCE_CONTEXT_REQUIRED); unmodeled resource shape fails closed",
+        "resource-context UI control is CSP-clean, keyboard-accessible, labeled; Playwright spec added",
+        "full node --test green; identity/trust behavior unchanged"
+      ]
+    },
+    {
+      "id": "IAM-1202",
+      "title": "Phase 12: principal-centric analysis + public-access (transport vs identity)",
+      "priority": 52,
+      "phase": 12,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Principal-centric analysis: enumerate WHO can act on the resource - external accounts/roles/users, services, federated, anonymous '*'. Emit a PUBLIC-ACCESS finding (critical/high) for Principal '*' or {AWS:'*'} on a resource policy (suite-3 relevant; docs/acceptance-suite-2.md test 28 PublicRead).",
+        "A transport Deny (Bool aws:SecureTransport=false) is a TRANSPORT constraint, NOT an identity constraint: it does NOT make public read private; record it as transport-only; if S3 Block Public Access config is absent, state exposure depends on that external control (test 28). Do not claim the deny suppresses the public Allow entirely.",
+        "Graph: external-principal / service / anonymous ORIGIN -> can-access-resource edge to the attached resource node; reuse typed edges, no generic can-write aggregation. Add fixtures for the public-access + transport-deny cases (test 28) and an external-account resource grant."
+      ],
+      "acceptance": [
+        "Principal '*' on a resource policy -> PUBLIC-ACCESS critical/high; external principals enumerated",
+        "aws:SecureTransport Deny classified as transport-only and does NOT neutralize the public Allow (test 28); BPA-dependency stated",
+        "graph origin is external/service/anonymous principals, not the policy subject; typed edges only",
+        "full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1203",
+      "title": "Phase 12: confused-deputy on resource policies (service principals)",
+      "priority": 53,
+      "phase": 12,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "A resource policy granting a SERVICE principal (e.g. events.amazonaws.com, cloudtrail.amazonaws.com) WITHOUT aws:SourceArn / aws:SourceAccount -> a confused-deputy exposure finding (high/medium), identifying the missing source binding, subject to service support; do NOT describe the resource as publicly writable (the principal is a service, not '*') (docs/acceptance-suite-2.md test 26).",
+        "Properly source-bound (ArnEquals aws:SourceArn + StringEquals aws:SourceAccount, ANDed) -> negative control, informational/low, no 'missing source binding' warning; do not infer whether the referenced source resource exists (test 27).",
+        "Mismatched SourceArn account vs SourceAccount -> warn the constraint is internally inconsistent / likely ineffective; do not praise it as source-bound; do not turn the mismatch into a public-write finding (test 53). Reuse trust-family confused-deputy logic. Add fixtures for 26/27/53."
+      ],
+      "acceptance": [
+        "service principal without SourceArn/SourceAccount -> confused-deputy exposure, not public-write (test 26)",
+        "correctly source-bound service principal -> informational negative control, no missing-binding warning (test 27)",
+        "mismatched SourceArn/SourceAccount -> inconsistent/ineffective warning, not source-bound praise, not public-write (test 53)",
+        "full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1204",
+      "title": "Phase 12: same-account resource grants + bucket-vs-object resource typing",
+      "priority": 54,
+      "phase": 12,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Same-account IAM-user / role / assumed-role-session principal grants on a resource policy: report the direct resource-policy grant and explain the resource-vs-identity evaluation distinction - an implicit deny in the principal's identity policy does not necessarily limit a direct same-account resource-policy grant, but an applicable explicit deny still does; do not generalize to cross-account or role vs session (docs/acceptance-suite-2.md test 32; identify an assumed-role-session ARN as ONE exact session, not the underlying role - test 33).",
+        "Bucket-vs-object resource typing: s3:GetObject on a bucket-only ARN (no /*) -> action/resource-type mismatch warning in the resource context too (consistent with suite-2 test 50); object actions need object-scope, bucket actions need bucket-scope.",
+        "Add fixtures for 32, 33, and the bucket-vs-object case."
+      ],
+      "acceptance": [
+        "same-account direct user/role/session resource grant reported with the resource-vs-identity caveat; explicit deny still applies (test 32)",
+        "assumed-role-session principal identified as one exact session, not collapsed to the role ARN (test 33)",
+        "bucket-only ARN for an object action -> mismatch warning, no confirmed object-read",
+        "full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1205",
+      "title": "Phase 12: KMS key-policy semantics + resource-policy condition composition",
+      "priority": 55,
+      "phase": 12,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "KMS key policy: the 'Enable IAM User Permissions' statement (Principal {AWS: account-root}, kms:*, Resource:*) delegates broad KMS authority to the OWNING ACCOUNT - do NOT call the key public and do NOT say only the root user can administer it; explain KMS key-policy + IAM interaction needs service-specific semantics and individual reachable principals are unknown without identity policies. Resource:* in a key policy = the ATTACHED key only - never create a graph node per KMS key in the account (docs/acceptance-suite-2.md test 51).",
+        "Resource-policy condition composition (test 49): model AND across distinct condition keys and OR within a key's value list (e.g. aws:SourceVpce list OR-ed, aws:PrincipalTag/environment ANDed); report broad principal syntax constrained by network + principal-tag selectors; do not simplify to 'VPCe OR tag'. Add fixtures for 51 and 49."
+      ],
+      "acceptance": [
+        "KMS account-root delegation -> broad-account-authority finding, not public, not root-only; Resource:* = the attached key, no per-key node explosion (test 51)",
+        "condition composition: AND across keys, OR within values, preserved and correctly described (test 49)",
+        "full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1206",
+      "title": "Phase 12: NotPrincipal Deny hazard (semantic warning, not ordinary exclusion)",
+      "priority": 56,
+      "phase": 12,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Deny + NotPrincipal on a resource (or trust) policy: produce a HIGH-CONFIDENCE semantic warning about the Deny+NotPrincipal hazard - IAM principals WITH permissions boundaries can be denied regardless of the listed exclusion, so it cannot be modeled as an ordinary 'deny everyone except these' exclusion. Recommend ArnNotEquals with aws:PrincipalArn instead. This may remain a blocking/fail-closed coverage state (UNSUPPORTED_NOTPRINCIPAL) BUT must surface the specific hazard, never silently render an ordinary deny graph (docs/acceptance-suite-2.md test 29).",
+        "Keep NotPrincipal in an IDENTITY policy rejected as before; this story is the resource/trust Deny+NotPrincipal HAZARD messaging. Add a fixture for test 29."
+      ],
+      "acceptance": [
+        "Deny+NotPrincipal on a resource/trust policy -> high-confidence hazard warning (permissions-boundary caveat + ArnNotEquals recommendation), not an ordinary exclusion/graph (test 29)",
+        "identity-policy NotPrincipal still fails closed; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-1207",
+      "title": "Phase 12: resource negative corpus + fixturize + re-run all three suites",
+      "priority": 57,
+      "phase": 12,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Add a resource negative corpus (fixtures/negative-resource/, frozen 'does-not-fire / low' contracts + rationale) - the credibility artifact, like the identity + trust corpora: a correctly source-bound service trust, a same-account-scoped grant, a private bucket policy, a properly-conditioned KMS key policy, an org-constrained resource policy. Wire it into a test mirroring negative-trust.test.js.",
+        "Fixturize the resource-family suite-2 tests (26/27/28/32/33/49/51/53) and suite-3 (69/85) as committed acceptance fixtures driven from analyze(); they flip from fail-closed to real resource analysis. Re-run all THREE suites + node --test; update docs/acceptance-suite-2-results.md (+ a resource-results doc). Confirm the only remaining fail-closed set is genuinely-unmodeled shapes, and NO regression to suites 1/2/3, the identity negative corpus, or the trust negative corpus."
+      ],
+      "acceptance": [
+        "resource negative corpus present with frozen contracts + rationale; every entry passes",
+        "suite-2 26/27/28/32/33/49/51/53 + suite-3 69/85 now analyzed correctly (not fail-closed); scoreboards updated",
+        "no regression to suites 1/2/3 or the identity/trust negative corpora; full node --test green"
+      ]
     }
   ]
 }

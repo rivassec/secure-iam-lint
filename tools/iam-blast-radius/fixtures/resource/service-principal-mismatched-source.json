@@ -1,0 +1,54 @@
+{
+  "name": "Mismatched SourceArn and SourceAccount (suite-2 test 53)",
+  "note": "IAM-1203 / suite-2 test 53: an S3 bucket policy grants cloudtrail.amazonaws.com s3:PutObject constrained by StringEquals aws:SourceAccount 111122223333 AND ArnLike aws:SourceArn arn:aws:cloudtrail:*:444455556666:trail/*. The two disagree - SourceAccount pins 111122223333 while the account component of SourceArn is 444455556666. AWS ANDs distinct condition keys, so the intended confused-deputy binding is internally inconsistent and likely ineffective. RESOURCE-CONFUSED-DEPUTY fires with the mismatch warning (medium); it must NOT be praised as source-bound and must NOT become a public-write finding. S3 object ARN carries no account, and the service principal is not '*', so PUBLIC-ACCESS / RESOURCE-CROSS-ACCOUNT do not fire.",
+  "phase": 12,
+  "story": "IAM-1203",
+  "suite2Test": 53,
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::central-cloudtrail/AWSLogs/111122223333/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "CloudTrailWriteWithMismatchedAccounts",
+        "Effect": "Allow",
+        "Principal": { "Service": "cloudtrail.amazonaws.com" },
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::central-cloudtrail/AWSLogs/111122223333/*",
+        "Condition": {
+          "StringEquals": {
+            "aws:SourceAccount": "111122223333"
+          },
+          "ArnLike": {
+            "aws:SourceArn": "arn:aws:cloudtrail:*:444455556666:trail/*"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "service": "s3-object",
+    "principalTypes": ["service"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-CONFUSED-DEPUTY"],
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "medium" },
+    "whyIncludes": { "RESOURCE-CONFUSED-DEPUTY": ["inconsistent", "111122223333", "444455556666", "likely ineffective", "NOT a correctly source-bound control", "NOT public write"] },
+    "graphEdgeTypes": ["can-access-resource"],
+    "graphOriginTypes": ["Service"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT"]
+  }
+}

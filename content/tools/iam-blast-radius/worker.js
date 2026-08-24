@@ -22,10 +22,16 @@ self.addEventListener('message', (event) => {
   // chosen, analyze() fails closed with POLICY_FAMILY_REQUIRED rather than
   // auto-detecting - the same contract the synchronous path enforces.
   const requireExplicitFamily = !!(data && data.requireExplicitFamily);
+  // IAM-1201: the attached-resource context ({ type, arn }) for the resource
+  // family. Only a plain object is honored; anything else is dropped so the
+  // engine's context gate (RESOURCE_CONTEXT_REQUIRED) fails closed.
+  const resourceContext = data && data.resourceContext && typeof data.resourceContext === 'object'
+    ? data.resourceContext
+    : undefined;
 
   let result;
   try {
-    result = analyze(text, { family, requireExplicitFamily });
+    result = analyze(text, { family, requireExplicitFamily, resourceContext });
   } catch (e) {
     // analyze() already backstops, but never let the worker die silently.
     result = {

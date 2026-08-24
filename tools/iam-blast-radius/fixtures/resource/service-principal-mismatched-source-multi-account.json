@@ -1,0 +1,56 @@
+{
+  "name": "Multi-account SourceArn all disagreeing with SourceAccount (IAM-1204 regression)",
+  "note": "IAM-1204 regression: an S3 bucket policy grants cloudtrail.amazonaws.com s3:PutObject constrained by StringEquals aws:SourceAccount 111122223333 AND ArnLike aws:SourceArn with a TWO-value list pinning accounts 444455556666 and 777788889999. Neither SourceArn account matches the SourceAccount, so the binding is internally inconsistent exactly like the single-account mismatch (suite-2 test 53). commonSourceAccount() collapses a multi-account value list to null, which previously skipped the mismatch guard and mis-credited this as a clean source-bound negative control at info severity. It must classify as state=mismatched at medium, name every disagreeing account, and NOT be praised as source-bound nor become a public-write finding.",
+  "phase": 12,
+  "story": "IAM-1204",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::central-cloudtrail/AWSLogs/111122223333/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "CloudTrailWriteWithMultiAccountMismatchedArn",
+        "Effect": "Allow",
+        "Principal": { "Service": "cloudtrail.amazonaws.com" },
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::central-cloudtrail/AWSLogs/111122223333/*",
+        "Condition": {
+          "StringEquals": {
+            "aws:SourceAccount": "111122223333"
+          },
+          "ArnLike": {
+            "aws:SourceArn": [
+              "arn:aws:cloudtrail:*:444455556666:trail/a",
+              "arn:aws:cloudtrail:*:777788889999:trail/b"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "service": "s3-object",
+    "principalTypes": ["service"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-CONFUSED-DEPUTY"],
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "medium" },
+    "whyIncludes": { "RESOURCE-CONFUSED-DEPUTY": ["inconsistent", "111122223333", "444455556666", "777788889999", "likely ineffective", "NOT a correctly source-bound control", "NOT public write"] },
+    "graphEdgeTypes": ["can-access-resource"],
+    "graphOriginTypes": ["Service"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT"]
+  }
+}

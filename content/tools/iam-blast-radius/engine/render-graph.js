@@ -83,6 +83,9 @@ export const EDGE_STYLE_ORDER = Object.freeze([
 export const EDGE_TYPE_CLASSES = Object.freeze({
   'can-read': 'edge-type-can-read',
   'can-decrypt': 'edge-type-can-decrypt',
+  // IAM-1202: a resource-policy access edge (external/anonymous principal -> the
+  // attached resource), visually distinct from an identity capability edge.
+  'can-access-resource': 'edge-type-can-access-resource',
 });
 
 function edgeTypeClass(type) {

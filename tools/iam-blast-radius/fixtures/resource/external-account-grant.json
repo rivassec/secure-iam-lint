@@ -1,0 +1,48 @@
+{
+  "name": "Cross-account S3 bucket grant to an external principal",
+  "note": "IAM-1202: an S3 bucket policy grants a role in account 999988887777 read on the bucket's objects. S3 bucket/object ARNs (arn:aws:s3:::finance-reports/*) carry NO account id, so the analyzer cannot know the bucket owner's account and MUST NOT assert same-vs-cross-account on that missing evidence (a routine same-account grant would otherwise be mislabeled external). The named principal is enumerated distinctly (aws-principal-arn), NEVER collapsed with the resource owner or treated as public, and surfaced as a RESOURCE-CROSS-ACCOUNT (high) finding, but the account relationship is HEDGED as potentially cross-account (undetermined) rather than asserted. The graph still draws an external-principal -> can-access-resource -> attached-resource edge. Not anonymous, so no PUBLIC-ACCESS.",
+  "phase": 12,
+  "story": "IAM-1202",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::finance-reports/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PartnerRead",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::999988887777:role/PartnerRole"
+        },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::finance-reports/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "s3-object",
+    "principalTypes": ["aws-principal-arn"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-CROSS-ACCOUNT"],
+    "findingSeverities": { "RESOURCE-CROSS-ACCOUNT": "high" },
+    "whyIncludes": { "RESOURCE-CROSS-ACCOUNT": ["potentially cross-account", "does not include an account id", "999988887777"] },
+    "graphEdgeTypes": ["can-access-resource"],
+    "graphOriginTypes": ["ExternalPrincipal"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ", "PUBLIC-ACCESS"]
+  }
+}

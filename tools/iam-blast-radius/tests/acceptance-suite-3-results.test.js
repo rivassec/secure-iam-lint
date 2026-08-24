@@ -86,7 +86,13 @@ const MANIFEST = {
   66: { campaign: 'B', verdict: 'COMPLETE', ...fx('family-envelope/test-66-session-selected.json') },
   67: { campaign: 'B', verdict: 'BLOCKED', ...fx('family-selection/67-identity-rejects-principal.json') },
   68: { campaign: 'B', verdict: 'BLOCKED', ...fx('family-selection/68-trust-rejects-resource.json') },
-  69: { campaign: 'B', verdict: 'BLOCKED', ...fx('family-selection/69-resource-family-unsupported.json') },
+  // IAM-1207 (Phase 12): the resource family shipped, so test 69 flips from
+  // fail-closed to real resource analysis when the explicit attached-resource
+  // context is supplied - Principal "*" is anonymous PUBLIC-ACCESS. (The
+  // no-context fail-closed path stays covered by
+  // fixtures/family-selection/69-resource-family-unsupported.json via
+  // tests/phase10-family-selection.test.js.)
+  69: { campaign: 'B', verdict: 'COMPLETE_WITH_WARNINGS', ...fx('resource/suite3-test-69-public-resource-analyzed.json') },
   70: { campaign: 'B', verdict: 'COMPLETE', ...proc('tests/phase10-family-selection.test.js', 'tests/e2e/ui-shell.spec.js') },
   71: { campaign: 'B', verdict: 'COMPLETE', ...proc('tests/phase10-family-selection.test.js') },
 
@@ -106,7 +112,14 @@ const MANIFEST = {
   82: { campaign: 'D', verdict: 'COMPLETE_WITH_WARNINGS', ...fx('acceptance-3/test-82-question-mark-inside-user-principal-arn.json') },
   83: { campaign: 'D', verdict: 'COMPLETE_WITH_WARNINGS', ...fx('acceptance-3/test-83-one-invalid-member-poisons-principal-array.json') },
   84: { campaign: 'D', verdict: 'COMPLETE', ...fx('acceptance-3/test-84-short-form-account-principal-valid.json') },
-  85: { campaign: 'D', verdict: 'BLOCKED', ...fx('acceptance-3/test-85-principalarn-condition-wildcard-not-rejected.json') },
+  // IAM-1207 (Phase 12): test 85 flips from fail-closed to real resource analysis
+  // - a "*" narrowed by an ArnLike aws:PrincipalArn condition is analyzed as a
+  // NARROWED (high, not unconditioned-critical) public grant, and the condition-
+  // value wildcard is not mis-rejected. (The identity-mode "condition-value
+  // wildcard not mis-flagged as an invalid Principal" guard stays covered by
+  // fixtures/acceptance-3/test-85-principalarn-condition-wildcard-not-rejected.json
+  // via tests/acceptance-suite-3-fixtures.test.js.)
+  85: { campaign: 'D', verdict: 'COMPLETE_WITH_WARNINGS', ...fx('resource/suite3-test-85-star-narrowed-principalarn-analyzed.json') },
 
   // Campaign E - IAM and ECS semantic precision.
   86: { campaign: 'E', verdict: 'COMPLETE', ...fx('acceptance-3/test-86-add-user-to-group-membership.json') },

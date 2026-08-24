@@ -16,8 +16,9 @@ import { analyzeRules, ruleFindingDenySuppressed, actionResourceTypeMismatches }
 import { analyzeEscalations } from './escalation.js';
 import { analyzeTrust, trustFindingDenyState, summarizeTrustDeny } from './trust.js';
 import { analyzeEnvelope } from './envelope.js';
+import { analyzeResource } from './resource.js';
 import { correlateFindings } from './correlate.js';
-import { buildGraph, buildTrustGraph, GRAPH_LIMITS } from './graph.js';
+import { buildGraph, buildTrustGraph, buildResourceGraph, GRAPH_LIMITS } from './graph.js';
 import { detectFamily, FAMILIES } from './family.js';
 import { enrichCoverage, duplicateSids } from './coverage.js';
 import { classifyConditions, unsupportedConditionKeys } from './conditions.js';
@@ -505,6 +506,64 @@ function envelopeResult(model, coverage, effectiveFamily) {
   });
 }
 
+// IAM-1201 (Phase 12): an EXPLICIT, context-validated resource family is routed
+// to the family-aware RESOURCE evaluator (engine/resource.js), NEVER to the
+// identity rules/escalation engine. A resource-based policy is analyzed from the
+// RESOURCE's perspective (who may act on THIS attached resource); running identity
+// rules on it would emit confident but wrong identity-style findings (threat-model
+// T8). This foundational tranche accepts + routes the family, records the attached-
+// resource context, and reports coverage as INCOMPLETE (the service-specific
+// resource finding families are IAM-1202..1206). The graph is EMPTY by
+// construction (the external-principal -> resource graph is IAM-1202). Every
+// resource finding (none in this tranche) will carry the caveat that effective
+// access depends on identity policies + other layers not supplied.
+function resourceResult(model, coverage, effectiveFamily, options) {
+  const resourceContext = (options && options.resourceContext) || null;
+  const res = analyzeResource(model, resourceContext);
+  if (!res.ok) return fail(res.errors);
+
+  const stamped = res.findings.map((f) => stampFamily(f, effectiveFamily));
+  const findings = Object.freeze(sortFindings(stamped));
+
+  // IAM-1202: the resource GRAPH models the external-origin relationship - each
+  // anonymous/external principal named by a resource grant -> a can-access-resource
+  // edge -> the ATTACHED resource node (built from res.findings + the validated
+  // attached-resource context). The origin is the external principal, NOT the
+  // policy subject. On any failure fall back to an empty graph (the findings table
+  // + coverage stay the authoritative representation).
+  const rg = res.context ? buildResourceGraph(model, res.findings, res.context) : null;
+  const graph = rg && rg.ok ? rg.graph : emptyGraph();
+
+  const enriched = enrichCoverage(coverage, {
+    model,
+    graph,
+    catalogVersion: defaultCatalog.version,
+    unsupportedConditions: unsupportedConditionKeys(model),
+    unrecognizedActions: unrecognizedActions(model, defaultCatalog),
+    duplicateSids: duplicateSids(model),
+    // IAM-1201: the resource evaluator's coverage (detected service + attached ARN
+    // + enumerated principal types) flips coverage to INCOMPLETE so an accepted
+    // resource policy with zero findings is never presented as proven-safe.
+    resourceCoverage: res.coverage,
+  });
+
+  return Object.freeze({
+    ok: true,
+    errors: Object.freeze([]),
+    findings,
+    model,
+    graph: Object.freeze(graph),
+    catalogVersion: CATALOG_VERSION,
+    counts: Object.freeze({
+      findings: findings.length,
+      edges: graph.edges.length,
+      nodes: graph.nodes.length,
+    }),
+    family: enriched.family,
+    coverage: enriched,
+  });
+}
+
 /**
  * Run the full analysis pipeline on raw policy text.
  *
@@ -549,6 +608,15 @@ export function analyze(text, options) {
     if (effectiveFamily === FAMILIES.PERMISSIONS_BOUNDARY
       || effectiveFamily === FAMILIES.SESSION) {
       return envelopeResult(m.model, coverage, effectiveFamily);
+    }
+
+    // IAM-1201 (Phase 12): an accepted resource family (explicit selection + a
+    // valid attached-resource context - the family gate has already failed closed
+    // otherwise) is routed to the resource evaluator, never the identity engine.
+    // Only a NON-blocked accepted resource reaches here (blocked shapes returned
+    // via blockedResult above), so this is the accept-and-route path.
+    if (effectiveFamily === FAMILIES.RESOURCE) {
+      return resourceResult(m.model, coverage, effectiveFamily, options || {});
     }
 
     const rules = analyzeRules(m.model);

@@ -1,0 +1,54 @@
+{
+  "name": "Properly source-bound service principal (suite-2 test 27)",
+  "note": "IAM-1203 / suite-2 test 27: the same SNS topic policy as test 26, but the events.amazonaws.com grant is constrained by ArnEquals aws:SourceArn AND StringEquals aws:SourceAccount (AWS ANDs the two operators). This is the AWS-recommended confused-deputy mitigation, so RESOURCE-CONFUSED-DEPUTY is emitted as a NEGATIVE control (info), with NO missing-source-binding warning. Both SourceArn's account (123456789012) and SourceAccount (123456789012) agree, so it is NOT a mismatch. The analyzer does NOT infer whether the referenced EventBridge rule actually exists.",
+  "phase": 12,
+  "story": "IAM-1203",
+  "suite2Test": 27,
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sns", "arn": "arn:aws:sns:us-west-2:123456789012:security-events" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowOneEventRule",
+        "Effect": "Allow",
+        "Principal": { "Service": "events.amazonaws.com" },
+        "Action": "sns:Publish",
+        "Resource": "arn:aws:sns:us-west-2:123456789012:security-events",
+        "Condition": {
+          "ArnEquals": {
+            "aws:SourceArn": "arn:aws:events:us-west-2:123456789012:rule/security-alerts"
+          },
+          "StringEquals": {
+            "aws:SourceAccount": "123456789012"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "service": "sns",
+    "principalTypes": ["service"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-CONFUSED-DEPUTY"],
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "info" },
+    "whyIncludes": { "RESOURCE-CONFUSED-DEPUTY": ["source-binding condition", "aws:SourceArn", "aws:SourceAccount", "NEGATIVE control", "does NOT infer whether the referenced source resource actually exists"] },
+    "graphEdgeTypes": ["can-access-resource"],
+    "graphOriginTypes": ["Service"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT"]
+  }
+}

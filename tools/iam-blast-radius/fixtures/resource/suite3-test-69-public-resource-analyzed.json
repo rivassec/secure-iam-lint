@@ -1,0 +1,42 @@
+{
+  "name": "Resource family selected WITH an attached-resource context: public '*' S3 read (suite-3 test 69, flipped)",
+  "note": "IAM-1207 (suite-3 test 69). Previously deferred: selecting the resource family failed closed (UNSUPPORTED_POLICY_FAMILY / RESOURCE_CONTEXT_REQUIRED). With the Phase-12 resource evaluator shipped AND the explicit attached-resource context supplied, this is now analyzed for real: Principal '*' on an S3 object policy is anonymous PUBLIC-ACCESS (critical). It is presented as a resource-analysis result, NOT an identity result, and coverage stays INCOMPLETE (unsupported != safe).",
+  "phase": 12,
+  "story": "IAM-1207",
+  "suite3Test": 69,
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::public/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::public/*"
+      }
+    ]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "s3-object",
+    "principalTypes": ["anonymous"],
+    "anonymousPresent": true,
+    "findingIds": ["PUBLIC-ACCESS"],
+    "findingSeverities": { "PUBLIC-ACCESS": "critical" },
+    "whyIncludes": { "PUBLIC-ACCESS": ["anonymous", "public access"] },
+    "graphEdgeTypes": ["can-access-resource"],
+    "graphOriginTypes": ["ExternalPrincipal"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  }
+}

@@ -352,6 +352,27 @@ test('NotPrincipal is rejected in the UI with its code and exact JSON path', asy
   await expect(page.locator('#findings table')).toHaveCount(0);
 });
 
+// IAM-1206 (suite-2 test 29): a Deny + NotPrincipal statement is a documented
+// permissions-boundary trap. It still fails closed, but the UI must surface the
+// SPECIFIC hazard (the permissions-boundary caveat + the ArnNotEquals /
+// aws:PrincipalArn recommendation) as a high-confidence hazard, never as an
+// ordinary deny. The fixture above is a Deny + NotPrincipal, so the notice is
+// escalated to the .coverage-hazard state.
+test('Deny + NotPrincipal surfaces the permissions-boundary hazard in the UI', async ({ page }) => {
+  await page.fill('#policy-input', fixture('family/notprincipal-rejected.json'));
+  await page.click('#analyze-btn');
+
+  const notice = page.locator('#findings .coverage-blocked.coverage-hazard');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('Security hazard: Deny + NotPrincipal');
+  await expect(notice).toContainText('permissions boundary');
+  await expect(notice).toContainText('ArnNotEquals');
+  await expect(notice).toContainText('aws:PrincipalArn');
+  // Never an ordinary deny graph, never a findings table.
+  await expect(page.locator('#findings table')).toHaveCount(0);
+  await expect(page.locator('#graph svg')).toHaveCount(0);
+});
+
 test('manual override to an unmodeled family blocks even a clean identity policy', async ({ page }) => {
   await page.fill('#policy-input', fixture('family/identity-auto-detect.json'));
   await page.selectOption('#policy-family', 'scp-rcp');
@@ -433,19 +454,38 @@ test('Role-trust selected on a statement with a Resource is a trust-policy synta
   await expect(page.locator('#findings table')).toHaveCount(0);
 });
 
-test('Resource family selected fails closed UNSUPPORTED_POLICY_FAMILY, input preserved (test 69)', async ({ page }) => {
+test('Resource family without an attached-resource context fails closed RESOURCE_CONTEXT_REQUIRED; supplying it accepts (test 69, IAM-1201)', async ({ page }) => {
   const text = JSON.stringify({
     Version: '2012-10-17',
     Statement: [{ Effect: 'Allow', Principal: '*', Action: 's3:GetObject', Resource: 'arn:aws:s3:::public/*' }],
   }, null, 2);
   await page.fill('#policy-input', text);
   await page.selectOption('#policy-family', 'resource');
-  await page.click('#analyze-btn');
 
-  await expect(page.locator('#findings .coverage-blocked')).toContainText('UNSUPPORTED_POLICY_FAMILY');
+  // IAM-1201: selecting the resource family reveals the attached-resource context
+  // control (hidden for every other family).
+  await expect(page.locator('#resource-context')).toBeVisible();
+  await expect(page.locator('#resource-type')).toBeVisible();
+  await expect(page.locator('#resource-arn')).toBeVisible();
+
+  await page.click('#analyze-btn');
+  // Without the context, resource analysis fails closed as CONTEXT REQUIRED (not
+  // UNSUPPORTED_POLICY_FAMILY - the family is now supported, its context is not).
+  await expect(page.locator('#findings .coverage-blocked')).toContainText('RESOURCE_CONTEXT_REQUIRED');
+  await expect(page.locator('#findings .coverage-blocked')).not.toContainText('UNSUPPORTED_POLICY_FAMILY');
   await expect(page.locator('#findings table')).toHaveCount(0);
-  // Input is preserved so the user can re-select a supported family.
+  // Input is preserved so the user can supply the context and re-analyze.
   await expect(page.locator('#policy-input')).toHaveValue(text);
+
+  // Supplying the attached-resource ARN accepts + routes to the resource
+  // evaluator. The blocking notice clears; the analysis is accepted but INCOMPLETE
+  // (the service-specific resource finding rules are a later tranche), so no
+  // identity finding and no blocked notice remain.
+  await page.fill('#resource-arn', 'arn:aws:s3:::public/*');
+  await page.locator('#resource-arn').blur();
+  await expect(page.locator('#findings .coverage-blocked')).toHaveCount(0);
+  await expect(page.locator('#status')).toHaveAttribute('data-status', 'warned');
+  await expect(page.locator('#findings table')).toHaveCount(0);
 });
 
 test('switching the family invalidates the prior analysis immediately (test 70)', async ({ page }) => {

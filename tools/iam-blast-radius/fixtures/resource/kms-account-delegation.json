@@ -1,0 +1,48 @@
+{
+  "name": "KMS key-policy account-root delegation ('Enable IAM User Permissions', suite-2 test 51)",
+  "note": "IAM-1205 / acceptance-suite-2 test 51. The standard KMS key-policy statement grants Principal {AWS: arn:aws:iam::111122223333:root} kms:* on Resource:* for a key OWNED by account 111122223333. This must be read as an ACCOUNT DELEGATION to the owning account (the account and its IAM-empowered administrators), NOT public access (the principal is one account, not '*') and NOT root-user-only (the ':root' account principal represents the account and its admins). Per KMS semantics the account-principal statement does not itself grant any individual IAM principal use of the key; it ALLOWS the account to delegate access via IAM identity policies, so which principals are actually reachable is UNKNOWN without those policies. Resource:'*' in a key policy means THIS attached key only, never every KMS key in the account - and the analyzer builds NO graph node per key (graphEdgeTypes is empty). The finding must be RESOURCE-KMS-ACCOUNT-DELEGATION, never PUBLIC-ACCESS, RESOURCE-CROSS-ACCOUNT, RESOURCE-SAME-ACCOUNT-GRANT, or any identity-style broad-resource / kms:* finding.",
+  "phase": 12,
+  "story": "IAM-1205",
+  "suite2Test": 51,
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "kms-key", "arn": "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "EnableIAMUserPermissions",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::111122223333:root"
+        },
+        "Action": "kms:*",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ", "KMS-DECRYPT", "DIRECT-IAM-ADMIN"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED", "UNSUPPORTED_RESOURCE_SHAPE"],
+    "service": "kms-key",
+    "principalTypes": ["aws-root"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-KMS-ACCOUNT-DELEGATION"],
+    "findingSeverities": { "RESOURCE-KMS-ACCOUNT-DELEGATION": "medium" },
+    "whyIncludes": { "RESOURCE-KMS-ACCOUNT-DELEGATION": ["OWNING ACCOUNT", "NOT public access", "root user only", "kms:*", "attached key only", "UNKNOWN", "every KMS key in the account"] },
+    "graphEdgeTypes": [],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ", "KMS-DECRYPT", "DIRECT-IAM-ADMIN", "PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT", "RESOURCE-SAME-ACCOUNT-GRANT", "RESOURCE-ACTION-RESOURCE-MISMATCH"]
+  }
+}

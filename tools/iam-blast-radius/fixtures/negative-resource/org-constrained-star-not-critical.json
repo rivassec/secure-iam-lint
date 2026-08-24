@@ -1,0 +1,34 @@
+{
+  "name": "Principal '*' narrowed by aws:PrincipalOrgID (positive operator) - surfaced but NOT unconditioned-critical public",
+  "note": "IAM-1207 (org-constrained resource policy negative control). An S3 object policy grants s3:GetObject to Principal '*' but ANDs StringEquals aws:PrincipalOrgID. A positive principal-identity condition excludes anonymous/unauthenticated callers (who carry no such key), so the grant is NARROWED to the named organization. It must still surface (fail closed toward surfacing) but must NOT be the unconditioned critical 'anyone including anonymous' public finding.",
+  "phase": 12,
+  "story": "IAM-1207",
+  "family": "resource",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::shared-artifacts/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "OrgOnlyRead",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::shared-artifacts/*",
+        "Condition": {
+          "StringEquals": { "aws:PrincipalOrgID": "o-abc1234567" }
+        }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["PUBLIC-ACCESS"],
+    "mustNotFind": ["RESOURCE-CROSS-ACCOUNT", "RESOURCE-CONFUSED-DEPUTY"],
+    "maxSeverity": { "PUBLIC-ACCESS": "high" },
+    "maxPathExploitability": { "PUBLIC-ACCESS": "medium" }
+  },
+  "rationale": "A '*' principal gated by StringEquals aws:PrincipalOrgID is a principal-IDENTITY constraint with a POSITIVE operator: anonymous, unauthenticated callers carry no aws:PrincipalOrgID and so are exactly what the condition excludes. The grant is therefore NARROWED to principals in organization o-abc1234567, not open to everyone - so it must NOT be reported as the unconditioned 'anyone including anonymous' critical public finding. The engine still surfaces it (fail closed toward surfacing) as PUBLIC-ACCESS but capped at high with the '*' recorded as narrowed by aws:PrincipalOrgID; it must never reach critical here, and the condition value must be preserved verbatim, not rejected. Contrast a NEGATED operator (StringNotEquals) which would be an expansion and stay critical. Ref: docs/resource-policy-semantics.md sec 3.1 / 9."
+}

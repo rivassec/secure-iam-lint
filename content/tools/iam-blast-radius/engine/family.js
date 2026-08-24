@@ -22,6 +22,11 @@
 // Pure, deterministic, dependency-free. No network APIs. No eval/Function. No
 // DOM. Same input (+ same options) -> same coverage, every run.
 
+// IAM-1201: the resource family is context-gated. The gate validates the explicit
+// attached-resource context (type + ARN) via the resource module, which owns the
+// service detection and the resource coverage codes.
+import { parseResourceContext, RESOURCE_CODES } from './resource.js';
+
 // Recognized families. IDENTITY is the only family the current rule engine
 // models; the rest are DETECTED (so exports and the coverage panel can name
 // them truthfully) but fail closed until a family-aware evaluator exists.
@@ -136,7 +141,37 @@ export const COVERAGE_CODES = Object.freeze({
   // absent/empty selection is NOT invalid - it is "no selection" (paste-and-go
   // auto-detect, or POLICY_FAMILY_REQUIRED under the explicit-family contract).
   INVALID_FAMILY: 'INVALID_FAMILY',
+  // IAM-1201 (Phase 12): the resource family is now ACCEPTED, but its context is
+  // explicit and required. These codes (owned by engine/resource.js) surface here
+  // for the gate + every export. RESOURCE_CONTEXT_REQUIRED: family=resource was
+  // selected on a resource-policy shape but no valid attached-resource context
+  // (type + ARN) was supplied. UNSUPPORTED_RESOURCE_SHAPE: the context parsed to a
+  // valid ARN for a service this analyzer does not yet model. Both fail closed.
+  RESOURCE_CONTEXT_REQUIRED: RESOURCE_CODES.RESOURCE_CONTEXT_REQUIRED,
+  UNSUPPORTED_RESOURCE_SHAPE: RESOURCE_CODES.UNSUPPORTED_RESOURCE_SHAPE,
+  // IAM-1201: non-blocking - an accepted resource family whose service-specific
+  // finding rules are foundational (not yet implemented), so coverage is
+  // incomplete ("zero findings does NOT mean safe").
+  RESOURCE_ANALYSIS_INCOMPLETE: RESOURCE_CODES.RESOURCE_ANALYSIS_INCOMPLETE,
 });
+
+// IAM-1206: the high-confidence Deny + NotPrincipal hazard warning surfaced on
+// the blocking code (and, via coverage.js, on the unsupported-element entry and
+// in every export). It states the documented permissions-boundary trap and the
+// recommended safe rewrite. Kept as a single constant so the engine, coverage
+// summary, and UI all speak with one voice (docs/resource-policy-semantics.md
+// section 8; acceptance-suite-2 test 29).
+export const NOTPRINCIPAL_DENY_HAZARD_MESSAGE =
+  'SECURITY HAZARD: Deny with NotPrincipal is not an ordinary "deny everyone ' +
+  'except these" exclusion and cannot be modeled as one. AWS documents that a ' +
+  'NotPrincipal element with a Deny effect ALWAYS denies any IAM principal that ' +
+  'has a permissions boundary attached, regardless of the principals listed in ' +
+  'NotPrincipal - so principals you intended to EXEMPT can still be denied. It is ' +
+  'also easy to accidentally deny an entire account. This analyzer does not model ' +
+  'NotPrincipal, so it fails closed here rather than render a misleading ordinary-' +
+  'deny result. Recommended safe rewrite: Deny on Principal "*" with ' +
+  'ArnNotEquals on aws:PrincipalArn naming the allowed principal ARN(s) instead ' +
+  'of NotPrincipal.';
 
 // IAM-1103: canonicalize the family-selection vocabulary. A caller (or a record-
 // test bundle) may name a family by a common synonym - notably the org-control
@@ -265,7 +300,14 @@ function isTrustOnly(statements) {
 
 // Classify the family from shape alone (no override applied). Returns the
 // detected family plus any blocking codes the SHAPE mandates.
-function classifyShape(statements) {
+//
+// IAM-1201: when the caller has EXPLICITLY selected the resource family
+// (opts.suppressResourceBlock), a clean resource shape must NOT be auto-blocked
+// here with UNSUPPORTED_POLICY_FAMILY - detectFamily's resource branch decides
+// accepted (with context) vs RESOURCE_CONTEXT_REQUIRED (without). Auto-detect
+// (no explicit resource selection) still fails closed on a resource shape.
+function classifyShape(statements, opts) {
+  const suppressResourceBlock = !!(opts && opts.suppressResourceBlock);
   const blockingCodes = [];
 
   // 0) SCP / RCP control-policy shape (IAM-704, test 19): fail closed BEFORE the
@@ -289,15 +331,40 @@ function classifyShape(statements) {
   // 1) NotPrincipal is a recognized-but-unmodeled element: reject each
   // occurrence with its exact JSON path. This is a resource-policy element, so
   // the detected family is resource, but it fails closed regardless.
+  //
+  // IAM-1206: a Deny + NotPrincipal statement is a DOCUMENTED semantic TRAP, not
+  // an ordinary "deny everyone except these" exclusion. AWS states the
+  // NotPrincipal + Deny element "will always deny any IAM principal that has a
+  // permissions boundary policy attached, regardless of the values specified in
+  // the NotPrincipal element" - so the principals the author intended to EXEMPT
+  // can still be denied. We keep failing closed (UNSUPPORTED_NOTPRINCIPAL, empty
+  // graph - never a rendered ordinary-deny graph) BUT surface the SPECIFIC hazard
+  // (the permissions-boundary caveat + the ArnNotEquals / aws:PrincipalArn
+  // recommendation) as a high-confidence warning on the blocking code, so a
+  // reader is not left thinking the exclusion behaves as written
+  // (docs/resource-policy-semantics.md section 8; acceptance-suite-2 test 29).
+  // A NotPrincipal with any other effect (AWS only supports it with Deny; an
+  // Allow + NotPrincipal is invalid) stays the generic unmodeled-element message.
   const notPrincipalStmts = statements.filter((s) => s.notPrincipal != null);
   for (const s of notPrincipalStmts) {
-    blockingCodes.push(code(
-      COVERAGE_CODES.UNSUPPORTED_NOTPRINCIPAL,
-      'NotPrincipal is a recognized resource-policy element that this analyzer ' +
-        'does not yet model. It is not the same as an absent Principal and is ' +
-        'never silently ignored.',
-      `Statement[${s.index}].NotPrincipal`,
-    ));
+    if (s.effect === 'Deny') {
+      blockingCodes.push({
+        code: COVERAGE_CODES.UNSUPPORTED_NOTPRINCIPAL,
+        message: NOTPRINCIPAL_DENY_HAZARD_MESSAGE,
+        path: `Statement[${s.index}].NotPrincipal`,
+        // High-confidence, first-class hazard marker (not an ordinary unsupported
+        // element): lets coverage/exports/UI render it as a security hazard.
+        hazard: true,
+      });
+    } else {
+      blockingCodes.push(code(
+        COVERAGE_CODES.UNSUPPORTED_NOTPRINCIPAL,
+        'NotPrincipal is a recognized resource-policy element that this analyzer ' +
+          'does not yet model. It is not the same as an absent Principal and is ' +
+          'never silently ignored.',
+        `Statement[${s.index}].NotPrincipal`,
+      ));
+    }
   }
 
   const withElement = statements.filter(hasPrincipalElement);
@@ -334,7 +401,11 @@ function classifyShape(statements) {
             `Statement[${s.index}].Principal`,
           ));
         }
-      } else {
+      } else if (!suppressResourceBlock) {
+        // Auto-detect (no explicit resource selection): a resource shape fails
+        // closed. When resource is EXPLICITLY selected (suppressResourceBlock),
+        // detectFamily's resource branch handles it (accept-with-context or
+        // RESOURCE_CONTEXT_REQUIRED) instead of this generic block.
         blockingCodes.push(code(
           COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY,
           `Detected a ${FAMILY_LABELS[detected]} (every statement names a ` +
@@ -473,7 +544,13 @@ export function detectFamily(model, options) {
     });
   }
 
-  const { detected, blockingCodes } = classifyShape(statements);
+  // IAM-1201: is the resource family EXPLICITLY selected? If so, a clean resource
+  // shape is not auto-blocked in classifyShape; the resource branch below decides
+  // accepted (with context) vs RESOURCE_CONTEXT_REQUIRED (without).
+  const resourceExplicit = rawSelection === FAMILIES.RESOURCE;
+  const { detected, blockingCodes } = classifyShape(statements, {
+    suppressResourceBlock: resourceExplicit,
+  });
 
   // IAM-704 (test 22C): version gate. An ABSENT Version is tolerated; any
   // EXPLICIT version other than the modeled grammar (e.g. legacy '2008-10-17')
@@ -509,6 +586,13 @@ export function detectFamily(model, options) {
   }
 
   const family = override || detected;
+
+  // IAM-1201: set true only when an explicit resource selection is ACCEPTED (a
+  // resource shape + a valid, modeled attached-resource context). Drives
+  // `supported` below so the orchestrator routes an accepted resource policy to
+  // the resource evaluator, while resource stays OUT of SUPPORTED_FAMILIES (a
+  // resource shape is not supported without its explicit context).
+  let resourceAccepted = false;
 
   if (override) {
     // IAM-1001 family-shape guards for an EXPLICIT selection. These are more
@@ -554,10 +638,53 @@ export function detectFamily(model, options) {
       }
     }
 
-    if (!SUPPORTED_FAMILIES.has(override)) {
-      // Selected a family we do not model (resource / scp-rcp) -> fail closed
-      // NAMING the selected family; the input is preserved so the user can
-      // re-select (test 69).
+    if (override === FAMILIES.RESOURCE) {
+      // IAM-1201: the resource family is ACCEPTED, gated on the explicit attached-
+      // resource context. Three outcomes, all fail-closed on anything but a clean
+      // resource shape with a modeled context:
+      //   (a) not a resource shape -> UNSUPPORTED_POLICY_FAMILY (the document does
+      //       not name a Principal on every statement, so it is not a resource
+      //       policy). Preserved for the record/e2e contract (resource selected on
+      //       an identity shape fails closed). A more specific shape block from
+      //       classifyShape (NotPrincipal / ambiguous / version) stays authoritative.
+      //   (b) a resource shape already failed closed on a recognized-but-unmodeled
+      //       element (NotPrincipal) or an unsupported Version -> that block stands.
+      //   (c) a clean resource shape -> require + validate the attached-resource
+      //       context: missing/invalid -> RESOURCE_CONTEXT_REQUIRED; a recognized-
+      //       but-unmodeled service -> UNSUPPORTED_RESOURCE_SHAPE; otherwise accept.
+      if (detected !== FAMILIES.RESOURCE) {
+        if (blockingCodes.length === 0) {
+          blockingCodes.push(code(
+            COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY,
+            'Resource-based policy selected, but this document is not a resource-' +
+              'policy shape: a resource-based policy names a Principal on every ' +
+              'statement. Analysis stops rather than analyze it as a resource policy; ' +
+              'your input is preserved so you can re-select a supported family.',
+            null,
+          ));
+        }
+        notes.push('Resource family selected; the document is not a resource-policy shape.');
+      } else if (blockingCodes.length > 0) {
+        // A resource shape that classifyShape / the version gate already failed
+        // closed (e.g. NotPrincipal is UNSUPPORTED_NOTPRINCIPAL until IAM-1206).
+        // Leave that block authoritative; do not accept.
+        notes.push('Resource family selected; a recognized-but-unmodeled element blocks analysis.');
+      } else {
+        const rc = parseResourceContext(opts.resourceContext);
+        if (!rc.ok) {
+          blockingCodes.push(code(rc.code, rc.message, null));
+          notes.push('Resource family selected without a modeled attached-resource context.');
+        } else {
+          resourceAccepted = true;
+          notes.push(
+            `Resource family accepted; attached ${rc.service} resource context supplied ` +
+              '(routed to the resource evaluator, not identity rules).',
+          );
+        }
+      }
+    } else if (!SUPPORTED_FAMILIES.has(override)) {
+      // Selected a family we do not model (scp-rcp) -> fail closed NAMING the
+      // selected family; the input is preserved so the user can re-select (test 69).
       if (!blockingCodes.some((b) => b.code === COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY)) {
         blockingCodes.push(code(
           COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY,
@@ -617,7 +744,10 @@ export function detectFamily(model, options) {
   }
 
   const blocked = blockingCodes.length > 0;
-  const supported = !blocked && SUPPORTED_FAMILIES.has(family);
+  // IAM-1201: an ACCEPTED resource family is supported (routed to the resource
+  // evaluator) even though resource is deliberately kept OUT of SUPPORTED_FAMILIES
+  // (a resource shape without its explicit context is not supported).
+  const supported = !blocked && (SUPPORTED_FAMILIES.has(family) || resourceAccepted);
 
   return Object.freeze({
     detected,

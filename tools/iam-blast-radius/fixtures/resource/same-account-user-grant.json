@@ -1,0 +1,47 @@
+{
+  "name": "Same-account direct IAM-user resource grant (suite-2 test 32)",
+  "note": "IAM-1204 / acceptance-suite-2 test 32. An S3 bucket policy grants a named IAM user (arn:aws:iam::123456789012:user/Alice) in the resource-OWNING account (123456789012) permission to read the bucket's objects. Because S3 bucket/object ARNs carry NO account id, the owning account is supplied EXPLICITLY in the attached-resource context (the 'resource-policy context is explicit' invariant). With the owning account known and equal to the principal's account, this is a DIRECT SAME-ACCOUNT grant (RESOURCE-SAME-ACCOUNT-GRANT, medium), NOT cross-account and NOT public. The finding explains the resource-vs-identity evaluation distinction: within one account AWS unions identity + resource permissions, so an IMPLICIT deny in the user's identity policy / permissions boundary does not, by itself, limit this direct resource-policy grant; an applicable EXPLICIT deny still blocks. The user principal is typed distinctly (IAM user) and never generalized to a role or cross-account principal.",
+  "phase": 12,
+  "story": "IAM-1204",
+  "suite2Test": 32,
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-bucket", "arn": "arn:aws:s3:::finance-reports", "account": "123456789012" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DirectUserGrant",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::123456789012:user/Alice"
+        },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::finance-reports/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
+    "service": "s3-bucket",
+    "principalTypes": ["aws-principal-arn"],
+    "anonymousPresent": false,
+    "findingIds": ["RESOURCE-SAME-ACCOUNT-GRANT"],
+    "findingSeverities": { "RESOURCE-SAME-ACCOUNT-GRANT": "medium" },
+    "whyIncludes": { "RESOURCE-SAME-ACCOUNT-GRANT": ["SAME-ACCOUNT", "123456789012", "IAM user", "IMPLICIT deny", "EXPLICIT Deny", "not generalized"] },
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ", "PUBLIC-ACCESS", "RESOURCE-CROSS-ACCOUNT", "RESOURCE-ACTION-RESOURCE-MISMATCH"]
+  }
+}

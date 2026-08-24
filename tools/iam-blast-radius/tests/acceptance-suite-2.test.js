@@ -21,6 +21,7 @@ import { dirname, join } from 'node:path';
 
 import { analyze } from '../../../content/tools/iam-blast-radius/engine/analyze.js';
 import { validate } from '../../../content/tools/iam-blast-radius/engine/validate.js';
+import { toMarkdown, toJSON } from '../../../content/tools/iam-blast-radius/engine/report.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(here, '..', 'fixtures');
@@ -155,4 +156,102 @@ test('duplicate-key block never false-positives on the protected corpora', () =>
     }
   }
   assert.deepEqual(offenders, [], `duplicate-key false positives: ${offenders.join(', ')}`);
+});
+
+// ---------------------------------------------------------------------------
+// IAM-1206 (suite-2 test 29): the Deny + NotPrincipal hazard. A resource (or
+// trust) policy that uses NotPrincipal with a Deny effect is a documented AWS
+// trap - a NotPrincipal + Deny ALWAYS denies any principal that has a
+// permissions boundary attached, regardless of the NotPrincipal list - so it
+// cannot be modeled as an ordinary exclusion. The engine keeps FAILING CLOSED
+// (UNSUPPORTED_NOTPRINCIPAL, empty graph, zero findings) but must SURFACE the
+// specific hazard (the permissions-boundary caveat + the ArnNotEquals /
+// aws:PrincipalArn recommendation) as a high-confidence warning, in the DOM
+// coverage notice AND in every export. This drives that fixture explicitly.
+// ---------------------------------------------------------------------------
+
+function hazardFixture() {
+  const all = loadDir(suite2Dir);
+  const hit = all.find(({ data }) => data.expect && data.expect.notPrincipalHazard);
+  assert.ok(hit, 'a suite-2 fixture must carry a notPrincipalHazard expectation (test 29)');
+  return hit;
+}
+
+test('suite-2 test 29: Deny + NotPrincipal fails closed AND surfaces the specific hazard', () => {
+  const { data } = hazardFixture();
+  const exp = data.expect;
+  const hz = exp.notPrincipalHazard;
+  const text = fixtureText(data);
+
+  const res = analyze(text, data.options || {});
+  // Fail-closed coverage state: a well-formed conclusion, not a crash.
+  assert.equal(res.ok, true, 'ok:true (blocking coverage, not an error)');
+  assert.equal(res.coverage.blocked, true, 'blocked (fail closed)');
+  assert.equal(res.family, exp.detectedFamily, 'detected family');
+  // Never an ordinary deny graph, never a finding row.
+  assert.equal(res.findings.length, 0, 'zero findings');
+  assert.equal(res.graph.nodes.length, 0, 'empty graph nodes');
+  assert.equal(res.graph.edges.length, 0, 'empty graph edges');
+
+  // The blocking code is the NotPrincipal code at the exact JSON path, now
+  // carrying the high-confidence hazard marker + the specific hazard message.
+  const np = res.coverage.blockingCodes.find((b) => b.code === 'UNSUPPORTED_NOTPRINCIPAL');
+  assert.ok(np, 'UNSUPPORTED_NOTPRINCIPAL present');
+  assert.equal(np.path, hz.path, 'exact JSON path');
+  assert.equal(np.hazard, true, 'flagged as a high-confidence hazard');
+  for (const needle of hz.messageIncludes) {
+    assert.ok(String(np.message).includes(needle), `blocking message must mention "${needle}"`);
+  }
+
+  // The enriched coverage summary carries the hazard on the unsupported element.
+  const el = res.coverage.summary.unsupportedElements.find((e) => e.element === 'NotPrincipal');
+  assert.ok(el, 'NotPrincipal unsupported element present');
+  assert.equal(el.hazard, true, 'unsupported element flagged hazard');
+  assert.ok(el.hazardMessage && el.hazardMessage.includes('ArnNotEquals'), 'element carries the hazard message');
+  assert.equal(res.coverage.summary.incomplete, true, 'coverage incomplete');
+  assert.ok(res.coverage.summary.codes.includes('UNSUPPORTED_NOTPRINCIPAL'), 'code in summary');
+
+  // Every export surfaces the hazard (Markdown + JSON), not just the DOM.
+  const md = toMarkdown(res);
+  for (const needle of hz.messageIncludes) {
+    assert.ok(md.includes(needle), `Markdown export must surface "${needle}"`);
+  }
+  const json = JSON.parse(toJSON(res));
+  const jnp = json.coverage.blockingCodes.find((b) => b.code === 'UNSUPPORTED_NOTPRINCIPAL');
+  assert.ok(jnp && jnp.hazard === true, 'JSON export carries the hazard code');
+  assert.ok(String(jnp.message).includes('aws:PrincipalArn'), 'JSON export carries the recommendation');
+});
+
+test('suite-2 test 29: hazard surfaces under an explicit resource family selection too', () => {
+  const { data } = hazardFixture();
+  const text = fixtureText(data);
+  // Explicit resource selection must NOT downgrade the hazard to a plain
+  // unsupported-shape block: the NotPrincipal block stays authoritative and keeps
+  // the hazard marker + message (family.js leaves the recognized-but-unmodeled
+  // element block in place even when resource is explicitly selected).
+  const res = analyze(text, {
+    family: 'resource',
+    resourceContext: { type: 's3-bucket', arn: 'arn:aws:s3:::audit-archive' },
+  });
+  assert.equal(res.coverage.blocked, true, 'still fails closed under explicit resource');
+  assert.equal(res.findings.length, 0, 'still zero findings');
+  const np = res.coverage.blockingCodes.find((b) => b.code === 'UNSUPPORTED_NOTPRINCIPAL');
+  assert.ok(np && np.hazard === true, 'hazard marker preserved under explicit resource selection');
+  assert.ok(String(np.message).includes('permissions boundary'), 'hazard message preserved');
+});
+
+test('suite-2 test 29: an Allow + NotPrincipal (invalid) stays the generic unmodeled block, no hazard', () => {
+  // AWS only supports NotPrincipal with Deny. An Allow + NotPrincipal is not the
+  // documented permissions-boundary trap, so it must NOT be flagged as the
+  // hazard - it stays the generic recognized-but-unmodeled NotPrincipal block.
+  const res = analyze(JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [
+      { Effect: 'Allow', NotPrincipal: { AWS: 'arn:aws:iam::123456789012:root' }, Action: 'sts:AssumeRole' },
+    ],
+  }));
+  assert.equal(res.coverage.blocked, true, 'still fails closed');
+  const np = res.coverage.blockingCodes.find((b) => b.code === 'UNSUPPORTED_NOTPRINCIPAL');
+  assert.ok(np, 'UNSUPPORTED_NOTPRINCIPAL present');
+  assert.ok(np.hazard !== true, 'Allow + NotPrincipal is NOT flagged as the Deny hazard');
 });

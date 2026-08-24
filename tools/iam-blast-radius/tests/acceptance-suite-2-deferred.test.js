@@ -2,10 +2,19 @@
 // are NO silent skips.
 //
 // docs/acceptance-suite-2.md tests 25-54 include cases that depend on policy
-// families this analyzer does not yet model: resource-based policies
-// (26/27/28/29/32/33/49/51/53), an RCP (52), an SCP shape (43), a permissions
-// boundary (30), and a session policy (31). Phase 9 is fenced to the three
-// in-scope engine bugs (901/902/903) and must NOT build those families.
+// families this analyzer does not yet model. Phase 9 was fenced to the three
+// in-scope engine bugs (901/902/903) and did not build those families.
+//
+// IAM-1207 (Phase 12) UPDATE: the resource-based policy family shipped
+// (IAM-1201..1206), so tests 26/27/28/32/33/49/51/53 FLIPPED from
+// blocked-by-design to real resource analysis and now live as committed
+// acceptance fixtures under fixtures/resource/ (driven from analyze() with the
+// explicit attached-resource context by tests/resource.test.js), scoreboarded by
+// tests/acceptance-resource-flip.test.js. Test 29 (Deny + NotPrincipal hazard)
+// is driven by tests/acceptance-suite-2.test.js. The ONLY shapes that remain
+// genuinely deferred here are the permissions-boundary (30), session (31),
+// SCP-shape (43), and RCP (52) families - each still a design-blocked fixture
+// below.
 //
 // Rather than skip these tests, each is encoded as a FIXTURE under
 // fixtures/acceptance-2-deferred/ carrying:

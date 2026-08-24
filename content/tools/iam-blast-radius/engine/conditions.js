@@ -103,8 +103,12 @@ function federationMeta(keyLower) {
 
 // Base operators (after stripping set qualifier + IfExists) whose match is
 // NEGATED - "everything EXCEPT the listed values" - so they broaden rather than
-// restrict when used to gate an Allow.
-const NEGATED_OPERATORS = new Set([
+// restrict when used to gate an Allow. Exported so the resource evaluator
+// (engine/resource.js) reuses the SAME polarity set when it decides whether a
+// principal-scoping condition on a "*" Allow genuinely narrows the grant or is an
+// exclusion/expansion (a negated operator flips constraint -> expansion), instead
+// of a name-only key match (adversarial-critic IAM-1202 iteration 4).
+export const NEGATED_OPERATORS = new Set([
   'stringnotequals',
   'stringnotequalsignorecase',
   'stringnotlike',

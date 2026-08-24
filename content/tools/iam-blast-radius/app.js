@@ -52,6 +52,15 @@ function collectElements() {
     input: byId('policy-input'),
     file: byId('policy-file'),
     family: byId('policy-family'),
+    // IAM-1201: the attached-resource context control (shown only for the
+    // Resource-based family). The wrapper's `hidden` attribute is toggled by
+    // updateResourceContextVisibility(); the two fields feed analyzeOptions().
+    resourceContextWrap: byId('resource-context'),
+    resourceType: byId('resource-type'),
+    resourceArn: byId('resource-arn'),
+    // IAM-1204: optional owning-account id (needed for S3 same-vs-cross-account,
+    // since S3 ARNs carry no account).
+    resourceAccount: byId('resource-account'),
     analyzeBtn: byId('analyze-btn'),
     clearBtn: byId('clear-btn'),
     samples: byId('samples'),
@@ -191,7 +200,62 @@ function hasFamilySelection() {
 // concrete/auto selection is forwarded as `family`.
 function analyzeOptions() {
   const v = familySelectionValue();
-  return { family: v.length > 0 ? v : undefined, requireExplicitFamily: true };
+  const opts = { family: v.length > 0 ? v : undefined, requireExplicitFamily: true };
+  // IAM-1201: for the resource family, forward the explicit attached-resource
+  // context (type + ARN). The engine fails closed (RESOURCE_CONTEXT_REQUIRED) if
+  // it is missing, so it is only meaningful for the resource family; forwarding
+  // it for other families is harmless (ignored) but we scope it to keep the
+  // options minimal and the intent clear.
+  if (v === 'resource') opts.resourceContext = resourceContextValue();
+  return opts;
+}
+
+// IAM-1201: the current attached-resource context from the two UI fields, as the
+// engine's { type, arn } option shape. Empty strings are preserved (the engine
+// treats an empty/whitespace ARN as "no context" and fails closed).
+function resourceContextValue() {
+  const type = els.resourceType && typeof els.resourceType.value === 'string' ? els.resourceType.value : '';
+  const arn = els.resourceArn && typeof els.resourceArn.value === 'string' ? els.resourceArn.value : '';
+  // IAM-1204: optional owning-account id. Trimmed; a non-12-digit value is passed
+  // through and ignored by the engine (parseResourceContext validates it). An empty
+  // string is omitted so it never looks like a supplied-but-invalid account.
+  const acct = els.resourceAccount && typeof els.resourceAccount.value === 'string'
+    ? els.resourceAccount.value.trim() : '';
+  const ctx = { type, arn };
+  if (acct.length > 0) ctx.account = acct;
+  return ctx;
+}
+
+// IAM-1201: reveal the attached-resource context control only when the Resource-
+// based family is selected (its `hidden` attribute is present by default in the
+// HTML). Toggling the standard `hidden` attribute keeps this CSP-clean (no inline
+// style). Idempotent; safe to call on init and on every family change.
+function updateResourceContextVisibility() {
+  if (!els.resourceContextWrap) return;
+  els.resourceContextWrap.hidden = familySelectionValue() !== 'resource';
+}
+
+// IAM-1201: clear the attached-resource context fields (used by Clear + when the
+// family moves away from resource) so a stale ARN never rides into a later run.
+function clearResourceContextFields() {
+  if (els.resourceType) els.resourceType.value = '';
+  if (els.resourceArn) els.resourceArn.value = '';
+  if (els.resourceAccount) els.resourceAccount.value = '';
+}
+
+// IAM-1201: editing the attached-resource context re-runs the analysis under the
+// new context (only meaningful for the resource family, and only with policy text
+// present). This keeps the displayed conclusion in lockstep with the supplied
+// context - e.g. filling in the ARN flips a RESOURCE_CONTEXT_REQUIRED block into
+// an accepted resource analysis. Uses 'change' (blur/enter) not 'input', so a
+// large policy is not re-analyzed on every keystroke.
+function onResourceContextChange() {
+  if (versionBlock) return;
+  if (familySelectionValue() !== 'resource') return;
+  const text = els.input ? els.input.value : '';
+  if (typeof text === 'string' && text.trim().length > 0) {
+    analyzeText(text);
+  }
 }
 
 // IAM-1001: the Analyze control is enabled only when a policy family is selected
@@ -223,9 +287,21 @@ function renderCoverageNotice(coverage) {
   // unsupported shape - it means the user has not picked a family yet, not that
   // the analyzer failed closed on a shape it understood. Word it accordingly.
   const familyRequired = codesList.some((b) => b && b.code === 'POLICY_FAMILY_REQUIRED');
+  // IAM-1201: a resource-family block for a MISSING attached-resource context is a
+  // distinct state - the family IS supported, its explicit context is not yet
+  // supplied - so word it as "supply the context", not "shape not supported".
+  const contextRequired = !familyRequired
+    && codesList.some((b) => b && b.code === 'RESOURCE_CONTEXT_REQUIRED');
+  // IAM-1206: a Deny + NotPrincipal hazard is a documented semantic TRAP, not a
+  // plain unsupported shape. It still fails closed, but it is surfaced as a
+  // high-confidence security hazard (permissions-boundary caveat + the
+  // ArnNotEquals recommendation), never rendered as an ordinary deny.
+  const notPrincipalHazard = !familyRequired && !contextRequired
+    && codesList.some((b) => b && b.hazard === true
+      && b.code === 'UNSUPPORTED_NOTPRINCIPAL');
 
   const section = document.createElement('section');
-  section.className = 'coverage-blocked';
+  section.className = notPrincipalHazard ? 'coverage-blocked coverage-hazard' : 'coverage-blocked';
   section.setAttribute('role', 'alert');
   section.setAttribute('aria-labelledby', 'coverage-blocked-h');
 
@@ -233,7 +309,11 @@ function renderCoverageNotice(coverage) {
   heading.id = 'coverage-blocked-h';
   heading.textContent = familyRequired
     ? 'Select a policy family to analyze'
-    : 'Analysis stopped - policy shape not supported';
+    : contextRequired
+      ? 'Attached-resource context required'
+      : notPrincipalHazard
+        ? 'Security hazard: Deny + NotPrincipal'
+        : 'Analysis stopped - policy shape not supported';
   section.appendChild(heading);
 
   const dl = document.createElement('dl');
@@ -247,9 +327,21 @@ function renderCoverageNotice(coverage) {
     ? 'Choose the policy family (or Auto-detect) before analyzing. The tool does ' +
       'not guess the family from the document shape, because analyzing one family ' +
       'as another would produce confident but wrong findings.'
-    : 'This analyzer models identity-policy semantics only. It stopped before ' +
-      'evaluating rules rather than present findings on a shape it does not ' +
-      'understand. Unsupported does NOT mean safe - it means no conclusion.';
+    : contextRequired
+      ? 'A resource-based policy is analyzed from the attached resource\'s ' +
+        'perspective, so the analyzer needs to know which resource this policy is ' +
+        'attached to. Supply the attached resource type and ARN above, then ' +
+        'analyze again. This context is required and never guessed.'
+      : notPrincipalHazard
+        ? 'Deny with NotPrincipal is a documented AWS trap, NOT an ordinary "deny ' +
+          'everyone except these" exclusion: a NotPrincipal + Deny always denies ' +
+          'any principal that has a permissions boundary attached, regardless of ' +
+          'the principals listed, so principals you meant to exempt can still be ' +
+          'denied. The analyzer fails closed rather than render a misleading ' +
+          'ordinary-deny result. See the recommended safe rewrite below.'
+        : 'This analyzer models identity-policy semantics only. It stopped before ' +
+          'evaluating rules rather than present findings on a shape it does not ' +
+          'understand. Unsupported does NOT mean safe - it means no conclusion.';
   section.appendChild(intro);
 
   const codes = Array.isArray(coverage.blockingCodes) ? coverage.blockingCodes : [];
@@ -937,7 +1029,16 @@ function runInWorker(text, options) {
   // IAM-1001: forward the family selection AND the requireExplicitFamily flag so
   // the worker's analyze() enforces the mandatory-selection contract identically
   // to the sync path.
-  worker.postMessage({ id, text, family: opts.family, requireExplicitFamily: !!opts.requireExplicitFamily });
+  // IAM-1201: forward the attached-resource context (present only for the
+  // resource family) so the worker's analyze() applies the same context gate as
+  // the sync path. Structured-clone-safe (plain strings only); no policy text.
+  worker.postMessage({
+    id,
+    text,
+    family: opts.family,
+    requireExplicitFamily: !!opts.requireExplicitFamily,
+    resourceContext: opts.resourceContext,
+  });
 }
 
 function analyzeText(text) {
@@ -976,6 +1077,10 @@ function analyzeText(text) {
 // displayed conclusion and the selected family in lockstep.
 function onFamilyChange() {
   updateAnalyzeEnabled();
+  // IAM-1201: reveal/hide the attached-resource context control for the resource
+  // family, and drop any stale context when the family moves away from resource.
+  updateResourceContextVisibility();
+  if (familySelectionValue() !== 'resource') clearResourceContextFields();
 
   if (versionBlock) return; // analysis is disabled entirely; nothing to invalidate
 
@@ -1023,6 +1128,10 @@ function loadSample(sample) {
   // behavior (e.g. the NotPrincipal sample must auto-detect the resource family
   // and fail closed), which is exactly what the engine sample fixtures assert.
   if (els.family) els.family.value = 'auto';
+  // IAM-1201: samples auto-detect, so the resource-context control is not needed;
+  // hide it and clear any stale context (setting .value does not fire 'change').
+  clearResourceContextFields();
+  updateResourceContextVisibility();
   updateAnalyzeEnabled();
   analyzeText(text);
 }
@@ -1132,6 +1241,9 @@ function clearAnalysis(announce) {
   // IAM-1001: Clear resets the selector to no selection (mandatory again) and
   // disables Analyze until the user re-selects a family.
   if (els.family) els.family.value = '';
+  // IAM-1201: also clear + hide the attached-resource context control.
+  clearResourceContextFields();
+  updateResourceContextVisibility();
   updateAnalyzeEnabled();
   if (els.status) els.status.removeAttribute('data-status');
   clearChildren(els.coverage);
@@ -1211,6 +1323,13 @@ function init() {
   // prior analysis; auto-reanalyze under the new family) and set the initial
   // Analyze enabled-state from the current selection (disabled with none).
   if (els.family) els.family.addEventListener('change', onFamilyChange);
+  // IAM-1201: the attached-resource context control - re-analyze on change, and
+  // set its initial visibility from the current family selection.
+  if (els.resourceType) els.resourceType.addEventListener('change', onResourceContextChange);
+  if (els.resourceArn) els.resourceArn.addEventListener('change', onResourceContextChange);
+  // IAM-1204: the optional owning-account field also re-analyzes on change.
+  if (els.resourceAccount) els.resourceAccount.addEventListener('change', onResourceContextChange);
+  updateResourceContextVisibility();
   updateAnalyzeEnabled();
 
   window.addEventListener('pagehide', onPageHide);

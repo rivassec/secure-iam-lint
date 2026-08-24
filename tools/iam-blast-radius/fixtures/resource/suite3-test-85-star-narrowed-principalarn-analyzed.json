@@ -1,0 +1,45 @@
+{
+  "name": "Principal '*' narrowed by an ArnLike aws:PrincipalArn condition (suite-3 test 85, flipped)",
+  "note": "IAM-1207 (suite-3 test 85). Previously deferred (resource family fail-closed). Now analyzed for real: a '*' principal gated by ArnLike aws:PrincipalArn is NARROWED to authenticated principals matching the named role path - it must NOT be the unconditioned-critical 'anyone including anonymous' public finding (drops to high), the condition-VALUE wildcard must NOT be rejected as an invalid partial Principal ARN, and the scoping key is recorded.",
+  "phase": 12,
+  "story": "IAM-1207",
+  "suite3Test": 85,
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "s3-object", "arn": "arn:aws:s3:::deployments/*" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::deployments/*",
+        "Condition": {
+          "ArnLike": { "aws:PrincipalArn": "arn:aws:iam::123456789012:role/deployment/*" }
+        }
+      }
+    ]
+  },
+  "expectResource": {
+    "ok": true,
+    "blocked": false,
+    "supported": true,
+    "family": "resource",
+    "status": "warned",
+    "incomplete": true,
+    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED", "INVALID_PRINCIPAL_WILDCARD_ARN"],
+    "service": "s3-object",
+    "principalTypes": ["anonymous"],
+    "anonymousPresent": true,
+    "findingIds": ["PUBLIC-ACCESS"],
+    "findingSeverities": { "PUBLIC-ACCESS": "high" },
+    "whyIncludes": { "PUBLIC-ACCESS": ["NARROWED", "aws:PrincipalArn"] },
+    "graphEdgeTypes": ["can-access-resource"],
+    "graphOriginTypes": ["ExternalPrincipal"],
+    "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "TRUST-INVALID-PRINCIPAL"]
+  }
+}

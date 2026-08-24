@@ -6,18 +6,29 @@
       "family": "permissions-boundary",
       "input": {
         "Version": "2012-10-17",
-        "Statement": [{
-          "Sid": "MaximumPermissions",
-          "Effect": "Allow",
-          "Action": ["s3:*", "dynamodb:*"],
-          "Resource": "*"
-        }]
+        "Statement": [
+          {
+            "Sid": "MaximumPermissions",
+            "Effect": "Allow",
+            "Action": [
+              "s3:*",
+              "dynamodb:*"
+            ],
+            "Resource": "*"
+          }
+        ]
       },
       "expect": {
         "status": "COMPLETE",
-        "requiredRuleIds": ["BOUNDARY-ENVELOPE"],
-        "forbiddenRuleIds": ["WILDCARD-RESOURCE"],
-        "requiredText": ["wildcard boundary provides no meaningful upper bound"],
+        "requiredRuleIds": [
+          "BOUNDARY-ENVELOPE"
+        ],
+        "forbiddenRuleIds": [
+          "WILDCARD-RESOURCE"
+        ],
+        "requiredText": [
+          "wildcard boundary provides no meaningful upper bound"
+        ],
         "capabilityEdges": 0
       }
     },
@@ -25,81 +36,157 @@
       "id": "BND-02",
       "kind": "controlled-rendering-procedure",
       "procedure": "Render a controlled finding with ruleId WILDCARD-RESOURCE in boundary mode.",
-      "expect": {"narrowForbiddenRuleAssertionFails": true}
+      "expect": {
+        "narrowForbiddenRuleAssertionFails": true
+      }
     },
     {
       "id": "BND-03",
       "kind": "family-switch-procedure",
       "from": "identity",
       "to": "permissions-boundary",
-      "expect": {"staleResults": 0, "forbiddenRuleIds": ["WILDCARD-RESOURCE"], "capabilityEdges": 0}
+      "expect": {
+        "staleResults": 0,
+        "forbiddenRuleIds": [
+          "WILDCARD-RESOURCE"
+        ],
+        "capabilityEdges": 0
+      }
     },
     {
       "id": "BND-04",
       "kind": "family-switch-procedure",
       "from": "permissions-boundary",
       "to": "identity",
-      "expect": {"staleResults": 0, "forbiddenRuleIds": ["BOUNDARY-ENVELOPE"]}
+      "expect": {
+        "staleResults": 0,
+        "forbiddenRuleIds": [
+          "BOUNDARY-ENVELOPE"
+        ]
+      }
     },
     {
       "id": "BND-05",
       "kind": "family-switch-procedure",
       "from": "permissions-boundary",
       "to": "session",
-      "expect": {"staleResults": 0, "capabilityEdges": 0}
+      "expect": {
+        "staleResults": 0,
+        "capabilityEdges": 0
+      }
     },
     {
       "id": "BND-06",
       "kind": "browser-matrix",
-      "projects": ["chromium", "firefox", "webkit"],
-      "cases": ["BND-01", "BND-02", "BND-03", "BND-04", "BND-05"],
-      "expect": {"semanticParity": true}
+      "projects": [
+        "chromium",
+        "firefox",
+        "webkit"
+      ],
+      "cases": [
+        "BND-01",
+        "BND-02",
+        "BND-03",
+        "BND-04",
+        "BND-05"
+      ],
+      "expect": {
+        "semanticParity": true
+      }
     },
     {
       "id": "BND-07",
       "kind": "export-procedure",
-      "formats": ["json", "markdown"],
-      "expect": {"latestFamilyOnly": true, "browserExportParity": true}
+      "formats": [
+        "json",
+        "markdown"
+      ],
+      "expect": {
+        "latestFamilyOnly": true,
+        "browserExportParity": true
+      }
     },
     {
       "id": "BND-08",
       "kind": "stale-state-procedure",
       "procedure": "Change family after completed analysis without reanalyzing.",
-      "expect": {"resultsRemovedOrMarkedStale": true, "exportsDisabled": true}
+      "expect": {
+        "resultsRemovedOrMarkedStale": true,
+        "exportsDisabled": true
+      }
     },
     {
       "id": "T91-01",
       "family": "identity",
-      "context": {"subjectAccount": "123456789012", "partition": "aws"},
+      "context": {
+        "subjectAccount": "123456789012",
+        "partition": "aws"
+      },
       "input": {
         "Version": "2012-10-17",
         "Statement": [
-          {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::999900001111:role/ForeignRole"},
-          {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "*"}
+          {
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "arn:aws:iam::999900001111:role/ForeignRole"
+          },
+          {
+            "Effect": "Allow",
+            "Action": "ec2:RunInstances",
+            "Resource": "*"
+          }
         ]
       },
       "expect": {
-        "forbiddenFindings": [{"ruleId": "PASSROLE-EC2", "severity": "critical"}],
-        "requiredWarningCodes": ["PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE"]
+        "forbiddenFindings": [
+          {
+            "ruleId": "PASSROLE-EC2",
+            "severity": "critical"
+          }
+        ],
+        "requiredWarningCodes": [
+          "PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE"
+        ]
       }
     },
     {
       "id": "T91-02",
       "family": "identity",
-      "context": {"subjectAccount": "123456789012", "partition": "aws"},
+      "context": {
+        "subjectAccount": "123456789012",
+        "partition": "aws"
+      },
       "input": {
         "Version": "2012-10-17",
         "Statement": [
-          {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::123456789012:role/LocalRole"},
-          {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "*"}
+          {
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "arn:aws:iam::123456789012:role/LocalRole"
+          },
+          {
+            "Effect": "Allow",
+            "Action": "ec2:RunInstances",
+            "Resource": "*"
+          }
         ]
       },
-      "expect": {"requiredFindings": [{"ruleId": "PASSROLE-EC2", "severity": "critical"}]}
+      "expect": {
+        "requiredFindings": [
+          {
+            "ruleId": "PASSROLE-EC2",
+            "severity": "critical"
+          }
+        ]
+      }
     },
     {
       "id": "T91-03",
       "family": "identity",
-      "context": {"subjectAccount": "123456789012", "partition": "aws"},
+      "context": {
+        "subjectAccount": "123456789012",
+        "partition": "aws"
+      },
       "input": {
         "Version": "2012-10-17",
         "Statement": [
@@ -107,30 +194,69 @@
             "Effect": "Allow",
             "Action": "iam:PassRole",
             "Resource": "arn:aws:iam::999900001111:role/ForeignRole",
-            "Condition": {"StringEquals": {"iam:PassedToService": "ec2.amazonaws.com"}}
+            "Condition": {
+              "StringEquals": {
+                "iam:PassedToService": "ec2.amazonaws.com"
+              }
+            }
           },
-          {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "*"}
+          {
+            "Effect": "Allow",
+            "Action": "ec2:RunInstances",
+            "Resource": "*"
+          }
         ]
       },
-      "expect": {"forbiddenFindings": [{"ruleId": "PASSROLE-EC2", "severity": "critical"}]}
+      "expect": {
+        "forbiddenFindings": [
+          {
+            "ruleId": "PASSROLE-EC2",
+            "severity": "critical"
+          }
+        ]
+      }
     },
     {
       "id": "T91-04",
       "family": "identity",
-      "context": {"subjectAccount": "123456789012", "partition": "aws"},
+      "context": {
+        "subjectAccount": "123456789012",
+        "partition": "aws"
+      },
       "input": {
         "Version": "2012-10-17",
         "Statement": [
-          {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::*:role/workloads/*"},
-          {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "*"}
+          {
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "arn:aws:iam::*:role/workloads/*"
+          },
+          {
+            "Effect": "Allow",
+            "Action": "ec2:RunInstances",
+            "Resource": "*"
+          }
         ]
       },
-      "expect": {"requiredFindings": [{"ruleId": "PASSROLE-EC2", "severity": ["critical", "high"]}]}
+      "expect": {
+        "requiredFindings": [
+          {
+            "ruleId": "PASSROLE-EC2",
+            "severity": [
+              "critical",
+              "high"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "T91-05",
       "family": "identity",
-      "context": {"subjectAccount": "123456789012", "partition": "aws"},
+      "context": {
+        "subjectAccount": "123456789012",
+        "partition": "aws"
+      },
       "input": {
         "Version": "2012-10-17",
         "Statement": [
@@ -142,26 +268,60 @@
               "arn:aws:iam::999900001111:role/ForeignRole"
             ]
           },
-          {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "*"}
+          {
+            "Effect": "Allow",
+            "Action": "ec2:RunInstances",
+            "Resource": "*"
+          }
         ]
       },
       "expect": {
-        "requiredFindings": [{"ruleId": "PASSROLE-EC2", "targetResources": ["arn:aws:iam::123456789012:role/LocalRole"]}],
-        "excludedTargets": ["arn:aws:iam::999900001111:role/ForeignRole"]
+        "requiredFindings": [
+          {
+            "ruleId": "PASSROLE-EC2",
+            "targetResources": [
+              "arn:aws:iam::123456789012:role/LocalRole"
+            ]
+          }
+        ],
+        "excludedTargets": [
+          "arn:aws:iam::999900001111:role/ForeignRole"
+        ]
       }
     },
     {
       "id": "T91-06",
       "family": "identity",
-      "context": {"subjectAccount": "123456789012", "partition": "aws"},
+      "context": {
+        "subjectAccount": "123456789012",
+        "partition": "aws"
+      },
       "input": {
         "Version": "2012-10-17",
         "Statement": [
-          {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws-us-gov:iam::123456789012:role/GovRole"},
-          {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "*"}
+          {
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "arn:aws-us-gov:iam::123456789012:role/GovRole"
+          },
+          {
+            "Effect": "Allow",
+            "Action": "ec2:RunInstances",
+            "Resource": "*"
+          }
         ]
       },
-      "expect": {"forbiddenFindings": [{"ruleId": "PASSROLE-EC2", "severity": "critical"}], "requiredWarningCodes": ["PARTITION_MISMATCH"]}
+      "expect": {
+        "forbiddenFindings": [
+          {
+            "ruleId": "PASSROLE-EC2",
+            "severity": "critical"
+          }
+        ],
+        "requiredWarningCodes": [
+          "PARTITION_MISMATCH"
+        ]
+      }
     },
     {
       "id": "T91-07",
@@ -169,111 +329,294 @@
       "input": {
         "Version": "2012-10-17",
         "Statement": [
-          {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::999900001111:role/RoleWithUnknownCompatibility"},
-          {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "*"}
+          {
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "arn:aws:iam::999900001111:role/RoleWithUnknownCompatibility"
+          },
+          {
+            "Effect": "Allow",
+            "Action": "ec2:RunInstances",
+            "Resource": "*"
+          }
         ]
       },
-      "expect": {"maxPathExploitability": "low", "requiredUnknowns": ["subjectAccount"]}
+      "expect": {
+        "maxPathExploitability": "low",
+        "requiredUnknowns": [
+          "subjectAccount"
+        ]
+      }
     },
     {
       "id": "T91-08",
       "family": "identity",
-      "context": {"subjectAccount": "123456789012", "partition": "aws"},
+      "context": {
+        "subjectAccount": "123456789012",
+        "partition": "aws"
+      },
       "input": {
         "Version": "2012-10-17",
         "Statement": [
-          {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::123456789012:role/LocalEc2Role"},
-          {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "*"},
-          {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "arn:aws:iam::999900001111:role/ForeignRole"}
+          {
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "arn:aws:iam::123456789012:role/LocalEc2Role"
+          },
+          {
+            "Effect": "Allow",
+            "Action": "ec2:RunInstances",
+            "Resource": "*"
+          },
+          {
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Resource": "arn:aws:iam::999900001111:role/ForeignRole"
+          }
         ]
       },
       "expect": {
-        "requiredFindings": [{"ruleId": "PASSROLE-EC2", "targetResources": ["arn:aws:iam::123456789012:role/LocalEc2Role"]}],
-        "forbiddenTargetCorrelations": ["arn:aws:iam::999900001111:role/ForeignRole"]
+        "requiredFindings": [
+          {
+            "ruleId": "PASSROLE-EC2",
+            "targetResources": [
+              "arn:aws:iam::123456789012:role/LocalEc2Role"
+            ]
+          }
+        ],
+        "forbiddenTargetCorrelations": [
+          "arn:aws:iam::999900001111:role/ForeignRole"
+        ]
       }
     },
     {
       "id": "T91-09",
       "family": "identity",
-      "context": {"subjectAccount": "123456789012", "partition": "aws"},
+      "context": {
+        "subjectAccount": "123456789012",
+        "partition": "aws"
+      },
       "input": {
         "Version": "2012-10-17",
         "Statement": [
-          {"Sid": "AllowPassRole", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "*"},
-          {"Sid": "DenyLocalRoles", "Effect": "Deny", "Action": "iam:PassRole", "Resource": "arn:aws:iam::123456789012:role/*"},
-          {"Sid": "RunInstances", "Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "*"}
+          {
+            "Sid": "AllowPassRole",
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "*"
+          },
+          {
+            "Sid": "DenyLocalRoles",
+            "Effect": "Deny",
+            "Action": "iam:PassRole",
+            "Resource": "arn:aws:iam::123456789012:role/*"
+          },
+          {
+            "Sid": "RunInstances",
+            "Effect": "Allow",
+            "Action": "ec2:RunInstances",
+            "Resource": "*"
+          }
         ]
       },
       "expect": {
-        "forbiddenFindings": [{"ruleId": "PASSROLE-EC2", "severity": "critical"}],
+        "forbiddenFindings": [
+          {
+            "ruleId": "PASSROLE-EC2",
+            "severity": "critical"
+          }
+        ],
         "reason": "The residual allowed PassRole scope is foreign-only and cannot be passed directly to same-account services."
       }
     },
     {
       "id": "DEF-01",
       "family": "resource",
-      "resourceContext": {"type": "s3-bucket", "arn": "arn:aws:s3:::public"},
+      "resourceContext": {
+        "type": "s3-bucket",
+        "arn": "arn:aws:s3:::public"
+      },
       "input": {
         "Version": "2012-10-17",
-        "Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::public/*"}]
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::public/*"
+          }
+        ]
       },
-      "expect": {"status": "BLOCKED", "errorCode": "UNSUPPORTED_POLICY_FAMILY", "graph": null}
+      "expect": {
+        "status": "COMPLETE_WITH_WARNINGS",
+        "warningCode": "RESOURCE_ANALYSIS_INCOMPLETE",
+        "capabilityEdges": 0,
+        "resourceAccessEdges": 1,
+        "resourceGraphOriginTypes": ["ExternalPrincipal"],
+        "expectedRuleIds": ["PUBLIC-ACCESS"],
+        "forbiddenRuleIds": [
+          "WILDCARD-ACTION",
+          "WILDCARD-RESOURCE",
+          "DATA-EXFIL",
+          "KMS-DECRYPT"
+        ]
+      },
+      "note": "IAM-1202: Principal '*' on a resource policy is anonymous/public, so the resource evaluator emits a PUBLIC-ACCESS finding and the graph draws an anonymous ExternalPrincipal -> can-access-resource -> attached-resource edge (an identity capability edge count of 0 - the resource-access edge is not an identity capability edge). Coverage stays INCOMPLETE: the remaining resource families (confused-deputy, same-account, KMS, NotPrincipal) are IAM-1203..1206, so the absence of a finding still does NOT mean safe."
     },
     {
       "id": "DEF-02",
       "family": "resource",
-      "resourceContext": {"type": "sns-topic", "arn": "arn:aws:sns:us-west-2:123456789012:events"},
+      "resourceContext": {
+        "type": "sns-topic",
+        "arn": "arn:aws:sns:us-west-2:123456789012:events"
+      },
       "input": {
         "Version": "2012-10-17",
-        "Statement": [{"Effect": "Allow", "Principal": {"Service": "events.amazonaws.com"}, "Action": "sns:Publish", "Resource": "arn:aws:sns:us-west-2:123456789012:events"}]
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "events.amazonaws.com"
+            },
+            "Action": "sns:Publish",
+            "Resource": "arn:aws:sns:us-west-2:123456789012:events"
+          }
+        ]
       },
-      "expect": {"status": "BLOCKED", "errorCode": "UNSUPPORTED_POLICY_FAMILY", "graph": null}
+      "expect": {
+        "status": "COMPLETE_WITH_WARNINGS",
+        "warningCode": "RESOURCE_ANALYSIS_INCOMPLETE",
+        "capabilityEdges": 0,
+        "expectedRuleIds": [
+          "RESOURCE-CONFUSED-DEPUTY"
+        ],
+        "resourceAccessEdges": 1,
+        "resourceGraphOriginTypes": [
+          "Service"
+        ],
+        "forbiddenRuleIds": [
+          "WILDCARD-ACTION",
+          "WILDCARD-RESOURCE",
+          "DATA-EXFIL",
+          "KMS-DECRYPT",
+          "PUBLIC-ACCESS"
+        ]
+      },
+      "note": "IAM-1203: an SNS topic policy granting the events.amazonaws.com service principal sns:Publish with NO source binding is a cross-service confused-deputy EXPOSURE (RESOURCE-CONFUSED-DEPUTY), NOT public write - the principal is a service, not '*'. The graph origin is the calling Service -> can-access-resource -> the attached SNS topic (not a capability edge, so capabilityEdges stays 0). Coverage stays INCOMPLETE (same-account / KMS / NotPrincipal families are IAM-1204..1206), so absence of a further finding is still not proven-safe."
     },
     {
       "id": "DEF-03",
       "family": "resource",
-      "resourceContext": {"type": "kms-key", "arn": "arn:aws:kms:us-west-2:123456789012:key/example"},
+      "resourceContext": {
+        "type": "kms-key",
+        "arn": "arn:aws:kms:us-west-2:123456789012:key/example"
+      },
       "input": {
         "Version": "2012-10-17",
-        "Statement": [{"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:root"}, "Action": "kms:*", "Resource": "*"}]
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::123456789012:root"
+            },
+            "Action": "kms:*",
+            "Resource": "*"
+          }
+        ]
       },
-      "expect": {"status": "BLOCKED", "errorCode": "UNSUPPORTED_POLICY_FAMILY", "graph": null}
+      "expect": {
+        "status": "COMPLETE_WITH_WARNINGS",
+        "warningCode": "RESOURCE_ANALYSIS_INCOMPLETE",
+        "graph": null,
+        "capabilityEdges": 0,
+        "forbiddenRuleIds": [
+          "WILDCARD-ACTION",
+          "WILDCARD-RESOURCE",
+          "DATA-EXFIL",
+          "KMS-DECRYPT"
+        ]
+      },
+      "note": "IAM-1201: resource family accepted with its explicit attached-resource context and routed to the resource evaluator (never identity rules). Service-specific resource finding rules are foundational (IAM-1202..1206), so the analysis is INCOMPLETE: not blocked, zero findings, and explicitly not proven-safe."
     },
     {
       "id": "DEF-04",
       "family": "rcp",
       "input": {
         "Version": "2012-10-17",
-        "Statement": [{"Effect": "Deny", "Principal": "*", "Action": "s3:*", "Resource": "*"}]
+        "Statement": [
+          {
+            "Effect": "Deny",
+            "Principal": "*",
+            "Action": "s3:*",
+            "Resource": "*"
+          }
+        ]
       },
-      "expect": {"status": "BLOCKED", "errorCode": "UNSUPPORTED_POLICY_FAMILY", "graph": null}
+      "expect": {
+        "status": "BLOCKED",
+        "errorCode": "UNSUPPORTED_POLICY_FAMILY",
+        "graph": null
+      }
     },
     {
       "id": "DEF-05",
       "family": "scp",
       "input": {
         "Version": "2012-10-17",
-        "Statement": [{"Effect": "Allow", "NotAction": "iam:*", "Resource": "*"}]
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "NotAction": "iam:*",
+            "Resource": "*"
+          }
+        ]
       },
-      "expect": {"status": "BLOCKED", "graph": null, "capabilityEdges": 0}
+      "expect": {
+        "status": "BLOCKED",
+        "graph": null,
+        "capabilityEdges": 0
+      }
     },
     {
       "id": "DEF-06",
       "family": "trust",
       "input": {
         "Version": "2012-10-17",
-        "Statement": [{"Effect": "Deny", "NotPrincipal": {"AWS": "arn:aws:iam::123456789012:role/BreakGlass"}, "Action": "sts:AssumeRole"}]
+        "Statement": [
+          {
+            "Effect": "Deny",
+            "NotPrincipal": {
+              "AWS": "arn:aws:iam::123456789012:role/BreakGlass"
+            },
+            "Action": "sts:AssumeRole"
+          }
+        ]
       },
-      "expect": {"status": "BLOCKED", "errorCode": "UNSUPPORTED_OR_INVALID_NOTPRINCIPAL"}
+      "expect": {
+        "status": "BLOCKED",
+        "errorCode": "UNSUPPORTED_OR_INVALID_NOTPRINCIPAL"
+      }
     },
     {
       "id": "DEF-07",
       "family": "resource",
       "input": {
         "Version": "2012-10-17",
-        "Statement": [{"Effect": "Deny", "NotPrincipal": {"AWS": "arn:aws:iam::123456789012:role/BreakGlass"}, "Action": "s3:*", "Resource": "*"}]
+        "Statement": [
+          {
+            "Effect": "Deny",
+            "NotPrincipal": {
+              "AWS": "arn:aws:iam::123456789012:role/BreakGlass"
+            },
+            "Action": "s3:*",
+            "Resource": "*"
+          }
+        ]
       },
-      "expect": {"status": "BLOCKED", "graph": null}
+      "expect": {
+        "status": "BLOCKED",
+        "graph": null
+      }
     },
     {
       "id": "DEF-08",
@@ -281,24 +624,48 @@
       "input": {
         "Version": "2012-10-17",
         "Statement": [
-          {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::private/*"},
-          {"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::public/*"}
+          {
+            "Effect": "Allow",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::private/*"
+          },
+          {
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::public/*"
+          }
         ]
       },
-      "expect": {"status": "BLOCKED", "errorCode": "MIXED_OR_INVALID_POLICY_FAMILY", "graph": null}
+      "expect": {
+        "status": "BLOCKED",
+        "errorCode": "MIXED_OR_INVALID_POLICY_FAMILY",
+        "graph": null
+      }
     },
     {
       "id": "DEF-09",
       "kind": "family-switch-procedure",
       "from": "resource",
       "to": "identity",
-      "expect": {"unsupportedWarningCleared": true, "blockedGraphLeak": false}
+      "expect": {
+        "unsupportedWarningCleared": true,
+        "blockedGraphLeak": false
+      }
     },
     {
       "id": "DEF-10",
       "kind": "blocked-export-procedure",
-      "formats": ["json", "markdown"],
-      "expect": {"status": "BLOCKED", "riskScore": null, "graph": null, "diagnosticsPresent": true}
+      "formats": [
+        "json",
+        "markdown"
+      ],
+      "expect": {
+        "status": "BLOCKED",
+        "riskScore": null,
+        "graph": null,
+        "diagnosticsPresent": true
+      }
     }
   ]
 }
