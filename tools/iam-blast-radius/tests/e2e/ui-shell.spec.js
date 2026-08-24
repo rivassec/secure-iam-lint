@@ -472,7 +472,12 @@ test('switching the family invalidates the prior analysis immediately (test 70)'
   // and the coverage/exports now name permissions-boundary.
   await expect(page.locator('#findings table')).toBeVisible();
   await expect(page.locator('#findings table')).toContainText(/envelope/i);
-  await expect(page.locator('#findings table')).not.toContainText(/Wildcard/i);
+  // The prior identity WILDCARD-RESOURCE / WILDCARD-ACTION capability rows must
+  // be gone. Match the rule-name form (hyphen/space + resource|action), NOT the
+  // bare word "wildcard" - the envelope finding's own prose legitimately reads
+  // "A wildcard boundary provides no meaningful upper bound", which is not a
+  // stale identity row.
+  await expect(page.locator('#findings table')).not.toContainText(/wildcard[-\s](resource|action)/i);
   await expect(page.locator('#status')).toHaveAttribute('data-status', 'ok');
 });
 
