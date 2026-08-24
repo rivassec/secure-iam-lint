@@ -973,6 +973,78 @@
         "docs/acceptance-suite-results.md updated; no regression to Phase-7 fixes, originally-passing tests, or negative corpora",
         "full node --test green"
       ]
+    },
+    {
+      "id": "IAM-901",
+      "title": "Phase 9: duplicate JSON key detection (fail closed)",
+      "priority": 27,
+      "phase": 9,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Fix docs/acceptance-suite-2.md test 44: a statement object with a duplicate key (e.g. two \"Action\") is currently accepted (JSON.parse silently keeps last-key-wins, hiding the dropped permission) and analyzed. Detect duplicate object keys in the RAW policy text (JSON.parse cannot see them) and BLOCK analysis with a DUPLICATE_JSON_KEY error that identifies the duplicated key and its statement/object location. Produce no findings, risk score, or graph. Preserve the original text so the duplicate can be highlighted.",
+        "Only duplicate keys WITHIN THE SAME object are an error; the same key name appearing in different objects/statements is legal and must not false-positive. Guard against every existing suite-1 acceptance fixture and the identity + trust negative corpora (none may newly fail).",
+        "Add an acceptance fixture (test-44) using policyRaw (verbatim text with the duplicate key) asserting ok=false / blocked with DUPLICATE_JSON_KEY and zero findings/graph."
+      ],
+      "acceptance": [
+        "a statement object with a duplicate key -> ok:false / blocked, error code DUPLICATE_JSON_KEY naming the key + location; no findings/score/graph (suite-2 test 44)",
+        "no false positive: same key in different objects is fine; all suite-1 fixtures + negative corpora still pass",
+        "test-44 acceptance fixture present; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-902",
+      "title": "Phase 9: role-takeover chain correlation (modify-then-assume, no PassRole)",
+      "priority": 28,
+      "phase": 9,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Fix docs/acceptance-suite-2.md test 34: a compound role-takeover path on the SAME role ARN - a permission-grant primitive (iam:PutRolePolicy or iam:AttachRolePolicy) AND iam:UpdateAssumeRolePolicy (trust modification) AND sts:AssumeRole, all targeting the same role - currently emits two separate high findings (PUT-INLINE-POLICY, TRUST-POLICY-MODIFY) and misses the compound. Correlate them into ONE CRITICAL role-takeover finding (reuse the correlate.js compound mechanism). This technique does NOT require iam:PassRole. Preserve per-statement evidence (do not attribute all actions to one statement) - the actions come from different statements (test 34 spans statements 0 and 1).",
+        "The contributing primitive findings may remain as subsumed risk factors, but the primary must be the critical takeover chain, and the graph must show the same-role modify-then-assume linkage (typed edges; no generic can-write aggregation).",
+        "Add acceptance fixtures: test-34 (positive: all three on the same role -> critical) and a boundary/negative (only 2 of the 3, or the actions on DIFFERENT roles -> NO critical takeover)."
+      ],
+      "acceptance": [
+        "PutRolePolicy + UpdateAssumeRolePolicy + AssumeRole on the same role -> one critical role-takeover finding, per-statement evidence preserved, no PassRole required (suite-2 test 34)",
+        "a partial set (2 of 3) or the actions spread across DIFFERENT roles does NOT fire the critical takeover (boundary fixture)",
+        "test-34 positive + boundary fixtures present; full node --test green; no regression to existing IAM-admin findings"
+      ]
+    },
+    {
+      "id": "IAM-903",
+      "title": "Phase 9: invalid wildcard Principal ARN detection",
+      "priority": 29,
+      "phase": 9,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Fix docs/acceptance-suite-2.md test 48: a Principal AWS ARN that uses a partial wildcard to denote multiple principals (e.g. arn:aws:iam::123456789012:role/application/*) is currently accepted and treated as an ordinary TRUST-CROSS-ACCOUNT high. IAM principal ARNs generally cannot use a partial wildcard to represent multiple role principals - mark the statement invalid / emit a coverage warning (do not silently expand it into trust for every role in the path). Suggest Principal: \"*\" plus an aws:PrincipalArn condition where that pattern is valid for the intended threat model.",
+        "Do NOT break legitimate cases: a wildcard in an aws:PrincipalArn CONDITION value is valid (leave it); a specific Principal ARN, account root, or Principal \"*\" are valid; only a partial wildcard in the Principal ELEMENT's ARN itself is the invalid pattern. Role-trust suite-1 tests 15/16/17/18 and the trust negative corpus must not regress.",
+        "Add acceptance fixtures: test-48 (invalid wildcard Principal ARN -> coverage warning / marked invalid) and a boundary confirming a specific Principal ARN and a Principal '*' + aws:PrincipalArn condition are unaffected."
+      ],
+      "acceptance": [
+        "Principal {AWS: '...:role/application/*'} -> flagged invalid / coverage warning, not a plain uncaveated TRUST-CROSS-ACCOUNT high (suite-2 test 48)",
+        "valid Principals (specific ARN, account root, '*') and wildcard aws:PrincipalArn CONDITION values unaffected; suite-1 trust tests + trust negative corpus not regressed",
+        "test-48 + boundary fixtures present; full node --test green"
+      ]
+    },
+    {
+      "id": "IAM-904",
+      "title": "Phase 9: re-run both acceptance suites + scoreboard",
+      "priority": 30,
+      "phase": 9,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Re-run BOTH acceptance suites end to end: docs/acceptance-suite.md (suite 1, tests 1-24) and docs/acceptance-suite-2.md (suite 2, tests 25-54), driving engine/analyze.js directly against every policy block. Confirm suite 1 stays 24/24 and suite-2 tests 44, 34, 48 now PASS.",
+        "The remaining suite-2 tests that depend on unbuilt families (resource policies 26/27/28/32/33/49/51/53, RCP 52, permissions boundary 30, session policy 31) must stay HONESTLY handled: resource/RCP fail closed (UNSUPPORTED_POLICY_FAMILY / UNSUPPORTED_SCP_SHAPE); boundary/session remain the documented family-selector gap. Encode each as a designBlocked expectation naming the family-tranche follow-up so a later feature flips them deliberately - no silent skips.",
+        "Write the updated scoreboard to docs/acceptance-suite-2-results.md (per-test verdict: pass / fail / blocked-by-design / family-gap) and note it in progress.md. Confirm no regression to suite 1, the identity negative corpus, or the trust negative corpus."
+      ],
+      "acceptance": [
+        "suite-2 tests 44, 34, 48 pass; suite 1 still 24/24; deferred-family tests remain honestly fail-closed / family-gap with designBlocked markers (no silent skips)",
+        "docs/acceptance-suite-2-results.md scoreboard written + progress.md updated",
+        "full node --test green; no regression to suite 1 or either negative corpus"
+      ]
     }
   ]
 }

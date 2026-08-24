@@ -1,0 +1,23 @@
+{
+  "name": "Role takeover chain (grant + trust-modify + assume) in one statement",
+  "note": "IAM-902 positive: all three takeover primitives target the same role within a single statement (iam:AttachRolePolicy to grant, iam:UpdateAssumeRolePolicy to re-trust, sts:AssumeRole to assume). One critical ROLE-TAKEOVER finding; no iam:PassRole required.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TakeOverDeployRole",
+        "Effect": "Allow",
+        "Action": [
+          "iam:AttachRolePolicy",
+          "iam:UpdateAssumeRolePolicy",
+          "sts:AssumeRole"
+        ],
+        "Resource": "arn:aws:iam::123456789012:role/DeployRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["ROLE-TAKEOVER"]
+  }
+}

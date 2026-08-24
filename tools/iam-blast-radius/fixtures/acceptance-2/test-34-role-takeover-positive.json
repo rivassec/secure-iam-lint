@@ -1,0 +1,34 @@
+{
+  "name": "Acceptance suite-2 test 34 - full IAM role takeover chain (modify-then-assume)",
+  "note": "IAM-902: a permission-grant primitive (iam:PutRolePolicy) AND iam:UpdateAssumeRolePolicy AND sts:AssumeRole, all targeting the SAME role (spanning statements 0 and 1), form a compound role-takeover path that crosses a privilege boundary WITHOUT iam:PassRole. The engine correlates the two standalone primitives (PUT-INLINE-POLICY, TRUST-POLICY-MODIFY) into ONE critical ROLE-TAKEOVER finding; per-statement evidence is preserved (PutRolePolicy + UpdateAssumeRolePolicy attributed to statement 0, sts:AssumeRole to statement 1 - no action attributed to a statement that does not grant it).",
+  "phase": 9,
+  "story": "IAM-902",
+  "suite": 2,
+  "acceptanceTest": 34,
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ModifyTargetRole",
+        "Effect": "Allow",
+        "Action": [
+          "iam:PutRolePolicy",
+          "iam:UpdateAssumeRolePolicy"
+        ],
+        "Resource": "arn:aws:iam::123456789012:role/automation/DeploymentRole"
+      },
+      {
+        "Sid": "AssumeTargetRole",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/automation/DeploymentRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["ROLE-TAKEOVER"]
+  }
+}

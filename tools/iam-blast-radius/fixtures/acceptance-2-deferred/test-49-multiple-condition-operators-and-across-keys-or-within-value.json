@@ -1,0 +1,35 @@
+{
+  "id": "suite2-test-49-multiple-condition-operators-and-across-keys-or-within-value",
+  "suite2Test": 49,
+  "title": "Multiple condition operators: AND across keys, OR within values",
+  "designBlocked": "Resource-based / RCP policy family tranche (post-Phase-5 family model). Flip to this test's Expected-result finding when a resource-policy (and RCP) evaluator ships; until then the engine fails closed rather than misread the document as an identity policy.",
+  "expect": {
+    "deferred": "blocked-by-design",
+    "familyBlocked": true,
+    "ok": true,
+    "detectedFamily": "resource",
+    "blockingCode": "UNSUPPORTED_POLICY_FAMILY",
+    "noFindings": true
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "RestrictedArtifactRead",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::release-artifacts/*",
+        "Condition": {
+          "StringEquals": {
+            "aws:SourceVpce": [
+              "vpce-0123456789abcdef0",
+              "vpce-0fedcba9876543210"
+            ],
+            "aws:PrincipalTag/environment": "production"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -85,6 +85,11 @@ export const KNOWN_PRINCIPAL_TYPES = Object.freeze(new Set([
 // hard-coding the strings, and so the ids stay DISTINCT from the identity
 // RULE_IDS / ESCALATION_IDS (fixture-matrix enumerates only those two).
 export const TRUST_IDS = Object.freeze([
+  // IAM-903: a Principal-element ARN carrying a partial wildcard is an INVALID
+  // pattern; it fails closed to this finding (marked invalid + a coverage
+  // warning), never a plain uncaveated TRUST-CROSS-ACCOUNT high. Ordered first so
+  // it sorts ahead of the substantive trust findings for the same statement.
+  'TRUST-INVALID-PRINCIPAL',
   'TRUST-PUBLIC',
   'TRUST-ORG-EXPANSION',
   'TRUST-CROSS-ACCOUNT',
@@ -409,9 +414,31 @@ function add(out, type, value) {
 // AWS principal string -> typed form. '*' is anonymous/public; a bare 12-digit
 // id or a ...:root ARN delegates trust to the whole account; anything else is a
 // specific user/role/session principal ARN (section 2.2-2.4).
+//
+// IAM-903: a partial wildcard ('*'/'?') INSIDE an AWS Principal-element ARN
+// (e.g. arn:aws:iam::123456789012:role/application/*, .../role/app-*,
+// arn:aws:iam::*:role/*) is an INVALID pattern - the IAM Principal element does
+// not support wildcard matching of a principal name/ARN; the ONLY wildcard a
+// Principal accepts is the standalone "*" (already typed 'anonymous' above).
+// AWS rejects a partial-wildcard principal ARN at save time, so it can neither be
+// a specific principal nor be expanded into "every role in the path". Type it
+// distinctly ('aws-principal-arn-wildcard') so findingsForStatement fails it
+// closed (an invalid/coverage-warning finding, never a plain TRUST-CROSS-ACCOUNT
+// high) instead of silently over-trusting an unbounded set. A wildcard in an
+// aws:PrincipalArn CONDITION value is a DIFFERENT, VALID construct and is handled
+// in conditionSignals, not here.
 function awsPrincipalType(v) {
   const s = String(v);
   if (s === '*') return 'anonymous';
+  // A partial wildcard must be tested BEFORE the account-root / bare-account
+  // shapes below: an ARN carrying a '*'/'?' anywhere (e.g. a wildcarded account
+  // field in arn:aws:iam::*:root, or arn:aws:iam::123456789012:role/app-*) is an
+  // INVALID Principal-element pattern regardless of how it ends. Testing :root$
+  // first would mis-type arn:aws:iam::*:root as a VALID whole-account 'aws-root'
+  // delegation and silently over-trust it, defeating the IAM-903 fail-closed
+  // handling. The bare 12-digit account form (^\d{12}$) can never contain a glob,
+  // so this reorder only ever reclassifies otherwise-invalid wildcard ARNs.
+  if (hasGlob(s)) return 'aws-principal-arn-wildcard';
   if (/:root$/i.test(s)) return 'aws-root';
   if (/^\d{12}$/.test(s)) return 'aws-account';
   return 'aws-principal-arn';
@@ -760,9 +787,62 @@ function subsetPrincipals(principals, types) {
 // array (usually one finding; a statement mixing e.g. an external account AND a
 // service principal can yield more than one).
 function findingsForStatement(stmt) {
-  const principals = classifyPrincipals(stmt.principal);
-  const sig = conditionSignals(stmt.condition, principals);
+  const allPrincipals = classifyPrincipals(stmt.principal);
   const found = [];
+
+  // IAM-903: fail closed on an INVALID partial-wildcard Principal-element ARN
+  // (arn:aws:iam::123456789012:role/application/*, .../role/app-*,
+  // arn:aws:iam::*:role/*, .../user/dev-*). The IAM Principal element cannot use a
+  // partial wildcard to denote multiple principals - AWS rejects it at save time -
+  // so it must NOT be silently accepted as an ordinary TRUST-CROSS-ACCOUNT high and
+  // must NOT be expanded into trust for every role the pattern appears to match
+  // (threat-model T8: overstated certainty on an unanalyzable shape). Emit a
+  // distinct, clearly-caveated TRUST-INVALID-PRINCIPAL finding (analyze.js also
+  // raises a coverage warning from it) and REMOVE these values before the
+  // substantive branches, so no downstream branch (org-expansion / public /
+  // cross-account / breadth) ever reasons about them. A wildcard in an
+  // aws:PrincipalArn CONDITION value is a different, valid construct and is left
+  // untouched (it is handled in conditionSignals, not here).
+  let principals = allPrincipals;
+  if (allPrincipals.categories.has('aws-principal-arn-wildcard')) {
+    const invalid = subsetPrincipals(allPrincipals, ['aws-principal-arn-wildcard']);
+    const invalidWho = principalSummary(invalid);
+    found.push(makeFinding(stmt, invalid, {
+      id: 'TRUST-INVALID-PRINCIPAL',
+      severity: 'high',
+      title: 'Invalid wildcard Principal ARN (fail closed)',
+      why:
+        `The trust policy names an AWS Principal ARN that uses a partial wildcard ` +
+        `to denote multiple principals (${invalidWho}). This is NOT a valid IAM ` +
+        'Principal element: a principal ARN cannot use a partial "*"/"?" wildcard to ' +
+        'match multiple user/role principals (AWS rejects such a policy at save ' +
+        'time), and the standalone Principal "*" is the ONLY wildcard the element ' +
+        'accepts. The trusted set is therefore UNDETERMINED from this document: it ' +
+        'is not a single specific principal, and it must NOT be read as trust for ' +
+        'every role the pattern appears to match. This statement is fail-closed and ' +
+        'is surfaced as a coverage warning rather than an ordinary cross-account ' +
+        'trust finding.',
+      remediation:
+        'A principal ARN wildcard is invalid here. If the intent is to trust one ' +
+        'specific role/user, name its exact ARN as the Principal. If the intent is ' +
+        'to trust a SET of principals matching a pattern (and that is appropriate ' +
+        'for the threat model), use Principal: "*" together with an aws:PrincipalArn ' +
+        'condition (e.g. ArnLike aws:PrincipalArn arn:aws:iam::123456789012:role/' +
+        'application/*) plus a confused-deputy constraint where a third party is ' +
+        'involved - the wildcard is valid in that condition value, not in the ' +
+        'Principal element itself.',
+      docRef: DOC_PRINCIPAL,
+      pathExploitability: 'low',
+    }));
+    // Continue with only the VALID principals (a statement may legitimately name a
+    // concrete account/root alongside the invalid wildcard); if none remain, the
+    // invalid finding is the whole story for this statement.
+    const validTypes = [...allPrincipals.categories].filter((t) => t !== 'aws-principal-arn-wildcard');
+    principals = subsetPrincipals(allPrincipals, validTypes);
+    if (principals.entries.length === 0) return found;
+  }
+
+  const sig = conditionSignals(stmt.condition, principals);
   const who = principalSummary(principals);
   // A would-be constraint carrying a bypassable qualifier (...IfExists /
   // ForAllValues:) is NOT credited above and does not lower severity; name it so

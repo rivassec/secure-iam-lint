@@ -1,0 +1,32 @@
+{
+  "name": "Acceptance suite-2 test 44 (boundary) - same key in DIFFERENT objects is legal",
+  "note": "IAM-901 negative control: the SAME key name (\"Action\", \"Sid\", \"Effect\", \"Resource\") appearing once in each of two distinct statement objects is valid JSON and a normal policy - it must NOT be flagged DUPLICATE_JSON_KEY. Only a repeat WITHIN ONE object is a collision. Analysis proceeds normally and produces the DATA-READ / wildcard findings the policy warrants.",
+  "phase": 9,
+  "story": "IAM-901",
+  "suite": 2,
+  "acceptanceTest": "44B",
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadObjects",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::reports/*"
+      },
+      {
+        "Sid": "AdminIam",
+        "Effect": "Allow",
+        "Action": "iam:*",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "notFindingIds": [],
+    "notErrorCodes": ["DUPLICATE_JSON_KEY"]
+  }
+}

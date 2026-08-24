@@ -1,0 +1,33 @@
+{
+  "id": "suite2-test-43-negated-ifexists-in-a-deny-matches-missing-keys",
+  "suite2Test": 43,
+  "title": "Negated IfExists in a Deny matches missing keys",
+  "designBlocked": "SCP/RCP ceiling-semantics tranche. Flip when full SCP/RCP ceiling analysis ships; until then the engine fails closed (a Deny guardrail grants nothing, so identity rules must not run).",
+  "expect": {
+    "deferred": "blocked-by-design",
+    "familyBlocked": true,
+    "ok": true,
+    "detectedFamily": "scp-rcp",
+    "blockingCode": "UNSUPPORTED_SCP_SHAPE",
+    "noFindings": true
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyOutsideApprovedRegions",
+        "Effect": "Deny",
+        "Action": "*",
+        "Resource": "*",
+        "Condition": {
+          "StringNotEqualsIfExists": {
+            "aws:RequestedRegion": [
+              "us-east-1",
+              "us-west-2"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

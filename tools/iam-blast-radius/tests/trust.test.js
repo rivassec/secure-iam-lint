@@ -127,53 +127,89 @@ test('external account + sts:ExternalId -> low/medium TRUST-CROSS-ACCOUNT; Exter
   assert.match(text, /not a secret/i, 'explicitly states ExternalId is not a secret');
 });
 
-// Adversarial-critic IAM-805 iteration 4 finding IAM805-1 (blocking under-claim +
-// internal asymmetry): a BROAD wildcard-ARN principal that spans every account
-// (arn:aws:iam::*:role/*) gated ONLY by a confused-deputy constraint (ExternalId /
-// SourceArn / SourceAccount) must NOT collapse the correct HIGH baseline to LOW.
-// The constraint correlates HOW the assume call is made but bounds neither WHICH
-// nor HOW-MANY of the unbounded principal set is trusted, so severity stays high
-// (at most path-exploitability drops). Contrast the account-BOUNDED test above,
-// where the same ExternalId legitimately lowers to low. The bug was a
-// principal-string-TYPE asymmetry: Principal "*" + the identical ExternalId
-// correctly stays CRITICAL (publicScopeConstraint excludes ExternalId), but a
-// wildcard ARN short-circuited to low without a breadth gate.
-test('IAM805-1: broad wildcard-ARN principal (arn:aws:iam::*:role/*) + sts:ExternalId stays HIGH (breadth not bounded by a correlation value)', () => {
+// IAM-903 (Phase 9) INTENTIONAL behavior change: a partial-wildcard AWS
+// Principal-element ARN is an INVALID pattern (the IAM Principal element cannot
+// wildcard-match a principal name/ARN - AWS rejects it at save time; only the
+// standalone Principal "*" is a valid wildcard). It must fail closed to a
+// caveated TRUST-INVALID-PRINCIPAL finding, never a plain TRUST-CROSS-ACCOUNT /
+// TRUST-ORG-EXPANSION expansion, and must not be silently over-trusted as "every
+// role the pattern matches". This supersedes the earlier IAM-805/IAM-803 tests
+// that modeled wildcard Principal ARNs (arn:aws:iam::*:role/*, .../role/app-*) as
+// ORDINARY broad/bounded principals - that premise was the very bug IAM-903 fixes.
+//
+// The underlying IAM-805 breadth invariant (a confused-deputy correlation value
+// does NOT neutralize an UNBOUNDED principal) still holds for the only VALID
+// unbounded AWS principal, Principal "*", and is re-asserted below so nothing is
+// lost.
+test('IAM-903: a wildcard-ARN Principal (arn:aws:iam::*:role/*) is INVALID -> TRUST-INVALID-PRINCIPAL, never a plain TRUST-CROSS-ACCOUNT expansion', () => {
   const r = trust([{
     Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::*:role/*' }, Action: 'sts:AssumeRole',
     Condition: { StringEquals: { 'sts:ExternalId': 'shared-correlation-value' } },
   }]);
-  const f = r.findings.find((x) => x.id === 'TRUST-CROSS-ACCOUNT');
-  assert.ok(f, 'expected TRUST-CROSS-ACCOUNT');
-  assert.equal(f.severity, 'high', 'a global wildcard-ARN principal is not neutralized by a confused-deputy correlation value');
-  assert.doesNotMatch(f.why, /gated by a confused[- ]deputy constraint/i,
-    'must not present the ExternalId as a severity-lowering mitigation on an unbounded principal');
-  assert.match(f.why, /every AWS account|unbounded/i, 'explains the principal spans an unbounded set');
-  // At most, path-exploitability is reduced by the constraint.
-  assert.equal(f.pathExploitability, 'low');
+  const inv = r.findings.find((x) => x.id === 'TRUST-INVALID-PRINCIPAL');
+  assert.ok(inv, 'expected TRUST-INVALID-PRINCIPAL');
+  assert.match(inv.why, /invalid|cannot use a partial/i, 'explains the principal ARN wildcard is invalid');
+  assert.match(inv.remediation, /aws:PrincipalArn/, 'suggests Principal "*" + aws:PrincipalArn condition');
+  assert.ok(!findingIds(r).includes('TRUST-CROSS-ACCOUNT'), 'an invalid wildcard principal is NOT expanded into an ordinary cross-account high');
+  // Coverage fails closed: the invalid element makes the trusted set undetermined.
+  assert.equal(r.coverage.summary.incomplete, true, 'invalid principal -> coverage incomplete');
+  assert.ok(r.coverage.summary.codes.includes('INVALID_PRINCIPAL_WILDCARD_ARN'), 'coverage carries the machine-readable warning code');
 });
 
-test('IAM805-1: broad wildcard-ARN principal + aws:SourceAccount also stays HIGH (same breadth gate)', () => {
-  const r = trust([{
-    Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::*:role/*' }, Action: 'sts:AssumeRole',
-    Condition: { StringEquals: { 'aws:SourceAccount': '111111111111' } },
-  }]);
-  const f = r.findings.find((x) => x.id === 'TRUST-CROSS-ACCOUNT');
-  assert.ok(f);
-  assert.equal(f.severity, 'high', 'SourceAccount does not bound which/how-many of the global principal set is trusted');
-});
-
-test('IAM805-1 symmetry preserved: an ACCOUNT-BOUNDED wildcard ARN + sts:ExternalId still lowers to low', () => {
-  // The breadth gate must fire ONLY on the org-wide (all-accounts) wildcard. An
-  // account-pinned wildcard ARN (bounded to one account) is a real cross-account
-  // relationship that a confused-deputy constraint legitimately lowers.
+test('IAM-903: an account-pinned wildcard-ARN Principal (arn:aws:iam::123456789012:role/app-*) is ALSO invalid (fail closed, no cross-account high)', () => {
   const r = trust([{
     Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::123456789012:role/app-*' }, Action: 'sts:AssumeRole',
     Condition: { StringEquals: { 'sts:ExternalId': 'vendor-correlation-id' } },
   }]);
-  const f = r.findings.find((x) => x.id === 'TRUST-CROSS-ACCOUNT');
-  assert.ok(f);
-  assert.equal(f.severity, 'low', 'account-bounded principal + ExternalId is the genuine confused-deputy low case');
+  assert.ok(findingIds(r).includes('TRUST-INVALID-PRINCIPAL'), 'account-pinned partial wildcard in a Principal ARN is still invalid');
+  assert.ok(!findingIds(r).includes('TRUST-CROSS-ACCOUNT'), 'not silently accepted as an ordinary (lowered) cross-account finding');
+});
+
+// IAM-903 (iteration 2, trust.js:433 defect): a partial wildcard that lands in
+// the ACCOUNT field of an otherwise-:root ARN (arn:aws:iam::*:root) must still be
+// typed as the INVALID wildcard form and fail closed. The glob test has to run
+// BEFORE the :root$/^\d{12}$ shape tests, otherwise the wildcard-account ARN
+// matches :root$ first and is silently accepted as a VALID whole-account
+// 'aws-root' delegation - over-trusting every account instead of failing closed.
+test('IAM-903: a wildcard in the account field of a :root ARN (arn:aws:iam::*:root) is INVALID, never a valid whole-account aws-root delegation', () => {
+  const cls = classifyPrincipals({ anyPrincipal: false, byType: { AWS: ['arn:aws:iam::*:root'] } });
+  assert.ok(cls.categories.has('aws-principal-arn-wildcard'),
+    'a wildcarded account field types as the invalid wildcard form, not aws-root');
+  assert.ok(!cls.categories.has('aws-root'),
+    'must NOT be classified as a valid whole-account root delegation');
+
+  const r = trust([{
+    Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::*:root' }, Action: 'sts:AssumeRole',
+  }]);
+  assert.ok(findingIds(r).includes('TRUST-INVALID-PRINCIPAL'),
+    'a wildcard-account :root ARN fails closed to TRUST-INVALID-PRINCIPAL');
+  assert.ok(!findingIds(r).includes('TRUST-CROSS-ACCOUNT'),
+    'not silently expanded into an ordinary cross-account trust finding');
+  assert.equal(r.coverage.summary.incomplete, true, 'invalid principal -> coverage incomplete');
+  assert.ok(r.coverage.summary.codes.includes('INVALID_PRINCIPAL_WILDCARD_ARN'),
+    'coverage carries the machine-readable warning code');
+});
+
+// Boundary: a CONCRETE :root ARN and a bare 12-digit account (no glob) are still
+// the valid whole-account forms - the reorder must not disturb them.
+test('IAM-903 boundary: concrete :root ARN and bare account id stay valid whole-account principals (aws-root / aws-account)', () => {
+  const cls = classifyPrincipals({ anyPrincipal: false, byType: { AWS: [
+    'arn:aws:iam::123456789012:root', '123456789012',
+  ] } });
+  assert.ok(cls.categories.has('aws-root'), 'concrete :root ARN stays aws-root');
+  assert.ok(cls.categories.has('aws-account'), 'bare 12-digit account stays aws-account');
+  assert.ok(!cls.categories.has('aws-principal-arn-wildcard'),
+    'no glob present -> not the invalid wildcard form');
+});
+
+test('IAM-805 breadth invariant preserved on the VALID unbounded principal: Principal "*" + sts:ExternalId stays CRITICAL public (a correlation value does not bound a public principal)', () => {
+  const r = trust([{
+    Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole',
+    Condition: { StringEquals: { 'sts:ExternalId': 'shared-correlation-value' } },
+  }]);
+  const f = r.findings.find((x) => x.id === 'TRUST-PUBLIC');
+  assert.ok(f, 'Principal "*" is TRUST-PUBLIC');
+  assert.equal(f.severity, 'critical', 'a confused-deputy correlation value does not bound which principals a public trust admits');
 });
 
 test('unconditioned external account -> high TRUST-CROSS-ACCOUNT', () => {
@@ -450,68 +486,49 @@ test('StringNotEquals org on ONE specific role ARN is NOT org-wide critical; sco
   assert.match(cross.why, /expansion/i, 'still notes the negated org condition is expansion polarity');
 });
 
-test('StringNotEquals org on a NAMED wildcard principal ("arn:aws:iam::*:role/*") is critical org-expansion via principal-VALUE breadth (IAM-803 it.3)', () => {
-  // Coverage gap closed here: the org-expansion critical branch
-  // (findingsForStatement: `sig.orgExclusion && principalIsBroad(principals)`)
-  // was only ever reached in tests via an ANONYMOUS Principal "*", which
-  // short-circuits principalIsBroad on `principals.anonymous`. The other broad
-  // path - a NAMED principal whose ARN value carries a "*" wildcard - runs
-  // through `principals.entries.some((e) => String(e.value).includes('*'))` and
-  // was untested, so a mutant neutralising that value-breadth check survived.
-  // A named wildcard ARN trusts an org-wide external set exactly as a bare "*"
-  // does, so it must also be the CRITICAL org-wide expansion, not the bounded
-  // single-ARN cross-account fall-through (contrast the specific-role test
-  // above).
+test('IAM-903 supersedes IAM-803 it.3: a wildcard-ARN Principal ("arn:aws:iam::*:role/*") + negated org is INVALID (fail closed), not a critical TRUST-ORG-EXPANSION', () => {
+  // The org-expansion critical branch (findingsForStatement:
+  // `sig.orgExclusion && principalIsBroad(principals)`) is reached only by a VALID
+  // broad principal - Principal "*". A NAMED principal ARN carrying a partial "*"
+  // wildcard is NOT a valid principal element at all (IAM-903): it fails closed to
+  // TRUST-INVALID-PRINCIPAL before any severity branch, so it can be neither the
+  // critical org-expansion nor a bounded cross-account fall-through. (The
+  // Principal "*" + negated-org critical case remains covered by the
+  // TRUST-ORG-EXPANSION test earlier in this file.)
   const r = trust([{
     Effect: 'Allow',
     Principal: { AWS: 'arn:aws:iam::*:role/*' },
     Action: 'sts:AssumeRole',
     Condition: { StringNotEquals: { 'aws:PrincipalOrgID': 'o-abc1234567' } },
   }]);
-  const f = r.findings.find((x) => x.id === 'TRUST-ORG-EXPANSION');
-  assert.ok(f, 'a named wildcard ARN principal + org-exclusion is the critical org-wide expansion');
-  assert.equal(f.severity, 'critical');
-  assert.match(f.why, /outside/i, 'explains it trusts principals OUTSIDE the org');
-  // It is NOT the bounded single-ARN cross-account case.
-  assert.ok(!findingIds(r).includes('TRUST-CROSS-ACCOUNT'), 'wildcard-value ARN is broad, not a bounded cross-account fall-through');
+  assert.ok(findingIds(r).includes('TRUST-INVALID-PRINCIPAL'), 'a wildcard-ARN principal element is invalid');
+  assert.ok(!findingIds(r).includes('TRUST-ORG-EXPANSION'), 'an invalid principal is not expanded into a critical org-expansion');
+  assert.ok(!findingIds(r).includes('TRUST-CROSS-ACCOUNT'), 'nor into an ordinary cross-account high');
 });
 
-test('StringNotEquals org on an ACCOUNT-PINNED wildcard ARN ("arn:aws:iam::123456789012:role/app-*") is NOT org-wide critical; falls through to cross-account high (IAM-803 it.4)', () => {
-  // Blocking adversarial defect IAM-803 iteration 4: principalIsBroad() treated
-  // ANY "*" in a value as org-wide/public, so an account-pinned wildcard ARN
-  // (bounded to ONE account, roles only) mis-fired TRUST-ORG-EXPANSION critical
-  // with why-text asserting an "organization-wide set of outside principals" -
-  // over-claiming a full severity band against the finding's own single-account
-  // evidence. It also inverted severity: the strictly BROADER whole-account trust
-  // ({"AWS":"999988887777"} / :root) correctly falls to cross-account high, while
-  // this narrower same-account subset scored critical. The account-pinned wildcard
-  // must fall through to the cross-account branch, carrying the expansion-polarity
-  // note, at high (never above the broader whole-account trust).
+test('IAM-903 supersedes IAM-803 it.4: an account-pinned wildcard ARN ("arn:aws:iam::123456789012:role/app-*") + negated org is INVALID, not cross-account high', () => {
   const r = trust([{
     Effect: 'Allow',
     Principal: { AWS: 'arn:aws:iam::123456789012:role/app-*' },
     Action: 'sts:AssumeRole',
     Condition: { StringNotEquals: { 'aws:PrincipalOrgID': 'o-abc1234567' } },
   }]);
-  assert.ok(!findingIds(r).includes('TRUST-ORG-EXPANSION'), 'account-pinned wildcard ARN is bounded to one account, not org-wide');
-  const cross = r.findings.find((x) => x.id === 'TRUST-CROSS-ACCOUNT');
-  assert.ok(cross, 'falls through to the cross-account case');
-  assert.equal(cross.severity, 'high', 'bounded to a single account -> high, not critical, and not above the broader whole-account trust');
-  assert.match(cross.why, /app-\*/, 'names the account-pinned principal it is actually about');
-  assert.doesNotMatch(cross.why, /organization-wide set of outside principals/i, 'does not overclaim org-wide expansion on a single-account principal');
-  assert.match(cross.why, /expansion/i, 'still notes the negated org condition is expansion polarity');
+  assert.ok(findingIds(r).includes('TRUST-INVALID-PRINCIPAL'), 'account-pinned partial wildcard in a Principal ARN is still invalid');
+  assert.ok(!findingIds(r).includes('TRUST-ORG-EXPANSION'), 'invalid principal is not org-wide critical');
+  assert.ok(!findingIds(r).includes('TRUST-CROSS-ACCOUNT'), 'invalid principal is not a cross-account fall-through');
 });
 
-test('severity ordering: an account-pinned role-wildcard is never scored above the strictly broader whole-account trust (IAM-803 it.4 inversion guard)', () => {
+test('IAM-803 it.4 inversion guard preserved for VALID principals: whole-account id and :root ARN both stay cross-account high (never over-ranked)', () => {
+  // The inversion guard applies to VALID principals. A wildcard-ARN principal is
+  // now invalid (IAM-903, asserted above), so the guard is re-anchored on the two
+  // valid whole-account spellings, which must both be cross-account high.
   const cond = { StringNotEquals: { 'aws:PrincipalOrgID': 'o-abc1234567' } };
   const wholeAccount = trust([{ Effect: 'Allow', Principal: { AWS: '999988887777' }, Action: 'sts:AssumeRole', Condition: cond }]);
   const rootArn = trust([{ Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::999988887777:root' }, Action: 'sts:AssumeRole', Condition: cond }]);
-  const roleWildcard = trust([{ Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::999988887777:role/app-*' }, Action: 'sts:AssumeRole', Condition: cond }]);
   const sev = (r) => r.findings.find((x) => x.id === 'TRUST-CROSS-ACCOUNT');
   assert.equal(sev(wholeAccount).severity, 'high', 'bare account id + negated org -> cross-account high');
   assert.equal(sev(rootArn).severity, 'high', ':root ARN + negated org -> cross-account high');
-  assert.ok(sev(roleWildcard), 'account-pinned role wildcard is a cross-account finding, not a critical org-expansion');
-  assert.equal(sev(roleWildcard).severity, 'high', 'the narrower same-account role-wildcard subset matches (never exceeds) the broader whole-account severity');
+  assert.ok(!findingIds(wholeAccount).includes('TRUST-ORG-EXPANSION'), 'a bounded whole-account principal is not org-wide critical');
 });
 
 // ---------------------------------------------------------------------------

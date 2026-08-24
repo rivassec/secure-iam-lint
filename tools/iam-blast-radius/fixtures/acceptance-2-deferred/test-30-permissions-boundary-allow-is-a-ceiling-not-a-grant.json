@@ -1,0 +1,30 @@
+{
+  "id": "suite2-test-30-permissions-boundary-allow-is-a-ceiling-not-a-grant",
+  "suite2Test": 30,
+  "title": "Permissions boundary Allow is a ceiling, not a grant",
+  "designBlocked": "Permissions-boundary family tranche. A boundary Allow is a permissions CEILING, not a grant. Flip when a boundary-aware evaluator ships (it must report a max-permission envelope and must NOT emit positive capability edges). Today there is no family selector, so the shape is analyzed as identity.",
+  "expect": {
+    "deferred": "family-gap",
+    "familyBlocked": false,
+    "ok": true,
+    "detectedFamily": "identity",
+    "currentFindingIds": [
+      "WILDCARD-ACTION",
+      "WILDCARD-RESOURCE"
+    ]
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "MaximumApplicationPermissions",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "dynamodb:*"
+        ],
+        "Resource": "*"
+      }
+    ]
+  }
+}

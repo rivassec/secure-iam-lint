@@ -1,0 +1,31 @@
+{
+  "name": "Acceptance suite-2 test 48 boundary - Principal '*' + aws:PrincipalArn CONDITION wildcard is valid",
+  "note": "IAM-903 boundary: a wildcard in an aws:PrincipalArn CONDITION value is the VALID construct AWS documents for pattern-matching principals (unlike a wildcard in the Principal element itself). Principal '*' + ArnLike aws:PrincipalArn must stay an ordinary public-trust finding (TRUST-PUBLIC) and must NOT be flagged TRUST-INVALID-PRINCIPAL. This is the exact pattern the invalid-principal remediation recommends.",
+  "phase": 9,
+  "story": "IAM-903",
+  "suite": 2,
+  "acceptanceTest": 48,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PublicScopedByPrincipalArn",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "ArnLike": {
+            "aws:PrincipalArn": "arn:aws:iam::123456789012:role/application/*"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["TRUST-PUBLIC"],
+    "notFindingIds": ["TRUST-INVALID-PRINCIPAL"]
+  }
+}

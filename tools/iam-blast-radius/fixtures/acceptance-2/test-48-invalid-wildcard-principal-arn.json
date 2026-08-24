@@ -1,0 +1,28 @@
+{
+  "name": "Acceptance suite-2 test 48 - wildcard inside a Principal ARN (fail closed)",
+  "note": "IAM-903: an AWS Principal-element ARN using a partial wildcard to denote multiple principals (arn:aws:iam::123456789012:role/application/*) is INVALID - the IAM Principal element cannot wildcard-match a principal name/ARN (only the standalone Principal \"*\" is accepted). The engine must NOT accept it as an ordinary TRUST-CROSS-ACCOUNT high and must NOT expand it into trust for every role in the path. It fails closed to a caveated TRUST-INVALID-PRINCIPAL finding plus an INVALID_PRINCIPAL_WILDCARD_ARN coverage warning (coverage incomplete). analyze() still succeeds (ok:true) - this is a coverage warning, not a hard block.",
+  "phase": 9,
+  "story": "IAM-903",
+  "suite": 2,
+  "acceptanceTest": 48,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "InvalidRolePattern",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::123456789012:role/application/*"
+        },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["TRUST-INVALID-PRINCIPAL"],
+    "notFindingIds": ["TRUST-CROSS-ACCOUNT"]
+  }
+}

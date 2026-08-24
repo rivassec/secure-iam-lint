@@ -1,0 +1,25 @@
+{
+  "name": "Role takeover chain on a role ARN carrying a hostile string (payload rides through inert)",
+  "note": "IAM-902 hostile-string rendering: the takeover role ARN embeds an HTML/JS payload. ROLE-TAKEOVER fires and the payload survives verbatim in the finding's resources as inert DATA (never parsed as markup) - the renderer places it via textContent.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TakeOver",
+        "Effect": "Allow",
+        "Action": [
+          "iam:PutRolePolicy",
+          "iam:UpdateAssumeRolePolicy",
+          "sts:AssumeRole"
+        ],
+        "Resource": "arn:aws:iam::123456789012:role/<script>alert(1)</script>"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["ROLE-TAKEOVER"],
+    "hostile": true,
+    "hostileFor": ["ROLE-TAKEOVER"]
+  }
+}

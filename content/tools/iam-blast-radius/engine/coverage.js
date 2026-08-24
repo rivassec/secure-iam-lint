@@ -129,9 +129,25 @@ export function enrichCoverage(coverage, context) {
   // Unsupported ELEMENTS: recognized-but-unmodeled elements, derived from the
   // blocking codes. Today only NotPrincipal; kept generic so a future element
   // slots in by adding its coverage code here.
-  const unsupportedElements = blockingCodes
+  const notPrincipalElements = blockingCodes
     .filter((b) => b && b.code === COVERAGE_CODES.UNSUPPORTED_NOTPRINCIPAL)
     .map((b) => Object.freeze({ element: 'NotPrincipal', code: b.code, path: b.path || null }));
+
+  // IAM-903: invalid partial-wildcard Principal-element ARNs (from analyze()'s
+  // trust path). Each is a recognized-but-unmodeled element that makes the trusted
+  // set undetermined - a non-blocking coverage warning (analysis continues on any
+  // valid principals) that still flips `incomplete` and the zero-findings wording.
+  const invalidPrincipals = Array.isArray(ctx.invalidPrincipals)
+    ? ctx.invalidPrincipals.map(String)
+    : [];
+  const invalidPrincipalElements = invalidPrincipals.map((v) => Object.freeze({
+    element: 'Principal',
+    code: COVERAGE_CODES.INVALID_PRINCIPAL_WILDCARD_ARN,
+    value: v,
+    path: null,
+  }));
+
+  const unsupportedElements = notPrincipalElements.concat(invalidPrincipalElements);
 
   // Supplied by analyze(): the action catalog (IAM-507, catalog.js) reports
   // concrete actions its dated snapshot does not recognize; the condition
@@ -180,6 +196,9 @@ export function enrichCoverage(coverage, context) {
   // (a clean parse is still not proof of complete coverage).
   const codes = blockingCodes.map((b) => String(b && b.code));
   if (trustDeny.unmodeled) codes.push('TRUST_DENY_UNMODELED');
+  // IAM-903: a stable, machine-readable code for the invalid-principal coverage
+  // warning, emitted once when any invalid wildcard Principal ARN is present.
+  if (invalidPrincipalElements.length > 0) codes.push(COVERAGE_CODES.INVALID_PRINCIPAL_WILDCARD_ARN);
 
   const summary = Object.freeze({
     detectedFamily: cov.detected || 'unknown',

@@ -1,0 +1,29 @@
+{
+  "name": "Acceptance suite-2 test 34 (boundary) - only 2 of the 3 takeover primitives -> NO critical takeover",
+  "note": "IAM-902 boundary: the chain requires ALL THREE of a permission-grant primitive, iam:UpdateAssumeRolePolicy, AND sts:AssumeRole on the same role. This policy grants only the modify legs (iam:PutRolePolicy + iam:UpdateAssumeRolePolicy) and NO sts:AssumeRole, so the compound ROLE-TAKEOVER must NOT fire; the two standalone primitives still surface individually.",
+  "phase": 9,
+  "story": "IAM-902",
+  "suite": 2,
+  "acceptanceTest": "34B",
+  "family": "identity",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ModifyTargetRole",
+        "Effect": "Allow",
+        "Action": [
+          "iam:PutRolePolicy",
+          "iam:UpdateAssumeRolePolicy"
+        ],
+        "Resource": "arn:aws:iam::123456789012:role/automation/DeploymentRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["TRUST-POLICY-MODIFY"],
+    "notFindingIds": ["ROLE-TAKEOVER"]
+  }
+}

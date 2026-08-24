@@ -1,0 +1,24 @@
+{
+  "id": "suite2-test-31-session-policy-allow-is-a-session-restriction",
+  "suite2Test": 31,
+  "title": "Session-policy Allow is a session restriction",
+  "designBlocked": "Session-policy family tranche. A session Allow caps a session; effective access is the intersection with the parent identity/role policy. Flip when a session-aware evaluator ships. Today there is no family selector, so the shape is analyzed as identity.",
+  "expect": {
+    "deferred": "family-gap",
+    "familyBlocked": false,
+    "ok": true,
+    "detectedFamily": "identity",
+    "currentFindingIds": []
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SessionScope",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::incident-evidence/*"
+      }
+    ]
+  }
+}

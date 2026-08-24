@@ -405,6 +405,17 @@ function trustResult(model, coverage, effectiveFamily) {
   // as a coverage caveat; an UNMODELED one (conditional / partial overlap) marks
   // coverage incomplete. A fully-modeled Deny (finding suppressed + blocked-by-deny
   // edge) is not itself incomplete, matching the identity engine.
+  // IAM-903: surface every INVALID partial-wildcard Principal-element ARN as a
+  // coverage warning (from the TRUST-INVALID-PRINCIPAL findings the trust
+  // evaluator fails closed to). A clean parse is not complete coverage: an invalid
+  // principal element makes the trusted set undetermined, so coverage is flagged
+  // incomplete rather than presented as a confident cross-account conclusion.
+  const invalidPrincipals = trust.findings
+    .filter((f) => f.id === 'TRUST-INVALID-PRINCIPAL')
+    .flatMap((f) => (f.evidence && f.evidence[0] && Array.isArray(f.evidence[0].principals)
+      ? f.evidence[0].principals.map((p) => p.value)
+      : []));
+
   const enriched = enrichCoverage(coverage, {
     model,
     graph,
@@ -412,6 +423,7 @@ function trustResult(model, coverage, effectiveFamily) {
     unsupportedConditions: unsupportedConditionKeys(model),
     unrecognizedActions: unrecognizedActions(model, defaultCatalog),
     trustDeny: summarizeTrustDeny(model, trust.findings),
+    invalidPrincipals,
   });
 
   return Object.freeze({

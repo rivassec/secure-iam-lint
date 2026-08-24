@@ -1,0 +1,28 @@
+{
+  "id": "suite2-test-32-same-account-direct-iam-user-resource-grant",
+  "suite2Test": 32,
+  "title": "Same-account direct IAM-user resource grant",
+  "designBlocked": "Resource-based / RCP policy family tranche (post-Phase-5 family model). Flip to this test's Expected-result finding when a resource-policy (and RCP) evaluator ships; until then the engine fails closed rather than misread the document as an identity policy.",
+  "expect": {
+    "deferred": "blocked-by-design",
+    "familyBlocked": true,
+    "ok": true,
+    "detectedFamily": "resource",
+    "blockingCode": "UNSUPPORTED_POLICY_FAMILY",
+    "noFindings": true
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DirectUserGrant",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::123456789012:user/Alice"
+        },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::finance-reports/*"
+      }
+    ]
+  }
+}

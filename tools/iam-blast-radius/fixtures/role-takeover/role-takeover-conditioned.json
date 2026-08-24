@@ -1,0 +1,33 @@
+{
+  "name": "Role takeover chain with a Condition on the assume leg (still fires, reduced confidence)",
+  "note": "IAM-902 condition interaction: all three takeover primitives target the same role, but the sts:AssumeRole leg carries an MFA Condition. The chain is still present (ROLE-TAKEOVER fires) but the Condition gates it, so confidence is reduced rather than the path suppressed.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ModifyRole",
+        "Effect": "Allow",
+        "Action": [
+          "iam:PutRolePolicy",
+          "iam:UpdateAssumeRolePolicy"
+        ],
+        "Resource": "arn:aws:iam::123456789012:role/DeployRole"
+      },
+      {
+        "Sid": "AssumeRoleWithMfa",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/DeployRole",
+        "Condition": {
+          "Bool": {
+            "aws:MultiFactorAuthPresent": "true"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["ROLE-TAKEOVER"]
+  }
+}

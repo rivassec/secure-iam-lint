@@ -95,6 +95,13 @@ const APPLICABILITY = Object.freeze({
   'TRUST-POLICY-MODIFY': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
   'CREDENTIAL-CREATION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],
   'ASSUME-ROLE-EXPANSION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
+  // IAM-902: the ROLE-TAKEOVER chain is a multi-statement compound AND path
+  // (grant + trust-modify + assume on the same role). Like the PassRole compound
+  // paths, notAction / notResource are not realistic single-shape expressions of
+  // this three-primitive correlation, so they are excluded; every other cell
+  // applies (present, absent, at a boundary, Deny-interacting, Condition-narrowed,
+  // hostile-string-bearing).
+  'ROLE-TAKEOVER': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
 });
 
 // A boundary witness is one of the curated `*-boundary.json` edge-case fixtures

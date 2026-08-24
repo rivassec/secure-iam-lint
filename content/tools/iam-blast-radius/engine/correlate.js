@@ -244,7 +244,14 @@ function withSubsumed(primary, subs) {
 export function correlateFindings(findings) {
   const afterCompound = correlateCompoundPaths(findings);
   const afterCapabilities = correlateSameStatementCapabilities(afterCompound);
-  return correlateIamAdmin(afterCapabilities);
+  const afterIamAdmin = correlateIamAdmin(afterCapabilities);
+  // IAM-902 runs LAST: the modify-then-assume ROLE-TAKEOVER chain subsumes its
+  // contributing IAM primitives (PUT-INLINE-POLICY / ATTACH-POLICY /
+  // TRUST-POLICY-MODIFY). Running after correlateIamAdmin means a DIRECT-IAM-ADMIN
+  // on a contributing statement has already been folded INTO one of those
+  // primitives (scenario B), so it rides up nested rather than surfacing as a
+  // stray standalone row when its primitive is folded into the takeover.
+  return correlateRoleTakeover(afterIamAdmin);
 }
 
 function correlateCompoundPaths(findings) {
@@ -673,6 +680,133 @@ function correlateIamAdmin(findings) {
     if (subsumed.has(f)) continue;
     if (scenarioA.has(f)) out.push(withIamAdminPrimary(f, scenarioA.get(f)));
     else if (scenarioB.has(f)) out.push(withGenericSubsumed(f, scenarioB.get(f)));
+    else out.push(f);
+  }
+  return out;
+}
+
+// --- IAM-902: role-takeover chain correlation --------------------------------
+//
+// escalation.js emits a critical ROLE-TAKEOVER compound finding when a
+// permission-grant primitive (iam:PutRolePolicy / iam:AttachRolePolicy),
+// iam:UpdateAssumeRolePolicy, and sts:AssumeRole are all granted on the SAME
+// concrete role (a modify-then-assume takeover that needs no iam:PassRole). The
+// contributing standalone primitives (PUT-INLINE-POLICY / ATTACH-POLICY /
+// TRUST-POLICY-MODIFY) each restate ONE leg of that chain, so leaving them as
+// separate top-level rows buries the higher-severity compound. This pass folds
+// each contributing primitive INTO its ROLE-TAKEOVER primary as a subsumed risk
+// factor (nothing lost - the full primitive, and anything already folded into it,
+// is preserved in subsumed[]).
+//
+// SAFETY (threat-model T8 - never understate blast radius / never hide an
+// independent capability). A primitive is subsumed ONLY when every one of its
+// (statementIndex, action) pairs is a grant/trust LEG the takeover chain actually
+// used. A primitive that also grants an action the chain did not consume (e.g. an
+// iam:PutRolePolicy on an UNRELATED role, or a PUT-INLINE-POLICY that also writes
+// a user policy) does not match and stays an independent top-level row.
+const ROLE_TAKEOVER_TECHNIQUE = 'role-takeover-chain';
+const ROLE_TAKEOVER_CANDIDATE_IDS = new Set([
+  'PUT-INLINE-POLICY',
+  'ATTACH-POLICY',
+  'TRUST-POLICY-MODIFY',
+]);
+const ROLE_TAKEOVER_SUBSUMED_REASON =
+  'Subsumed into the compound role-takeover chain on the same role: this ' +
+  'primitive is one leg of the modify-then-assume takeover, so it is reported as ' +
+  'a risk factor of that critical path rather than a separate row.';
+
+function isRoleTakeoverPrimary(f) {
+  return !!(
+    f &&
+    f.escalation &&
+    f.escalation.technique === ROLE_TAKEOVER_TECHNIQUE &&
+    Array.isArray(f.evidence)
+  );
+}
+
+// The (statementIndex, action) pairs the takeover's grant/trust legs contribute.
+// The `assume` leg is intentionally excluded: sts:AssumeRole on a specific role
+// produces no standalone escalation finding, so there is nothing to subsume for it.
+function takeoverLegKeys(primary) {
+  const set = new Set();
+  for (const ev of primary.evidence) {
+    if (!ev) continue;
+    if (ev.role !== 'grant-permissions' && ev.role !== 'modify-trust') continue;
+    if (typeof ev.statementIndex !== 'number') continue;
+    for (const a of Array.isArray(ev.actions) ? ev.actions : []) {
+      set.add(`${ev.statementIndex} ${a}`);
+    }
+  }
+  return set;
+}
+
+function withRoleTakeoverSubsumed(primary, folded) {
+  const clone = {};
+  for (const key of Object.keys(primary)) clone[key] = primary[key];
+  const existing = Array.isArray(primary.subsumed) ? primary.subsumed : [];
+  const added = [];
+  for (const f of folded) {
+    added.push(subsumedView(f, ROLE_TAKEOVER_SUBSUMED_REASON));
+    // Carry up anything already folded INTO this primitive (e.g. a DIRECT-IAM-ADMIN
+    // that correlateIamAdmin subsumed into a PUT-INLINE-POLICY) so folding the
+    // primitive away never drops it ("nothing lost").
+    for (const nested of Array.isArray(f.subsumed) ? f.subsumed : []) {
+      added.push(deepFreeze({ ...nested }));
+    }
+  }
+  clone.subsumed = [...existing, ...added];
+  return deepFreeze(clone);
+}
+
+/**
+ * Fold each contributing IAM primitive into its ROLE-TAKEOVER primary (IAM-902).
+ * Runs after the compound/capability/iam-admin passes.
+ *
+ * @param {Array<object>} findings post-iam-admin finding list
+ * @returns {Array<object>} new list: contributing primitives folded into their
+ *          takeover primary; everything else passes through untouched.
+ */
+function correlateRoleTakeover(findings) {
+  const list = Array.isArray(findings) ? findings.slice() : [];
+  const primaries = list.filter(isRoleTakeoverPrimary);
+  if (primaries.length === 0) return list;
+
+  const legKeys = new Map();
+  for (const p of primaries) legKeys.set(p, takeoverLegKeys(p));
+
+  const subsumed = new Set();
+  const attachments = new Map(); // primary -> [contributing findings]
+
+  for (const f of list) {
+    if (isRoleTakeoverPrimary(f)) continue;
+    if (!ROLE_TAKEOVER_CANDIDATE_IDS.has(f.id)) continue;
+    if (typeof f.statementIndex !== 'number') continue;
+    const acts = Array.isArray(f.actions) ? f.actions : [];
+    if (acts.length === 0) continue;
+
+    // Subsume into the FIRST primary (input order) whose grant/trust legs cover
+    // EVERY (statementIndex, action) this primitive reports. A primitive that
+    // carries any pair no takeover chain used stays an independent top-level row.
+    let target = null;
+    for (const p of primaries) {
+      const keys = legKeys.get(p);
+      if (acts.every((a) => keys.has(`${f.statementIndex} ${a}`))) {
+        target = p;
+        break;
+      }
+    }
+    if (!target) continue;
+    if (!attachments.has(target)) attachments.set(target, []);
+    attachments.get(target).push(f);
+    subsumed.add(f);
+  }
+
+  if (subsumed.size === 0) return list;
+
+  const out = [];
+  for (const f of list) {
+    if (subsumed.has(f)) continue;
+    if (attachments.has(f)) out.push(withRoleTakeoverSubsumed(f, attachments.get(f)));
     else out.push(f);
   }
   return out;

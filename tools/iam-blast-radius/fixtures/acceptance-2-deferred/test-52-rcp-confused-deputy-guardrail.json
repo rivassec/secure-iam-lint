@@ -1,0 +1,37 @@
+{
+  "id": "suite2-test-52-rcp-confused-deputy-guardrail",
+  "suite2Test": 52,
+  "title": "RCP confused-deputy guardrail",
+  "designBlocked": "Resource-based / RCP policy family tranche (post-Phase-5 family model). Flip to this test's Expected-result finding when a resource-policy (and RCP) evaluator ships; until then the engine fails closed rather than misread the document as an identity policy.",
+  "expect": {
+    "deferred": "blocked-by-design",
+    "familyBlocked": true,
+    "ok": true,
+    "detectedFamily": "resource",
+    "blockingCode": "UNSUPPORTED_POLICY_FAMILY",
+    "noFindings": true
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "EnforceServiceSourceOrganization",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": "*",
+        "Condition": {
+          "StringNotEqualsIfExists": {
+            "aws:SourceOrgID": "o-exampleorgid"
+          },
+          "Null": {
+            "aws:SourceAccount": "false"
+          },
+          "Bool": {
+            "aws:PrincipalIsAWSService": "true"
+          }
+        }
+      }
+    ]
+  }
+}

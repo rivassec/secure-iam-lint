@@ -1,0 +1,30 @@
+{
+  "name": "Role takeover chain with the assume leg fully Denied (deny suppresses the chain)",
+  "note": "IAM-902 deny interaction: the grant + trust-modify + assume grants are all present on the same role, but a same-policy explicit Deny removes sts:AssumeRole on that exact role. Explicit-Deny precedence blocks the assume leg, so the compound ROLE-TAKEOVER must NOT fire (only 2 of the 3 legs survive). The surviving modify primitives still surface.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ModifyRole",
+        "Effect": "Allow",
+        "Action": [
+          "iam:PutRolePolicy",
+          "iam:UpdateAssumeRolePolicy",
+          "sts:AssumeRole"
+        ],
+        "Resource": "arn:aws:iam::123456789012:role/DeployRole"
+      },
+      {
+        "Sid": "DenyAssume",
+        "Effect": "Deny",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/DeployRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-POLICY-MODIFY"],
+    "notFindingIds": ["ROLE-TAKEOVER"]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "Acceptance suite-2 test 44 - duplicate JSON key blocks (fail closed)",
+  "note": "IAM-901: a statement object with two \"Action\" keys parses (JSON.parse keeps last-key-wins, silently dropping s3:GetObject), so the analyzer would report on a policy the author did not write. Detect the duplicate in the RAW TEXT and BLOCK with DUPLICATE_JSON_KEY naming the key + statement location; no findings, risk score, or graph. policyRaw carries the exact text (a clean JS object cannot express a duplicate key). Original text is preserved so the UI can highlight the duplicate.",
+  "phase": 9,
+  "story": "IAM-901",
+  "suite": 2,
+  "acceptanceTest": 44,
+  "family": "identity",
+  "policyRaw": "{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Sid\": \"DuplicateAction\",\n      \"Effect\": \"Allow\",\n      \"Action\": \"s3:GetObject\",\n      \"Action\": \"iam:*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+  "expect": {
+    "valid": false,
+    "status": "blocked",
+    "findingIds": [],
+    "notFindingIds": ["DIRECT-IAM-ADMIN", "WILDCARD-ACTION", "DATA-READ"]
+  },
+  "errorExpect": {
+    "errorCodes": ["DUPLICATE_JSON_KEY"],
+    "duplicateKey": "Action",
+    "locationIncludes": "Statement[0]"
+  }
+}

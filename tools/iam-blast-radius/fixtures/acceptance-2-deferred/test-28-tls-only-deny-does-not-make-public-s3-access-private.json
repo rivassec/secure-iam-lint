@@ -1,0 +1,41 @@
+{
+  "id": "suite2-test-28-tls-only-deny-does-not-make-public-s3-access-private",
+  "suite2Test": 28,
+  "title": "TLS-only Deny does not make public S3 access private",
+  "designBlocked": "Resource-based / RCP policy family tranche (post-Phase-5 family model). Flip to this test's Expected-result finding when a resource-policy (and RCP) evaluator ships; until then the engine fails closed rather than misread the document as an identity policy.",
+  "expect": {
+    "deferred": "blocked-by-design",
+    "familyBlocked": true,
+    "ok": true,
+    "detectedFamily": "resource",
+    "blockingCode": "UNSUPPORTED_POLICY_FAMILY",
+    "noFindings": true
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PublicRead",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::public-downloads/*"
+      },
+      {
+        "Sid": "DenyInsecureTransport",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": [
+          "arn:aws:s3:::public-downloads",
+          "arn:aws:s3:::public-downloads/*"
+        ],
+        "Condition": {
+          "Bool": {
+            "aws:SecureTransport": "false"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -90,6 +90,11 @@ export const COVERAGE_CODES = Object.freeze({
   // does not model (anything outside AWS/Service/Federated/CanonicalUser). The
   // shape is recognized as role-trust but stays fail-closed - never guessed.
   UNSUPPORTED_PRINCIPAL_TYPE: 'UNSUPPORTED_PRINCIPAL_TYPE',
+  // IAM-903: a role-trust document whose AWS Principal-element ARN carries a
+  // partial "*"/"?" wildcard - an invalid principal pattern AWS rejects. Surfaced
+  // as a non-blocking coverage warning (the statement is fail-closed to a
+  // TRUST-INVALID-PRINCIPAL finding, never a plain TRUST-CROSS-ACCOUNT high).
+  INVALID_PRINCIPAL_WILDCARD_ARN: 'INVALID_PRINCIPAL_WILDCARD_ARN',
 });
 
 // The set of families a caller may select via the optional manual override.

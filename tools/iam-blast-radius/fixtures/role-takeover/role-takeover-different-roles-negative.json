@@ -1,0 +1,29 @@
+{
+  "name": "Takeover primitives spread across DIFFERENT roles -> NO critical takeover",
+  "note": "IAM-902 negative: the grant + trust-modify legs target role/RoleA while the sts:AssumeRole targets a DIFFERENT role/RoleB. The takeover requires all three primitives on the SAME role, so no compound ROLE-TAKEOVER may be asserted; the individual primitives still surface on their own statements.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ModifyRoleA",
+        "Effect": "Allow",
+        "Action": [
+          "iam:PutRolePolicy",
+          "iam:UpdateAssumeRolePolicy"
+        ],
+        "Resource": "arn:aws:iam::123456789012:role/RoleA"
+      },
+      {
+        "Sid": "AssumeRoleB",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::123456789012:role/RoleB"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "findingIds": ["TRUST-POLICY-MODIFY"],
+    "notFindingIds": ["ROLE-TAKEOVER"]
+  }
+}

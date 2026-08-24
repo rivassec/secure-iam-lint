@@ -735,7 +735,57 @@ const ESCALATION_MAP = {
       lane: LANES.IDENTITY_EXPANSION,
     });
   },
+  // IAM-902: the modify-then-assume role-takeover chain renders as same-role typed
+  // edges - the principal can MODIFY the role (grant it permissions + rewrite its
+  // trust) and can ASSUME it - both pointing at the one role node, so the takeover
+  // linkage is explicit and no generic can-write aggregation is used.
+  'ROLE-TAKEOVER': (f, b) => roleTakeoverEdges(f, b),
 };
+
+// IAM-902: draw the role-takeover linkage with per-statement evidence (IAM-701).
+// A can-modify edge (the grant-permissions + modify-trust legs) and a can-assume
+// edge (the assume leg) both target the SAME role node, so the same-role
+// modify-then-assume chain is visible as two distinctly-typed edges. Each edge
+// carries ONLY its own leg's statement + actions, never the finding's combined
+// action list re-attributed to the anchor.
+function roleTakeoverEdges(f, b) {
+  const role = firstResource(f);
+  const roleId = `role:${role}`;
+  const ev = Array.isArray(f.evidence) ? f.evidence : [];
+  const modifyEv = ev.filter((e) => e && (e.role === 'grant-permissions' || e.role === 'modify-trust'));
+  const assumeEv = ev.filter((e) => e && e.role === 'assume');
+  // Modify leg(s): the grant/trust grants are literally in the policy -> the edge
+  // is confirmed-by-policy (a gating Condition already lowered policyEvidence).
+  for (const leg of modifyEv) {
+    b.addEdge({
+      toId: roleId,
+      toType: NODE_TYPES.ROLE,
+      toLabel: `Role: ${role}`,
+      type: EDGE_TYPES.CAN_MODIFY,
+      certainty: certaintyFromEvidence(f.policyEvidence),
+      finding: edgeEvidenceCarrier(f, leg),
+      statementIndex: leg.statementIndex,
+      label: 'can grant permissions to / rewrite the trust policy of this role',
+      lane: LANES.PRIVILEGE_ESCALATION,
+    });
+  }
+  // Assume leg(s): assuming the re-trusted role is a POLICY-SUPPORTED transition -
+  // the grant is present, but the actual elevation depends on what the modify leg
+  // writes onto the role and any permission boundary / SCP capping it (out of scope).
+  for (const leg of assumeEv) {
+    b.addEdge({
+      toId: roleId,
+      toType: NODE_TYPES.ROLE,
+      toLabel: `Role: ${role}`,
+      type: EDGE_TYPES.CAN_ASSUME,
+      certainty: CERTAINTY.POLICY_SUPPORTED,
+      finding: edgeEvidenceCarrier(f, leg),
+      statementIndex: leg.statementIndex,
+      label: 'can assume this role once its trust policy permits it',
+      lane: LANES.PRIVILEGE_ESCALATION,
+    });
+  }
+}
 
 // IAM credential-creation actions (impersonation primitives). A DIRECT-IAM-ADMIN
 // finding whose actions are EXACTLY (case-insensitively) these - and nothing that
@@ -1268,6 +1318,13 @@ export function buildTrustGraph(model, findings) {
       // exact "may assume" overclaim the finding layer removed (trust.js
       // findingsForStatement; threat-model T8, IAM-805 iteration 3).
       if (f.id === 'TRUST-SESSION-CONTROL') continue;
+      // IAM-903: an INVALID partial-wildcard Principal-element ARN is fail-closed
+      // (marked invalid + a coverage warning); it must NOT draw a can-assume edge.
+      // Drawing one would silently expand the invalid pattern into trust for every
+      // role it appears to match - exactly the over-trust the finding layer refuses
+      // (threat-model T8). The invalid principal is surfaced in the findings table
+      // + coverage, not as a positive graph grant.
+      if (f.id === 'TRUST-INVALID-PRINCIPAL') continue;
       // IAM-806: a grant a same-policy trust Deny FULLY neutralizes draws NO
       // can-assume edge - the principal cannot assume the role, so an unqualified
       // can-assume edge would be a false grant ("denies are not grants",

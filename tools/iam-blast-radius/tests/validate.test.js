@@ -206,6 +206,59 @@ test('top-level non-object rejected', () => {
 });
 
 // ---------------------------------------------------------------------------
+// IAM-901: duplicate object-key detection (fail closed). JSON.parse silently
+// keeps last-key-wins, so the raw text is scanned for a repeated key WITHIN the
+// same object.
+// ---------------------------------------------------------------------------
+
+test('duplicate key within a statement object rejected with DUPLICATE_JSON_KEY', () => {
+  const text = '{"Version":"2012-10-17","Statement":[{"Sid":"Dup","Effect":"Allow","Action":"s3:GetObject","Action":"iam:*","Resource":"*"}]}';
+  const r = validate(text);
+  assert.equal(r.ok, false);
+  const dup = r.errors.find((e) => e.code === 'DUPLICATE_JSON_KEY');
+  assert.ok(dup, 'expected DUPLICATE_JSON_KEY');
+  assert.ok(dup.message.includes('"Action"'), 'names the duplicated key');
+  assert.ok(dup.message.includes('Statement[0]') || String(dup.path).includes('Statement[0]'),
+    'locates the statement object');
+  assert.equal(r.raw, null, 'no raw returned on a blocked policy');
+});
+
+test('same key in DIFFERENT objects is legal (no false positive)', () => {
+  const text = '{"Version":"2012-10-17","Statement":[' +
+    '{"Sid":"A","Effect":"Allow","Action":"s3:GetObject","Resource":"*"},' +
+    '{"Sid":"B","Effect":"Allow","Action":"iam:*","Resource":"*"}]}';
+  const r = validate(text);
+  assert.equal(r.ok, true);
+  assert.ok(!r.errors.some((e) => e.code === 'DUPLICATE_JSON_KEY'));
+});
+
+test('duplicate top-level key rejected and located', () => {
+  const text = '{"Version":"2012-10-17","Version":"2008-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}';
+  const r = validate(text);
+  assert.equal(r.ok, false);
+  const dup = r.errors.find((e) => e.code === 'DUPLICATE_JSON_KEY');
+  assert.ok(dup);
+  assert.ok(dup.message.includes('"Version"'));
+});
+
+test('escaped-form duplicate key still collides (matches JSON.parse semantics)', () => {
+  // "Action" decodes to "Action"; JSON.parse would collapse the two.
+  const text = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","\\u0041ction":"iam:*","Resource":"*"}]}';
+  const r = validate(text);
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => e.code === 'DUPLICATE_JSON_KEY'));
+});
+
+test('a key value containing braces/quotes does not confuse the scanner', () => {
+  // The string value has {, }, and an escaped quote; the scanner must treat it
+  // as one string and not mis-open an object scope.
+  const text = '{"Version":"2012-10-17","Statement":[{"Sid":"weird {}\\" value","Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}';
+  const r = validate(text);
+  assert.equal(r.ok, true);
+  assert.ok(!r.errors.some((e) => e.code === 'DUPLICATE_JSON_KEY'));
+});
+
+// ---------------------------------------------------------------------------
 // Determinism: same input -> identical result.
 // ---------------------------------------------------------------------------
 

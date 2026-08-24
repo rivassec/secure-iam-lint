@@ -305,6 +305,20 @@ const CREDENTIAL_ACTIONS = Object.freeze([
 
 const ASSUME_ROLE_ACTIONS = Object.freeze(['sts:AssumeRole', 'sts:AssumeRoleWithSAML', 'sts:AssumeRoleWithWebIdentity']);
 
+// IAM-902 role-takeover chain (modify-then-assume, no PassRole required). Three
+// primitives that, when granted on the SAME role, let a principal take the role
+// over: give it permissions, rewrite its trust to trust the attacker, then assume
+// it. Each is scoped to a role, so all three are role-targeting actions.
+//   grant  - iam:PutRolePolicy / iam:AttachRolePolicy write/attach a permission
+//            policy onto the role (the user/group variants target a different
+//            principal type and are NOT part of a role takeover).
+//   trust  - iam:UpdateAssumeRolePolicy rewrites the role's trust policy.
+//   assume - sts:AssumeRole assumes the re-trusted role. The federated
+//            WithSAML / WithWebIdentity variants require an out-of-scope IdP
+//            trust and are deliberately excluded from this exact-role chain.
+const ROLE_TAKEOVER_GRANT_ACTIONS = Object.freeze(['iam:PutRolePolicy', 'iam:AttachRolePolicy']);
+const ROLE_TAKEOVER_ASSUME_ACTIONS = Object.freeze(['sts:AssumeRole']);
+
 // --- Catalog metadata --------------------------------------------------------
 // Ordering here defines the deterministic within-statement finding order.
 
@@ -380,6 +394,18 @@ export const ESCALATIONS = Object.freeze({
     ruleVersion: '1',
     docRef:
       'https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html',
+  }),
+  // IAM-902: compound role-takeover chain on a single role - grant permissions,
+  // rewrite trust, then assume - which crosses a privilege boundary without
+  // iam:PassRole. A critical compound path, distinct from the standalone
+  // TRUST-POLICY-MODIFY / PUT-INLINE-POLICY / ATTACH-POLICY primitives it correlates.
+  'ROLE-TAKEOVER': Object.freeze({
+    id: 'ROLE-TAKEOVER',
+    order: 9,
+    title: 'Role takeover chain (grant permissions + rewrite trust + assume, same role)',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_manage_modify.html',
   }),
 });
 
@@ -1439,6 +1465,181 @@ function detectAssumeRoleExpansion(allows, out, denies) {
   }
 }
 
+// IAM-902: is `r` a CONCRETE role ARN (names one specific role, no wildcard)?
+// A takeover chain is only asserted when the three primitives target the exact
+// same named role. A wildcard role scope (arn:aws:iam::*:role/*, role/*, a bare
+// "*", or any partial wildcard) is a DIFFERENT, broader shape - it is the
+// province of ASSUME-ROLE-EXPANSION / the wildcard rules, not this same-role
+// correlation - so it is excluded here (never expand a wildcard into "the same
+// role"). Determinism: pure string test, no regex compiled from input.
+function isConcreteRoleArn(r) {
+  const s = String(r == null ? '' : r);
+  if (s.includes('*') || s.includes('?')) return false;
+  return s.includes(':role/');
+}
+
+// IAM-902: correlate the modify-then-assume ROLE-TAKEOVER chain. A principal that,
+// on the SAME concrete role, is granted (a) a permission-grant primitive
+// (iam:PutRolePolicy / iam:AttachRolePolicy), (b) iam:UpdateAssumeRolePolicy, and
+// (c) sts:AssumeRole can give the role permissions, rewrite its trust to trust
+// itself, and then assume it - a critical privilege-boundary crossing that needs
+// NO iam:PassRole. The three grants may live in one statement or (as in
+// acceptance-suite-2 test 34) span several; per-statement evidence is preserved so
+// no action is attributed to a statement that does not grant it. Same-policy
+// explicit-Deny precedence applies to each leg (a fully-denied leg cannot
+// contribute). A PARTIAL set (only 2 of 3) or the actions spread across DIFFERENT
+// roles does NOT fire - that is the boundary the correlation must respect.
+function detectRoleTakeover(allows, out, denies) {
+  // Per concrete role ARN, the surviving contributing (stmt, actions) for each leg.
+  const legs = {
+    grant: new Map(), // role ARN -> [{ stmt, actions }]
+    trust: new Map(),
+    assume: new Map(),
+  };
+  const record = (legName, stmt, actions) => {
+    for (const r of stmt.resources) {
+      if (!isConcreteRoleArn(r)) continue;
+      const m = legs[legName];
+      if (!m.has(r)) m.set(r, []);
+      m.get(r).push({ stmt, actions });
+    }
+  };
+  for (const stmt of allows) {
+    const g = grantedPatternsFor(stmt, ROLE_TAKEOVER_GRANT_ACTIONS);
+    if (g.length > 0) {
+      const d = applyDenyToActions(denies, g, stmt);
+      if (!d.blocked) record('grant', stmt, d.actions);
+    }
+    const t = grantedPatternsFor(stmt, TRUST_MODIFY_ACTIONS);
+    if (t.length > 0) {
+      const d = applyDenyToActions(denies, t, stmt);
+      if (!d.blocked) record('trust', stmt, d.actions);
+    }
+    const a = grantedPatternsFor(stmt, ROLE_TAKEOVER_ASSUME_ACTIONS);
+    if (a.length > 0) {
+      const d = applyDenyToActions(denies, a, stmt);
+      if (!d.blocked) record('assume', stmt, d.actions);
+    }
+  }
+
+  // A role qualifies only when ALL THREE legs name it. Deterministic order.
+  const roles = [...legs.grant.keys()]
+    .filter((r) => legs.trust.has(r) && legs.assume.has(r))
+    .sort();
+
+  for (const role of roles) {
+    const grantLegs = legs.grant.get(role);
+    const trustLegs = legs.trust.get(role);
+    const assumeLegs = legs.assume.get(role);
+
+    // Per-statement evidence: one record per contributing statement/leg, each
+    // carrying ONLY the actions that statement grants toward this chain (IAM-701
+    // provenance - never attribute all three actions to one statement).
+    const evidence = [];
+    for (const { stmt, actions } of grantLegs) {
+      evidence.push(
+        evidenceOf(stmt, 'grant-permissions', actions, `can attach/write a permission policy onto ${role}`),
+      );
+    }
+    for (const { stmt, actions } of trustLegs) {
+      evidence.push(
+        evidenceOf(stmt, 'modify-trust', actions, `can rewrite the trust policy of ${role} to trust an attacker-controlled principal`),
+      );
+    }
+    for (const { stmt, actions } of assumeLegs) {
+      evidence.push(
+        evidenceOf(stmt, 'assume', actions, `can assume ${role} once its trust policy permits it`),
+      );
+    }
+
+    // Grounded action lists per leg (deduped, statement order preserved).
+    const dedupe = (arr) => {
+      const seen = [];
+      for (const x of arr) if (!seen.includes(x)) seen.push(x);
+      return seen;
+    };
+    const grantActions = dedupe(grantLegs.flatMap((l) => l.actions));
+    const trustActions = dedupe(trustLegs.flatMap((l) => l.actions));
+    const assumeActions = dedupe(assumeLegs.flatMap((l) => l.actions));
+    const combinedActions = dedupe([...grantActions, ...trustActions, ...assumeActions]);
+
+    // Anchor = lowest contributing statement index (deterministic header anchor).
+    let anchor = null;
+    for (const { stmt } of [...grantLegs, ...trustLegs, ...assumeLegs]) {
+      if (anchor === null || stmt.index < anchor.index) anchor = stmt;
+    }
+
+    // Any contributing leg carrying a Condition gates the chain (lower confidence).
+    const conditioned = [...grantLegs, ...trustLegs, ...assumeLegs].some(
+      ({ stmt }) => hasNonEmptyCondition(stmt),
+    );
+    const denyNarrowed = [...grantLegs, ...trustLegs, ...assumeLegs].some(
+      ({ stmt, actions }) => applyDenyToActions(denies, actions, stmt).narrowed,
+    );
+
+    // AND semantics (IAM-703): all three prerequisite groups are jointly required.
+    const prerequisites = prerequisitesOf([
+      prereqTechnique(
+        'role-takeover-chain',
+        [
+          prereqGroup(grantActions, 'grant-permissions'),
+          prereqGroup(trustActions, 'modify-trust'),
+          prereqGroup(assumeActions, 'assume'),
+        ],
+        { requiresPassRole: false },
+      ),
+    ]);
+
+    const riskFactors = [
+      { key: 'grant-permissions', label: `Permission-grant primitive on ${role} (${grantActions.join(' / ')})`, present: true },
+      { key: 'modify-trust', label: `Trust-policy rewrite on ${role} (${trustActions.join(' / ')})`, present: true },
+      { key: 'assume', label: `Role assumption of ${role} (${assumeActions.join(' / ')})`, present: true },
+      { key: 'same-role', label: 'All three primitives target the same role ARN', present: true },
+    ];
+
+    out.push(
+      makeEscalation('ROLE-TAKEOVER', anchor, {
+        // Critical (IAM-102/902): a compound chain that grants a role permissions,
+        // re-trusts it, and assumes it plausibly crosses a privilege boundary - the
+        // reserved-critical bar - and does so without iam:PassRole.
+        severity: 'critical',
+        // All three grants are literally present in the policy text -> policy
+        // evidence HIGH. Whether the assumption actually elevates depends on what
+        // the permission-grant leg then writes onto the role and any permission
+        // boundary / SCP capping it (out of scope) -> exploitability MEDIUM.
+        policyEvidence: 'high',
+        pathExploitability: 'medium',
+        conditioned,
+        denyNarrowed,
+        technique: 'role-takeover-chain',
+        service: null,
+        requiredActions: combinedActions,
+        prerequisites,
+        actions: combinedActions,
+        resources: [role],
+        evidence,
+        riskFactors,
+        why:
+          `Grants a compound role-takeover chain on ${role}: a permission-grant ` +
+          `primitive (${grantActions.join(' / ')}) to give the role permissions, ` +
+          `iam:UpdateAssumeRolePolicy to rewrite its trust policy so the principal ` +
+          `may assume it, and sts:AssumeRole to then assume it. Together these let ` +
+          `the principal take the role over - grant it permissions, make it ` +
+          `assumable, and assume it - WITHOUT needing iam:PassRole. The role's ` +
+          `current permissions and any permission boundary on it are not in scope.`,
+        remediation:
+          'Separate role-permission management (iam:PutRolePolicy / ' +
+          'iam:AttachRolePolicy), trust-policy management ' +
+          '(iam:UpdateAssumeRolePolicy), and role assumption (sts:AssumeRole) ' +
+          'across distinct administrative identities so no single principal can ' +
+          'grant, re-trust, and assume the same role; scope each to specific role ' +
+          'ARNs and protect high-value roles with a permission boundary and change ' +
+          'review.',
+      }),
+    );
+  }
+}
+
 const DETECTORS = [
   detectPassRolePaths,
   detectPolicyVersion,
@@ -1447,6 +1648,7 @@ const DETECTORS = [
   detectTrustModify,
   detectCredentialCreation,
   detectAssumeRoleExpansion,
+  detectRoleTakeover,
 ];
 
 // --- Public entry points -----------------------------------------------------

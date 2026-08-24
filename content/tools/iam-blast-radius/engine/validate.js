@@ -72,6 +72,162 @@ function maxJsonDepth(text) {
   return max;
 }
 
+// --- Duplicate object-key scan (IAM-901) -------------------------------------
+// JSON.parse silently applies last-key-wins for a repeated object key, so a
+// statement like { "Action": "s3:GetObject", "Action": "iam:*" } parses to just
+// { Action: "iam:*" } - the first grant vanishes and the analyzer would report on
+// a policy that is NOT the one the author wrote (a security-relevant surprise,
+// suite-2 test 44). JSON.parse cannot see the collision, so we detect it in the
+// RAW TEXT with a minimal, non-recursive-into-strings JSON walk that tracks the
+// set of keys seen WITHIN EACH object and records any repeat, with the object's
+// JSON path so the UI can point at the duplicate.
+//
+// Only a repeat WITHIN THE SAME object is a collision; the same key name in two
+// different objects/statements is legal and must not be flagged. Keys are
+// compared AFTER decoding JSON string escapes, matching how JSON.parse would
+// collide them (e.g. "Action" and "Action").
+//
+// The scan runs only after JSON.parse has already accepted the text and after
+// the depth guard, so the input is known well-formed and shallower than
+// MAX_DEPTH; the walk therefore cannot over-recurse or hit malformed tokens.
+// Defensive all the same: it never throws (any surprise ends the scan and
+// returns whatever was found so far).
+
+function decodeJsonString(text, start) {
+  // text[start] === '"'. Return { value, end } where end is the index just past
+  // the closing quote. Decodes standard JSON escapes so key comparison matches
+  // JSON.parse semantics.
+  let out = '';
+  let i = start + 1;
+  const n = text.length;
+  while (i < n) {
+    const ch = text[i];
+    if (ch === '"') {
+      return { value: out, end: i + 1 };
+    }
+    if (ch === '\\') {
+      const esc = text[i + 1];
+      switch (esc) {
+        case '"': out += '"'; i += 2; break;
+        case '\\': out += '\\'; i += 2; break;
+        case '/': out += '/'; i += 2; break;
+        case 'b': out += '\b'; i += 2; break;
+        case 'f': out += '\f'; i += 2; break;
+        case 'n': out += '\n'; i += 2; break;
+        case 'r': out += '\r'; i += 2; break;
+        case 't': out += '\t'; i += 2; break;
+        case 'u': {
+          const hex = text.slice(i + 2, i + 6);
+          out += String.fromCharCode(parseInt(hex, 16));
+          i += 6;
+          break;
+        }
+        default:
+          // Unknown escape (should not occur post-JSON.parse); copy literally.
+          out += esc;
+          i += 2;
+      }
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return { value: out, end: n };
+}
+
+function isWs(ch) {
+  return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r';
+}
+
+function findDuplicateKeys(text) {
+  const dups = [];
+  const n = text.length;
+  let i = 0;
+
+  function skipWs() {
+    while (i < n && isWs(text[i])) i++;
+  }
+
+  // Advance past a primitive token (number / true / false / null) up to the next
+  // structural character. Strings/objects/arrays are handled by parseValue.
+  function skipPrimitive() {
+    while (i < n) {
+      const ch = text[i];
+      if (ch === ',' || ch === '}' || ch === ']' || isWs(ch)) break;
+      i++;
+    }
+  }
+
+  function parseString() {
+    const r = decodeJsonString(text, i);
+    i = r.end;
+    return r.value;
+  }
+
+  function parseValue(path) {
+    skipWs();
+    if (i >= n) return;
+    const ch = text[i];
+    if (ch === '{') {
+      parseObject(path);
+    } else if (ch === '[') {
+      parseArray(path);
+    } else if (ch === '"') {
+      parseString();
+    } else {
+      skipPrimitive();
+    }
+  }
+
+  function parseArray(path) {
+    i++; // consume '['
+    skipWs();
+    if (text[i] === ']') { i++; return; }
+    let idx = 0;
+    while (i < n) {
+      parseValue(`${path}[${idx}]`);
+      idx++;
+      skipWs();
+      if (text[i] === ',') { i++; skipWs(); continue; }
+      if (text[i] === ']') { i++; return; }
+      return; // unexpected; bail (post-JSON.parse this cannot happen)
+    }
+  }
+
+  function parseObject(path) {
+    i++; // consume '{'
+    skipWs();
+    if (text[i] === '}') { i++; return; }
+    const seen = new Set();
+    while (i < n) {
+      skipWs();
+      if (text[i] !== '"') return; // unexpected
+      const key = parseString();
+      if (seen.has(key)) {
+        dups.push({ key, path });
+      } else {
+        seen.add(key);
+      }
+      skipWs();
+      if (text[i] !== ':') return; // unexpected
+      i++; // consume ':'
+      parseValue(path ? `${path}.${key}` : key);
+      skipWs();
+      if (text[i] === ',') { i++; continue; }
+      if (text[i] === '}') { i++; return; }
+      return; // unexpected
+    }
+  }
+
+  try {
+    skipWs();
+    parseValue('');
+  } catch (e) {
+    // Should be unreachable post-JSON.parse; fail safe by returning what we have.
+  }
+  return dups;
+}
+
 // --- Sanitize walk -----------------------------------------------------------
 // Rebuild the parsed value into a structure that uses null-prototype maps for
 // every object, rejecting dangerous keys along the way. A visited set guards
@@ -239,6 +395,30 @@ export function validate(text) {
       parsed = JSON.parse(text);
     } catch (e) {
       errors.push(err('INVALID_JSON', 'Input is not valid JSON.'));
+      return { ok: false, errors, raw: null };
+    }
+
+    // IAM-901: JSON.parse cannot see a duplicate object key (last-key-wins would
+    // silently drop the first grant), so scan the RAW TEXT and BLOCK if any
+    // object repeats a key. This fails closed - no findings/graph downstream -
+    // because the parsed document is not the policy that was written. The
+    // original text is left untouched (the caller still holds it) so the UI can
+    // highlight the duplicate. Same key in DIFFERENT objects is legal and is not
+    // flagged. Runs before schema/count guards so the block takes precedence.
+    const duplicateKeys = findDuplicateKeys(text);
+    if (duplicateKeys.length > 0) {
+      for (const d of duplicateKeys) {
+        const location = d.path ? d.path : '(top-level object)';
+        errors.push(
+          err(
+            'DUPLICATE_JSON_KEY',
+            `Duplicate key "${d.key}" in object at ${location}; ` +
+              'JSON parsers keep only the last value, so a grant would be silently ' +
+              'dropped. Remove the duplicate before analysis.',
+            d.path ? `${d.path}.${d.key}` : d.key,
+          ),
+        );
+      }
       return { ok: false, errors, raw: null };
     }
 

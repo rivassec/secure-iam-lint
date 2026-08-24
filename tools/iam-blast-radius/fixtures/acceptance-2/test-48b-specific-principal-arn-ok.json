@@ -1,0 +1,28 @@
+{
+  "name": "Acceptance suite-2 test 48 boundary - a specific (non-wildcard) Principal ARN is valid",
+  "note": "IAM-903 boundary: a concrete IAM role ARN with NO partial wildcard is a valid Principal element. It must remain an ordinary external/cross-account trust finding and must NOT be flagged invalid. Confirms the invalid-wildcard detection keys on an actual '*'/'?' in the Principal ARN, not on principal ARNs in general.",
+  "phase": 9,
+  "story": "IAM-903",
+  "suite": 2,
+  "acceptanceTest": 48,
+  "family": "role-trust",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SpecificRole",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::123456789012:role/application/DeploymentRole"
+        },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "status": "complete",
+    "findingIds": ["TRUST-CROSS-ACCOUNT"],
+    "notFindingIds": ["TRUST-INVALID-PRINCIPAL"]
+  }
+}
