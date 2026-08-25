@@ -44,6 +44,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
-        env:
-          GITLEAKS_CONFIG: .gitleaks.toml
+      - name: gitleaks (pinned binary, checksum-verified; scans full git history)
+        run: |
+          set -euo pipefail
+          VER=8.30.1
+          SHA=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          curl -fsSL -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          echo "${SHA}  gitleaks.tgz" | sha256sum -c -
+          tar -xzf gitleaks.tgz gitleaks
+          ./gitleaks git . -c .gitleaks.toml --redact --no-banner
