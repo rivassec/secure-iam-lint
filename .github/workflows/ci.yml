@@ -28,3 +28,31 @@ jobs:
         run: npm run gate:no-network
       - name: Gate - no unsafe DOM / eval in shipped JS
         run: npm run gate:no-unsafe-dom
+
+  csp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: CSP audit - no inline styles/scripts/event-handlers in the shipped tool
+        run: python3 scripts/csp_audit.py content/tools/iam-blast-radius
+
+  e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/iam-blast-radius
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Install @playwright/test (pinned in package.json)
+        run: npm install --no-audit --no-fund
+      - name: Install browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Playwright e2e (Chromium, Firefox, WebKit)
+        run: npx playwright test
