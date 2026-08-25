@@ -112,12 +112,11 @@ test('Twitter Card tags are present and use name="twitter:*"', () => {
   assert.ok(metaContent(html, 'name', 'twitter:image'), 'twitter:image missing');
 });
 
-test('OG/Twitter image references an existing self-hosted asset', () => {
+test('OG/Twitter image references an absolute self-hosted URL', () => {
   const img = metaContent(html, 'property', 'og:image');
   assert.match(img, /^https:\/\/rivassec\.com\//, 'og:image must be an absolute site URL');
-  const relPath = img.replace('https://rivassec.com/', '');
-  const onDisk = join(here, '..', '..', '..', 'content', relPath);
-  assert.ok(existsSync(onDisk), `og:image asset not found on disk: content/${relPath}`);
+  // The OG asset itself is served from the blog at that URL; its on-disk
+  // existence check lives in the blog's own test suite (repo split 2026-08-24).
 });
 
 // --- JSON-LD ---------------------------------------------------------------

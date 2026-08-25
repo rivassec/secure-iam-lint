@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: this workflow only reads the code.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/iam-blast-radius
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'   # node --test glob expansion needs >= 21
+      - name: Unit + security tests
+        run: node --test "tests/**/*.test.js"
+      - name: Gate - no network APIs in shipped JS
+        run: npm run gate:no-network
+      - name: Gate - no unsafe DOM / eval in shipped JS
+        run: npm run gate:no-unsafe-dom
