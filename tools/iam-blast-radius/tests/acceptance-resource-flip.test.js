@@ -120,8 +120,11 @@ test('suite-3 resource tests 69/85 flipped from fail-closed to real resource ana
 
 test('the flipped tests are no longer carried as blocked-by-design deferred fixtures', () => {
   // The only shapes that remain in the deferred set are genuinely-unmodeled
-  // families (permissions-boundary 30, session 31, SCP-shape 43, RCP 52). None of
-  // the flipped resource tests may still be represented there.
+  // families. IAM-1303 shipped the SCP/RCP org-control evaluators, so tests 43
+  // (SCP-shape) and 52 (RCP) flipped out of the deferred set too (gated by
+  // tests/acceptance-scp-rcp-flip.test.js); only permissions-boundary (30) and
+  // session (31) remain deferred. None of the flipped resource tests may still be
+  // represented in the deferred set.
   const deferredDir = join(here, '..', 'fixtures', 'acceptance-2-deferred');
   const stillDeferred = new Set(
     readdirSync(deferredDir)
@@ -132,5 +135,5 @@ test('the flipped tests are no longer carried as blocked-by-design deferred fixt
     assert.ok(!stillDeferred.has(num), `suite-2 test ${num} flipped but is still a blocked-by-design deferred fixture`);
   }
   // The remaining deferred set is exactly the genuinely-unmodeled families.
-  assert.deepEqual([...stillDeferred].sort((a, b) => a - b), [30, 31, 43, 52], 'remaining deferred set is boundary/session/SCP/RCP only');
+  assert.deepEqual([...stillDeferred].sort((a, b) => a - b), [30, 31], 'remaining deferred set is permissions-boundary/session only');
 });

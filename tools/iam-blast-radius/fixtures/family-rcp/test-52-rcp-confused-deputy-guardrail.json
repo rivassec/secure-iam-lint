@@ -1,0 +1,62 @@
+{
+  "id": "suite2-test-52-rcp-confused-deputy-guardrail",
+  "suite2Test": 52,
+  "title": "RCP confused-deputy guardrail",
+  "note": "IAM-1302: an EXPLICIT SCP/RCP selection routes this Principal-bearing, deny-only org RESOURCE guardrail to the family-aware RCP evaluator (engine/rcp.js). It is a resource-control CEILING, never a grant: the confused-deputy conditions (StringNotEqualsIfExists aws:SourceOrgID + Null aws:SourceAccount + Bool aws:PrincipalIsAWSService) act TOGETHER as one guardrail (logical AND), NOT three independent denies. NO S3 permissions or public-access finding is emitted (Principal '*' is the subject the deny reaches, not a grant to anyone); zero positive capability edges; every finding states RCPs are deny-only and a corresponding Allow must exist elsewhere (intersection with identity/resource policies not supplied). Compare with the auto-detect fail-closed baseline in fixtures/acceptance-2-deferred/test-52 (detected=resource, UNSUPPORTED_POLICY_FAMILY) - the auto-detect flip is IAM-1303's job.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "EnforceServiceSourceOrganization",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": "*",
+        "Condition": {
+          "StringNotEqualsIfExists": {
+            "aws:SourceOrgID": "o-exampleorgid"
+          },
+          "Null": {
+            "aws:SourceAccount": "false"
+          },
+          "Bool": {
+            "aws:PrincipalIsAWSService": "true"
+          }
+        }
+      }
+    ]
+  },
+  "options": {
+    "family": "rcp",
+    "requireExplicitFamily": true
+  },
+  "rcpExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "scp-rcp",
+    "override": "scp-rcp",
+    "status": "warned",
+    "note": "warned (not ok): the curated action catalog / condition classifier does not recognize the org-scope confused-deputy keys and the s3:* wildcard, an honest coverage gap - it does not weaken the guardrail semantics.",
+    "findingIds": [
+      "RCP-GUARDRAIL"
+    ],
+    "severities": {
+      "RCP-GUARDRAIL": "info"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesCeilingNotGrant": true,
+    "guardrailKinds": ["confused-deputy"],
+    "confusedDeputy": true,
+    "orgScopeKeys": ["aws:SourceOrgID"],
+    "orgScopeNegatedIfExists": true,
+    "targetsAwsServicePrincipals": true,
+    "sourceAccountPresenceRequired": true,
+    "wildcardPrincipalSubject": true,
+    "denyOnly": true,
+    "conditionOperatorsPreserved": ["StringNotEqualsIfExists", "Null", "Bool"],
+    "conditionKeysPreserved": ["aws:SourceOrgID", "aws:SourceAccount", "aws:PrincipalIsAWSService"],
+    "forbidFindingIds": ["PUBLIC-ACCESS", "RESOURCE-CONFUSED-DEPUTY", "RESOURCE-SAME-ACCOUNT-GRANT", "RESOURCE-CROSS-ACCOUNT"],
+    "noPublicAccess": true
+  }
+}

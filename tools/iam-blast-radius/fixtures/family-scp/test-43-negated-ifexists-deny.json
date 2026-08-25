@@ -1,0 +1,49 @@
+{
+  "id": "suite2-test-43-negated-ifexists-in-a-deny-matches-missing-keys",
+  "suite2Test": 43,
+  "title": "Negated IfExists in a Deny matches missing keys",
+  "note": "IAM-1301: an EXPLICIT SCP selection analyzes this as an SCP region GUARDRAIL. StringNotEqualsIfExists on aws:RequestedRegion in a Deny also denies requests that OMIT the key (negated ...IfExists in a Deny still denies when the key is absent), so global-service calls routed to us-east-1 can be denied. With no NotAction global-service carve-out this is a potentially over-broad regional Deny (hazard). Never interpreted as a grant inside or outside the regions; zero capability edges.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyOutsideApprovedRegions",
+        "Effect": "Deny",
+        "Action": "*",
+        "Resource": "*",
+        "Condition": {
+          "StringNotEqualsIfExists": {
+            "aws:RequestedRegion": [
+              "us-east-1",
+              "us-west-2"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "options": {
+    "family": "scp",
+    "requireExplicitFamily": true
+  },
+  "scpExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "scp-rcp",
+    "override": "scp-rcp",
+    "status": "ok",
+    "findingIds": [
+      "SCP-GUARDRAIL"
+    ],
+    "severities": {
+      "SCP-GUARDRAIL": "medium"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesCeilingNotGrant": true,
+    "guardrailKinds": ["region"],
+    "allowedRegions": ["us-east-1", "us-west-2"],
+    "hazard": true,
+    "hazardWhyMatches": "over-broad"
+  }
+}

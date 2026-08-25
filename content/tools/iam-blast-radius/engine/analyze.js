@@ -16,10 +16,12 @@ import { analyzeRules, ruleFindingDenySuppressed, actionResourceTypeMismatches }
 import { analyzeEscalations } from './escalation.js';
 import { analyzeTrust, trustFindingDenyState, summarizeTrustDeny } from './trust.js';
 import { analyzeEnvelope } from './envelope.js';
+import { analyzeScp } from './scp.js';
+import { analyzeRcp } from './rcp.js';
 import { analyzeResource } from './resource.js';
 import { correlateFindings } from './correlate.js';
 import { buildGraph, buildTrustGraph, buildResourceGraph, GRAPH_LIMITS } from './graph.js';
-import { detectFamily, FAMILIES } from './family.js';
+import { detectFamily, FAMILIES, isRcpShape } from './family.js';
 import { enrichCoverage, duplicateSids } from './coverage.js';
 import { classifyConditions, unsupportedConditionKeys } from './conditions.js';
 import { defaultCatalog, unrecognizedActions } from './catalog.js';
@@ -506,6 +508,105 @@ function envelopeResult(model, coverage, effectiveFamily) {
   });
 }
 
+// IAM-1301 (Phase 13): an EXPLICIT SCP/RCP selection resolved to an SCP-analyzable
+// (no-Principal) document is routed to the family-aware SCP CEILING evaluator
+// (engine/scp.js), NEVER to the identity rules/escalation engine. An SCP Allow is
+// a maximum-permissions CEILING and a Deny is a GUARDRAIL - neither grants - so the
+// identity engine would emit spurious positive capability findings and edges
+// (can-read/can-write/can-pass/data-exfil/escalation) that a ceiling can never
+// establish (threat-model T8; Phase-13 immutable guardrail: an SCP/RCP is a
+// ceiling, never a grant). The graph is EMPTY by construction: no positive
+// capability edges for this family. Every finding states the intersection
+// semantics (effective access is the intersection with identity policies, not
+// supplied here) and SCPs never grant.
+function scpResult(model, coverage, effectiveFamily) {
+  const scp = analyzeScp(model);
+  if (!scp.ok) return fail(scp.errors);
+
+  const stamped = scp.findings.map((f) => stampFamily(f, effectiveFamily));
+  const findings = Object.freeze(sortFindings(stamped));
+
+  // No positive capability edges for a ceiling/guardrail family - the graph is
+  // empty. The findings table (ceiling breadth + guardrail shape + intersection
+  // caveat) is the authoritative and only representation.
+  const graph = emptyGraph();
+
+  const enriched = enrichCoverage(coverage, {
+    model,
+    graph,
+    catalogVersion: defaultCatalog.version,
+    unsupportedConditions: unsupportedConditionKeys(model),
+    unrecognizedActions: unrecognizedActions(model, defaultCatalog),
+    duplicateSids: duplicateSids(model),
+  });
+
+  return Object.freeze({
+    ok: true,
+    errors: Object.freeze([]),
+    findings,
+    model,
+    graph: Object.freeze(graph),
+    catalogVersion: CATALOG_VERSION,
+    counts: Object.freeze({
+      findings: findings.length,
+      edges: graph.edges.length,
+      nodes: graph.nodes.length,
+    }),
+    family: enriched.family,
+    coverage: enriched,
+  });
+}
+
+// IAM-1302 (Phase 13): an EXPLICIT SCP/RCP selection resolved to an RCP-shaped
+// document (a Principal-bearing, DENY-ONLY org resource guardrail carrying an
+// org-scope condition key) is routed to the family-aware RCP GUARDRAIL evaluator
+// (engine/rcp.js), NEVER to the identity/resource engine. An RCP is deny-only and
+// grants nothing; running the resource engine on it would emit a spurious
+// public-access / S3 capability finding (from the Principal:"*" + s3:*) that a
+// deny-only ceiling can never establish (threat-model T8; Phase-13 immutable
+// guardrail: an SCP/RCP is a ceiling, never a grant). The graph is EMPTY by
+// construction: no positive capability edges for this family. Every finding states
+// the intersection semantics (a corresponding Allow must exist elsewhere; effective
+// access is the intersection with identity/resource policies, not supplied here)
+// and preserves the confused-deputy condition interaction as one guardrail.
+function rcpResult(model, coverage, effectiveFamily) {
+  const rcp = analyzeRcp(model);
+  if (!rcp.ok) return fail(rcp.errors);
+
+  const stamped = rcp.findings.map((f) => stampFamily(f, effectiveFamily));
+  const findings = Object.freeze(sortFindings(stamped));
+
+  // No positive capability edges for a deny-only guardrail family - the graph is
+  // empty. The findings table (guardrail shape + intersection caveat) is the
+  // authoritative and only representation.
+  const graph = emptyGraph();
+
+  const enriched = enrichCoverage(coverage, {
+    model,
+    graph,
+    catalogVersion: defaultCatalog.version,
+    unsupportedConditions: unsupportedConditionKeys(model),
+    unrecognizedActions: unrecognizedActions(model, defaultCatalog),
+    duplicateSids: duplicateSids(model),
+  });
+
+  return Object.freeze({
+    ok: true,
+    errors: Object.freeze([]),
+    findings,
+    model,
+    graph: Object.freeze(graph),
+    catalogVersion: CATALOG_VERSION,
+    counts: Object.freeze({
+      findings: findings.length,
+      edges: graph.edges.length,
+      nodes: graph.nodes.length,
+    }),
+    family: enriched.family,
+    coverage: enriched,
+  });
+}
+
 // IAM-1201 (Phase 12): an EXPLICIT, context-validated resource family is routed
 // to the family-aware RESOURCE evaluator (engine/resource.js), NEVER to the
 // identity rules/escalation engine. A resource-based policy is analyzed from the
@@ -608,6 +709,21 @@ export function analyze(text, options) {
     if (effectiveFamily === FAMILIES.PERMISSIONS_BOUNDARY
       || effectiveFamily === FAMILIES.SESSION) {
       return envelopeResult(m.model, coverage, effectiveFamily);
+    }
+
+    // IAM-1301 / IAM-1302 (Phase 13): an accepted SCP/RCP family (explicit selection
+    // on a guardrail-shaped document - the family gate has already failed closed on
+    // any non-guardrail shape) is a CEILING/GUARDRAIL. Route it to the family-aware
+    // ceiling evaluator (no positive capability edges, no escalation) rather than
+    // the identity/resource engine. The two org-control shapes are disjoint: an SCP
+    // is no-Principal (isScpShape rejects Principals) and an RCP is Principal-bearing
+    // (isRcpShape requires a Principal on every statement), so a Principal-bearing
+    // accepted document is the RCP guardrail and everything else is the SCP ceiling.
+    if (effectiveFamily === FAMILIES.SCP_RCP) {
+      if (isRcpShape(m.model.statements)) {
+        return rcpResult(m.model, coverage, effectiveFamily);
+      }
+      return scpResult(m.model, coverage, effectiveFamily);
     }
 
     // IAM-1201 (Phase 12): an accepted resource family (explicit selection + a

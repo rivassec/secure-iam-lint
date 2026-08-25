@@ -1,0 +1,55 @@
+{
+  "id": "rcp-inverted-org-scope-hazard",
+  "title": "RCP org-scope Deny with INVERTED operator polarity (positive StringEquals footgun)",
+  "note": "IAM-1302 iteration 2 (fixes review finding F1): a Principal-bearing, deny-only org RESOURCE guardrail whose org-scope condition uses a POSITIVE comparator (StringEquals aws:PrincipalOrgID) instead of the intended negated StringNotEqualsIfExists. In a Deny a positive comparator fires WHEN the org matches, so this policy denies requests FROM your OWN organization and PERMITS everyone else - the INVERSE of confused-deputy / org-perimeter protection, the exact StringEquals/StringNotEquals footgun. The evaluator must record operator polarity, narrate the inverted effect (NOT 'denies UNLESS the org matches'), stop asserting confused-deputy protection, and flag it as a misconfiguration hazard (severity medium, hazard=true), just as scp.js raises the over-broad-region hazard. The guardrail-not-grant invariant still holds: deny-only, empty graph, no S3/public-access finding, states a corresponding Allow must exist elsewhere.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "EnforceServiceSourceOrganizationInverted",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": "*",
+        "Condition": {
+          "StringEquals": {
+            "aws:PrincipalOrgID": "o-exampleorgid"
+          },
+          "Bool": {
+            "aws:PrincipalIsAWSService": "true"
+          }
+        }
+      }
+    ]
+  },
+  "options": {
+    "family": "rcp",
+    "requireExplicitFamily": true
+  },
+  "rcpExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "scp-rcp",
+    "override": "scp-rcp",
+    "status": "warned",
+    "note": "warned (not ok): the curated action catalog / condition classifier does not recognize the org-scope keys and the s3:* wildcard, an honest coverage gap - it does not weaken the guardrail semantics.",
+    "findingIds": [
+      "RCP-GUARDRAIL"
+    ],
+    "severities": {
+      "RCP-GUARDRAIL": "medium"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesCeilingNotGrant": true,
+    "guardrailKinds": ["confused-deputy"],
+    "confusedDeputy": true,
+    "orgScopeKeys": ["aws:PrincipalOrgID"],
+    "orgScopeNegatedIfExists": false,
+    "targetsAwsServicePrincipals": true,
+    "wildcardPrincipalSubject": true,
+    "denyOnly": true,
+    "forbidFindingIds": ["PUBLIC-ACCESS", "RESOURCE-CONFUSED-DEPUTY", "RESOURCE-SAME-ACCOUNT-GRANT", "RESOURCE-CROSS-ACCOUNT"],
+    "noPublicAccess": true
+  }
+}

@@ -258,16 +258,104 @@ function hasScpGuardrailCondition(stmt) {
   return false;
 }
 
+// A FullAWSAccess-style ceiling Allow: Action "*" on Resource "*" with no
+// NotAction / NotResource scoping. This is the AWS managed FullAWSAccess default
+// that virtually every real SCP carries alongside its Deny guardrails ("when you
+// enable SCPs, AWS Organizations attaches ... FullAWSAccess which allows all
+// services and actions", docs/scp-rcp-semantics.md section 2). It is the ONLY
+// Allow shape the SCP recognizer tolerates: a SCOPED Allow (specific
+// actions/resources, or a NotAction/NotResource complement) is structurally
+// indistinguishable from an identity grant, so a document carrying one is left to
+// the identity path rather than swept into the SCP family.
+function isFullAccessAllow(s) {
+  const actions = Array.isArray(s.actions) ? s.actions : [];
+  const resources = Array.isArray(s.resources) ? s.resources : [];
+  const notActions = Array.isArray(s.notActions) ? s.notActions : [];
+  const notResources = Array.isArray(s.notResources) ? s.notResources : [];
+  return notActions.length === 0 && notResources.length === 0
+    && actions.length === 1 && actions[0] === '*'
+    && resources.length === 1 && resources[0] === '*';
+}
+
 function isScpShape(statements) {
   if (statements.length === 0) return false;
-  if (!statements.every((s) => s.effect === 'Deny')) return false;
   if (statements.some(hasPrincipalElement)) return false; // SCPs attach to OUs, not principals
+  // An SCP is a set of Deny guardrails, optionally alongside a FullAWSAccess-style
+  // Allow ceiling (the AWS managed default nearly every real SCP carries). We
+  // recognize BOTH the original all-Deny SCP AND the canonical mixed
+  // FullAWSAccess + Deny SCP - the shape almost every real-world SCP takes, since
+  // it carries the FullAWSAccess Allow. Recognition requires TWO things:
+  //   1) at least one Deny carries a hallmark org/region guardrail signal (an
+  //      organizations:* action/NotAction, or an aws:RequestedRegion condition).
+  //      Requiring that guardrail signal keeps a plain full-admin identity policy
+  //      ([Allow * *] plus an ordinary Deny with no org/region signal - e.g. the
+  //      graph/rule-edge NotAction-deny fixture) OUT of the SCP family; it stays
+  //      an identity policy.
+  //   2) every NON-Deny statement is a FullAWSAccess-style Allow ceiling. A scoped
+  //      Allow is identity-ambiguous, so a document carrying one is left to the
+  //      identity path (this recognizer bails out, returning false).
+  // Detecting the mixed shape here is what closes the auto-detect fail-OPEN: a
+  // FullAWSAccess + region/org Deny SCP is no longer misclassified as identity and
+  // run through the escalation engine (which would manufacture can-* capability
+  // edges and critical escalation findings a CEILING can never establish).
+  let sawGuardrail = false;
   for (const s of statements) {
-    if (s.actions.some(isOrgControlAction)) return true;
-    if (s.notActions.some(isOrgControlAction)) return true;
-    if (hasScpGuardrailCondition(s)) return true;
+    if (s.effect === 'Deny') {
+      if (s.actions.some(isOrgControlAction)
+        || s.notActions.some(isOrgControlAction)
+        || hasScpGuardrailCondition(s)) {
+        sawGuardrail = true;
+      }
+    } else if (s.effect === 'Allow') {
+      if (!isFullAccessAllow(s)) return false; // a scoped Allow is identity-ambiguous
+    } else {
+      return false; // an unrecognized effect is not a clean SCP shape
+    }
+  }
+  return sawGuardrail;
+}
+
+// --- RCP (Resource Control Policy) shape (IAM-1302, test 52) ------------------
+// An RCP is the resource-side sibling of an SCP: an ORGANIZATIONS control policy
+// that CAPS who may access org resources. Unlike an SCP it names a Principal (it
+// is Principal-bearing, like a resource-based policy) and it is DENY-ONLY in
+// practice (its Allow is only the RCPFullAWSAccess pass-through default). It is a
+// CEILING, never a grant. Structurally it looks like a resource-based policy, so
+// it can be told apart only by its org-scope guardrail condition keys
+// (aws:SourceOrgID / aws:SourceOrgPaths / aws:PrincipalOrgID / the
+// aws:PrincipalIsAWSService confused-deputy signal). We detect that shape so an
+// EXPLICIT SCP/RCP selection routes it to the RCP guardrail evaluator instead of
+// mis-analyzing it as an ordinary resource GRANT (which would emit a spurious
+// public-access / S3 capability finding a deny-only ceiling can never establish).
+const RCP_GUARDRAIL_CONDITION_KEYS = new Set([
+  'aws:sourceorgid', 'aws:sourceorgpaths', 'aws:principalorgid', 'aws:principalisawsservice',
+]);
+
+function hasRcpGuardrailCondition(stmt) {
+  const c = stmt.condition;
+  if (!c || typeof c !== 'object') return false;
+  for (const op of Object.getOwnPropertyNames(c)) {
+    const inner = c[op];
+    if (!inner || typeof inner !== 'object') continue;
+    for (const key of Object.getOwnPropertyNames(inner)) {
+      if (RCP_GUARDRAIL_CONDITION_KEYS.has(String(key).toLowerCase())) return true;
+    }
   }
   return false;
+}
+
+// An RCP shape: EVERY statement is a Principal-bearing Deny (RCPs are deny-only
+// and name a Principal, capping who may reach org resources), NONE names a
+// NotPrincipal (a Deny + NotPrincipal is the documented hazard, kept fail-closed),
+// AND at least one statement carries an org-scope guardrail condition key. The
+// org-scope signal is what distinguishes an RCP guardrail from an ordinary
+// resource-based grant, so a plain resource policy is never swept up.
+export function isRcpShape(statements) {
+  if (statements.length === 0) return false;
+  if (!statements.every((s) => s.effect === 'Deny')) return false; // deny-only
+  if (!statements.every((s) => s.principal != null)) return false; // Principal-bearing
+  if (statements.some((s) => s.notPrincipal != null)) return false; // NotPrincipal is the hazard
+  return statements.some(hasRcpGuardrailCondition);
 }
 
 // Role-trust statements whose Principal names a type the trust evaluator does
@@ -308,23 +396,46 @@ function isTrustOnly(statements) {
 // (no explicit resource selection) still fails closed on a resource shape.
 function classifyShape(statements, opts) {
   const suppressResourceBlock = !!(opts && opts.suppressResourceBlock);
+  // IAM-1301 (Phase 13): when the SCP family is EXPLICITLY selected, an SCP-shaped
+  // (deny-guardrail) document is routed to the family-aware SCP evaluator instead
+  // of failing closed here. Auto-detect (no explicit SCP selection) still fails
+  // closed on an SCP shape (the auto-detect flip is IAM-1303's job).
+  const suppressScpBlock = !!(opts && opts.suppressScpBlock);
   const blockingCodes = [];
 
-  // 0) SCP / RCP control-policy shape (IAM-704, test 19): fail closed BEFORE the
-  // identity fallback so a deny-only org guardrail is never analyzed with
-  // identity rules. This is fail-closed only; full SCP ceiling semantics come
-  // later.
+  // 0) SCP / RCP control-policy shape (IAM-704, test 19): a deny-only org
+  // guardrail must never be analyzed with identity rules. IAM-1301: under an
+  // EXPLICIT SCP selection this shape is CEILING-analyzed (suppressScpBlock), so
+  // the block is skipped and the family resolves to SCP_RCP for the SCP evaluator.
+  // Without an explicit SCP selection we fail closed (deny-guardrail SCP under
+  // auto-detect stays blocked until IAM-1303 flips the auto path).
   if (isScpShape(statements)) {
-    blockingCodes.push(code(
-      COVERAGE_CODES.UNSUPPORTED_SCP_SHAPE,
-      'Detected a Service Control Policy / Resource Control Policy shape ' +
-        '(organization-wide Deny guardrails). SCPs set permission CEILINGS and ' +
-        'do not GRANT permissions, so identity-policy rules do not apply and a ' +
-        'NotAction here does not describe allowed capabilities. Full SCP ceiling ' +
-        'analysis is not yet supported; analysis stops rather than fall back to ' +
-        'identity-policy rules.',
-      `Statement[${statements[0].index}]`,
-    ));
+    if (!suppressScpBlock) {
+      blockingCodes.push(code(
+        COVERAGE_CODES.UNSUPPORTED_SCP_SHAPE,
+        'Detected a Service Control Policy / Resource Control Policy shape ' +
+          '(organization-wide Deny guardrails). SCPs set permission CEILINGS and ' +
+          'do not GRANT permissions, so identity-policy rules do not apply and a ' +
+          'NotAction here does not describe allowed capabilities. Select the ' +
+          'SCP / RCP family to analyze it as a ceiling / guardrail; under ' +
+          'auto-detect analysis stops rather than fall back to identity-policy rules.',
+        `Statement[${statements[0].index}]`,
+      ));
+    }
+    return { detected: FAMILIES.SCP_RCP, blockingCodes };
+  }
+
+  // 0b) RCP (Resource Control Policy) shape (IAM-1302, test 52): a DENY-ONLY,
+  // Principal-bearing org RESOURCE guardrail (carrying an org-scope condition key
+  // such as aws:SourceOrgID / aws:PrincipalIsAWSService). It is a CEILING, never a
+  // grant. Under an EXPLICIT SCP/RCP selection (suppressScpBlock) it is routed to
+  // the family-aware RCP guardrail evaluator (detected=SCP_RCP, no block here).
+  // Under AUTO-DETECT (no explicit selection) it is deliberately LEFT to the
+  // resource branch below, which fails closed (UNSUPPORTED_POLICY_FAMILY) exactly
+  // as before - the auto-detect flip for org-control policies is IAM-1303's job,
+  // so gating on suppressScpBlock keeps auto-detect behavior byte-for-byte
+  // unchanged (the deferred RCP fixture still detects `resource` + fails closed).
+  if (suppressScpBlock && isRcpShape(statements)) {
     return { detected: FAMILIES.SCP_RCP, blockingCodes };
   }
 
@@ -548,8 +659,13 @@ export function detectFamily(model, options) {
   // shape is not auto-blocked in classifyShape; the resource branch below decides
   // accepted (with context) vs RESOURCE_CONTEXT_REQUIRED (without).
   const resourceExplicit = rawSelection === FAMILIES.RESOURCE;
+  // IAM-1301: is the SCP/RCP family EXPLICITLY selected? If so, a deny-guardrail
+  // SCP shape is CEILING-analyzed (not auto-blocked) - classifyShape skips the
+  // UNSUPPORTED_SCP_SHAPE block and the SCP override branch below routes it.
+  const scpExplicit = rawSelection === FAMILIES.SCP_RCP;
   const { detected, blockingCodes } = classifyShape(statements, {
     suppressResourceBlock: resourceExplicit,
+    suppressScpBlock: scpExplicit,
   });
 
   // IAM-704 (test 22C): version gate. An ABSENT Version is tolerated; any
@@ -593,6 +709,15 @@ export function detectFamily(model, options) {
   // the resource evaluator, while resource stays OUT of SUPPORTED_FAMILIES (a
   // resource shape is not supported without its explicit context).
   let resourceAccepted = false;
+
+  // IAM-1301 / IAM-1302: set true when an explicit SCP/RCP selection is ACCEPTED as
+  // a ceiling family - either an SCP-analyzable no-Principal guardrail shape
+  // (IAM-1301) OR an RCP-shaped Principal-bearing deny-only org resource guardrail
+  // (IAM-1302). Drives `supported` so the orchestrator routes it to the SCP/RCP
+  // ceiling evaluator, while SCP_RCP stays OUT of SUPPORTED_FAMILIES (auto-detect
+  // never resolves to it - an org-control shape is only ceiling-analyzed under an
+  // explicit selection).
+  let scpAccepted = false;
 
   if (override) {
     // IAM-1001 family-shape guards for an EXPLICIT selection. These are more
@@ -682,9 +807,49 @@ export function detectFamily(model, options) {
           );
         }
       }
+    } else if (override === FAMILIES.SCP_RCP) {
+      // IAM-1301 / IAM-1302 (Phase 13): an EXPLICIT SCP/RCP selection routes to the
+      // ceiling family - an SCP Allow is a maximum-permissions envelope and an
+      // SCP/RCP Deny is a guardrail; neither grants. This is gated on the GUARDRAIL
+      // SHAPE (classifyShape, with suppressScpBlock, returns detected=SCP_RCP only
+      // when isScpShape matched an all-Deny, no-Principal org/region guardrail, OR
+      // isRcpShape matched a Principal-bearing deny-only org RESOURCE guardrail
+      // carrying an org-scope condition key). We deliberately do NOT relabel an
+      // arbitrary grant as a ceiling: an allow-list SCP is structurally identical
+      // to an identity policy, and an ordinary resource GRANT (no org-scope signal)
+      // is not an RCP guardrail, so selecting SCP/RCP on such a shape fails closed
+      // (deferred), naming the family - preserving suite-3 test 69 and never mis-
+      // analyzing an identity grant or a resource grant. Auto-detect on the same
+      // guardrail shape still fails closed (IAM-1303 flips it).
+      if (detected === FAMILIES.SCP_RCP) {
+        scpAccepted = true;
+        notes.push(
+          'SCP / RCP family selected; analyzed as a permission ceiling / guardrail ' +
+            '(SCPs and RCPs set the maximum permissions and never grant).',
+        );
+      } else {
+        if (!blockingCodes.some((b) => b.code === COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY)) {
+          blockingCodes.push(code(
+            COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY,
+            'SCP / RCP selected, but this document is not an SCP or RCP guardrail ' +
+              'shape. An SCP is an all-Deny organization guardrail with an org- or ' +
+              'region-control signal and never names a Principal; an RCP is a ' +
+              'deny-only, Principal-bearing org RESOURCE guardrail carrying an ' +
+              'org-scope condition key (for example aws:SourceOrgID or ' +
+              'aws:PrincipalIsAWSService). An allow-list SCP is structurally ' +
+              'identical to an identity policy, and an ordinary resource GRANT is ' +
+              'not an RCP guardrail, so neither can be safely relabeled as a ' +
+              'ceiling. Analysis stops rather than mis-analyze it; your input is ' +
+              'preserved so you can re-select a supported family.',
+            null,
+          ));
+        }
+        notes.push('SCP / RCP selected; the document is not an SCP or RCP guardrail shape.');
+      }
     } else if (!SUPPORTED_FAMILIES.has(override)) {
-      // Selected a family we do not model (scp-rcp) -> fail closed NAMING the
-      // selected family; the input is preserved so the user can re-select (test 69).
+      // Selected a family we do not model -> fail closed NAMING the selected
+      // family; the input is preserved so the user can re-select (test 69).
+      // (SCP_RCP is handled above; RESOURCE above; this is the residual safety net.)
       if (!blockingCodes.some((b) => b.code === COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY)) {
         blockingCodes.push(code(
           COVERAGE_CODES.UNSUPPORTED_POLICY_FAMILY,
@@ -747,7 +912,7 @@ export function detectFamily(model, options) {
   // IAM-1201: an ACCEPTED resource family is supported (routed to the resource
   // evaluator) even though resource is deliberately kept OUT of SUPPORTED_FAMILIES
   // (a resource shape without its explicit context is not supported).
-  const supported = !blocked && (SUPPORTED_FAMILIES.has(family) || resourceAccepted);
+  const supported = !blocked && (SUPPORTED_FAMILIES.has(family) || resourceAccepted || scpAccepted);
 
   return Object.freeze({
     detected,

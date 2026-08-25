@@ -11,10 +11,18 @@
 // acceptance fixtures under fixtures/resource/ (driven from analyze() with the
 // explicit attached-resource context by tests/resource.test.js), scoreboarded by
 // tests/acceptance-resource-flip.test.js. Test 29 (Deny + NotPrincipal hazard)
-// is driven by tests/acceptance-suite-2.test.js. The ONLY shapes that remain
-// genuinely deferred here are the permissions-boundary (30), session (31),
-// SCP-shape (43), and RCP (52) families - each still a design-blocked fixture
-// below.
+// is driven by tests/acceptance-suite-2.test.js.
+//
+// IAM-1303 (Phase 13) UPDATE: the SCP/RCP org-control evaluators shipped
+// (IAM-1301 engine/scp.js + IAM-1302 engine/rcp.js), so tests 43 (SCP-shape) and
+// 52 (RCP) FLIPPED from blocked-by-design to real ceiling/guardrail analysis and
+// now live as committed acceptance fixtures under fixtures/family-scp/ and
+// fixtures/family-rcp/ (driven from analyze() with the explicit SCP/RCP family
+// selection by tests/phase13-scp.test.js + tests/phase13-rcp.test.js),
+// scoreboarded by tests/acceptance-scp-rcp-flip.test.js. Auto-detect on an
+// SCP/RCP shape still fails closed with a machine-readable UNSUPPORTED_* code.
+// The ONLY shapes that remain genuinely deferred here are the permissions-boundary
+// (30) and session (31) families - each still a design-blocked fixture below.
 //
 // Rather than skip these tests, each is encoded as a FIXTURE under
 // fixtures/acceptance-2-deferred/ carrying:

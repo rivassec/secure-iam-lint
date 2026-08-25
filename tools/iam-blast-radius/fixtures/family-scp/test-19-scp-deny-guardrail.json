@@ -1,0 +1,62 @@
+{
+  "id": "suite1-test-19-scp-deny-guardrail",
+  "suiteTest": 19,
+  "title": "SCP deny guardrail",
+  "note": "IAM-1301: an EXPLICIT SCP selection routes to the family-aware SCP ceiling/guardrail evaluator (engine/scp.js). Deny statements are GUARDRAILS (organization-departure deny + region deny with a global-service NotAction carve-out), never grants. The NotAction list is a carve-out (excludedActions), NEVER reported as allowed capabilities. Zero positive capability edges; every finding states SCPs set permission ceilings and do not grant (intersection with identity policies not supplied). Compare with the auto-detect fail-closed baseline in fixtures/acceptance-2-deferred/test-43 and the family gate's UNSUPPORTED_SCP_SHAPE under auto-detect.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyLeavingOrganization",
+        "Effect": "Deny",
+        "Action": "organizations:LeaveOrganization",
+        "Resource": "*"
+      },
+      {
+        "Sid": "DenyUnapprovedRegions",
+        "Effect": "Deny",
+        "NotAction": [
+          "iam:*",
+          "route53:*",
+          "support:*"
+        ],
+        "Resource": "*",
+        "Condition": {
+          "StringNotEquals": {
+            "aws:RequestedRegion": [
+              "us-east-1",
+              "us-west-2"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "options": {
+    "family": "scp",
+    "requireExplicitFamily": true
+  },
+  "scpExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "scp-rcp",
+    "override": "scp-rcp",
+    "status": "warned",
+    "note": "warned (not ok): the curated action catalog does not recognize organizations:LeaveOrganization, an honest coverage gap - it does not weaken the guardrail semantics.",
+    "findingIds": [
+      "SCP-GUARDRAIL",
+      "SCP-GUARDRAIL"
+    ],
+    "severities": {
+      "SCP-GUARDRAIL": "info"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesCeilingNotGrant": true,
+    "guardrailKinds": ["organization", "region"],
+    "excludedActionsPresent": true,
+    "excludedActionsNeverAllowed": ["iam:*", "route53:*", "support:*"],
+    "allowedRegions": ["us-east-1", "us-west-2"],
+    "noHazard": true
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "id": "iam1302-iter3-mixed-fullawsaccess-region-deny-scp",
+  "title": "Canonical mixed SCP: FullAWSAccess Allow ceiling + region Deny guardrail",
+  "note": "IAM-1302 iteration-3 regression: the most common real-world SCP shape carries the AWS managed FullAWSAccess Allow (Action */Resource *) alongside a region Deny guardrail. Under an EXPLICIT SCP selection it is analyzed as a CEILING/GUARDRAIL: the FullAWSAccess statement is a maximum-permissions ENVELOPE (SCP-CEILING, never a grant) and the negated-IfExists aws:RequestedRegion Deny is a region GUARDRAIL (SCP-GUARDRAIL, over-broad-regional-Deny hazard). ZERO capability edges, no escalation, ceiling-not-grant framing on every finding. Under AUTO-DETECT this same shape FAILS CLOSED (UNSUPPORTED_SCP_SHAPE) - it is never misread as an identity policy and run through the escalation engine (which would manufacture critical can-* grants a ceiling can never establish). The auto-detect assertion lives inline in tests/phase13-scp.test.js.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "FullAWSAccess",
+        "Effect": "Allow",
+        "Action": "*",
+        "Resource": "*"
+      },
+      {
+        "Sid": "DenyRegion",
+        "Effect": "Deny",
+        "Action": "*",
+        "Resource": "*",
+        "Condition": {
+          "StringNotEqualsIfExists": {
+            "aws:RequestedRegion": "us-east-1"
+          }
+        }
+      }
+    ]
+  },
+  "options": {
+    "family": "scp",
+    "requireExplicitFamily": true
+  },
+  "scpExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "scp-rcp",
+    "override": "scp-rcp",
+    "status": "ok",
+    "findingIds": [
+      "SCP-CEILING",
+      "SCP-GUARDRAIL"
+    ],
+    "severities": {
+      "SCP-CEILING": "high",
+      "SCP-GUARDRAIL": "medium"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesCeilingNotGrant": true,
+    "guardrailKinds": ["region"],
+    "allowedRegions": ["us-east-1"],
+    "hazard": true,
+    "hazardWhyMatches": "over-broad"
+  }
+}

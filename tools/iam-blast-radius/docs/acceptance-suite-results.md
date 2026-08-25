@@ -42,7 +42,7 @@ column reflects the Phase-8 state.
 | 16 | Third-party trust + ExternalId | BLOCKED | FIXED (Phase 8) - TRUST-CROSS-ACCOUNT low; sts:ExternalId recognized as a confused-deputy constraint (never "missing", never called auth/secret); target-role perms out of scope | test-16 |
 | 17 | Over-broad OIDC trust | BLOCKED | FIXED (Phase 8) - TRUST-FEDERATED high; aud a valid constraint, repo:example-org/* sub broad (not credited); recommends repo+ref/env; no "every repo can assume" claim | test-17 |
 | 18 | Normal service trust (neg ctrl) | BLOCKED | FIXED (Phase 8) - TRUST-SERVICE informational only; no public/external/escalation finding; no target-role-permission inference (negative control) | test-18 |
-| 19 | SCP deny guardrail | FAIL (misdetect) | FIXED - detected as SCP/RCP shape; fail-closed UNSUPPORTED_SCP_SHAPE (no identity fallback). Full SCP ceiling semantics = later feature | test-19 |
+| 19 | SCP deny guardrail | FAIL (misdetect) | FIXED - PASS (flipped IAM-1303). Under an explicit SCP selection: two `SCP-GUARDRAIL` findings (organization-departure deny + region deny); the NotAction global-service list is surfaced as a carve-out (`excludedActions`), NEVER as allowed; ceiling-not-grant + INTERSECTION caveat; zero capability edges (`tests/phase13-scp.test.js`, gated by `tests/acceptance-scp-rcp-flip.test.js`). Under auto-detect still fail-closed `UNSUPPORTED_SCP_SHAPE` (no identity fallback) | test-19 (auto), family-scp/test-19 (explicit) |
 | 20 | Mixed policy family | PASS | PASS (preserved) - fail-closed AMBIGUOUS_POLICY_SHAPE citing Statement[1] | test-20 |
 | 21 | Policy variables | FAIL | FIXED - DATA-READ with `${aws:username}` preserved verbatim (not resolved/classified) | test-21 |
 | 22A | Malformed JSON | PASS | PASS (preserved) - INVALID_JSON, ok:false, no findings/graph/model | test-22a |
@@ -93,9 +93,19 @@ markers to their REAL expected findings + severities, per
 `UNSUPPORTED_NOTPRINCIPAL` (expansion trap), asserted in `family.test.js` and
 `trust.test.js`.
 
-Test 19 is fail-closed for the SCP/RCP shape (`UNSUPPORTED_SCP_SHAPE`). The
-Phase-7 requirement (block rather than fall back to identity rules) is MET; full
-SCP **ceiling** semantics remains a separate later feature.
+Test 19 (SCP deny guardrail) FLIPPED in Phase 13. Under an explicit SCP selection
+it is now analyzed by the family-aware SCP ceiling/guardrail evaluator
+(`engine/scp.js`, IAM-1301): two `SCP-GUARDRAIL` findings (an organization-departure
+deny + a region deny), the global-service NotAction list surfaced as a carve-out
+(never as allowed capabilities), the ceiling-not-grant + INTERSECTION caveat on
+every finding, and zero positive capability edges. The committed fixture is
+`fixtures/family-scp/test-19-scp-deny-guardrail.json`, driven by
+`tests/phase13-scp.test.js` and gated by the flip scoreboard
+`tests/acceptance-scp-rcp-flip.test.js`. Under **auto-detect** (no explicit family)
+it still fails closed with `UNSUPPORTED_SCP_SHAPE` - the Phase-7 requirement (block
+rather than fall back to identity rules) is preserved, so the shape is
+analyzed-or-explicitly-fail-closed, never mis-read. See
+`docs/family-coverage-matrix.md`.
 
 ## Cross-test invariants
 

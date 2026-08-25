@@ -1,0 +1,50 @@
+{
+  "id": "rcp-org-perimeter-guardrail",
+  "title": "RCP organization-perimeter resource guardrail (aws:PrincipalOrgID Deny)",
+  "note": "IAM-1302: a deny-only, Principal-bearing org RESOURCE guardrail whose org-scope key is aws:PrincipalOrgID and which carries NO aws:PrincipalIsAWSService signal - so it is an ORGANIZATION-PERIMETER guardrail (guardrailKind 'organization'), not the confused-deputy variant. It denies access to org resources unless the calling principal is within the org. Because the org check is a negated ...IfExists in a Deny, absence of the key STILL denies (fail-closed). No S3/public-access finding, zero capability edges, states RCPs are deny-only and a corresponding Allow must exist elsewhere. Exercises the non-confused-deputy RCP branch.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "EnforceOrgPerimeter",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": "*",
+        "Condition": {
+          "StringNotEqualsIfExists": {
+            "aws:PrincipalOrgID": "o-exampleorgid"
+          }
+        }
+      }
+    ]
+  },
+  "options": {
+    "family": "rcp",
+    "requireExplicitFamily": true
+  },
+  "rcpExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "scp-rcp",
+    "override": "scp-rcp",
+    "status": "ok",
+    "findingIds": [
+      "RCP-GUARDRAIL"
+    ],
+    "severities": {
+      "RCP-GUARDRAIL": "info"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesCeilingNotGrant": true,
+    "guardrailKinds": ["organization"],
+    "confusedDeputy": false,
+    "orgScopeKeys": ["aws:PrincipalOrgID"],
+    "orgScopeNegatedIfExists": true,
+    "wildcardPrincipalSubject": true,
+    "denyOnly": true,
+    "forbidFindingIds": ["PUBLIC-ACCESS", "RESOURCE-CONFUSED-DEPUTY", "RESOURCE-SAME-ACCOUNT-GRANT", "RESOURCE-CROSS-ACCOUNT"],
+    "noPublicAccess": true
+  }
+}
