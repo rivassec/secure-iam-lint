@@ -1,0 +1,27 @@
+# gitleaks config for secure-iam-lint.
+# Test fixtures + docs deliberately contain FAKE AWS ARNs / account IDs / policy
+# JSON. Allowlist by PATH (narrow) - never by a broad key regex that would blind
+# the scanner to real leaks. Real source, workflows, action.yml, and release
+# scripts stay fully scanned.
+title = "secure-iam-lint gitleaks config"
+
+[extend]
+useDefault = true   # keep all upstream secret rules
+
+[allowlist]
+description = "Test fixtures + doc examples use documented FAKE AWS identifiers only."
+paths = [
+  '''tools/iam-blast-radius/fixtures/.*''',
+  '''tools/iam-blast-radius/tests/.*''',
+  '''tools/iam-blast-radius/docs/.*\.md''',
+  '''content/tools/iam-blast-radius/samples\.js''',
+]
+# Convention: any fake credential in scanned code must carry a dummy marker or be
+# AWS's documented example key, so a real accidental leak still trips.
+regexes = [
+  '''EXAMPLE''',
+  '''FAKE''',
+  '''DUMMY''',
+  '''AKIAIOSFODNN7EXAMPLE''',
+  '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
+]
