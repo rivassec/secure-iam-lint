@@ -69,7 +69,7 @@ function isNonEmptyString(v) {
 // what is committed is what runs, architecture invariant 2).
 export function versionString(manifest = VERSION_MANIFEST) {
   const m = manifest || {};
-  return `iam-br (IAM Blast Radius) rule-catalog ${m.ruleVersion}, ` +
+  return `iam-br ${m.releaseVersion} (IAM Blast Radius) - rule-catalog ${m.ruleVersion}, ` +
     `action-catalog ${m.actionCatalogVersion}, build ${m.buildSha}`;
 }
 

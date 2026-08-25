@@ -621,7 +621,8 @@ test('toJsonReport surfaces the load-bearing verdict fields', () => {
 });
 
 test('versionString is derived from the canonical manifest', () => {
-  const s = versionString({ ruleVersion: '9', actionCatalogVersion: '2099.01.01', buildSha: 'abc' });
+  const s = versionString({ releaseVersion: '1.2.3', ruleVersion: '9', actionCatalogVersion: '2099.01.01', buildSha: 'abc' });
+  assert.match(s, /iam-br 1\.2\.3/);
   assert.match(s, /rule-catalog 9/);
   assert.match(s, /action-catalog 2099\.01\.01/);
   assert.match(s, /build abc/);
