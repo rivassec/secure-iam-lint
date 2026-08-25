@@ -1493,6 +1493,98 @@
         "full-family coverage matrix written; every family analyzed-or-explicitly-fail-closed with a code",
         "no regression to suites 1/2/3 or the identity/trust/resource negative corpora; full node --test green"
       ]
+    },
+    {
+      "id": "IAM-1400",
+      "title": "Phase 14: AWS-verified per-service resource-policy semantics grounding doc",
+      "priority": 64,
+      "status": "pending",
+      "maximumIterations": 3,
+      "requirements": [
+        "Ship docs/resource-per-service-semantics.md (AWS-verified, cite sources) EXTENDING docs/resource-policy-semantics.md, not duplicating it: the per-service authorization nuances that make identical policy syntax mean different things on S3 vs KMS vs SNS vs SQS. Cover per service: exactly which condition keys narrow vs leave-open a Principal '*' (principal-identity keys narrow; kms:ViaService and the S3 network keys narrow the CHANNEL not the principal; kms:CallerAccount is the KMS principal-account key), which actions are dangerous/control-plane (s3:PutBucketPolicy, kms:PutKeyPolicy, kms:CreateGrant, sns:Subscribe, sqs:ReceiveMessage/SendMessage), the confused-deputy controls (aws:SourceArn/aws:SourceAccount; aws:SourceOwner deprecated on SNS), and the fail-closed caveats (S3 Block Public Access out of policy scope; the KMS silent-key-policy inversion; request-property Deny keys s3:x-amz-server-side-encryption / s3:TlsVersion like aws:SecureTransport).",
+        "State the load-bearing per-service invariant that KMS Principal '*' is NOT anonymous (KMS has no unauthenticated path; '*' = all AWS identities in all accounts, cross-account still double-authorized) whereas S3 and SQS Principal '*' IS anonymous public, so the same '*' yields different severity framing per service. No shipped-code change in this story."
+      ],
+      "acceptance": [
+        "docs/resource-per-service-semantics.md present; per-service narrowing-key tables, dangerous-action lists, confused-deputy controls, and fail-closed caveats (PAB, silent KMS policy) all covered and consistent with docs/resource-policy-semantics.md",
+        "every service-specific claim traces to a cited current-AWS source (aws-verifier confirms against the cited pages), especially KMS '*' = all AWS identities in all accounts (not anonymous) and SQS '*' = anonymous public",
+        "no shipped-code change; existing tests untouched",
+        "Adversarial critic MUST target: any claim that a service-channel/transport/request-property key (kms:ViaService, s3:x-amz-server-side-encryption, aws:SecureTransport) or a resource-owner key (s3:ResourceAccount) narrows WHO may act, and any cited source that does not support the per-service claim it is attached to"
+      ]
+    },
+    {
+      "id": "IAM-1401",
+      "title": "Phase 14: per-service dispatch scaffolding in resource.js (no regression to the generic path)",
+      "priority": 65,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Add a per-service dispatch layer in engine/resource.js that, after parseResourceContext() accepts a context, selects a per-service rule set by the detected service token (serviceForArn: s3-bucket/s3-object/kms-key/sns/sqs) and runs it IN ADDITION to the existing generic principal-centric resourceFindings() loop - never instead of it, and never routing to identity rules. Per-service findings reuse makeResourceFinding() (canonical shape, RESOURCE_LIMIT carried, resource.service set) and extend RESOURCE_IDS; the generic loop remains the safety net so an unmodeled sub-shape still yields the generic PUBLIC-ACCESS/CROSS-ACCOUNT/CONFUSED-DEPUTY/UNSUPPORTED-PRINCIPAL findings and the INCOMPLETE coverage flag.",
+        "A per-service rule may REFINE severity/wording/id for its service but MUST NOT SUPPRESS a generic fail-closed finding, and MUST NOT change classification for a different service. In particular the KMS 'Principal * is not anonymous' reframing (IAM-1403) must be scoped to kms-key only and be structurally incapable of altering the S3/SNS/SQS anonymous-public classification. Keep the module pure/deterministic/dependency-free; no per-key node explosion; preserve all IAM-1201..1208 behavior and the resource negative corpus.",
+        "Wire the dispatch so exports (JSON/Markdown/UI) and coverage read from the same finding set; update the analyzeResource() coverage note to reflect that per-service rules ran while keeping the potential-not-effective and fail-closed language intact."
+      ],
+      "acceptance": [
+        "dispatch selects per-service rules by service token and runs them additively; generic resourceFindings() output for every existing fixture is byte-identical unless a per-service rule intentionally refines it, and the resource negative corpus does not regress",
+        "no per-service rule suppresses a generic fail-closed finding or the INCOMPLETE coverage flag; a rejected/null context still fails closed (IAM-1208 fix 3 preserved)",
+        "full node --test green; suites 1/2/3 and the identity/trust/resource negative corpora unchanged; determinism (same input+context -> byte-identical semantic JSON) holds",
+        "Adversarial critic MUST target: dispatch bleed - a per-service refactor that lets the KMS not-anonymous carve-out downgrade an S3/SQS anonymous-public grant, or that lets one service's severity/wording leak into another; and any path where adding a per-service rule silently drops a generic finding"
+      ]
+    },
+    {
+      "id": "IAM-1402",
+      "title": "Phase 14: S3 bucket-policy per-service finding rules",
+      "priority": 66,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Add S3 per-service rules (dispatch on s3-bucket/s3-object) per docs/resource-per-service-semantics.md sections 1-2: (a) request-property Deny keys s3:x-amz-server-side-encryption and s3:TlsVersion are constraints on the request, NOT identity constraints - like aws:SecureTransport (test 28) they must NOT downgrade or suppress a public/'*' Allow (extend the transport-only-Deny recognition to these keys, keeping isTransportOnlyCondition semantics); (b) network selectors (aws:SourceIp/SourceVpc/SourceVpce) and s3:ResourceAccount do NOT narrow a '*' to authenticated principals - a network-only-scoped '*' is still anonymous WITHIN that network, and s3:ResourceAccount pins the bucket-owner account not the caller; (c) rank bucket-control actions (s3:PutBucketPolicy, s3:PutBucketAcl, s3:PutBucketPublicAccessBlock, s3:DeleteBucketPolicy) as resource-policy takeover/self-expansion above data-plane actions when granted to '*' or a cross-account principal.",
+        "Every S3 public/broad finding carries the fail-closed 'cannot see Block Public Access' caveat (BPA is a separate account/bucket/org control not in the policy; never assume it on or off). Preserve the shipped bucket-vs-object typing (RESOURCE-ACTION-RESOURCE-MISMATCH, test 50) and all IAM-1202..1208 S3 behavior. Add fixtures for acceptance-suite-4 tests 101-108 and 128 driven from analyze().",
+        "Do not regress: suite-2 test 28 (transport-only Deny) or suite-3 test 85 (PrincipalArn-narrowed '*'); the resource negative corpus (a private bucket policy must stay finding-free / low)."
+      ],
+      "acceptance": [
+        "genuine public '*' s3:GetObject -> critical PUBLIC-ACCESS with anonymous wording + PAB caveat (test 101); '*' narrowed by aws:PrincipalOrgID -> high narrowed, no anonymous wording (test 102)",
+        "network-only-scoped '*' still anonymous-within-network, not authenticated-only (test 103); SSE-enforcing / TLS Deny does not make public read private (test 104); s3:ResourceAccount does not narrow the principal (test 108)",
+        "s3:PutBucketPolicy to external principal ranked as bucket-policy takeover above data-plane (test 105); same-account direct grant still medium resource-vs-identity (test 107)",
+        "fixtures 101-108 + 128 added and passing; full node --test green; suite-2 test 28, suite-3 test 85, and the resource negative corpus not regressed",
+        "Adversarial critic MUST target: an s3:x-amz-server-side-encryption or s3:TlsVersion Deny read as making a public bucket private, and a network-selector-scoped or s3:ResourceAccount-scoped '*' mis-credited as narrowed to authenticated principals (false negative on public exposure)"
+      ]
+    },
+    {
+      "id": "IAM-1403",
+      "title": "Phase 14: KMS key-policy per-service finding rules",
+      "priority": 67,
+      "status": "pending",
+      "maximumIterations": 5,
+      "requirements": [
+        "Add KMS per-service rules (dispatch on kms-key) per docs/resource-per-service-semantics.md section 3: (a) a Principal '*' KMS key policy is NOT anonymous - KMS has no unauthenticated path; report it as 'usable by every AWS identity in every account (cross-account still double-authorized)' and DROP all 'anonymous / unauthenticated / anyone on the internet' wording that the generic PUBLIC-ACCESS finding uses; Resource:'*' = the attached key only. (b) kms:CallerAccount is a principal-account scoping key (narrows a '*' to authenticated identities in the named account, like aws:PrincipalAccount); kms:ViaService is a SERVICE-CHANNEL selector that narrows the request vector, NOT the principal - a '*' narrowed only by kms:ViaService is still account-open and must not read as scoped-to-account/authenticated-only.",
+        "(c) Rank dangerous KMS actions: kms:Decrypt/GenerateDataKey*/ReEncrypt* to '*' or cross-account = data-plane exposure; kms:PutKeyPolicy = key-policy takeover; kms:CreateGrant = an onward-DELEGATION primitive (the grantee can create grants letting other principals in any account/org use the key and need not hold the permission itself) - name it as delegation, never as proven decrypt or effective access; kms:GrantIsForAWSResource narrows CreateGrant. (d) The KMS silent-key-policy inversion: a key policy that omits the account-delegation ('Enable IAM User Permissions') statement means IAM identity policies CANNOT govern the key (unlike S3), so per-principal effective access is fail-closed UNKNOWN; emit a coverage warning, never infer reachability from the key policy alone. Preserve RESOURCE-KMS-ACCOUNT-DELEGATION (test 51) unchanged.",
+        "Add fixtures for acceptance-suite-4 tests 109-116 and 127 driven from analyze(); do not regress suite-2 test 51 or the resource negative corpus (a properly-conditioned KMS key policy stays finding-free / low)."
+      ],
+      "acceptance": [
+        "KMS '*' grant surfaces high/critical over-grant WITHOUT anonymous/unauthenticated wording; Resource:'*' = attached key only, no per-key node explosion (test 109); account-root delegation still not-public/not-root-only medium (test 110)",
+        "kms:ViaService alone leaves a '*' account-open (test 111); kms:CallerAccount narrows to the named account (test 112); AND composition of the two preserved",
+        "kms:CreateGrant to external/'*' reported as onward-delegation ranked above key use, never over-claimed as decrypt/effective (test 114); cross-account root delegation high (test 113); silent key policy -> UNKNOWN coverage warning, IAM-inversion stated (tests 115, 127)",
+        "fixtures 109-116 + 127 added and passing; full node --test green; suite-2 test 51 and the resource negative corpus not regressed",
+        "Adversarial critic MUST target: a KMS '*' finding that says 'anonymous / unauthenticated / anyone' (the single sharpest trap), and kms:ViaService credited as principal-identity scoping so a still-account-open key reads as scoped/authenticated"
+      ]
+    },
+    {
+      "id": "IAM-1404",
+      "title": "Phase 14: SNS topic + SQS queue per-service finding rules (shared messaging family)",
+      "priority": 68,
+      "status": "pending",
+      "maximumIterations": 4,
+      "requirements": [
+        "Add ONE shared messaging per-service rule set (dispatch on sns and sqs; they share near-identical resource-policy semantics and differ only in action namespace) per docs/resource-per-service-semantics.md section 4: (a) SQS Principal '*' IS anonymous public (AWS docs label it 'all users (anonymous users)') and SNS Principal '*' is a public wildcard-principal grant - both critical, and the KMS not-anonymous carve-out (IAM-1403) must NOT leak here; (b) rank dangerous messaging actions: sns:Subscribe to '*' = anyone can subscribe an endpoint and exfiltrate published messages, sns:Publish to '*' = anyone can inject, sqs:ReceiveMessage(+DeleteMessage) to '*' = anyone can drain/read, sqs:SendMessage to '*' = anyone can inject/poison, and sns:AddPermission/SetTopicAttributes and sqs:AddPermission/SetQueueAttributes = policy takeover.",
+        "(c) Confused-deputy for the classic S3-notifications / EventBridge / CloudWatch / SNS->SQS pattern: a service principal (s3.amazonaws.com, events.amazonaws.com, sns.amazonaws.com, ...) granted sns:Publish / sqs:SendMessage without aws:SourceArn/aws:SourceAccount is an exposure (medium), source-bound is a negative control (info/low), a SourceArn/SourceAccount account mismatch is medium 'mismatched' (reuse RESOURCE-CONFUSED-DEPUTY and the IAM-1208 set-mismatch logic) - a service principal is never public write; recognize aws:SourceOwner as a deprecated legacy source-binding key on SNS and recommend aws:SourceArn/aws:SourceAccount. (d) '*' narrowed by aws:PrincipalOrgID is the org-scoped publish pattern (high, not critical). Preserve fail-closed on unmodeled principals (RESOURCE-UNSUPPORTED-PRINCIPAL).",
+        "Add fixtures for acceptance-suite-4 tests 117-126 driven from analyze(); do not regress suite-2 tests 26/27/53 or the resource negative corpus (a source-bound service grant stays finding-free / low)."
+      ],
+      "acceptance": [
+        "SQS '*' sqs:ReceiveMessage -> critical anonymous PUBLIC-ACCESS (test 122); SNS '*' sns:Subscribe -> critical exfiltration-vector public (test 117); the KMS not-anonymous wording never appears on SNS/SQS",
+        "unbound service publish/send -> medium confused-deputy exposure, not public write (tests 118, 124); source-bound -> info negative control (tests 119, 123); SourceArn/SourceAccount disjoint mismatch -> medium mismatched, match-all SourceArn treated as bypassed not clean (test 125)",
+        "'*' narrowed by aws:PrincipalOrgID -> high org-scoped, no anonymous wording (test 120); deprecated aws:SourceOwner recognized as a legacy binding, not a missing binding (test 121); cross-account sqs:* ranked with queue-policy takeover (test 126)",
+        "fixtures 117-126 added and passing; full node --test green; suite-2 tests 26/27/53 and the resource negative corpus not regressed",
+        "Adversarial critic MUST target: an SNS/SQS service-principal grant mislabeled 'public write' (a service is not '*'), and any softening that downgrades the genuinely-anonymous SQS/SNS '*' public grant below critical (dispatch bleed from the KMS carve-out)"
+      ]
     }
   ]
 }
