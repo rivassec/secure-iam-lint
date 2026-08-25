@@ -478,14 +478,16 @@ test('Resource family without an attached-resource context fails closed RESOURCE
   await expect(page.locator('#policy-input')).toHaveValue(text);
 
   // Supplying the attached-resource ARN accepts + routes to the resource
-  // evaluator. The blocking notice clears; the analysis is accepted but INCOMPLETE
-  // (the service-specific resource finding rules are a later tranche), so no
-  // identity finding and no blocked notice remain.
+  // evaluator. The blocking notice clears; this Principal:"*" grant on the named
+  // bucket is analyzed as a PUBLIC-ACCESS finding (IAM-1202), so the findings
+  // table now renders that finding. Status stays 'warned' because resource
+  // analysis is INCOMPLETE (service-specific rules are a later tranche), but the
+  // public-access capability is surfaced rather than dropped.
   await page.fill('#resource-arn', 'arn:aws:s3:::public/*');
   await page.locator('#resource-arn').blur();
   await expect(page.locator('#findings .coverage-blocked')).toHaveCount(0);
   await expect(page.locator('#status')).toHaveAttribute('data-status', 'warned');
-  await expect(page.locator('#findings table')).toHaveCount(0);
+  await expect(page.locator('#findings table')).toContainText(/public/i);
 });
 
 test('switching the family invalidates the prior analysis immediately (test 70)', async ({ page }) => {
