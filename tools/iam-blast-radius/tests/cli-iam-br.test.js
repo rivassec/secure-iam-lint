@@ -213,6 +213,14 @@ test('--family auto is refused (exit 2), not treated as auto-detection', async (
   assert.equal(r.code, EXIT.USAGE);
 });
 
+test('an unknown --family value is a usage error (exit 2), never analyzed', async () => {
+  // A family that does not exist is a caller mistake (exit 2), distinct from a
+  // valid family whose document cannot be analyzed (exit 3). Never analyzed.
+  const r = await runWith(['--family', 'bogus'], { stdin: CLEAN_IDENTITY });
+  assert.equal(r.code, EXIT.USAGE);
+  assert.equal(r.stdout, '', 'no analysis output is produced for a usage error');
+});
+
 test('a fail-closed malformed input is exit 3, never 0', async () => {
   const r = await runWith(['--family', 'identity'], { stdin: MALFORMED });
   assert.equal(r.code, EXIT.FAIL_CLOSED);

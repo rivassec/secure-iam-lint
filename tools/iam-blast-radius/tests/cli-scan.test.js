@@ -223,11 +223,12 @@ test('resource selected on an identity shape -> failed, exit 3', () => {
   assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
 });
 
-test('an unrecognized family token fails closed in the engine (exit 3), never identity', () => {
+test('an unrecognized family token is a usage error (exit 2), never analyzed', () => {
   const r = scan({ text: ADMIN_IDENTITY, family: 'banana' });
-  assert.equal(r.analysisStatus, ANALYSIS_STATUS.FAILED);
-  assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
-  assert.ok(r.analysisStates.some((s) => s.code === 'INVALID_FAMILY'));
+  // A family that does not exist is a caller mistake (usage error, exit 2),
+  // distinct from a valid family whose document cannot be analyzed (exit 3).
+  assert.equal(r.exitCode, EXIT.USAGE);
+  assert.equal(r.reason, 'UNKNOWN_FAMILY');
   // It must NOT have been analyzed as an identity admin grant.
   assert.equal(r.blockingCount, 0);
 });
