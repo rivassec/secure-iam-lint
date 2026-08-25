@@ -47,6 +47,9 @@ body {
   font: 16px/1.55 "Source Sans Pro", -apple-system, system-ui, sans-serif;
   color: var(--fg); background: var(--bg);
 }
+.site-nav { display: flex; flex-wrap: wrap; gap: 1.25rem; margin: 0 0 1rem; font-size: .9rem; }
+.site-nav a { color: var(--accent); text-decoration: none; }
+.site-nav a:hover, .site-nav a:focus-visible { text-decoration: underline; }
 h1 { margin: 0 0 .25rem; font-size: 1.6rem; color: var(--heading); }
 h2 { margin: 1.75rem 0 .5rem; font-size: 1.2rem; color: var(--heading); }
 .tagline, .hint, .status { color: var(--muted); }
