@@ -81,7 +81,7 @@ const DEFAULT_THRESHOLD = 'high';
 // outside this set is a usage error (exit 2) - the caller named a family that does
 // not exist - rejected before the engine runs, distinct from a valid family whose
 // document the engine cannot analyze (exit 3).
-const SELECTABLE_FAMILIES = Object.freeze(new Set([
+export const SELECTABLE_FAMILIES = Object.freeze(new Set([
   'identity', 'resource', 'role-trust', 'permissions-boundary', 'scp-rcp', 'session',
   // engine-recognized synonyms (family.js FAMILY_ALIASES)
   'scp', 'rcp', 'trust',
