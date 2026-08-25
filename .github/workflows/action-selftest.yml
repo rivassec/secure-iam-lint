@@ -49,11 +49,15 @@ jobs:
           sarif-output: selftest-good.sarif
 
       - name: assert known-good
+        env:
+          OUTCOME: ${{ steps.good.outcome }}
+          CODE: ${{ steps.good.outputs.exit-code }}
+          STATUS: ${{ steps.good.outputs.analysis-status }}
         run: |
           set -euo pipefail
-          outcome='${{ steps.good.outcome }}'
-          code='${{ steps.good.outputs.exit-code }}'
-          status='${{ steps.good.outputs.analysis-status }}'
+          outcome="$OUTCOME"
+          code="$CODE"
+          status="$STATUS"
           test "$outcome" = "success" || { echo "known-good: expected step success, got '$outcome'"; exit 1; }
           test "$code" = "0" || { echo "known-good: expected exit-code 0, got '$code'"; exit 1; }
           test "$status" = "complete" || { echo "known-good: expected analysis-status complete, got '$status'"; exit 1; }
@@ -72,10 +76,13 @@ jobs:
           sarif-output: selftest-bad.sarif
 
       - name: assert known-bad
+        env:
+          OUTCOME: ${{ steps.bad.outcome }}
+          CODE: ${{ steps.bad.outputs.exit-code }}
         run: |
           set -euo pipefail
-          outcome='${{ steps.bad.outcome }}'
-          code='${{ steps.bad.outputs.exit-code }}'
+          outcome="$OUTCOME"
+          code="$CODE"
           test "$outcome" = "failure" || { echo "known-bad: expected step outcome failure, got '$outcome'"; exit 1; }
           test "$code" = "1" || { echo "known-bad: expected exit-code 1, got '$code'"; exit 1; }
           # The SARIF must carry the expected security finding ruleId - a real finding,
@@ -95,11 +102,15 @@ jobs:
           sarif-output: selftest-malformed.sarif
 
       - name: assert malformed FAILS CLOSED (exit 3, never 0)
+        env:
+          OUTCOME: ${{ steps.malformed.outcome }}
+          CODE: ${{ steps.malformed.outputs.exit-code }}
+          STATUS: ${{ steps.malformed.outputs.analysis-status }}
         run: |
           set -euo pipefail
-          outcome='${{ steps.malformed.outcome }}'
-          code='${{ steps.malformed.outputs.exit-code }}'
-          status='${{ steps.malformed.outputs.analysis-status }}'
+          outcome="$OUTCOME"
+          code="$CODE"
+          status="$STATUS"
           # Adversarial guard: a fail-closed "could not analyze" MUST NOT collapse to a
           # clean pass. Assert BOTH that it is 3 AND explicitly that it is not 0.
           test "$outcome" = "failure" || { echo "malformed: expected step outcome failure, got '$outcome'"; exit 1; }
@@ -129,23 +140,35 @@ jobs:
           sarif-output: selftest-usage.sarif
 
       - name: assert usage-error
+        env:
+          OUTCOME: ${{ steps.usage.outcome }}
+          CODE: ${{ steps.usage.outputs.exit-code }}
         run: |
           set -euo pipefail
-          outcome='${{ steps.usage.outcome }}'
-          code='${{ steps.usage.outputs.exit-code }}'
+          outcome="$OUTCOME"
+          code="$CODE"
           test "$outcome" = "failure" || { echo "usage-error: expected step outcome failure, got '$outcome'"; exit 1; }
           test "$code" = "2" || { echo "usage-error: expected exit-code 2, got '$code'"; exit 1; }
 
       - name: self-test summary
         if: always()
+        env:
+          GOOD_OUTCOME: ${{ steps.good.outcome }}
+          GOOD_CODE: ${{ steps.good.outputs.exit-code }}
+          BAD_OUTCOME: ${{ steps.bad.outcome }}
+          BAD_CODE: ${{ steps.bad.outputs.exit-code }}
+          MAL_OUTCOME: ${{ steps.malformed.outcome }}
+          MAL_CODE: ${{ steps.malformed.outputs.exit-code }}
+          USAGE_OUTCOME: ${{ steps.usage.outcome }}
+          USAGE_CODE: ${{ steps.usage.outputs.exit-code }}
         run: |
           {
             echo "## IAM Blast Radius action self-test"
             echo ""
             echo "| case | step outcome | exit-code |"
             echo "| --- | --- | --- |"
-            echo "| known-good | ${{ steps.good.outcome }} | ${{ steps.good.outputs.exit-code }} |"
-            echo "| known-bad | ${{ steps.bad.outcome }} | ${{ steps.bad.outputs.exit-code }} |"
-            echo "| malformed | ${{ steps.malformed.outcome }} | ${{ steps.malformed.outputs.exit-code }} |"
-            echo "| usage-error | ${{ steps.usage.outcome }} | ${{ steps.usage.outputs.exit-code }} |"
+            echo "| known-good | $GOOD_OUTCOME | $GOOD_CODE |"
+            echo "| known-bad | $BAD_OUTCOME | $BAD_CODE |"
+            echo "| malformed | $MAL_OUTCOME | $MAL_CODE |"
+            echo "| usage-error | $USAGE_OUTCOME | $USAGE_CODE |"
           } >> "$GITHUB_STEP_SUMMARY"
