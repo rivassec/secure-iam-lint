@@ -28,6 +28,18 @@ import { RULE_VERSION, BUILD_SHA } from '../../../content/tools/iam-blast-radius
 import { ACTION_CATALOG_VERSION } from '../../../content/tools/iam-blast-radius/engine/catalog.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+// Release-version coherence: the root package.json (npm/release source of truth)
+// and engine/version.js VERSION_MANIFEST.releaseVersion (the browser-safe
+// canonical) must agree, so a release bump cannot update one and forget the other.
+test('root package.json version equals VERSION_MANIFEST.releaseVersion', () => {
+  const pkg = JSON.parse(readFileSync(join(here, '../../../package.json'), 'utf8'));
+  assert.equal(
+    pkg.version,
+    VERSION_MANIFEST.releaseVersion,
+    'package.json version must match engine/version.js releaseVersion (bump both together)',
+  );
+});
 const shippedDir = join(here, '..', '..', '..', 'content', 'tools', 'iam-blast-radius');
 const fixturesDir = join(here, '..', 'fixtures');
 

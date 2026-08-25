@@ -1,0 +1,48 @@
+{
+  "name": "secure-iam-lint",
+  "version": "1.0.0",
+  "description": "Client-side AWS IAM policy blast-radius analyzer with a fail-closed headless CLI, SARIF 2.1.0 output, and a GitHub Action. Reports potential blast radius, not effective permissions.",
+  "type": "module",
+  "license": "MIT",
+  "author": "rivassec",
+  "homepage": "https://rivassec.com/tools/iam-blast-radius/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rivassec/secure-iam-lint.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rivassec/secure-iam-lint/issues"
+  },
+  "keywords": [
+    "aws",
+    "iam",
+    "security",
+    "sarif",
+    "policy-analysis",
+    "blast-radius",
+    "devsecops",
+    "iam-policy",
+    "fail-closed"
+  ],
+  "bin": {
+    "iam-br": "cli/iam-br.mjs",
+    "secure-iam-lint": "cli/iam-br.mjs"
+  },
+  "main": "cli/scan.mjs",
+  "files": [
+    "cli/",
+    "content/tools/iam-blast-radius/engine/",
+    "action/",
+    "action.yml",
+    "ACTION.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "cd tools/iam-blast-radius && node --test \"tests/**/*.test.js\"",
+    "iam-br": "node cli/iam-br.mjs"
+  }
+}
