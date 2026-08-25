@@ -86,7 +86,21 @@ jobs:
           node-version: '22'
       - name: Install @playwright/test (pinned in package.json)
         run: npm install --no-audit --no-fund
-      - name: Install browsers
+      # Cache the browser BINARIES (~300-400 MB). Keyed on the dev package.json
+      # (which pins the Playwright version), so a version bump re-downloads.
+      # OS-level deps are apt packages on a fresh runner, so they are installed
+      # every run regardless of the cache.
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('tools/iam-blast-radius/package.json') }}
+      - name: Install browsers + OS deps (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium firefox webkit
+      - name: Install OS deps only (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium firefox webkit
       - name: Playwright e2e (Chromium, Firefox, WebKit)
         run: npx playwright test
