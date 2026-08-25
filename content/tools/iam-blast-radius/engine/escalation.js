@@ -79,6 +79,11 @@
 
 import { modelFromText } from './model.js';
 import { statementNeverMatches, parseOperator } from './conditions.js';
+// ONE shared, ReDoS-safe, linear wildcard matcher (S3-dos-budget). Replaces the
+// byte-identical globMatch copy this file used to carry; isGlobBudgetError lets the
+// analyzer re-throw the cooperative wall-clock budget sentinel instead of masking it
+// as a generic internal error (see the analyzeEscalations catch below).
+import { globMatch, isGlobBudgetError, chargeWork } from './glob.js';
 
 // --- Shared caveat language --------------------------------------------------
 // One constant so every escalation's `limit` carries identical, non-overstated
@@ -121,36 +126,9 @@ const PASSED_TO_SERVICE_UNCERTAIN_LIMIT =
   'that cannot be resolved from the policy text, so whether this service may ' +
   'receive the role is uncertain; confidence is reduced accordingly.';
 
-// --- Linear glob matcher (ReDoS-safe) ----------------------------------------
-// Matches an IAM wildcard pattern ('*' = any run incl. empty, '?' = one char)
-// against a literal string using two-pointer scanning. O(n*m) worst case, NO
-// catastrophic backtracking (unlike a regex compiled from hostile input).
-function globMatch(pattern, text) {
-  const p = String(pattern);
-  const t = String(text);
-  let pi = 0;
-  let ti = 0;
-  let starIdx = -1;
-  let matchIdx = 0;
-  while (ti < t.length) {
-    if (pi < p.length && (p[pi] === '?' || p[pi] === t[ti])) {
-      pi++;
-      ti++;
-    } else if (pi < p.length && p[pi] === '*') {
-      starIdx = pi;
-      matchIdx = ti;
-      pi++;
-    } else if (starIdx !== -1) {
-      pi = starIdx + 1;
-      matchIdx++;
-      ti = matchIdx;
-    } else {
-      return false;
-    }
-  }
-  while (pi < p.length && p[pi] === '*') pi++;
-  return pi === p.length;
-}
+// The linear, ReDoS-safe wildcard matcher (globMatch) now lives in ./glob.js and
+// is imported at the top of this module - one canonical matcher shared by every
+// engine file instead of three drifting copies (S3-dos-budget).
 
 // IAM action matching is case-insensitive ("s3:getobject" == "s3:GetObject").
 // Exported so graph.js (IAM-006) can apply the SAME same-policy Deny precedence
@@ -697,10 +675,55 @@ function grantTokenIsBroad(action) {
   return a.includes('*') || a.includes('?');
 }
 
+// Does any concrete Deny resource pattern glob-cover `ar`? Scans every Deny resource.
+//
+// S3-dos-budget (iter-3): this scan is charged AGAINST THE DETERMINISTIC WORK BUDGET
+// for the WHOLE inspection (one unit per Deny resource examined), UP FRONT and
+// INDEPENDENT of whether globMatch is actually reached. A Deny resource that carries
+// an IAM policy variable (${...}) is skipped by the `!hasPolicyVariable(dr)` guard, so
+// globMatch - the only place chargeWork used to run - never fires for it. Without this
+// explicit charge the entire nested deny-coverage traversal (O(ruleFindings x
+// findingActions x denies x denyResources)) accrued ZERO work when the Deny scope was
+// variable-bearing, analyze()'s work budget (sampled only inside chargeWork) never
+// tripped, and a within-caps ${...}-scoped policy drove analyze() to multiple seconds
+// yet returned a COMPLETE, non-aborted verdict - a fail-OPEN (threat-model T5/T8). The
+// concrete/wildcard-deny path already fails closed in ~70ms because globMatch charges
+// its own compare cost; this base charge makes the policy-variable path reach the SAME
+// aborted+incomplete state instead of running unbounded. globMatch still charges its
+// own per-character cost on the concrete branch, so this does not double-count that.
+function denyResourcesCover(denyResources, ar) {
+  const arLen = String(ar).length;
+  let covered = false;
+  for (const dr of denyResources) {
+    if (!hasPolicyVariable(dr)) {
+      // Concrete Deny resource: globMatch runs and charges its own (dr+ar) compare
+      // cost, exactly as before.
+      if (globMatch(dr, ar)) { covered = true; break; }
+    } else {
+      // Policy-variable Deny resource: globMatch is (correctly) short-circuited -
+      // a ${...} pattern cannot be resolved from the policy text - but INSPECTING it
+      // (the hasPolicyVariable string scan, and the traversal that reaches it) is
+      // real O(dr) work. Charge the SAME magnitude globMatch would have charged for
+      // a concrete dr of this size so the variable branch accrues budget at the same
+      // rate as the concrete branch. This is the crux of S3-dos-budget iter-3: without
+      // it, a Deny whose Resource is entirely policy variables makes this scan free,
+      // analyze()'s work budget never trips, and a within-caps ${...}-scoped policy
+      // runs multiple seconds yet returns a COMPLETE verdict (fail-OPEN, T5/T8).
+      chargeWork(String(dr).length + arLen + 1);
+    }
+  }
+  return covered;
+}
+
 // How completely does `denyStmt` cover the resource scope granted by `allowStmt`?
 // Returns 'full' | 'partial' | 'none'. Only 'full' (paired with an unconditional,
 // certain action match) suppresses a path; 'partial' reduces confidence.
 export function denyResourceCoverage(denyStmt, allowStmt) {
+  // Charge one unit per invocation so the OUTER traversal (per deny, per action, per
+  // finding) accrues budget even on the early-return branches below - a policy whose
+  // cost is the sheer NUMBER of deny-coverage calls (not the per-call scan) is still
+  // bounded (S3-dos-budget iter-3).
+  chargeWork(1);
   // A Deny scoped by NotResource, or with no Resource/NotResource, cannot be
   // proven to fully cover the Allow scope from the policy text -> partial.
   if (denyStmt.notResources.length > 0) return 'partial';
@@ -721,14 +744,10 @@ export function denyResourceCoverage(denyStmt, allowStmt) {
     if (hasPolicyVariable(ar) || ar.includes('*') || ar.includes('?')) {
       // Wildcarded / variable Allow scope: a concrete Deny may still overlap
       // part of it, but cannot be proven to cover all -> not full.
-      if (denyStmt.resources.some((dr) => !hasPolicyVariable(dr) && globMatch(dr, ar))) {
-        anyOverlap = true;
-      }
+      if (denyResourcesCover(denyStmt.resources, ar)) anyOverlap = true;
       return false;
     }
-    const covered = denyStmt.resources.some(
-      (dr) => !hasPolicyVariable(dr) && globMatch(dr, ar),
-    );
+    const covered = denyResourcesCover(denyStmt.resources, ar);
     if (covered) anyOverlap = true;
     return covered;
   });
@@ -741,6 +760,11 @@ export function denyResourceCoverage(denyStmt, allowStmt) {
 function denyEffectOnAction(denies, action, allowStmt) {
   let result = 'clear';
   for (const deny of denies) {
+    // S3-dos-budget (iter-3): charge one unit per deny inspected so the denies
+    // dimension of the O(findings x actions x denies x resources) scan is bounded
+    // by the deterministic budget even on branches where both the action match and
+    // the resource match short-circuit globMatch (all-policy-variable Deny).
+    chargeWork(1);
     const a = denyActionApplies(deny, action);
     if (!a.applies) continue;
     const coverage = denyResourceCoverage(deny, allowStmt);
@@ -2307,6 +2331,10 @@ export function analyzeEscalations(model, options) {
     for (const f of findings) deepFreeze(f);
     return Object.freeze({ ok: true, errors: Object.freeze(errors), findings: Object.freeze(findings) });
   } catch (e) {
+    // The cooperative wall-clock budget sentinel must PROPAGATE, not be masked as a
+    // generic internal error, so scan() can report the specific fail-closed
+    // "analysis aborted (resource budget)" verdict (S3-dos-budget).
+    if (isGlobBudgetError(e)) throw e;
     errors.push({ code: 'INTERNAL', message: 'Escalation analysis failed unexpectedly.', path: null });
     return Object.freeze({ ok: false, errors: Object.freeze(errors), findings: Object.freeze([]) });
   }

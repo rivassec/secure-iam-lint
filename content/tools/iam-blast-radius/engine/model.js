@@ -295,6 +295,16 @@ function normalizeStatement(stmt, index, errors) {
     condition,
     principal,
     notPrincipal,
+    // IAM-1508 (S2-guard-parity): record which action/resource COMPLEMENT element
+    // was actually present in the source statement. The normalized model collapses
+    // `Action: []` and `NotAction: []` to the identical `actions:[] notActions:[]`
+    // shape, so a downstream masked-grant detector (engine/masked-grant.js) cannot
+    // otherwise distinguish a benign empty POSITIVE set from an empty COMPLEMENT
+    // (`NotAction: []` excludes nothing -> grants EVERY action). These booleans keep
+    // that distinction so the shared engine - not just the CLI adapter - can fail
+    // closed on the empty-complement full-admin/broad-resource shapes.
+    notActionPresent: hasNotAction,
+    notResourcePresent: hasNotResource,
   };
 }
 

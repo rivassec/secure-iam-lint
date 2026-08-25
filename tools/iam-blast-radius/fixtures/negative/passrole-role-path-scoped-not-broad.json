@@ -1,0 +1,24 @@
+{
+  "name": "iam:PassRole on an IAM PATH-scoped role wildcard (arn:aws:iam::123456789012:role/deployment/*) is NOT broad",
+  "note": "S1-dataexfil-arn iteration 3 over-correction guard. Closing the type-prefixed leading-wildcard fail-open (role/* = every role) must NOT start flagging PATH-scoped role wildcards. Here the identifier segment right after the concrete type head 'role' is 'deployment' (a concrete IAM path component), and only the trailing key is wildcarded (role/deployment/*), so the grant is confined to roles under the /deployment/ path - narrower than pass-any-role. Broadness is decided by the FIRST identifier segment after the type; a deeper wildcard behind a concrete path does not widen it back to the whole type. The engine MUST NOT emit WILDCARD-RESOURCE here.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassDeploymentPathRoles",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "arn:aws:iam::123456789012:role/deployment/*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["WILDCARD-RESOURCE"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "arn:aws:iam::123456789012:role/deployment/* matches only roles created under the IAM path /deployment/ in one account - a bounded subset, not every role. The resource-id is type='role' then identifier 'deployment/*': the identifier's first segment ('deployment') is a concrete path component, so this is a path-prefix scope, materially narrower than role/* (all roles). isBroadArnResource must test only the FIRST identifier segment after a concrete type head, so a trailing wildcard behind a concrete path stays quiet. Ref: AWS IAM role paths (arn:aws:iam::acct:role/path/RoleName); least-privilege path scoping."
+}

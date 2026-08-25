@@ -1,6 +1,6 @@
 {
   "name": "Destructive actions (positive)",
-  "note": "ec2:TerminateInstances + rds:DeleteDBInstance are delete/terminate-family actions. Scoped resources isolate DESTRUCTIVE-ACTION (no WILDCARD-RESOURCE, no wildcard action).",
+  "note": "ec2:TerminateInstances + rds:DeleteDBInstance are delete/terminate-family actions, so DESTRUCTIVE-ACTION fires and no wildcard ACTION is present. One of the two resources - arn:aws:ec2:us-east-1:111122223333:instance/* - is a resource-TYPE-prefixed wildcard (concrete type head 'instance' + leading-wildcard identifier) that reaches EVERY instance in the account/region, so the grant is broadly resource-scoped and WILDCARD-RESOURCE (high) MUST fire at the raw rule layer (exactFindingIds), where IAM-201 correlation then folds it into the same-statement DESTRUCTIVE-ACTION capability, so the correlated analyze() view (findingIds) shows DESTRUCTIVE-ACTION with WILDCARD-RESOURCE subsumed. Only the rds resource (db:app-*) is a concrete name-prefix; the instance one is account-wide. (Corrected in S1-dataexfil-arn iteration 3: type-prefixed leading-wildcard identifiers such as instance/*, role/*, accesspoint/*/object/* are account-wide, not scoped - previously this fixture wrongly asserted no WILDCARD-RESOURCE, a fail-open.)",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -12,5 +12,5 @@
       }
     ]
   },
-  "expect": { "valid": true, "exactFindingIds": ["DESTRUCTIVE-ACTION"], "findingIds": ["DESTRUCTIVE-ACTION"], "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DETECTION-IMPAIRMENT"] }
+  "expect": { "valid": true, "exactFindingIds": ["DESTRUCTIVE-ACTION", "WILDCARD-RESOURCE"], "findingIds": ["DESTRUCTIVE-ACTION"], "notFindingIds": ["WILDCARD-ACTION", "DETECTION-IMPAIRMENT"] }
 }

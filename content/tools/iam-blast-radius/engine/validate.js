@@ -25,6 +25,17 @@ export const LIMITS = Object.freeze({
   MAX_STATEMENTS: 1000,
   MAX_ACTIONS: 10000,
   MAX_RESOURCES: 10000,
+  // Max length (in UTF-16 code units) of any SINGLE Action/NotAction/Resource/
+  // NotResource string. Real IAM action names are tiny (< ~100 chars) and an ARN
+  // is capped by AWS at 2048 chars, so 2048 accepts every legitimate token yet
+  // rejects an adversarially long pattern outright. This is the per-STRING
+  // companion to MAX_BYTES (a whole-document cap): MAX_BYTES alone permits one
+  // multi-hundred-KB Action/Resource string, which is the exact input the wildcard
+  // matcher does the most work on (threat-model T5). A single over-cap token fails
+  // CLOSED here, before any analysis, rather than being fed to the matcher. The
+  // matcher itself is now linear (engine/glob.js), so this cap is defense in depth,
+  // not the sole control.
+  MAX_STRING_LENGTH: 2048,
 });
 
 // Keys that enable prototype pollution. Rejected at ANY depth, as object keys.
@@ -293,6 +304,38 @@ function countArrayOrString(v) {
   return 0;
 }
 
+// Per-string length guard (threat-model T5). Reject any single Action / NotAction /
+// Resource / NotResource token longer than LIMITS.MAX_STRING_LENGTH, failing CLOSED
+// before analysis. `field` is the IAM element name (for the error path); `value` is
+// a string or an array of strings (any non-string element is left to schema
+// validation downstream and ignored here). Returns an error object on the FIRST
+// over-cap token found, or null. Deterministic: scans in element order.
+function overLongString(field, value, stmtIndex) {
+  const check = (s, idx) => {
+    if (typeof s === 'string' && s.length > LIMITS.MAX_STRING_LENGTH) {
+      const path = idx === null
+        ? `Statement[${stmtIndex}].${field}`
+        : `Statement[${stmtIndex}].${field}[${idx}]`;
+      return err(
+        'STRING_TOO_LONG',
+        `A ${field} value is ${s.length} characters; the per-string limit is ` +
+          `${LIMITS.MAX_STRING_LENGTH}. Real IAM actions/ARNs are far shorter; an ` +
+          'over-long token is rejected before analysis (fails closed).',
+        path,
+      );
+    }
+    return null;
+  };
+  if (typeof value === 'string') return check(value, null);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const e = check(value[i], i);
+      if (e) return e;
+    }
+  }
+  return null;
+}
+
 function enforceCounts(raw, errors) {
   // raw is null-prototype; access via bracket notation is safe.
   const stmtRaw = raw['Statement'];
@@ -319,8 +362,20 @@ function enforceCounts(raw, errors) {
 
   let actions = 0;
   let resources = 0;
-  for (const s of statements) {
+  for (let si = 0; si < statements.length; si++) {
+    const s = statements[si];
     if (!s || typeof s !== 'object' || Array.isArray(s)) continue;
+    // Per-string cap (T5): a single over-long Action/Resource token fails CLOSED
+    // before it can reach the wildcard matcher. Checked here, in the statement walk
+    // we already do for counts, so it costs no extra pass.
+    const longFields = ['Action', 'NotAction', 'Resource', 'NotResource'];
+    for (const field of longFields) {
+      const e = overLongString(field, s[field], si);
+      if (e) {
+        errors.push(e);
+        return;
+      }
+    }
     actions += countArrayOrString(s['Action']) + countArrayOrString(s['NotAction']);
     resources += countArrayOrString(s['Resource']) + countArrayOrString(s['NotResource']);
   }

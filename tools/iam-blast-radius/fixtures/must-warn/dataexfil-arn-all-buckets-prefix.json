@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:aws:s3:::*/prefix* (all buckets, shared prefix) must warn",
+  "note": "S1-dataexfil-arn regression: arn:aws:s3:::*/prefix* wildcards the BUCKET (head '*'), so a matching key prefix in ANY bucket is readable - account-wide, not a single-bucket scope. The trailing 'prefix*' constrains only the key inside each of all buckets, not the bucket set. Previously CLEAN (DATA-EXFIL fail-open, T8). DATA-EXFIL must fire; CLI must exit non-zero.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadPrefixAcrossAllBuckets", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::*/prefix*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

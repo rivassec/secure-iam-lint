@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:*:*:*:*:* (every ARN segment wildcarded) must warn",
+  "note": "S1-dataexfil-arn regression: arn:*:*:*:*:* wildcards the partition (and every other) segment, so it matches literally every ARN - the ARN spelling of Resource:'*'. Previously CLEAN because resourceIsBroad() only matched the bare '*' literal (DATA-EXFIL fail-open, T8). DATA-EXFIL must fire; CLI must exit non-zero.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadEveryArn", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:*:*:*:*:*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

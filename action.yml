@@ -54,6 +54,14 @@ inputs:
     description: Path to write the SARIF 2.1.0 output file.
     required: false
     default: iam-blast-radius.sarif
+  budget-ms:
+    description: >-
+      Per-policy wall-clock analysis budget in milliseconds (default 10000). If a
+      policy's analysis overruns this budget it FAILS CLOSED (exit 3,
+      RESOURCE_BUDGET_EXCEEDED) - it never reports a clean pass. A non-numeric value
+      falls back to the default.
+    required: false
+    default: "10000"
 
 outputs:
   sarif-path:

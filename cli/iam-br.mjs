@@ -30,7 +30,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { scan, EXIT, SELECTABLE_FAMILIES } from './scan.mjs';
+import { scan, EXIT, SELECTABLE_FAMILIES, DEFAULT_BUDGET_MS } from './scan.mjs';
 // The SARIF 2.1.0 adapter (story P15-sarif): a PURE projection of a scan() result.
 // The CLI just picks it when --format sarif; the exit code is unaffected.
 import { formatSarif } from './sarif.mjs';
@@ -54,6 +54,7 @@ const VALUE_FLAGS = Object.freeze(new Set([
   '--format',
   '--output',
   '--artifact-uri',
+  '--budget-ms',
 ]));
 
 // Boolean flags (no value). `-h` is an alias for `--help`.
@@ -114,6 +115,10 @@ OPTIONS
                           fail-closed exit 3 to 0.
   --format <fmt>          Output format: json | sarif. Default: json. The format
                           never changes the exit code.
+  --budget-ms <ms>        Wall-clock budget for analyzing the policy, in
+                          milliseconds (default: ${DEFAULT_BUDGET_MS}). If analysis
+                          overruns, the scan FAILS CLOSED (exit 3,
+                          RESOURCE_BUDGET_EXCEEDED); it never reports a clean pass.
   --output <path>         Write formatted output to <path> instead of STDOUT.
   --artifact-uri <uri>    Location URI recorded in SARIF output for the analyzed
                           policy (default: the file path, or 'stdin').
@@ -147,6 +152,7 @@ export function parseArgs(argv) {
     format: 'json',
     output: undefined,
     artifactUri: undefined,
+    budgetMs: DEFAULT_BUDGET_MS,
     file: undefined,
   };
 
@@ -198,6 +204,7 @@ export function parseArgs(argv) {
         case '--format': opts.format = value; break;
         case '--output': opts.output = value; break;
         case '--artifact-uri': opts.artifactUri = value; break;
+        case '--budget-ms': opts.budgetMs = value; break;
         default: return usage(`unknown option '${name}'`);
       }
       continue;
@@ -244,6 +251,18 @@ export function parseArgs(argv) {
   // Format is a CLI-level concern (scan does not see it), so validate it here.
   if (!FORMATS.has(opts.format)) {
     return usage(`unknown --format '${opts.format}' (expected: json | sarif)`);
+  }
+
+  // Coerce --budget-ms to a number. Flag values arrive as strings; a non-numeric
+  // value is a usage error. The default (DEFAULT_BUDGET_MS) is already a number and
+  // passes through. A non-positive value is accepted (it forces an immediate
+  // fail-closed abort - useful for a hard "no analysis over N ms" gate / tests).
+  if (typeof opts.budgetMs === 'string') {
+    const n = Number(opts.budgetMs.trim());
+    if (!Number.isFinite(n)) {
+      return usage(`invalid --budget-ms '${opts.budgetMs}' (expected a number of milliseconds)`);
+    }
+    opts.budgetMs = n;
   }
 
   return { ok: true, opts };
@@ -372,6 +391,9 @@ export async function run(argv, io) {
       // rather than being silently treated as a confident 'aws' assertion.
       partition: opts.partition,
       threshold: opts.threshold,
+      // Wall-clock budget (S3-dos-budget): analysis that overruns fails CLOSED
+      // (exit 3, RESOURCE_BUDGET_EXCEEDED), never a clean pass.
+      budgetMs: opts.budgetMs,
     });
 
     // Defensive: the code must be an integer in the contract's range. Anything

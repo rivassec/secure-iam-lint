@@ -1,0 +1,16 @@
+{
+  "name": "iam:PassRole on arn:aws:iam::*:role/app-* (pass any app-* role in ANY account) must warn",
+  "note": "S1-dataexfil-arn iteration 4 BLOCKER regression: account-wildcard fail-open, NAME-prefix (not '/'-path) sibling. account='*' with a concrete NAME-prefixed identifier 'role/app-*'. The type-prefix branch sees idParts[1]='app-*', whose leading char is a concrete letter, not a wildcard, so it did not fire; the account-wildcard branch previously demanded an empty/leading-wildcard resource id, so this read clean. A wildcard ACCOUNT spans every account in the partition (pass-any-app-*-role-in-every-account), strictly broader than the single-account case. WILDCARD-RESOURCE (high) must fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PassAnyAppRoleAnyAccount", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::*:role/app-*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["WILDCARD-RESOURCE"],
+    "mustNotFind": ["WILDCARD-ACTION"],
+    "minSeverity": { "WILDCARD-RESOURCE": "high" },
+    "nonZeroExit": true
+  }
+}

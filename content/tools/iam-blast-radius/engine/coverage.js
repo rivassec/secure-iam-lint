@@ -25,6 +25,7 @@
 // DOM. Same coverage (+ same context) -> same summary, every run.
 
 import { FAMILY_LABELS, COVERAGE_CODES } from './family.js';
+import { detectMaskedGrants } from './masked-grant.js';
 
 // No build step ships this tool (architecture invariant 2): what is committed is
 // what runs, so there is no build-time SHA injection. This is a committed marker,
@@ -276,6 +277,42 @@ export function enrichCoverage(coverage, context) {
     })
     : null;
 
+  // IAM-1508 (S2-guard-parity): masked-grant shapes the model faithfully
+  // represents but the rule/escalation/graph engines evaluate as granting nothing
+  // (empty NotAction/NotResource complement, malformed condition value, suppressed
+  // ForAnyValue never-match). Detected from the model so the SHARED engine - not
+  // just the CLI adapter - fails closed on them. Each flips `incomplete` (a masked
+  // full-admin/broad-resource grant must never read as a clean, complete analysis)
+  // and carries a stable code + JSON path. Frozen structured entries so the CLI/
+  // SARIF adapters translate them into fail-closed analyzer-states without
+  // re-parsing the raw text (single detection source; the two surfaces cannot drift).
+  const maskedGrants = detectMaskedGrants(model).map((g) => Object.freeze({
+    element: String(g.element),
+    code: String(g.code),
+    path: g.path != null ? String(g.path) : null,
+    kind: String(g.kind),
+  }));
+
+  // S3-dos-budget: the analysis was ABORTED mid-run by the cooperative resource
+  // budget (a pathological within-caps policy whose CPU cost - not its size -
+  // exploded). This is a hard fail-closed state: the analysis did NOT run to a
+  // conclusion, so its (empty) findings prove nothing. It flips `incomplete` and
+  // surfaces a stable code + a recognized-but-uncompleted element so the UI's
+  // incomplete panel and every export name it, and NEVER read as a clean pass.
+  const analysisAborted = ctx.analysisAborted === true;
+  const abortedElements = analysisAborted
+    ? [Object.freeze({
+      element: 'analysis',
+      code: 'RESOURCE_BUDGET_EXCEEDED',
+      path: null,
+      hazard: true,
+      hazardMessage:
+        'analysis aborted (resource budget): the analysis exceeded its resource ' +
+        'budget and was stopped before completing. Zero findings here does NOT mean ' +
+        'the policy is safe - it means the policy could not be fully analyzed.',
+    })]
+    : [];
+
   const represented = FAMILY_LAYERS[cov.family] || FAMILY_LAYERS[cov.detected] || [];
   const missingLayers = EVALUATION_LAYERS
     .filter((l) => !represented.includes(l.key))
@@ -309,7 +346,13 @@ export function enrichCoverage(coverage, context) {
     || trustDeny.unmodeled
     // IAM-1201: an accepted resource policy whose service-specific rules are not
     // yet implemented is INCOMPLETE (zero findings != proven safe).
-    || !!(resourceContextSummary && resourceContextSummary.incomplete);
+    || !!(resourceContextSummary && resourceContextSummary.incomplete)
+    // IAM-1508: any masked-grant shape makes the analysis INCOMPLETE - a masked
+    // full-admin/broad-resource grant must never read as a clean, complete pass.
+    || maskedGrants.length > 0
+    // S3-dos-budget: an analysis stopped by the resource budget never ran to a
+    // conclusion, so it is INCOMPLETE by construction (never a clean pass).
+    || analysisAborted;
 
   // Stable machine-readable codes carried into exports. Today this mirrors the
   // family gate's blocking codes; future non-blocking coverage codes append here
@@ -329,6 +372,15 @@ export function enrichCoverage(coverage, context) {
   if (resourceContextSummary && resourceContextSummary.incomplete) {
     codes.push(COVERAGE_CODES.RESOURCE_ANALYSIS_INCOMPLETE || 'RESOURCE_ANALYSIS_INCOMPLETE');
   }
+  // IAM-1508: one stable code per DISTINCT masked-grant code present (dedup keeps
+  // the codes list stable when a shape recurs across statements).
+  for (const g of maskedGrants) {
+    if (!codes.includes(g.code)) codes.push(g.code);
+  }
+  // S3-dos-budget: a stable code for a budget-aborted analysis.
+  if (analysisAborted && !codes.includes('RESOURCE_BUDGET_EXCEEDED')) {
+    codes.push('RESOURCE_BUDGET_EXCEEDED');
+  }
 
   const summary = Object.freeze({
     detectedFamily: cov.detected || 'unknown',
@@ -341,9 +393,19 @@ export function enrichCoverage(coverage, context) {
     statements: Object.freeze({ total, accepted, rejected }),
     unrecognizedActions: Object.freeze(unrecognizedActions),
     unsupportedConditions: Object.freeze(unsupportedConditions),
-    unsupportedElements: Object.freeze(unsupportedElements),
+    unsupportedElements: Object.freeze(unsupportedElements.concat(abortedElements)),
+    // S3-dos-budget: true when the analysis was stopped by the resource budget
+    // before completing. A hard fail-closed signal the CLI/SARIF adapters and the
+    // browser UI read to report "analysis aborted (resource budget)".
+    analysisAborted,
     actionResourceMismatches: Object.freeze(actionResourceMismatches),
     duplicateSids: Object.freeze(duplicateSidsList),
+    // IAM-1508: masked-grant analyzer-states (empty NotAction/NotResource
+    // complement, malformed condition value, suppressed ForAnyValue never-match).
+    // Each { element, code, path, kind } - kind 'malformed' (hard fail-closed) or
+    // 'incomplete' (suppressed would-be grant left a trace). Empty for a policy
+    // that carries none.
+    maskedGrants: Object.freeze(maskedGrants),
     // IAM-1201: the attached-resource context recorded for a resource-family
     // analysis (null for every other family). Names the detected service, the
     // attached ARN, and the principal types the policy names, as inert evidence.

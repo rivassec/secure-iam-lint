@@ -30,7 +30,7 @@
 //   4 internal invariant error
 // A CI gate treats 1,2,3,4 as FAILED. Code 3 is DISTINCT from 0 and from 1.
 
-import { scan, EXIT } from '../cli/scan.mjs';
+import { scan, EXIT, DEFAULT_BUDGET_MS } from '../cli/scan.mjs';
 import { buildSarifLog } from '../cli/sarif.mjs';
 // READ-ONLY canonical version manifest (browser-safe, no Node deps) so the SARIF
 // semanticVersion ties to the same identifiers the engine reports.
@@ -87,7 +87,18 @@ export function readInputs(env) {
     partition: getInput(env, 'partition'),
     failOn: getInput(env, 'fail-on') || 'high',
     sarifOutput: getInput(env, 'sarif-output') || 'iam-blast-radius.sarif',
+    // Wall-clock budget per policy, in ms (S3-dos-budget). A non-numeric or omitted
+    // value falls back to the default; a policy whose analysis overruns fails CLOSED
+    // (exit 3, RESOURCE_BUDGET_EXCEEDED), never a clean pass.
+    budgetMs: budgetMsInput(getInput(env, 'budget-ms')),
   };
+}
+
+// Coerce the budget-ms input to a number, defaulting when absent/invalid.
+function budgetMsInput(raw) {
+  if (!isNonEmptyString(raw)) return DEFAULT_BUDGET_MS;
+  const n = Number(String(raw).trim());
+  return Number.isFinite(n) ? n : DEFAULT_BUDGET_MS;
 }
 
 // --- paths / glob resolution --------------------------------------------------
@@ -429,6 +440,8 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
             // rather than trusting a defaulted 'aws'. Mirrors the CLI.
             partition: inputs.partition || undefined,
             threshold: inputs.failOn,
+            // Wall-clock budget (S3-dos-budget): overrun fails CLOSED, never clean.
+            budgetMs: inputs.budgetMs,
           });
         }
       } catch (e) {

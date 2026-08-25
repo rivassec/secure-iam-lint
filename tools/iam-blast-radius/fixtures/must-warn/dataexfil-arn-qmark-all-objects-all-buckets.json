@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:aws:s3:::?*/* (single-char wildcard bucket head, all objects, all buckets) must warn",
+  "note": "S1-dataexfil-arn regression (iter2): AWS IAM honors '?' (exactly-one-character) as a Resource-ARN wildcard alongside '*'. A leading '?*' on the S3 bucket-name head matches every bucket of length>=1 - i.e. EVERY bucket - identical account-wide reach to arn:aws:s3:::*/*. isBroadArnResource() previously tested only a leading literal '*' (startsWith('*')), so this '?'-spelled bulk read returned findings=[] status complete exit 0 CLEAN - the SAME DATA-EXFIL fail-open (T8) as the '*' form, just spelled with '?'. DATA-EXFIL must fire at high and the CLI must exit non-zero. GetObject is a read verb, so WILDCARD-RESOURCE must NOT fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadAllObjectsAllBucketsQmark", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::?*/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

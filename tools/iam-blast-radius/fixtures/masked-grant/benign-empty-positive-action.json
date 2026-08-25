@@ -1,0 +1,16 @@
+{
+  "name": "Benign empty POSITIVE Action set (must NOT be flagged)",
+  "note": "IAM-1508 no-over-fire control. An empty POSITIVE Action set (Action:[]) grants NO actions and is NOT the empty-complement full-admin trap. It must never be flagged as a masked grant (that is the NotAction:[] shape). Pins the presence-flag distinction so the model does not conflate Action:[] with NotAction:[].",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": [], "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": false
+  }
+}

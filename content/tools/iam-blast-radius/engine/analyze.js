@@ -25,6 +25,26 @@ import { detectFamily, FAMILIES, isRcpShape } from './family.js';
 import { enrichCoverage, duplicateSids } from './coverage.js';
 import { classifyConditions, unsupportedConditionKeys } from './conditions.js';
 import { defaultCatalog, unrecognizedActions } from './catalog.js';
+// Cooperative resource budgets (S3-dos-budget). analyze() arms a DETERMINISTIC
+// WORK budget (an op-count ceiling, not a clock - so architecture invariant 8 holds)
+// on EVERY run, including the browser/worker path, so a pathological within-caps
+// policy whose CPU cost explodes can never return a COMPLETE verdict: it fails CLOSED
+// to a graceful in-band "analysis aborted (resource budget)" incomplete result. The
+// separate WALL-CLOCK sentinel (armed only by the Node adapter, cli/scan.mjs) is
+// RE-THROWN so scan() maps it to its timing-dependent RESOURCE_BUDGET_EXCEEDED verdict.
+import { isGlobBudgetError, setWorkLimit, getWorkLimit } from './glob.js';
+
+// Default deterministic WORK ceiling for one analyze() run. Units are ~char-compares
+// / automaton word-steps charged inside the shared matcher. Sized FAR above any
+// legitimate policy (a within-all-caps policy analyzes in a few million work units)
+// yet far below an unbounded runaway, so it never trips a real analysis but bounds a
+// pathological one (whose cost comes from the deny-coverage nested loops calling the
+// matcher an enormous number of times, not from any single quadratic call). It is an
+// op count, not milliseconds, so the trip point is DETERMINISTIC across machines;
+// with the now-linear matcher this budget is a backstop, not the primary control.
+// Callers may override via options.workLimit (a finite number; <=0 forces an
+// immediate abort for tests; Infinity disables it).
+export const DEFAULT_WORK_LIMIT = 60000000;
 
 // The RULE/finding catalog version reported at the top level of the result (UI
 // footer + export "Rule catalog version"). Rule + escalation findings all carry
@@ -370,6 +390,41 @@ function blockedResult(model, coverage) {
   });
 }
 
+// S3-dos-budget: the DETERMINISTIC work budget tripped mid-analysis (a within-caps
+// policy whose CPU cost - not its size - exploded). Build a fail-closed, well-formed
+// result: ok:true (the UI can render it), ZERO findings, an EMPTY graph, and an
+// enriched coverage marked ABORTED + incomplete so no surface reads it as a clean
+// pass. Deterministic: the work budget is an op count, so the same input aborts at
+// the same point every run. `model`/`coverage` may be null if the trip somehow
+// preceded model/family classification (it cannot in practice - the matcher only
+// runs after both - but this stays total either way).
+function abortedResult(model, coverage) {
+  const graph = emptyGraph();
+  const baseCoverage = coverage || {
+    family: null, detected: 'unknown', supported: false, blocked: false, blockingCodes: [],
+  };
+  const enriched = enrichCoverage(baseCoverage, {
+    model: model || null,
+    graph,
+    catalogVersion: defaultCatalog.version,
+    // The single flag that flips coverage to the aborted/incomplete fail-closed state.
+    analysisAborted: true,
+  });
+  return Object.freeze({
+    ok: true,
+    errors: Object.freeze([]),
+    findings: Object.freeze([]),
+    model: model || null,
+    graph: Object.freeze(graph),
+    catalogVersion: CATALOG_VERSION,
+    counts: Object.freeze({ findings: 0, edges: 0, nodes: 0 }),
+    family: enriched.family,
+    coverage: enriched,
+    // A top-level convenience flag mirroring coverage.summary.analysisAborted.
+    aborted: true,
+  });
+}
+
 // IAM-801: the model parsed cleanly and the family gate classified it as a
 // SUPPORTED role-trust policy. Route it to the family-aware trust evaluator
 // (engine/trust.js) instead of the identity rules/escalation engine, then build
@@ -677,15 +732,32 @@ function resourceResult(model, coverage, effectiveFamily, options) {
  *            graph:object, catalogVersion:string, counts:object}}
  */
 export function analyze(text, options) {
+  const opts = options || {};
+  // S3-dos-budget: arm the DETERMINISTIC work budget for this run (browser + Node).
+  // A finite options.workLimit overrides the default (<=0 forces an immediate abort
+  // for tests); options.workLimit === Infinity disables it. Save/restore the prior
+  // limit so a caller that already armed one (or a wall-clock deadline set by scan())
+  // is left exactly as it was. The wall-clock deadline is independent and untouched.
+  const prevWorkLimit = getWorkLimit();
+  let workLimit = DEFAULT_WORK_LIMIT;
+  if (opts.workLimit === Infinity) workLimit = Infinity;
+  else if (Number.isFinite(opts.workLimit)) workLimit = opts.workLimit;
+  setWorkLimit(workLimit);
+  // Refs hoisted so the budget-abort catch can build a coverage-bearing fail-closed
+  // result from whatever context the pipeline reached before the trip.
+  let model = null;
+  let coverageRef = null;
   try {
     const m = modelFromText(text);
     if (!m.ok) return fail(m.errors);
+    model = m.model;
 
     // IAM-501: classify the policy family from shape (auto-detect by default;
     // an optional manual override is honored). Fail closed BEFORE any rule
     // evaluation on a shape the engine does not model - never present confident
     // identity findings on a resource/trust/ambiguous/NotPrincipal document.
-    const coverage = detectFamily(m.model, options || {});
+    const coverage = detectFamily(m.model, opts);
+    coverageRef = coverage;
     if (coverage.blocked) return blockedResult(m.model, coverage);
 
     const effectiveFamily = coverage.family || coverage.detected || 'unknown';
@@ -825,8 +897,24 @@ export function analyze(text, options) {
       coverage: enriched,
     });
   } catch (e) {
+    // S3-dos-budget: a tripped resource budget is not an internal fault.
+    if (isGlobBudgetError(e)) {
+      // WALL-CLOCK deadline ('clock', armed only by the Node adapter): re-throw so
+      // scan() maps it to its timing-dependent RESOURCE_BUDGET_EXCEEDED verdict. This
+      // path is never taken on the browser (it never arms a clock).
+      if (e.kind === 'clock') throw e;
+      // DETERMINISTIC work ceiling ('work', armed on every run incl. the browser):
+      // convert to a graceful, well-formed fail-closed result - ok:true, zero
+      // findings, coverage marked aborted/incomplete - so a runaway can NEVER return
+      // a COMPLETE verdict and NEVER surfaces as an uncaught throw or a clean pass.
+      return abortedResult(model, coverageRef);
+    }
     // Absolute backstop: the UI must never see an uncaught exception.
     return fail([{ code: 'INTERNAL', message: 'Analysis failed unexpectedly.', path: null }]);
+  } finally {
+    // Restore the work limit the caller had (Infinity by default), leaving any
+    // wall-clock deadline scan() armed untouched.
+    setWorkLimit(prevWorkLimit);
   }
 }
 

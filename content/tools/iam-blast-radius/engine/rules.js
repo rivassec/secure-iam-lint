@@ -64,6 +64,10 @@ import {
   hasNonEmptyCondition,
 } from './escalation.js';
 import { statementNeverMatches } from './conditions.js';
+// ONE shared, ReDoS-safe, linear wildcard matcher (S3-dos-budget). isGlobBudgetError
+// lets analyzeRules re-throw the cooperative wall-clock budget sentinel instead of
+// masking it as a generic internal error (see the analyzeRules catch below).
+import { globMatch, isGlobBudgetError } from './glob.js';
 
 // --- Shared capability caveat (mirrors evaluator.js wording) -----------------
 // Kept as one constant so every finding's `limit` field carries identical,
@@ -102,40 +106,24 @@ function lowerConfidence(level, notches) {
   return CONFIDENCE_LADDER[Math.min(CONFIDENCE_LADDER.length - 1, i + notches)];
 }
 
-// --- Linear glob matcher (ReDoS-safe) ----------------------------------------
-// Matches an IAM wildcard pattern ('*' = any run incl. empty, '?' = one char)
-// against a literal string using two-pointer scanning. O(n*m) worst case, NO
-// catastrophic backtracking (unlike a regex compiled from hostile input).
-function globMatch(pattern, text) {
-  const p = String(pattern);
-  const t = String(text);
-  let pi = 0;
-  let ti = 0;
-  let starIdx = -1;
-  let matchIdx = 0;
-  while (ti < t.length) {
-    if (pi < p.length && (p[pi] === '?' || p[pi] === t[ti])) {
-      pi++;
-      ti++;
-    } else if (pi < p.length && p[pi] === '*') {
-      starIdx = pi;
-      matchIdx = ti;
-      pi++;
-    } else if (starIdx !== -1) {
-      pi = starIdx + 1;
-      matchIdx++;
-      ti = matchIdx;
-    } else {
-      return false;
-    }
-  }
-  while (pi < p.length && p[pi] === '*') pi++;
-  return pi === p.length;
-}
+// The linear, ReDoS-safe wildcard matcher (globMatch) is imported from the shared
+// ./glob.js - one canonical matcher for the whole engine (S3-dos-budget).
 
 // IAM action matching is case-insensitive ("s3:getobject" == "s3:GetObject").
 function actionGrants(pattern, concreteAction) {
   return globMatch(String(pattern).toLowerCase(), String(concreteAction).toLowerCase());
+}
+
+// AWS RESOURCE-ARN matching is CASE-SENSITIVE and applies over the WHOLE string,
+// with the two IAM resource wildcards: '*' = any run of characters (incl. empty)
+// and '?' = exactly one character. Unlike actionGrants() this does NOT lowercase -
+// resource ARNs are matched verbatim. Reuses the same ReDoS-safe linear two-pointer
+// matcher (globMatch already treats '?' as one char and '*' as any run), so a
+// hostile pattern can never trigger catastrophic backtracking. Used by the
+// breadth predicate below to test a policy Resource value, read as a glob, against
+// concrete canonical probe ARNs.
+function arnGlobMatch(pattern, probe) {
+  return globMatch(String(pattern), String(probe));
 }
 
 // --- Action-shape classifiers ------------------------------------------------
@@ -524,11 +512,245 @@ function resourceScope(stmt) {
   return ['(no Resource/NotResource specified)'];
 }
 
+// Does a single Resource ARN match all / nearly-all ARNs, so a grant on it reaches
+// essentially every resource rather than a specific one? This is the ARN-wildcard
+// generalization of the bare "*": AWS treats a wildcard in an ARN's high-order
+// segments (partition / service) or in the leading segment of the resource id
+// (the S3 bucket name, or a resource-type head) as spanning the whole account /
+// service, e.g.:
+//   arn:aws:s3:::*          arn:aws:s3:::*/*        arn:aws:s3:::*/prefix*
+//   arn:aws:*               arn:*:*:*:*:*           arn:aws:s3:::*-logs/*
+// A genuinely-scoped ARN whose bucket / resource-id head is a CONCRETE name -
+// arn:aws:s3:::my-bucket/prefix/* , arn:aws:iam::123456789012:role/app-* - is NOT
+// broad: only its trailing key/suffix is wildcarded, so it stays account-scoped.
+// FAIL CLOSED: a LEADING wildcard on a segment (partition / service / resource-id
+// head) makes the matched set unbounded and account-wide, so it counts as broad; a
+// concrete-prefix-then-wildcard segment (my-bucket, app-*) does not.
+//
+// AWS IAM honors TWO wildcards in Resource ARNs: "*" (any run of characters) AND
+// "?" (exactly one character). A leading "?" is just as unbounded as a leading
+// "*": "arn:aws:s3:::?*/*" matches every bucket of length>=1 - i.e. every bucket -
+// exactly like "arn:aws:s3:::*/*", and "arn:?:?:?:?:?" spans every ARN like
+// "arn:*:*:*:*:*". So broadness must test a leading "*" OR "?", not "*" alone, or
+// the same account-wide bulk read spelled with "?" fails OPEN (threat-model T8).
+// Leading whitespace is normalized away first: " arn:aws:s3:::*" would otherwise
+// miss the startsWith('arn:') gate and fail open (AWS almost certainly rejects the
+// whitespace, but fail CLOSED rather than silently clean).
+// --- Semantic breadth PROBE battery (S1-dataexfil-arn) ------------------------
+// The ENUMERATIVE broadness test (a growing chain of startsWith('*')/segment
+// checks) kept leaking: the adversarial hunter re-spelled the SAME "reaches across
+// the account/service boundary" class faster than shapes could be enumerated - the
+// non-ARN globs "*/*", "?*", "**", "*:*", "arn*" all slipped the arn:-prefix gate
+// and read CLEAN (a DATA-EXFIL / WILDCARD-RESOURCE fail-OPEN, threat-model T8).
+//
+// So breadth is decided SEMANTICALLY instead of by shape: interpret the Resource
+// value as an AWS resource GLOB (case-sensitive over the whole string; '*' = any
+// run incl. empty, '?' = exactly one char) and test what it actually MATCHES
+// against a fixed battery of diverse, concrete, canonical probe ARNs that
+// deliberately span multiple ACCOUNTS and multiple SERVICES / resource-types. A
+// value that matches probes across >= 2 DISTINCT ACCOUNTS reaches across the
+// account (or service) boundary and is broad; a value pinned to one concrete
+// resource matches at most one probe and stays narrow. This is spelling-agnostic:
+// any NEW glob spelling of the same boundary-crossing class matches the same
+// diverse probes, so it cannot be re-spelled around.
+//
+// Each probe carries an explicit `account` identity. S3 object ARNs
+// (arn:aws:s3:::bucket/key) encode no account SEGMENT - the owning account rides
+// in the (globally unique) bucket name - so the two S3 probes are tagged as two
+// DISTINCT accounts (A, B): a value matching both spans the S3 namespace across
+// accounts. Probes use deliberately distinctive "probe-" identifiers that appear
+// in no fixture, so a genuinely-scoped Resource (arn:aws:s3:::my-bucket/*,
+// arn:aws:iam::123456789012:role/app-team/*, ...) matches zero probes and reads
+// narrow. Frozen: fixed, shared, deterministic, no per-call allocation.
+const BROADNESS_PROBES = Object.freeze([
+  // s3 object, account A (owning account encoded in the bucket name)
+  Object.freeze({ arn: 'arn:aws:s3:::probe-alpha-bucket/data/report.csv', account: 'A' }),
+  // s3 object, account B (a DIFFERENT owning account / bucket)
+  Object.freeze({ arn: 'arn:aws:s3:::probe-bravo-bucket/logs/2026/app.log', account: 'B' }),
+  // iam role, account C
+  Object.freeze({ arn: 'arn:aws:iam::100000000001:role/platform/probe-role', account: '100000000001' }),
+  // kms key, account D
+  Object.freeze({ arn: 'arn:aws:kms:us-east-1:100000000002:key/1111aaaa-2222-bbbb-3333-cccc4444dddd', account: '100000000002' }),
+  // sqs queue, account E (no '/' in its ARN - distinguishes path globs like "*/*")
+  Object.freeze({ arn: 'arn:aws:sqs:eu-west-1:100000000003:probe-order-queue', account: '100000000003' }),
+  // s3 access-point object, account F (a resource-TYPE-prefixed ARN)
+  Object.freeze({ arn: 'arn:aws:s3:us-east-1:100000000004:accesspoint/probe-ap/object/reports/q1.csv', account: '100000000004' }),
+  // a bare NON-arn resource (no ':' and no '/') - the "resource is not an ARN" case
+  Object.freeze({ arn: 'probe-non-arn-resource', account: 'N' }),
+]);
+
+// SEMANTIC breadth predicate: read `value` as an AWS resource glob and count how
+// many DISTINCT probe accounts it matches. >= 2 distinct accounts means the value
+// reaches across the account (or service) boundary - it is broad. Deterministic;
+// never throws. This is the single test the ARN-glob broadness rests on for the
+// boundary-crossing / bare-glob class; the ARN-structural collection detector
+// below backstops account-PINNED single-account collections (role/*, outpost
+// bucket/*, ...), whose account value is unbounded and so cannot be spanned by any
+// finite probe battery - fail CLOSED there rather than trust the probes alone.
+function globReachesMultipleAccounts(value) {
+  const accounts = new Set();
+  for (const probe of BROADNESS_PROBES) {
+    if (arnGlobMatch(value, probe.arn)) {
+      accounts.add(probe.account);
+      if (accounts.size >= 2) return true;
+    }
+  }
+  return false;
+}
+
+function startsWithArnWildcard(segment) {
+  // A segment is unbounded from its head when it begins with an IAM ARN wildcard
+  // ("*" any-run, "?" single-char) - both make the leading position match freely.
+  return /^[*?]/.test(segment);
+}
+// S3-on-Outposts collection keywords whose identifier is CONTENT WITHIN a single
+// named parent, not a collection of top-level resources: a terminal wildcard on
+// one of these (outpost/<id>/bucket/<name>/object/*) scopes to that one named
+// parent's keys and stays quiet. Every OTHER collection keyword (bucket,
+// accesspoint) names the whole collection when wildcarded at the leaf, so it is
+// broad. Frozen so the set is stable and shared (deterministic, no per-call alloc).
+const OUTPOST_CONTENT_LEAF_KEYWORDS = Object.freeze(new Set(['object']));
+function isBroadArnResource(resource) {
+  const r = String(resource == null ? '' : resource).trim();
+  if (r === '') return false;
+  if (r === '*') return true;
+  // SEMANTIC breadth test FIRST: interpret the value as an AWS resource glob and
+  // ask what it MATCHES. A value reaching across >= 2 distinct probe accounts is
+  // broad regardless of how it is spelled - this closes the non-ARN glob fail-opens
+  // ("*/*", "?*", "**", "*:*", "arn*") that slipped the arn:-prefix gate below, and
+  // acts as a spelling-robust net for boundary-crossing ARN globs too. A concrete,
+  // scoped resource (arn / non-arn) matches < 2 accounts and falls through.
+  if (globReachesMultipleAccounts(r)) return true;
+  // Not an ARN and not boundary-crossing: a concrete non-ARN resource is scoped.
+  if (!r.startsWith('arn:')) return false;
+  // arn:partition:service:region:account:resourceId (resourceId may hold ':').
+  const seg = r.split(':');
+  const partition = seg[1] || '';
+  const service = seg[2] || '';
+  const region = seg[3] || '';
+  const account = seg[4] || '';
+  const resourceId = seg.slice(5).join(':');
+  // A leading wildcard ("*" or "?") in partition or service spans essentially
+  // every ARN.
+  if (startsWithArnWildcard(partition)) return true;
+  if (startsWithArnWildcard(service)) return true;
+  // A wildcard account ("*"/"?") reaches across EVERY account in the partition, so
+  // the grant crosses the account boundary no matter how the resource IDENTIFIER is
+  // scoped. arn:aws:iam::*:role/deployment/* is pass-any-role-under-/deployment/ in
+  // EVERY account - the same account-crossing broadening the corpus locks for
+  // arn:aws:iam::*:role/*, and strictly broader than the intended-narrow SINGLE
+  // account case (arn:aws:iam::123456789012:role/deployment/*), which the negative
+  // corpus deliberately pins to a concrete account. A concrete-prefixed resource id
+  // ('role/deployment/*', 'role/app-*', 'repository/team-*', 'function:svc-*',
+  // 'secret:app/*') does NOT re-narrow a wildcard account back to one account, so
+  // this branch must NOT additionally require the resource id to be empty or itself
+  // leading-wildcard - that extra requirement WAS the account-wildcard fail-OPEN
+  // (threat-model T8): a wildcard account + concrete-prefixed identifier slipped
+  // every broad branch and read clean. The finite semantic probe battery cannot
+  // close this either: an unbounded account segment matches no fixed-account probe
+  // and a probe pinned to one concrete path (/platform/) misses any other path, so
+  // the wildcard ACCOUNT must be caught STRUCTURALLY here - fail CLOSED. Plain S3
+  // bucket ARNs (arn:aws:s3:::bucket/key) carry an EMPTY account segment, so this
+  // never touches arn:aws:s3:::my-bucket/*.
+  if (startsWithArnWildcard(account)) return true;
+  // The resource-id head is the S3 bucket name, or the resource-type/id first
+  // segment. A leading wildcard there matches all/nearly-all resources of the
+  // service.
+  const head = resourceId.split('/')[0];
+  if (startsWithArnWildcard(head)) return true;
+  // Resource-TYPE-prefixed ARNs, where the head is a CONCRETE resource TYPE and
+  // the wildcard sits in the IDENTIFIER segment right AFTER the type:
+  //   arn:aws:s3:region:acct:accesspoint/*/object/*   (every access point -> every object)
+  //   arn:aws:iam::acct:role/*        arn:aws:iam::*:role/*   (every role, all accounts)
+  //   arn:aws:iam::acct:user/*        arn:aws:s3-outposts:...:outpost/*/...
+  // The leading-wildcard-HEAD check above misses these because the head is a
+  // literal type keyword ("accesspoint", "role"), so the wildcard lives one
+  // segment deeper. A leading wildcard on that FIRST identifier segment spans
+  // the ENTIRE collection of that type in the account (all accounts under a
+  // wildcard account) - just as account-wide as arn:aws:s3:::*/*, which the
+  // must-warn corpus locks as a mandatory DATA-EXFIL finding. Missing it is the
+  // same fail-OPEN class (threat-model T8).
+  //
+  // Guard - PLAIN S3 bucket ARNs (arn:aws:s3:::bucket/key: service "s3" with
+  // EMPTY region AND account) carry NO type prefix; the head IS the bucket name,
+  // so "my-bucket/*" is one bucket's objects (scoped) and is handled by the head
+  // check above. Skip the type logic there so a single named bucket - even one
+  // literally named "accesspoint" or "role" - never reads as account-wide.
+  //
+  // ONLY the first identifier segment after the type is decisive: "role/*" is
+  // all-roles (broad), but a PATH- or NAME-prefixed identifier - "role/deployment/*",
+  // "policy/application/*", "secret:app/*" - is scoped to that path/prefix and
+  // stays quiet; a deeper wildcard does NOT widen it back to the whole type.
+  const isPlainS3Bucket = service === 's3' && region === '' && account === '';
+  if (!isPlainS3Bucket && resourceId !== '') {
+    // AWS resource-id forms are "type/id" and "type:id"; split on the first of
+    // either. idParts[0] is the resource-type head, idParts[1] the identifier.
+    const idParts = resourceId.split(/[/:]/);
+    if (
+      idParts.length > 1 &&
+      !startsWithArnWildcard(idParts[0]) && // concrete resource TYPE head
+      startsWithArnWildcard(idParts[1]) // leading-wildcard IDENTIFIER -> whole type
+    )
+      return true;
+  }
+  // S3 on Outposts nests named resource-collections rather than using a flat
+  // "type/id": the collection keyword alternates with its identifier at each level -
+  //   arn:aws:s3-outposts:region:acct:outpost/<outpost-id>/bucket/<bucket-id>/object/<key>
+  //   arn:aws:s3-outposts:region:acct:outpost/<outpost-id>/accesspoint/<ap>/object/<key>
+  // The generic type-prefix check above only inspects idParts[1] (the identifier
+  // right after the head). For an outpost the head is "outpost" and idParts[1] is a
+  // CONCRETE outpost id, so a leading wildcard on a DEEPER collection identifier -
+  // the bucket id in outpost/<id>/bucket/*/object/* - is never examined and the ARN
+  // reads as scoped, a fail-OPEN (T8). Such a wildcard spans the ENTIRE collection
+  // of that type on the outpost (every bucket -> every object), exactly as
+  // account-wide as accesspoint/*/object/* (which the must-warn corpus locks). FAIL
+  // CLOSED: a leading wildcard on ANY NON-LEAF collection identifier is broad.
+  //
+  // The LEAF identifier is NOT blanket-excluded: whether a terminal wildcard is
+  // broad depends on WHAT collection it names.
+  //   - A terminal wildcard on a COLLECTION-of-top-level-resources identifier -
+  //     outpost/<id>/bucket/* , outpost/<id>/accesspoint/* - names EVERY bucket /
+  //     access point on the outpost (the entire collection), just as account-wide
+  //     as arn:aws:s3:::*/* . That is broad. Earlier code exempted the terminal id
+  //     unconditionally (`i < idParts.length - 1`), so bucket/* / accesspoint/* -
+  //     a mutating grant across every outpost bucket/AP (e.g. make-every-bucket-
+  //     public) - read as scoped and fired NOTHING: a WILDCARD-RESOURCE fail-OPEN
+  //     (T8), the same class this story closes.
+  //   - A terminal wildcard on a CONTENT-LEAF identifier WITHIN a concretely-named
+  //     parent - outpost/<id>/bucket/<name>/object/* - is one named bucket's object
+  //     keys, the least-privilege object-read shape (like arn:aws:s3:::my-bucket/*).
+  //     That stays scoped/quiet. (If the parent bucket were itself wildcarded it
+  //     would already be caught above as a NON-LEAF collection wildcard.)
+  // FAIL CLOSED: exempt only known content-leaf keywords ("object"); a terminal
+  // wildcard on any OTHER collection identifier counts as broad.
+  if (service === 's3-outposts' && resourceId !== '') {
+    // Identifier segments sit at odd indices (keyword, id, keyword, id, ...).
+    const idParts = resourceId.split(/[/:]/);
+    for (let i = 1; i < idParts.length; i += 2) {
+      if (!startsWithArnWildcard(idParts[i])) continue;
+      // Non-leaf identifier: a wildcard widens the whole subtree beneath it.
+      const isLeaf = i >= idParts.length - 2;
+      if (!isLeaf) return true;
+      // Terminal identifier: broad unless it is a content-leaf key (object/<key>)
+      // scoped within a concretely-named parent collection.
+      const keyword = String(idParts[i - 1] || '').toLowerCase();
+      if (!OUTPOST_CONTENT_LEAF_KEYWORDS.has(keyword)) return true;
+    }
+  }
+  return false;
+}
+
 // Is the resource scope broad enough that "on everything" is a fair reading?
-// True when Resource contains the bare "*", or the statement uses NotResource
-// (Allow everything except a few) - both grant across essentially all ARNs.
+// True when the statement uses NotResource (Allow everything except a few), or
+// ANY listed Resource is the bare "*" or an ARN-wildcard that matches all /
+// nearly-all ARNs (see isBroadArnResource) - all grant across essentially every
+// ARN. Fixing the ARN-wildcard case closes a DATA-EXFIL fail-open (T8): a bulk
+// read on arn:aws:s3:::*/* is just as account-wide as one on "*".
 function resourceIsBroad(stmt) {
-  return stmt.resources.includes('*') || stmt.notResources.length > 0;
+  return (
+    stmt.notResources.length > 0 ||
+    stmt.resources.some(isBroadArnResource)
+  );
 }
 
 // Is a single action pattern a non-read (mutating/privileged) action - the kind
@@ -708,10 +930,15 @@ function ruleWildcardAction(stmt, out) {
 function ruleWildcardResource(stmt, out) {
   if (!resourceIsBroad(stmt)) return;
   if (!grantsNonReadAction(stmt)) return; // read-only wildcard is routine
+  // Three broadness shapes with distinct wording: the bare "*" (all resources),
+  // an ARN-wildcard that matches all/nearly-all ARNs (e.g. arn:aws:s3:::*/*), and
+  // a NotResource carve-out. The first two are account-wide resource scopes (high);
+  // a NotResource-only grant is broad-except-a-few (medium).
   const broadStar = stmt.resources.includes('*');
+  const broadArn = stmt.resources.some(isBroadArnResource); // true for bare "*" too
   out.push(
     makeFinding('WILDCARD-RESOURCE', stmt, {
-      severity: broadStar ? 'high' : 'medium',
+      severity: broadArn ? 'high' : 'medium',
       policyEvidence: 'high',
       // Per-action (suite-3 test 95): for the explicit-actions path list ONLY the
       // remediable non-read actions, so a required-wildcard enumeration action
@@ -722,6 +949,10 @@ function ruleWildcardResource(stmt, out) {
       why: broadStar
         ? 'Resource "*" leaves the granted action(s) broadly resource-scoped: ' +
           'they apply to every resource in the account rather than a specific ARN.'
+        : broadArn
+        ? 'An ARN-wildcard Resource that matches all / nearly-all ARNs leaves the ' +
+          'granted action(s) broadly resource-scoped: they apply across the whole ' +
+          'service / account rather than a specific ARN.'
         : 'NotResource leaves the granted action(s) broadly resource-scoped: ' +
           'they apply to every resource EXCEPT the few listed - typically far ' +
           'broader than intended.',
@@ -1086,6 +1317,10 @@ export function analyzeRules(model) {
     for (const f of findings) deepFreeze(f);
     return Object.freeze({ ok: true, errors: Object.freeze(errors), findings: Object.freeze(findings) });
   } catch (e) {
+    // Propagate the cooperative wall-clock budget sentinel (S3-dos-budget) so scan()
+    // reports the specific "analysis aborted (resource budget)" fail-closed verdict
+    // rather than masking it as a generic internal error.
+    if (isGlobBudgetError(e)) throw e;
     errors.push({ code: 'INTERNAL', message: 'Rule analysis failed unexpectedly.', path: null });
     return Object.freeze({ ok: false, errors: Object.freeze(errors), findings: Object.freeze([]) });
   }

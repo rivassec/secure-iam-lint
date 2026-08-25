@@ -295,3 +295,19 @@ All Phase 15/16 stories accepted. Last-round reason per story:
 - P16-action: accepted (all-pass)
 - P16-selftests: accepted (all-pass)
 - P16-docs: accepted (all-pass)
+
+## Phase 17 - app-sec-remediation story outcomes (2026-08-25)
+Chain halted early at S1; downstream stories un-reached (pending).
+Last-round reason per story:
+- S1-dataexfil-arn: human-review (1 blocking) - chain halted here
+- (subsequent stories): pending - un-reached due to early halt
+
+## Phase 17 - app-sec-remediation story outcomes (re-run 2026-08-25)
+Chain halted early at S5. Stories after the halt point un-reached (pending).
+Last-round reason per story:
+- S1-dataexfil-arn: accepted (all-pass)
+- S2-guard-parity: accepted (all-pass)
+- S3-dos-budget: accepted (all-pass)
+- S4-sarif-sid: accepted (all-pass)
+- S5-md-autolink: human-review (1 blocking) - chain halted here
+- (subsequent stories): pending - un-reached due to early halt

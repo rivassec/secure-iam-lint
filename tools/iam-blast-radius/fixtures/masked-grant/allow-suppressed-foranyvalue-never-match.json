@@ -1,0 +1,28 @@
+{
+  "name": "Allow + suppressed ForAnyValue never-match (empty [] value)",
+  "note": "IAM-1508 / S2-guard-parity regression, mirrors the audit repro. A full-admin Allow (Action:* / Resource:*) gated by a ForAnyValue operator over a LITERALLY empty array ([]) can never match, so the engine SUPPRESSES the whole grant as a never-match and emits no finding - a silent CLEAN on a full-admin-looking grant. The shared engine must leave a trace (SUPPRESSED_NEVER_MATCH_ALLOW, coverage INCOMPLETE) so the suppressed grant is never a clean pass. A MODELED key (aws:PrincipalOrgID) is used so the pre-existing unsupported-condition path does NOT mask the fix.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "*",
+        "Resource": "*",
+        "Condition": { "ForAnyValue:StringEquals": { "aws:PrincipalOrgID": [] } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": true,
+    "code": "SUPPRESSED_NEVER_MATCH_ALLOW",
+    "kind": "incomplete",
+    "path": "Statement[0].Condition.ForAnyValue:StringEquals.aws:PrincipalOrgID",
+    "coverageIncomplete": true,
+    "scanExit": 3,
+    "scanReason": "SUPPRESSED_NEVER_MATCH_ALLOW",
+    "scanStatus": "partial"
+  }
+}

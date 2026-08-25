@@ -1,0 +1,16 @@
+{
+  "name": "Benign Deny + empty NotAction complement (must NOT be flagged)",
+  "note": "IAM-1508 no-over-fire control. A Deny with an empty NotAction complement denies EVERYTHING (an empty complement excludes nothing); it grants nothing and is benign. Only an Allow can MASK a grant, so this must never be flagged as a masked grant. Pins the Effect:'Allow' scoping of the empty-complement detection.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Deny", "NotAction": [], "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": false
+  }
+}

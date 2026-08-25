@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:aws:s3:::*/* (all objects, all buckets) must warn",
+  "note": "S1-dataexfil-arn regression: resourceIsBroad() previously treated only the bare '*' (or NotResource) as broad, so a bulk object read scoped to the ARN-wildcard arn:aws:s3:::*/* returned findings=[] status complete exit 0 CLEAN - a DATA-EXFIL fail-open (threat-model T8). An ARN whose bucket-name head is '*' spans every object in every bucket, exactly as broad as Resource:'*', so DATA-EXFIL must fire and the CLI must exit non-zero. GetObject is a read verb, so WILDCARD-RESOURCE must NOT fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadAllObjectsAllBuckets", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::*/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

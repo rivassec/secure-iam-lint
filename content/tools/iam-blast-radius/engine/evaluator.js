@@ -30,6 +30,10 @@
 // Vanilla ES module. No network APIs. No eval/Function. No DOM. Deterministic:
 // same model + same request -> same output, every run (no Date/Math.random).
 
+// ONE shared, ReDoS-safe, linear wildcard matcher (S3-dos-budget) - replaces the
+// byte-identical globMatch copy this module used to carry.
+import { globMatch } from './glob.js';
+
 // --- Public enums ------------------------------------------------------------
 
 // Outcome of decide() for a single (action, resource) request against THIS
@@ -69,37 +73,8 @@ export const CAPABILITY_CAVEAT =
   'resource policies, permission boundaries, SCPs, and session policies not ' +
   'supplied here.';
 
-// --- Linear glob matcher (ReDoS-safe) ----------------------------------------
-// Matches an IAM wildcard pattern ('*' = any run incl. empty, '?' = one char)
-// against a literal string using two-pointer scanning. O(n*m) worst case with
-// NO catastrophic backtracking, unlike a regex compiled from hostile input.
-
-function globMatch(pattern, text) {
-  const p = String(pattern);
-  const t = String(text);
-  let pi = 0;
-  let ti = 0;
-  let starIdx = -1;
-  let matchIdx = 0;
-  while (ti < t.length) {
-    if (pi < p.length && (p[pi] === '?' || p[pi] === t[ti])) {
-      pi++;
-      ti++;
-    } else if (pi < p.length && p[pi] === '*') {
-      starIdx = pi;
-      matchIdx = ti;
-      pi++;
-    } else if (starIdx !== -1) {
-      pi = starIdx + 1;
-      matchIdx++;
-      ti = matchIdx;
-    } else {
-      return false;
-    }
-  }
-  while (pi < p.length && p[pi] === '*') pi++;
-  return pi === p.length;
-}
+// The linear, ReDoS-safe wildcard matcher (globMatch) is imported from the shared
+// ./glob.js - one canonical matcher for the whole engine (S3-dos-budget).
 
 // IAM action matching is case-insensitive ("s3:getobject" == "s3:GetObject").
 function actionMatches(pattern, action) {

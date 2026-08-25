@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on the bare glob '*/*' (all objects, no arn: prefix) must warn",
+  "note": "S1-dataexfil-arn iteration 5 regression, NON-arn glob class. resourceIsBroad()/isBroadArnResource() gated ARN-wildcard breadth behind r.startsWith('arn:'), so a Resource that is a BARE glob carrying no 'arn:' prefix - '*/*' - short-circuited to NOT broad and a bulk object read returned findings=[] status complete exit 0 CLEAN (DATA-EXFIL fail-open, threat-model T8). As an AWS resource glob '*/*' matches every ARN that contains a '/', i.e. essentially every object/key resource across accounts and services - just as account-wide as Resource:'*'. Breadth is now decided SEMANTICALLY (does the value, read as a glob, match probe ARNs across >=2 distinct accounts) rather than by arn:-prefix shape, so this fires. GetObject is a read verb, so WILDCARD-RESOURCE must NOT fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadEveryPathGlob", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

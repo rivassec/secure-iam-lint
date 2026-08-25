@@ -129,6 +129,7 @@ run the Action **multiple times** with different `paths` globs and a different
 | `partition` | no | - | AWS partition (`aws`, `aws-us-gov`, `aws-cn`, `aws-iso*`). No default on purpose: an omitted partition is "not asserted", not `aws`. A cross-partition role-viability verdict is trusted only when you supply a real partition; otherwise it is treated as unknown and fails closed (exit `3`). |
 | `fail-on` | no | `high` | Minimum severity that fails the check: `critical`, `high`, `medium`, `low`, `info`, `none`. `none` does not turn a fail-closed `3` into `0`. |
 | `sarif-output` | no | `iam-blast-radius.sarif` | Path to write the SARIF 2.1.0 output file. |
+| `budget-ms` | no | `10000` | Per-policy wall-clock analysis budget, in milliseconds. If a policy's analysis overruns this budget it fails closed (exit `3`, `RESOURCE_BUDGET_EXCEEDED`) - it never reports a clean pass. A non-numeric value falls back to the default. |
 
 ## Outputs
 

@@ -1,0 +1,16 @@
+{
+  "name": "s3:PutObject on arn:aws:s3-outposts:...:outpost/op-abc/accesspoint/* (write via EVERY access point on the outpost) must warn",
+  "note": "S1-dataexfil-arn iteration 5 regression, WILDCARD-RESOURCE side, access-point-collection-leaf form. Same terminal-collection fail-OPEN as outpost/op-abc/bucket/*: the S3-on-Outposts loop skipped the wildcarded terminal identifier (`i < idParts.length - 1`), so outpost/op-abc/accesspoint/* - idParts=[outpost,op-abc,accesspoint,*], every access point on outpost op-abc - read as scoped and a mutating grant (s3:PutObject) fired NOTHING (analyze() findings=[], scan() exit 0 CLEAN). FAIL CLOSED: a leading wildcard on a terminal collection identifier names the whole collection and is broad. PutObject is non-read/mutating, so a broad resource scope is a remediable WILDCARD-RESOURCE. The genuinely-scoped one-access-point form outpost/op-abc/accesspoint/my-ap/object/* (a named AP's objects) is caught by the content-leaf exemption and stays quiet.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PutObjectEveryOutpostAccessPoint", "Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3-outposts:us-east-1:123456789012:outpost/op-abc/accesspoint/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["WILDCARD-RESOURCE"],
+    "mustNotFind": ["WILDCARD-ACTION"],
+    "minSeverity": { "WILDCARD-RESOURCE": "high" },
+    "nonZeroExit": true
+  }
+}

@@ -144,10 +144,17 @@ function hashIdentity(canonical) {
 // is what partialFingerprints hashes, so it MUST be stable across whitespace,
 // object key order, and absolute-vs-repo-relative artifact paths, and MUST NOT
 // include message text, line numbers, timestamps, or the artifact URI. It captures:
-// finding type + policy family + statement identity + normalized action / resource /
+// finding type + policy family + statement POSITION + normalized action / resource /
 // principal / condition, plus the sorted names (never values) of any unresolved
 // viability inputs - so supplying a subject account resolves the finding without
 // churning a different account VALUE into the fingerprint.
+//
+// SECURITY (S4-sarif-sid): the raw statement Sid is DELIBERATELY EXCLUDED. The Sid is
+// attacker-controlled free-form policy text; folding it into the identity would let a
+// fork PR craft a Sid whose fingerprint COLLIDES with a dismissed base-branch alert,
+// auto-suppressing a real finding. Statement identity is carried by the structural
+// POSITION (statementIndex) - which the attacker cannot use to forge a collision
+// against a semantically different finding - never by the free-form label.
 export function findingIdentity(finding, family) {
   const f = finding || {};
   const esc = f.escalation && typeof f.escalation === 'object' ? f.escalation : null;
@@ -159,7 +166,6 @@ export function findingIdentity(finding, family) {
     `type=${f.id != null ? String(f.id) : ''}`,
     `family=${family != null ? String(family) : ''}`,
     `stmtIndex=${typeof f.statementIndex === 'number' ? f.statementIndex : ''}`,
-    `stmtSid=${f.statementSid != null ? String(f.statementSid) : ''}`,
     `actions=${normList(f.actions, { lowercase: true }).join('|')}`,
     `resources=${normList(f.resources).join('|')}`,
     `principals=${findingPrincipals(f).join('|')}`,
@@ -210,7 +216,12 @@ function evidenceOf(finding) {
   return f.evidence.map((e) => {
     const row = {};
     if (e && e.statementIndex != null) row.statementIndex = e.statementIndex;
-    if (e && e.statementSid != null) row.statementSid = e.statementSid;
+    // SECURITY (S4-sarif-sid): evidence Sids are attacker-controlled too; sanitize
+    // before surfacing in properties.evidence. Omit when nothing printable survives.
+    if (e && e.statementSid != null) {
+      const safeSid = sanitizeSid(e.statementSid);
+      if (safeSid) row.statementSid = safeSid;
+    }
     if (e && e.role != null) row.role = e.role;
     if (e && Array.isArray(e.actions)) row.actions = e.actions.slice();
     if (e && Array.isArray(e.resources)) row.resources = e.resources.slice();
@@ -220,19 +231,86 @@ function evidenceOf(finding) {
   });
 }
 
+// Max characters kept from a hostile Sid before ellipsizing. A 10KB Sid must never
+// land verbatim in message.text or properties.
+const MAX_SID_LEN = 128;
+
+// Neutralize an attacker-controlled statement Sid before it is embedded anywhere a
+// consumer might render it (SARIF message.text is rendered as MARKDOWN by GitHub's
+// Security tab; properties are shown in alert detail). It:
+//   - strips ASCII/C1 control chars and newlines (they break out of a line / an
+//     inline-code span and let a payload span multiple rendered lines),
+//   - strips backticks (so the value cannot escape the inline-code span it is wrapped
+//     in, which is what defuses markdown-link / image injection like [x](javascript:...)),
+//   - collapses remaining runs of whitespace to a single space, and
+//   - caps length + ellipsizes (a multi-KB Sid cannot bloat or dominate the output).
+// Returns '' when nothing printable survives (caller then falls back to the index).
+// Pure + deterministic: same Sid -> same token, every run.
+function sanitizeSid(sid) {
+  let s = String(sid);
+  // Control chars (C0 0x00-0x1F incl. newlines/tabs, DEL, C1 0x80-0x9F) + backticks
+  // -> space. Backtick removal keeps the value inside its inline-code wrapper so a
+  // markdown payload cannot escape it.
+  // eslint-disable-next-line no-control-regex
+  s = s.replace(/[\u0000-\u001F\u007F-\u009F`]/g, ' ');
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s.length > MAX_SID_LEN) s = `${s.slice(0, MAX_SID_LEN)}...`;
+  return s;
+}
+
+// Max distinct action tokens rendered inline before the list is elided. Bounds the
+// message so a policy carrying a huge Action array cannot dominate message.text; the
+// full normalized action list still rides in partialFingerprints identity + properties.
+const MAX_MSG_ACTIONS = 12;
+
+// Render an attacker-controlled action list for message.text. Each Action is just as
+// attacker-controlled as a Sid (a fork PR owns the whole policy JSON), and GitHub
+// renders message.text as MARKDOWN. So every action is neutralized with the SAME
+// treatment the Sid gets - control chars / newlines / backticks stripped, length capped
+// - and wrapped in its OWN backtick-quoted inline-code token, NEVER emitted as free
+// prose. That defuses an Action like `[x](javascript:...)` (the markdown link cannot
+// render inside a code span) and an embedded newline (it is stripped, so it cannot break
+// the message across lines). The token COUNT is capped so a large Action array cannot
+// bloat the message; the elided remainder is reported as a plain "(+N more)" count.
+// Returns '' (no `; actions:` clause) when nothing printable survives.
+function renderActionClause(actions) {
+  const norm = normList(actions);
+  if (norm.length === 0) return '';
+  const shown = norm.slice(0, MAX_MSG_ACTIONS);
+  const tokens = [];
+  for (const a of shown) {
+    const safe = sanitizeSid(a);
+    if (safe) tokens.push(`\`${safe}\``);
+  }
+  if (tokens.length === 0) return '';
+  const more = norm.length - shown.length;
+  const suffix = more > 0 ? `, (+${more} more)` : '';
+  return `; actions: ${tokens.join(', ')}${suffix}`;
+}
+
 // A deterministic, one-line per-instance message. Deliberately carries the finding
 // TITLE + statement identity + action list, but NOT the resource ARNs (those live in
 // properties/evidence): keeps the human-facing message stable and low-leakage while
 // the full semantic identity is preserved in partialFingerprints + properties.
+//
+// SECURITY (S4-sarif-sid): every attacker-controlled policy field surfaced here - the
+// statement Sid AND the Action list - is sanitized (control chars/newlines/backticks
+// stripped, length capped) and rendered as DISTINCT backtick-quoted inline-code tokens,
+// NEVER as free prose, because GitHub renders this text as markdown in the Security tab.
+// The finding title and policy family are tool-controlled (fixed rule metadata), so they
+// are the only free prose. A hostile Sid or Action such as `[x](javascript:...)` or one
+// carrying a newline therefore cannot inject a link, image, or line break into the
+// rendered message.
 function findingMessage(finding, family) {
   const f = finding || {};
   const title = isNonEmptyString(f.title) ? f.title.trim() : String(f.id != null ? f.id : 'finding');
-  const sid = f.statementSid != null ? String(f.statementSid)
+  const safeSid = f.statementSid != null ? sanitizeSid(f.statementSid) : '';
+  const sidToken = safeSid
+    ? `\`${safeSid}\``
     : (typeof f.statementIndex === 'number' ? `(index ${f.statementIndex})` : '(unknown statement)');
-  const actions = normList(f.actions).join(', ');
   const fam = family != null ? String(family) : 'unknown';
-  const actionPart = actions ? `; actions: ${actions}` : '';
-  return `${title} [${fam} policy] at statement ${sid}${actionPart}. Potential blast radius from the supplied policy context only; not effective permissions.`;
+  const actionPart = renderActionClause(f.actions);
+  return `${title} [${fam} policy] at statement ${sidToken}${actionPart}. Potential blast radius from the supplied policy context only; not effective permissions.`;
 }
 
 // A stable JSON Pointer to the statement the finding is anchored on, when the engine
@@ -345,7 +423,13 @@ function buildResults(result, uri, ruleIndex) {
     if (evidence) properties.evidence = evidence;
     const pointer = jsonPointerFor(f);
     if (pointer) properties.jsonPointer = pointer;
-    if (f && f.statementSid != null) properties.statementSid = String(f.statementSid);
+    // SECURITY (S4-sarif-sid): the Sid is attacker-controlled; sanitize (strip control
+    // chars/newlines/backticks, cap length) before embedding in a rendered property.
+    // Omit when nothing printable survives rather than emit an empty token.
+    if (f && f.statementSid != null) {
+      const safeSid = sanitizeSid(f.statementSid);
+      if (safeSid) properties.statementSid = safeSid;
+    }
 
     const row = {
       ruleId: id,

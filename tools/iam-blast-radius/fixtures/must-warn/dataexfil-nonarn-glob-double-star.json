@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on the bare glob '**' (any resource) must warn",
+  "note": "S1-dataexfil-arn iteration 5 regression, NON-arn glob class. '**' is two any-run wildcards - it matches EVERY resource string, exactly as broad as '*', but is spelled differently so the old code (which special-cased only the single bare '*' and otherwise required an 'arn:' prefix) read it as NOT broad -> findings=[] exit 0 CLEAN (DATA-EXFIL fail-open, T8). Semantic probe matching flags it: '**' matches probes across >=2 distinct accounts. GetObject is a read verb, so WILDCARD-RESOURCE must NOT fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadEveryDoubleStar", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "**" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

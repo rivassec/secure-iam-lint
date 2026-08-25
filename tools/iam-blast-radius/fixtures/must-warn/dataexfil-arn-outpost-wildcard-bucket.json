@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:aws:s3-outposts:...:outpost/op-abc/bucket/*/object/* (every object in every bucket on the outpost) must warn",
+  "note": "S1-dataexfil-arn iteration 4 regression: isBroadArnResource() judged resource-TYPE-prefixed broadness from idParts[1] alone (the identifier right after the head). S3-on-Outposts nests collections - outpost/<outpost-id>/bucket/<bucket-id>/object/<key> - so for outpost/op-abc/bucket/*/object/* idParts=[outpost,op-abc,bucket,*,object,*]: the head 'outpost' is concrete AND idParts[1]='op-abc' is concrete, so the collection wildcard 'bucket/*' one level deeper was never examined and the ARN read as scoped -> resourceIsBroad=false -> DATA-EXFIL treated the bulk read as routine -> analyze() ok:true findings=[] and CLI exit 0 CLEAN. This grant reaches EVERY object in EVERY bucket on outpost op-abc - all S3-on-Outposts storage under that outpost - just as account-wide as accesspoint/*/object/* (a locked must-warn) and arn:aws:s3:::*/*. The leading-wildcard variant outpost/*/bucket/*/object/* was already flagged; only the concrete-outpost + wildcard-bucket-collection form leaked. FAIL CLOSED: a leading-wildcard on any NON-LEAF collection identifier is broad. GetObject is a read verb, so WILDCARD-RESOURCE must NOT fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadAllObjectsAllBucketsOnOutpost", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3-outposts:us-east-1:123456789012:outpost/op-abc/bucket/*/object/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

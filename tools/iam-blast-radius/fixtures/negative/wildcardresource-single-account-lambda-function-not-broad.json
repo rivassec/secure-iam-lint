@@ -1,0 +1,24 @@
+{
+  "name": "lambda:UpdateFunctionCode on arn:aws:lambda:us-east-1:123456789012:function:svc-* (one account) is NOT broad",
+  "note": "S1-dataexfil-arn iteration 4 over-correction guard for the account-wildcard fix. The must-warn sibling pins account='*' (arn:aws:lambda:*:*:function:svc-*) and MUST fire WILDCARD-RESOURCE; this pins a CONCRETE account (123456789012) and a concrete region, scoping the svc-* function prefix to ONE account. Making a leading-wildcard ACCOUNT broad must NOT start flagging a concrete-account function-name prefix. Only the trailing name is wildcarded (function:svc-*), so the grant stays account-scoped. The engine MUST NOT emit WILDCARD-RESOURCE here.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "UpdateSvcFunctionsOneAccount",
+        "Effect": "Allow",
+        "Action": "lambda:UpdateFunctionCode",
+        "Resource": "arn:aws:lambda:us-east-1:123456789012:function:svc-*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["WILDCARD-RESOURCE"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "arn:aws:lambda:us-east-1:123456789012:function:svc-* names functions whose name begins 'svc-' in ONE concrete account (123456789012) and region (us-east-1) - a bounded, name-prefixed subset, not every function across every account. The account segment is a concrete 12-digit id, not '*'/'?', so it does not cross the account boundary; only the function-name suffix is wildcarded. isBroadArnResource treats a leading-wildcard ACCOUNT as broad but a concrete account keeps the grant single-account, so a trailing name wildcard behind it stays quiet - materially narrower than the all-accounts arn:aws:lambda:*:*:function:svc-* the must-warn corpus locks. Ref: AWS ARN account-id segment; least-privilege name-prefix scoping."
+}

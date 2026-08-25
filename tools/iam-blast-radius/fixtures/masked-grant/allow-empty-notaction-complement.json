@@ -1,0 +1,23 @@
+{
+  "name": "Allow + empty NotAction complement (masked full-admin)",
+  "note": "IAM-1508 / S2-guard-parity regression. An Allow whose only action element is a present-but-empty NotAction ([]) excludes NOTHING under AWS semantics, so it grants EVERY action - a full-admin grant. The engine models it as granting nothing; the shared engine must mark coverage INCOMPLETE (EMPTY_NOTACTION_COMPLEMENT) so neither the browser (analyze) nor the CLI (scan) reports a clean pass. Previously caught only by the CLI adapter (browser fail-open).",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "NotAction": [], "Resource": "*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": true,
+    "code": "EMPTY_NOTACTION_COMPLEMENT",
+    "kind": "malformed",
+    "path": "Statement[0].NotAction",
+    "coverageIncomplete": true,
+    "scanExit": 3,
+    "scanReason": "EMPTY_NOTACTION_COMPLEMENT",
+    "scanStatus": "failed"
+  }
+}

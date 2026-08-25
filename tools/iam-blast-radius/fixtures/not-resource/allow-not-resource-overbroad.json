@@ -34,7 +34,9 @@
           ],
           "condition": null,
           "principal": null,
-          "notPrincipal": null
+          "notPrincipal": null,
+          "notActionPresent": false,
+          "notResourcePresent": true
         }
       ]
     },
