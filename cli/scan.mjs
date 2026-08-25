@@ -78,9 +78,10 @@ const DEFAULT_THRESHOLD = 'high';
 // 'auto' / 'auto-detect': the CI contract forbids family auto-detection, so an
 // auto selection is a usage error here even though the engine itself supports it.
 // Canonical families + the recognized synonyms the engine canonicalizes. A token
-// outside this set is still forwarded to the engine, which fails it closed with
-// INVALID_FAMILY (exit 3) rather than guessing.
-const SELECTABLE_FAMILIES = Object.freeze(new Set([
+// outside this set is a usage error (exit 2) - the caller named a family that does
+// not exist - rejected before the engine runs, distinct from a valid family whose
+// document the engine cannot analyze (exit 3).
+export const SELECTABLE_FAMILIES = Object.freeze(new Set([
   'identity', 'resource', 'role-trust', 'permissions-boundary', 'scp-rcp', 'session',
   // engine-recognized synonyms (family.js FAMILY_ALIASES)
   'scp', 'rcp', 'trust',
@@ -573,12 +574,24 @@ export function scan(input) {
       'Family auto-detection is not permitted. Select an explicit policy family.',
     );
   }
+  if (!SELECTABLE_FAMILIES.has(familyLower)) {
+    // An unrecognized family VALUE is a usage error (exit 2): the caller named a
+    // family that does not exist. This is distinct from a valid family whose
+    // document the engine cannot analyze (exit 3), and is consistent with a
+    // missing family also being a usage error.
+    return usageError(
+      'UNKNOWN_FAMILY',
+      `Unknown policy family '${familyToken}' (expected one of: identity, ` +
+        'resource, role-trust, permissions-boundary, scp-rcp, session).',
+    );
+  }
 
   // --- 2. Run the engine READ-ONLY. ------------------------------------------
-  // requireExplicitFamily is set so the engine also refuses to guess; a token
-  // outside the recognized families fails closed inside the engine (INVALID_FAMILY)
-  // rather than being analyzed as identity. subjectAccount/partition feed the
-  // engine's existing PassRole viability reasoning.
+  // requireExplicitFamily is set so the engine also refuses to guess. The family
+  // token is already validated against SELECTABLE_FAMILIES above, so the engine's
+  // own INVALID_FAMILY path is now a defense-in-depth backstop rather than the
+  // CLI's primary rejection. subjectAccount/partition feed the engine's existing
+  // PassRole viability reasoning.
   let result;
   try {
     result = analyze(inp.text, {

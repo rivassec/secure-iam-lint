@@ -30,7 +30,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { scan, EXIT } from './scan.mjs';
+import { scan, EXIT, SELECTABLE_FAMILIES } from './scan.mjs';
 // The SARIF 2.1.0 adapter (story P15-sarif): a PURE projection of a scan() result.
 // The CLI just picks it when --format sarif; the exit code is unaffected.
 import { formatSarif } from './sarif.mjs';
@@ -228,6 +228,18 @@ export function parseArgs(argv) {
       'the --family option is required and is never auto-detected ' +
       '(identity | resource | role-trust | permissions-boundary | scp-rcp | session)',
     );
+  }
+  // Validate the family VALUE here too (like --format) so a bad value is a usage
+  // error on stderr with no stdout, consistent with a missing family. scan()
+  // enforces the same SELECTABLE_FAMILIES set for the programmatic / action path.
+  const familyLower = opts.family.trim().toLowerCase();
+  if (familyLower === 'auto' || familyLower === 'auto-detect') {
+    return usage('family auto-detection is not permitted; select an explicit family '
+      + '(identity | resource | role-trust | permissions-boundary | scp-rcp | session)');
+  }
+  if (!SELECTABLE_FAMILIES.has(familyLower)) {
+    return usage(`unknown --family '${opts.family}' `
+      + '(expected: identity | resource | role-trust | permissions-boundary | scp-rcp | session)');
   }
   // Format is a CLI-level concern (scan does not see it), so validate it here.
   if (!FORMATS.has(opts.format)) {
