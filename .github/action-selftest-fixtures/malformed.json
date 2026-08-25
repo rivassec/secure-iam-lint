@@ -1,0 +1,1 @@
+{ this is deliberately not valid JSON - the analyzer MUST fail closed (exit 3), never treat it as a clean policy

@@ -285,3 +285,13 @@ Gates: full node --test 1464 pass / 0 fail (was 1442; +22); gate:no-network +
 gate:no-unsafe-dom exit 0; ASCII-only; shipped-tree-hygiene green. No regression to
 suites 1/2/3, suite-2 test 51, suite-4 S3 (101-108/128), resource-dispatch, the
 resource negative corpus, or grounding-per-service.
+
+## Phase 15/16 - story outcomes (2026-08-25)
+All Phase 15/16 stories accepted. Last-round reason per story:
+- P15-scan: accepted (all-pass)
+- P15-cli: accepted (all-pass)
+- P15-sarif: accepted (all-pass)
+- P15-purity: accepted (all-pass)
+- P16-action: accepted (all-pass)
+- P16-selftests: accepted (all-pass)
+- P16-docs: accepted (all-pass)

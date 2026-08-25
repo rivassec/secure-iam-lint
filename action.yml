@@ -1,0 +1,72 @@
+name: IAM Blast Radius
+description: Scan AWS IAM policies for potential blast radius; fail closed on unknown analysis states.
+author: rivassec
+branding:
+  icon: shield
+  color: purple
+
+# A JavaScript action (node20), not Docker or composite: no build step, no bundled
+# dist, no runtime npm deps. It imports the headless scan module directly and reads
+# a STRUCTURED result (it never scrapes stdout). It reads policy FILES only and
+# NEVER runs Terraform, npm, shell, or any repo-provided command - untrusted PR
+# policy content stays DATA, not code.
+#
+# Exit-code contract (carried into the consumer's CI, load-bearing):
+#   0 analyzed, no findings at/above fail-on   -> action succeeds
+#   1 findings at/above fail-on                -> action FAILS
+#   2 usage/config error (bad/missing family, missing/empty paths, missing files)
+#   3 FAIL-CLOSED could-not-analyze            -> action FAILS (must never be green)
+#   4 internal invariant error                 -> action FAILS
+# The action fails the check on 1, 2, 3, and 4. A fail-closed "could not analyze"
+# (exit 3) MUST NEVER become a green check.
+#
+# The default does NOT upload SARIF: it writes a SARIF file and sets outputs.
+# Consumers add github/codeql-action/upload-sarif themselves (opt-in
+# security-events: write). Default required permission stays contents: read.
+
+inputs:
+  paths:
+    description: Newline-separated files or globs to scan (e.g. "policies/**/*.json").
+    required: true
+  family:
+    description: >-
+      Policy family (REQUIRED; never auto-detected): identity | role-trust |
+      resource | permissions-boundary | session | scp | rcp. Mixed repos run the
+      action multiple times with different globs/families.
+    required: true
+  subject-account:
+    description: AWS account id (12 digits) for account-aware checks (e.g. PassRole viability).
+    required: false
+  partition:
+    description: >-
+      AWS partition (aws | aws-us-gov | aws-cn | aws-iso*). NO DEFAULT ON PURPOSE:
+      an OMITTED partition is "not asserted", not 'aws'. Account ids do not encode
+      partition, so a cross-partition role-viability verdict is only trustworthy
+      when the caller actually vouched for the partition. Leave it unset and any
+      such verdict is treated as UNKNOWN and FAILS CLOSED (exit 3); set it
+      explicitly to assert the subject's partition.
+    required: false
+  fail-on:
+    description: Minimum severity that fails the check (critical | high | medium | low | info | none).
+    required: false
+    default: high
+  sarif-output:
+    description: Path to write the SARIF 2.1.0 output file.
+    required: false
+    default: iam-blast-radius.sarif
+
+outputs:
+  sarif-path:
+    description: Path to the generated SARIF file.
+  exit-code:
+    description: Aggregate IAM Blast Radius exit code (worst code across all scanned files).
+  findings-count:
+    description: Total number of findings emitted across all scanned files.
+  blocking-findings-count:
+    description: Total findings at/above the fail-on threshold across all scanned files.
+  analysis-status:
+    description: Aggregate analysis status - complete, partial, or failed.
+
+runs:
+  using: node20
+  main: action/index.mjs

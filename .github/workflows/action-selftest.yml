@@ -1,0 +1,149 @@
+# Self-test for the IAM Blast Radius GitHub Action (Phase 16, story P16-selftests).
+#
+# Runs the LOCAL action (uses: ./) against checked-in fixtures and asserts BOTH the
+# step outcome AND the action's exit-code output for each case. This is the in-CI
+# proof that the fail-closed exit-code contract survives when the action runs inside
+# a real runner - not just in the node --test unit suite.
+#
+# The load-bearing, adversarial assertion: the MALFORMED fixture MUST fail closed
+# with exit-code 3 (could-not-analyze), NEVER 0 / a green check. A fail-closed state
+# collapsing to success is the top fail-open bug this whole tool exists to prevent.
+#
+# Cases:
+#   known-good     -> action succeeds, exit-code 0, SARIF generated.
+#   known-bad      -> step outcome failure, exit-code 1, SARIF has ruleId DIRECT-IAM-ADMIN.
+#   malformed      -> step outcome failure, exit-code 3, an analysis-state SARIF result exists.
+#   usage-error    -> step outcome failure, exit-code 2 (family omitted; never auto-detected).
+#
+# The bad/malformed/usage steps use continue-on-error so the job can inspect their
+# outcome; the good case does NOT (a failure there is a real regression that fails CI).
+
+name: Action self-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: this self-test only reads the repo and runs the action against
+# files. It does NOT upload SARIF, so it needs no security-events: write.
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- known-good: expect success, exit 0 --------------------------------
+      - name: known-good (expect success, exit 0)
+        id: good
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/clean-identity.json
+          family: identity
+          fail-on: high
+          sarif-output: selftest-good.sarif
+
+      - name: assert known-good
+        run: |
+          set -euo pipefail
+          outcome='${{ steps.good.outcome }}'
+          code='${{ steps.good.outputs.exit-code }}'
+          status='${{ steps.good.outputs.analysis-status }}'
+          test "$outcome" = "success" || { echo "known-good: expected step success, got '$outcome'"; exit 1; }
+          test "$code" = "0" || { echo "known-good: expected exit-code 0, got '$code'"; exit 1; }
+          test "$status" = "complete" || { echo "known-good: expected analysis-status complete, got '$status'"; exit 1; }
+          test -f selftest-good.sarif || { echo "known-good: SARIF file was not generated"; exit 1; }
+          jq -e '.version == "2.1.0"' selftest-good.sarif > /dev/null
+
+      # --- known-bad: findings, expect failure + exit 1 ----------------------
+      - name: known-bad (expect failure, exit 1)
+        id: bad
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/admin-identity.json
+          family: identity
+          fail-on: high
+          sarif-output: selftest-bad.sarif
+
+      - name: assert known-bad
+        run: |
+          set -euo pipefail
+          outcome='${{ steps.bad.outcome }}'
+          code='${{ steps.bad.outputs.exit-code }}'
+          test "$outcome" = "failure" || { echo "known-bad: expected step outcome failure, got '$outcome'"; exit 1; }
+          test "$code" = "1" || { echo "known-bad: expected exit-code 1, got '$code'"; exit 1; }
+          # The SARIF must carry the expected security finding ruleId - a real finding,
+          # not an analyzer-state result.
+          jq -e '[.runs[].results[] | select(.ruleId == "DIRECT-IAM-ADMIN")] | length > 0' selftest-bad.sarif > /dev/null \
+            || { echo "known-bad: SARIF missing expected ruleId DIRECT-IAM-ADMIN"; exit 1; }
+
+      # --- malformed: fail closed, expect failure + exit 3 (ADVERSARIAL) -----
+      - name: malformed (expect failure, exit 3 - fail closed)
+        id: malformed
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/malformed.json
+          family: identity
+          fail-on: high
+          sarif-output: selftest-malformed.sarif
+
+      - name: assert malformed FAILS CLOSED (exit 3, never 0)
+        run: |
+          set -euo pipefail
+          outcome='${{ steps.malformed.outcome }}'
+          code='${{ steps.malformed.outputs.exit-code }}'
+          status='${{ steps.malformed.outputs.analysis-status }}'
+          # Adversarial guard: a fail-closed "could not analyze" MUST NOT collapse to a
+          # clean pass. Assert BOTH that it is 3 AND explicitly that it is not 0.
+          test "$outcome" = "failure" || { echo "malformed: expected step outcome failure, got '$outcome'"; exit 1; }
+          test "$code" != "0" || { echo "malformed: FAIL-OPEN - fail-closed collapsed to exit 0"; exit 1; }
+          test "$code" = "3" || { echo "malformed: expected exit-code 3 (fail closed), got '$code'"; exit 1; }
+          test "$status" = "failed" || { echo "malformed: expected analysis-status failed, got '$status'"; exit 1; }
+          # An analyzer-state (kind:fail, category analysis-state) SARIF result must
+          # exist and must NOT carry a security-severity.
+          jq -e '[.runs[].results[] | select(.kind == "fail" and .properties.category == "analysis-state")] | length > 0' selftest-malformed.sarif > /dev/null \
+            || { echo "malformed: SARIF missing an analysis-state result"; exit 1; }
+          jq -e '[.runs[].results[] | select(.properties.category == "analysis-state" and (.properties | has("security-severity")))] | length == 0' selftest-malformed.sarif > /dev/null \
+            || { echo "malformed: analysis-state result must NOT carry a security-severity"; exit 1; }
+
+      # --- usage-error: family omitted, expect failure + exit 2 --------------
+      - name: usage-error (family omitted, expect failure, exit 2)
+        id: usage
+        continue-on-error: true
+        uses: ./
+        with:
+          # family is intentionally EMPTY: it is REQUIRED and never auto-detected, so
+          # an empty/absent family must fail closed to a usage error (exit 2), never a
+          # guessed family. (Set to "" rather than omitted so linters see it as present
+          # while the action still rejects it as missing.)
+          paths: .github/action-selftest-fixtures/clean-identity.json
+          family: ''
+          fail-on: high
+          sarif-output: selftest-usage.sarif
+
+      - name: assert usage-error
+        run: |
+          set -euo pipefail
+          outcome='${{ steps.usage.outcome }}'
+          code='${{ steps.usage.outputs.exit-code }}'
+          test "$outcome" = "failure" || { echo "usage-error: expected step outcome failure, got '$outcome'"; exit 1; }
+          test "$code" = "2" || { echo "usage-error: expected exit-code 2, got '$code'"; exit 1; }
+
+      - name: self-test summary
+        if: always()
+        run: |
+          {
+            echo "## IAM Blast Radius action self-test"
+            echo ""
+            echo "| case | step outcome | exit-code |"
+            echo "| --- | --- | --- |"
+            echo "| known-good | ${{ steps.good.outcome }} | ${{ steps.good.outputs.exit-code }} |"
+            echo "| known-bad | ${{ steps.bad.outcome }} | ${{ steps.bad.outputs.exit-code }} |"
+            echo "| malformed | ${{ steps.malformed.outcome }} | ${{ steps.malformed.outputs.exit-code }} |"
+            echo "| usage-error | ${{ steps.usage.outcome }} | ${{ steps.usage.outputs.exit-code }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
