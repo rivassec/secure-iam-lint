@@ -44,13 +44,22 @@ lands with the CLI work below.
     npm run gate:no-network              # no network APIs in shipped JS
     npm run gate:no-unsafe-dom           # no innerHTML/eval/unsafe DOM
 
-## Roadmap
+## Use it in CI
 
-- **Headless CLI + SARIF 2.1.0** - run the same engine in CI with a fail-closed
-  exit-code contract (a distinct non-zero for "could not analyze", so unknown
-  never passes a gate). See `tools/iam-blast-radius/docs/sarif-cli-design.md`.
+The same engine runs headless, with a fail-closed exit-code contract so
+"could not analyze" never passes a gate silently.
+
 - **GitHub Action** - drop `secure-iam-lint` into any workflow to scan IAM
-  policies on PRs. See `tools/iam-blast-radius/docs/github-action-plan.md`.
+  policies on PRs. It reports *potential blast radius, not effective
+  permissions*, and fails the check on findings **and** on fail-closed
+  could-not-analyze states (a distinct exit `3`, never a green check). Default
+  required permission is `contents: read`; SARIF upload to the Security tab is
+  opt-in. See **[ACTION.md](ACTION.md)** for the two example workflows (with and
+  without SARIF upload), input/output tables, SHA-pinning and
+  `pull_request_target` guidance, supported families, and limits.
+- **Headless CLI + SARIF 2.1.0** - the `iam-br` CLI the Action wraps, with the
+  full `0`/`1`/`2`/`3`/`4` exit-code contract. See
+  `tools/iam-blast-radius/docs/sarif-cli-design.md`.
 
 ## History
 
