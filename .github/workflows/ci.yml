@@ -38,7 +38,41 @@ jobs:
       - name: CSP audit - no inline styles/scripts/event-handlers in the shipped tool
         run: python3 scripts/csp_audit.py content/tools/iam-blast-radius
 
+  # Detect whether any web-affecting file changed. e2e only runs when it did.
+  # FAIL SAFE: if the base ref is unknown (first push, shallow, force-push), RUN
+  # e2e rather than skip it - when unsure whether the UI changed, test it.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.f.outputs.web }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: f
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then REF="${BASE:-}"; else REF="${BEFORE:-}"; fi
+          if [ -z "$REF" ] || [ "$REF" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$REF^{commit}" 2>/dev/null; then
+            echo "e2e gate: base ref unknown -> RUN (fail safe)"; echo "web=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git diff --name-only "$REF" HEAD | grep -qE '^(content/tools/iam-blast-radius/|tools/iam-blast-radius/tests/e2e/|tools/iam-blast-radius/playwright\.config\.js|tools/iam-blast-radius/package\.json|\.github/workflows/ci\.yml)'; then
+            echo "e2e gate: web files changed -> RUN"; echo "web=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "e2e gate: no web changes -> SKIP"; echo "web=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # e2e runs only when the fast jobs pass (needs) AND web files changed (if).
+  # (If e2e is ever made a REQUIRED check under branch protection, add an
+  # always-runs gate job so a path-skipped e2e cannot block a PR indefinitely.)
   e2e:
+    needs: [test, csp, changes]
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
