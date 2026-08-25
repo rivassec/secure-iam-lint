@@ -411,7 +411,7 @@ as broad as public.
 7. **A service principal is not public**; source-bind it (confused deputy) [4].
    `aws:SourceOwner` is a deprecated legacy binding on SNS [10].
 8. **Per-service refines, never suppresses.** A per-service rule adds/refines
-   refines findings; the generic fail-closed findings and INCOMPLETE coverage still stand
+   findings; the generic fail-closed findings and INCOMPLETE coverage still stand
    if a sub-shape is unmodeled. "Unsupported != safe."
 
 ---

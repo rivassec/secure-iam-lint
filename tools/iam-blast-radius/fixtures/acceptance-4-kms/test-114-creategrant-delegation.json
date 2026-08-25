@@ -1,0 +1,56 @@
+{
+  "id": "test-114",
+  "suite4Test": 114,
+  "story": "IAM-1403",
+  "name": "kms:CreateGrant is onward-delegation, not mere use (trap 5)",
+  "note": "acceptance-suite-4 test 114. kms:CreateGrant is a DELEGATION primitive: the grantee can create grants allowing OTHER principals (in any account/org, including AWS services) to use the key, and need not hold the permission itself. Ranked above ordinary key use (KMS-CREATE-GRANT-DELEGATION high), NEVER over-claimed as a proven decrypt or effective access. The cross-account role also surfaces the generic RESOURCE-CROSS-ACCOUNT; and because the key policy omits the account-delegation statement, the silent-policy inversion also applies (only the named external role can use the key; owner IAM cannot govern it).",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "kms-key",
+      "arn": "arn:aws:kms:us-east-1:111122223333:key/abcd-1234"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::999900001111:role/Integrator" },
+        "Action": "kms:CreateGrant",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectKms": {
+    "findingIds": [
+      "RESOURCE-CROSS-ACCOUNT",
+      "KMS-CREATE-GRANT-DELEGATION",
+      "KMS-SILENT-POLICY-UNKNOWN"
+    ],
+    "findingSeverities": {
+      "RESOURCE-CROSS-ACCOUNT": "high",
+      "KMS-CREATE-GRANT-DELEGATION": "high",
+      "KMS-SILENT-POLICY-UNKNOWN": "info"
+    },
+    "notFindingIds": ["PUBLIC-ACCESS", "KMS-KEY-POLICY-TAKEOVER"],
+    "whyIncludes": {
+      "KMS-CREATE-GRANT-DELEGATION": [
+        "onward-DELEGATION",
+        "need not already hold the permission",
+        "much like kms:PutKeyPolicy"
+      ]
+    },
+    "forbidWhy": {
+      "KMS-CREATE-GRANT-DELEGATION": [
+        "effective access",
+        "proves decrypt",
+        "only uses the key"
+      ]
+    }
+  }
+}

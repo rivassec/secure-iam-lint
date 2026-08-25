@@ -1,0 +1,53 @@
+{
+  "id": "test-110",
+  "suite4Test": 110,
+  "story": "IAM-1403",
+  "name": "KMS account-root delegation (not public, not root-only)",
+  "note": "acceptance-suite-4 test 110. The default 'Enable IAM User Permissions' statement (Allow arn:aws:iam::<owner>:root kms:* Resource '*') delegates broad KMS authority to the OWNING account (the account and its administrators, not the root user only, not public). RESOURCE-KMS-ACCOUNT-DELEGATION medium (suite-2 test 51 semantics, unchanged); Resource:'*' = the attached key. The silent-policy inversion does NOT fire (the account-delegation statement is present).",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "kms-key",
+      "arn": "arn:aws:kms:us-east-1:111122223333:key/abcd-1234"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "EnableIAMUserPermissions",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::111122223333:root" },
+        "Action": "kms:*",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectKms": {
+    "findingIds": ["RESOURCE-KMS-ACCOUNT-DELEGATION"],
+    "findingSeverities": { "RESOURCE-KMS-ACCOUNT-DELEGATION": "medium" },
+    "notFindingIds": [
+      "PUBLIC-ACCESS",
+      "KMS-SILENT-POLICY-UNKNOWN",
+      "KMS-KEY-POLICY-TAKEOVER",
+      "KMS-CREATE-GRANT-DELEGATION"
+    ],
+    "whyIncludes": {
+      "RESOURCE-KMS-ACCOUNT-DELEGATION": [
+        "OWNING",
+        "attached key only"
+      ]
+    },
+    "forbidWhy": {
+      "RESOURCE-KMS-ACCOUNT-DELEGATION": [
+        "grants public access",
+        "only the root user",
+        "publicly"
+      ]
+    }
+  }
+}

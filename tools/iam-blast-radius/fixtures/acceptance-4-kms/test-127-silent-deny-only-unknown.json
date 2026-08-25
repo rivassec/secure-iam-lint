@@ -1,0 +1,55 @@
+{
+  "id": "test-127",
+  "suite4Test": 127,
+  "story": "IAM-1403",
+  "name": "Silent / no-grant KMS policy is UNKNOWN, not safe",
+  "note": "acceptance-suite-4 test 127. A Deny-only KMS key policy has no positive grant and no account-delegation statement. Coverage stays INCOMPLETE and the KMS-SILENT-POLICY-UNKNOWN finding surfaces the inversion: a KMS key with no account-delegation Allow is UNKNOWN for effective access (IAM identity policies cannot govern the key). The absence of a positive finding does NOT mean the key is safe or unreachable - a clean, empty analysis is never presented as 'safe'.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "kms-key",
+      "arn": "arn:aws:kms:us-east-1:111122223333:key/abcd-1234"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Deny",
+        "Principal": { "AWS": "*" },
+        "Action": "kms:Decrypt",
+        "Resource": "*",
+        "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectKms": {
+    "findingIds": ["KMS-SILENT-POLICY-UNKNOWN"],
+    "findingSeverities": { "KMS-SILENT-POLICY-UNKNOWN": "info" },
+    "notFindingIds": [
+      "PUBLIC-ACCESS",
+      "RESOURCE-KMS-ACCOUNT-DELEGATION",
+      "KMS-KEY-POLICY-TAKEOVER",
+      "KMS-CREATE-GRANT-DELEGATION"
+    ],
+    "coverageIncomplete": true,
+    "whyIncludes": {
+      "KMS-SILENT-POLICY-UNKNOWN": [
+        "does NOT include the account-delegation",
+        "fail-closed",
+        "does NOT mean the key is safe"
+      ]
+    },
+    "forbidWhy": {
+      "KMS-SILENT-POLICY-UNKNOWN": [
+        "nothing here",
+        "analysis complete",
+        "no access to the key"
+      ]
+    }
+  }
+}

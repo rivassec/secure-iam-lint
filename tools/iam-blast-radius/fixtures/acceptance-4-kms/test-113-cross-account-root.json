@@ -1,0 +1,47 @@
+{
+  "id": "test-113",
+  "suite4Test": 113,
+  "story": "IAM-1403",
+  "name": "Cross-account KMS delegation to an external root",
+  "note": "acceptance-suite-4 test 113. An account-root principal for an account that DIFFERS from the key's owning account is a CROSS-ACCOUNT KMS delegation: authority over the key is delegated to the external account, which must also allow it via its own IAM policies. RESOURCE-KMS-ACCOUNT-DELEGATION high (external). Not public; not root-only. The silent-policy inversion does NOT fire (an account-delegation statement is present, albeit external).",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "kms-key",
+      "arn": "arn:aws:kms:us-east-1:111122223333:key/abcd-1234"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::999900001111:root" },
+        "Action": ["kms:Decrypt", "kms:DescribeKey"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectKms": {
+    "findingIds": ["RESOURCE-KMS-ACCOUNT-DELEGATION"],
+    "findingSeverities": { "RESOURCE-KMS-ACCOUNT-DELEGATION": "high" },
+    "notFindingIds": [
+      "PUBLIC-ACCESS",
+      "KMS-SILENT-POLICY-UNKNOWN",
+      "KMS-CREATE-GRANT-DELEGATION"
+    ],
+    "whyIncludes": {
+      "RESOURCE-KMS-ACCOUNT-DELEGATION": [
+        "CROSS-ACCOUNT KMS delegation",
+        "external account"
+      ]
+    },
+    "forbidWhy": {
+      "RESOURCE-KMS-ACCOUNT-DELEGATION": ["same-account", "publicly", "only the root user"]
+    }
+  }
+}

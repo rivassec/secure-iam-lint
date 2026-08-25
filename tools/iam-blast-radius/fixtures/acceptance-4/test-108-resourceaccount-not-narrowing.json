@@ -1,0 +1,75 @@
+{
+  "id": "test-108",
+  "suite4Test": 108,
+  "story": "IAM-1402",
+  "name": "s3:ResourceAccount does not narrow the principal (near-miss)",
+  "note": "acceptance-suite-4 test 108. s3:ResourceAccount pins the BUCKET-OWNER account, not the caller identity, so it does NOT exclude anonymous callers. The generic path keeps the '*' grant critical PUBLIC-ACCESS with principalScopedBy=[] (resource-account keys are never credited as principal scoping); the S3 per-service NOT-NARROWED note names s3:ResourceAccount as pinning the bucket owner, not WHO may act.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "s3-bucket",
+      "arn": "arn:aws:s3:::owner-scoped",
+      "account": "123456789012"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::owner-scoped/*",
+        "Condition": {
+          "StringEquals": {
+            "s3:ResourceAccount": "123456789012"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectS3": {
+    "findingIds": [
+      "PUBLIC-ACCESS",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "findingSeverities": {
+      "PUBLIC-ACCESS": "critical",
+      "S3-PUBLIC-NOT-NARROWED": "high"
+    },
+    "notFindingIds": [
+      "S3-BUCKET-POLICY-TAKEOVER"
+    ],
+    "scopedByEmpty": [
+      "PUBLIC-ACCESS",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "whyIncludes": {
+      "S3-PUBLIC-NOT-NARROWED": [
+        "s3:ResourceAccount",
+        "BUCKET-OWNER",
+        "does not narrow WHO may act"
+      ],
+      "PUBLIC-ACCESS": [
+        "anonymous"
+      ]
+    },
+    "pabCaveatOn": [
+      "PUBLIC-ACCESS",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "forbidWhy": {
+      "S3-PUBLIC-NOT-NARROWED": [
+        "scoped to account 123456789012 principals",
+        "not public"
+      ],
+      "PUBLIC-ACCESS": [
+        "not public"
+      ]
+    }
+  }
+}

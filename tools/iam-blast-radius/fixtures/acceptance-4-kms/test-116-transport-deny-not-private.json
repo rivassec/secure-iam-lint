@@ -1,0 +1,60 @@
+{
+  "id": "test-116",
+  "suite4Test": 116,
+  "story": "IAM-1403",
+  "name": "KMS transport-only Deny does not neutralize the grant",
+  "note": "acceptance-suite-4 test 116. The '*' kms:Decrypt Allow stands (every AWS identity in every account - NOT anonymous, per 109). A same-policy Deny gated only on aws:SecureTransport=false is a TRANSPORT constraint (forces HTTPS) and constrains transport, not WHO may act; it does NOT make the key private - the grant stays in effect over TLS.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "kms-key",
+      "arn": "arn:aws:kms:us-east-1:111122223333:key/abcd-1234"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "AWS": "*" },
+        "Action": "kms:Decrypt",
+        "Resource": "*"
+      },
+      {
+        "Effect": "Deny",
+        "Principal": { "AWS": "*" },
+        "Action": "kms:*",
+        "Resource": "*",
+        "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectKms": {
+    "findingIds": ["PUBLIC-ACCESS"],
+    "findingSeverities": { "PUBLIC-ACCESS": "critical" },
+    "notFindingIds": [
+      "KMS-SILENT-POLICY-UNKNOWN",
+      "KMS-VIASERVICE-NOT-SCOPING"
+    ],
+    "scopedByEmpty": ["PUBLIC-ACCESS"],
+    "anonymousFalse": ["PUBLIC-ACCESS"],
+    "whyIncludes": {
+      "PUBLIC-ACCESS": [
+        "every AWS identity in every account",
+        "TRANSPORT constraint",
+        "stays in effect over TLS"
+      ]
+    },
+    "forbidWhy": {
+      "PUBLIC-ACCESS": [
+        "including anonymous",
+        "unauthenticated callers",
+        "makes the key private"
+      ]
+    }
+  }
+}

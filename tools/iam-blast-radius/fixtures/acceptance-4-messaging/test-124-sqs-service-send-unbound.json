@@ -1,0 +1,28 @@
+{
+  "id": "test-124",
+  "suite4Test": 124,
+  "story": "IAM-1404",
+  "name": "SQS service send without source binding (confused deputy)",
+  "note": "acceptance-suite-4 test 124. An SQS queue grants s3.amazonaws.com sqs:SendMessage with NO aws:SourceArn/aws:SourceAccount (the S3-notifications -> SQS pattern). RESOURCE-CONFUSED-DEPUTY fires medium (unbound). A service principal is not public write and not anonymous.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sqs", "arn": "arn:aws:sqs:us-east-2:444455556666:MyQueue" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Principal": { "Service": "s3.amazonaws.com" }, "Action": "sqs:SendMessage", "Resource": "arn:aws:sqs:us-east-2:444455556666:MyQueue" }
+    ]
+  },
+  "expect": { "valid": true },
+  "expectMessaging": {
+    "coverageIncomplete": true,
+    "findingIds": ["RESOURCE-CONFUSED-DEPUTY"],
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "medium" },
+    "notFindingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE", "MESSAGING-POLICY-TAKEOVER", "RESOURCE-CROSS-ACCOUNT"],
+    "sourceBindingState": { "RESOURCE-CONFUSED-DEPUTY": "unbound" },
+    "whyIncludes": { "RESOURCE-CONFUSED-DEPUTY": ["confused-deputy", "NOT public write"] },
+    "forbidWhy": { "RESOURCE-CONFUSED-DEPUTY": ["anonymous", "anyone can"] }
+  }
+}

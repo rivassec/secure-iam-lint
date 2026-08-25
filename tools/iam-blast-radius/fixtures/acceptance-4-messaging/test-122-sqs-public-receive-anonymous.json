@@ -1,0 +1,35 @@
+{
+  "id": "test-122",
+  "suite4Test": 122,
+  "story": "IAM-1404",
+  "name": "SQS '*' receive is anonymous public and MUST stay critical (dispatch-bleed near-miss)",
+  "note": "acceptance-suite-4 test 122. AWS SQS docs label a Principal '*' grant 'all users (anonymous users)', so sqs:ReceiveMessage to '*' is genuinely anonymous public: the generic PUBLIC-ACCESS is critical and resource.anonymous is TRUE. The messaging rule ADDS MESSAGING-PUBLIC-EXPOSURE (high) naming the DRAIN vector. The KMS not-anonymous carve-out (test 109) MUST NOT leak here - the SQS grant keeps its anonymous framing.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sqs", "arn": "arn:aws:sqs:us-east-2:111122223333:queue1" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AnonymousReceive", "Effect": "Allow", "Principal": "*", "Action": "sqs:ReceiveMessage", "Resource": "arn:aws:sqs:us-east-2:111122223333:queue1" }
+    ]
+  },
+  "expect": { "valid": true },
+  "expectMessaging": {
+    "coverageIncomplete": true,
+    "findingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE"],
+    "findingSeverities": { "PUBLIC-ACCESS": "critical", "MESSAGING-PUBLIC-EXPOSURE": "high" },
+    "notFindingIds": ["RESOURCE-CROSS-ACCOUNT", "RESOURCE-CONFUSED-DEPUTY", "MESSAGING-POLICY-TAKEOVER"],
+    "anonymousTrue": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE"],
+    "scopedByEmpty": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE"],
+    "whyIncludes": {
+      "MESSAGING-PUBLIC-EXPOSURE": ["DRAIN", "sqs:ReceiveMessage"],
+      "PUBLIC-ACCESS": ["anonymous"]
+    },
+    "forbidWhy": {
+      "MESSAGING-PUBLIC-EXPOSURE": ["not anonymous", "all AWS identities in all accounts", "authenticated only"],
+      "PUBLIC-ACCESS": ["not anonymous", "all AWS identities in all accounts", "authenticated only"]
+    }
+  }
+}

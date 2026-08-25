@@ -1,0 +1,62 @@
+{
+  "id": "test-111",
+  "suite4Test": 111,
+  "story": "IAM-1403",
+  "name": "KMS '*' + kms:ViaService only is still account-open (near-miss, trap 2)",
+  "note": "acceptance-suite-4 test 111. kms:ViaService pins the SERVICE CHANNEL a request flows through (e.g. EC2 in a Region), NOT the caller's identity, so a '*' key policy narrowed only by it is STILL open to any account's principals whose requests flow through that service. The generic PUBLIC-ACCESS over-grant stays critical (not downgraded); the KMS per-service KMS-VIASERVICE-NOT-SCOPING note states ViaService is a channel selector, not principal scoping. principalScopedBy stays EMPTY (ViaService is not credited as narrowing).",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "kms-key",
+      "arn": "arn:aws:kms:us-west-2:111122223333:key/abcd-1234"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "AWS": "*" },
+        "Action": ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*"],
+        "Resource": "*",
+        "Condition": {
+          "StringEquals": { "kms:ViaService": "ec2.us-west-2.amazonaws.com" }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectKms": {
+    "findingIds": ["PUBLIC-ACCESS", "KMS-VIASERVICE-NOT-SCOPING"],
+    "findingSeverities": {
+      "PUBLIC-ACCESS": "critical",
+      "KMS-VIASERVICE-NOT-SCOPING": "high"
+    },
+    "notFindingIds": [
+      "KMS-SILENT-POLICY-UNKNOWN",
+      "KMS-CREATE-GRANT-DELEGATION"
+    ],
+    "scopedByEmpty": ["PUBLIC-ACCESS", "KMS-VIASERVICE-NOT-SCOPING"],
+    "anonymousFalse": ["PUBLIC-ACCESS", "KMS-VIASERVICE-NOT-SCOPING"],
+    "whyIncludes": {
+      "PUBLIC-ACCESS": ["every AWS identity in every account"],
+      "KMS-VIASERVICE-NOT-SCOPING": [
+        "kms:ViaService",
+        "SERVICE CHANNEL",
+        "not the caller",
+        "kms:CallerAccount"
+      ]
+    },
+    "forbidWhy": {
+      "PUBLIC-ACCESS": ["including anonymous", "unauthenticated callers"],
+      "KMS-VIASERVICE-NOT-SCOPING": [
+        "scoped to account 111122223333",
+        "authenticated only",
+        "narrowed to authenticated"
+      ]
+    }
+  }
+}

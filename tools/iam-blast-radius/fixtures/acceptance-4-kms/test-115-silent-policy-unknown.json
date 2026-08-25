@@ -1,0 +1,59 @@
+{
+  "id": "test-115",
+  "suite4Test": 115,
+  "story": "IAM-1403",
+  "name": "KMS silent key policy is fail-closed UNKNOWN (inverted vs S3)",
+  "note": "acceptance-suite-4 test 115. A key policy that grants only a specific same-account role (KeyAdmin) and OMITS the account-delegation ('Enable IAM User Permissions') statement means IAM identity policies CANNOT govern this key - unlike S3, where an absent bucket policy still lets the account's IAM policies grant access. Only key-policy-named principals can use the key; per-principal effective access is fail-closed UNKNOWN from the key policy alone. The direct same-account grant is reported (RESOURCE-SAME-ACCOUNT-GRANT medium) plus a KMS-SILENT-POLICY-UNKNOWN coverage-style finding that notes kms:PutKeyPolicy = key-policy takeover.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "kms-key",
+      "arn": "arn:aws:kms:us-east-1:111122223333:key/abcd-1234"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SingleAdminOnly",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::111122223333:role/KeyAdmin" },
+        "Action": ["kms:Describe*", "kms:PutKeyPolicy"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectKms": {
+    "findingIds": [
+      "RESOURCE-SAME-ACCOUNT-GRANT",
+      "KMS-SILENT-POLICY-UNKNOWN"
+    ],
+    "findingSeverities": {
+      "RESOURCE-SAME-ACCOUNT-GRANT": "medium",
+      "KMS-SILENT-POLICY-UNKNOWN": "info"
+    },
+    "notFindingIds": [
+      "PUBLIC-ACCESS",
+      "KMS-KEY-POLICY-TAKEOVER",
+      "RESOURCE-KMS-ACCOUNT-DELEGATION"
+    ],
+    "whyIncludes": {
+      "KMS-SILENT-POLICY-UNKNOWN": [
+        "does NOT include the account-delegation",
+        "INVERTS the S3 rule",
+        "fail-closed",
+        "key-policy-takeover primitive"
+      ]
+    },
+    "forbidWhy": {
+      "KMS-SILENT-POLICY-UNKNOWN": [
+        "can still grant access to this key",
+        "private-but-IAM-reachable"
+      ]
+    }
+  }
+}

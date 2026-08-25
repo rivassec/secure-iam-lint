@@ -1,0 +1,51 @@
+{
+  "id": "test-112",
+  "suite4Test": 112,
+  "story": "IAM-1403",
+  "name": "KMS '*' + kms:CallerAccount narrows to the account (contrast to 111)",
+  "note": "acceptance-suite-4 test 112. kms:CallerAccount is a principal-ACCOUNT scoping key (the KMS analog of aws:PrincipalAccount): combined with Principal '*' it narrows the grant to all authenticated identities in the named account. kms:ViaService additionally pins the channel. The '*' is NARROWED (not public/critical) with principalScopedBy=[kms:CallerAccount], and the AND composition of the two keys is preserved (not collapsed to OR). The KMS-VIASERVICE-NOT-SCOPING note does NOT fire (the grant IS principal-scoped here).",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "kms-key",
+      "arn": "arn:aws:kms:us-west-2:111122223333:key/abcd-1234"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "AWS": "*" },
+        "Action": ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*"],
+        "Resource": "*",
+        "Condition": {
+          "StringEquals": {
+            "kms:CallerAccount": "111122223333",
+            "kms:ViaService": "ec2.us-west-2.amazonaws.com"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectKms": {
+    "findingIds": ["PUBLIC-ACCESS"],
+    "findingSeverities": { "PUBLIC-ACCESS": "high" },
+    "notCritical": ["PUBLIC-ACCESS"],
+    "notFindingIds": [
+      "KMS-VIASERVICE-NOT-SCOPING",
+      "KMS-SILENT-POLICY-UNKNOWN"
+    ],
+    "scopedBy": { "PUBLIC-ACCESS": ["kms:CallerAccount"] },
+    "whyIncludes": {
+      "PUBLIC-ACCESS": ["NARROWED", "kms:CallerAccount", "logical AND"]
+    },
+    "forbidWhy": {
+      "PUBLIC-ACCESS": ["anyone can", "open to every account", "any account can use"]
+    }
+  }
+}

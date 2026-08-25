@@ -1,0 +1,36 @@
+{
+  "id": "test-123",
+  "suite4Test": 123,
+  "story": "IAM-1404",
+  "name": "SNS-to-SQS source-bound service send (negative control)",
+  "note": "acceptance-suite-4 test 123. The documented SNS -> SQS pattern grants sns.amazonaws.com sqs:SendMessage constrained by ArnEquals aws:SourceArn (the source topic). That is a source-bound negative control: RESOURCE-CONFUSED-DEPUTY drops to info, not a missing binding and not public write.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sqs", "arn": "arn:aws:sqs:us-east-2:444455556666:MyQueue" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "Allow-SNS-SendMessage",
+        "Effect": "Allow",
+        "Principal": { "Service": "sns.amazonaws.com" },
+        "Action": "sqs:SendMessage",
+        "Resource": "arn:aws:sqs:us-east-2:444455556666:MyQueue",
+        "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:us-east-2:444455556666:MyTopic" } }
+      }
+    ]
+  },
+  "expect": { "valid": true },
+  "expectMessaging": {
+    "coverageIncomplete": true,
+    "findingIds": ["RESOURCE-CONFUSED-DEPUTY"],
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "info" },
+    "notFindingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE", "MESSAGING-POLICY-TAKEOVER", "RESOURCE-CROSS-ACCOUNT"],
+    "sourceBindingState": { "RESOURCE-CONFUSED-DEPUTY": "source-bound" },
+    "sourceBindingBound": { "RESOURCE-CONFUSED-DEPUTY": ["aws:SourceArn"] },
+    "whyIncludes": { "RESOURCE-CONFUSED-DEPUTY": ["source-binding", "NEGATIVE control"] },
+    "forbidWhy": { "RESOURCE-CONFUSED-DEPUTY": ["missing source binding", "anyone can"] }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "id": "test-117",
+  "suite4Test": 117,
+  "story": "IAM-1404",
+  "name": "Public sns:Subscribe is an exfiltration vector (critical)",
+  "note": "acceptance-suite-4 test 117. A bare Principal '*' Allow of sns:Subscribe on an SNS topic policy is a public wildcard-principal grant: the generic PUBLIC-ACCESS finding is critical. The shared messaging per-service rule ADDS MESSAGING-PUBLIC-EXPOSURE (high) naming the specific vector - anyone can attach an endpoint and EXFILTRATE every message published to the topic. Neither finding is narrowed; both keep the anonymous reach.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sns", "arn": "arn:aws:sns:us-east-2:444455556666:MyTopic" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Principal": "*", "Action": "sns:Subscribe", "Resource": "arn:aws:sns:us-east-2:444455556666:MyTopic" }
+    ]
+  },
+  "expect": { "valid": true },
+  "expectMessaging": {
+    "coverageIncomplete": true,
+    "findingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE"],
+    "findingSeverities": { "PUBLIC-ACCESS": "critical", "MESSAGING-PUBLIC-EXPOSURE": "high" },
+    "notFindingIds": ["RESOURCE-CROSS-ACCOUNT", "RESOURCE-CONFUSED-DEPUTY", "MESSAGING-POLICY-TAKEOVER"],
+    "anonymousTrue": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE"],
+    "scopedByEmpty": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE"],
+    "whyIncludes": {
+      "MESSAGING-PUBLIC-EXPOSURE": ["EXFILTRATE", "sns:Subscribe"],
+      "PUBLIC-ACCESS": ["anonymous"]
+    },
+    "forbidWhy": {
+      "MESSAGING-PUBLIC-EXPOSURE": ["safe", "not anonymous", "all AWS identities in all accounts"],
+      "PUBLIC-ACCESS": ["not anonymous", "all AWS identities in all accounts"]
+    }
+  }
+}

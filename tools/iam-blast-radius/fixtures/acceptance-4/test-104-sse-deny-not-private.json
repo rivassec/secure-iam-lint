@@ -1,0 +1,77 @@
+{
+  "id": "test-104",
+  "suite4Test": 104,
+  "story": "IAM-1402",
+  "name": "SSE-enforcing Deny does not make public access private (near-miss, trap 3)",
+  "note": "acceptance-suite-4 test 104. A StringNotEquals s3:x-amz-server-side-encryption Deny forces server-side encryption on writes; it constrains the object's encryption header (a request property), not WHO may act - exactly like an aws:SecureTransport Deny (test 28). The public s3:GetObject read Allow stays critical PUBLIC-ACCESS; the S3 per-service NOT-NARROWED note classifies the SSE Deny as a request-property Deny that does NOT privatize the public read.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "s3-bucket",
+      "arn": "arn:aws:s3:::sse-enforced",
+      "account": "123456789012"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PublicRead",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::sse-enforced/*"
+      },
+      {
+        "Sid": "RequireSSE",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::sse-enforced/*",
+        "Condition": {
+          "StringNotEquals": {
+            "s3:x-amz-server-side-encryption": "AES256"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectS3": {
+    "findingIds": [
+      "PUBLIC-ACCESS",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "findingSeverities": {
+      "PUBLIC-ACCESS": "critical",
+      "S3-PUBLIC-NOT-NARROWED": "high"
+    },
+    "scopedByEmpty": [
+      "PUBLIC-ACCESS",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "whyIncludes": {
+      "S3-PUBLIC-NOT-NARROWED": [
+        "s3:x-amz-server-side-encryption",
+        "request-property Deny",
+        "does NOT constrain WHO may act"
+      ],
+      "PUBLIC-ACCESS": [
+        "anonymous"
+      ]
+    },
+    "pabCaveatOn": [
+      "PUBLIC-ACCESS",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "forbidWhy": {
+      "S3-PUBLIC-NOT-NARROWED": [
+        "deny makes the bucket private",
+        "neutralizes public read"
+      ]
+    }
+  }
+}

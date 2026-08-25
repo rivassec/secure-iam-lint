@@ -104,6 +104,87 @@ export const RESOURCE_IDS = Object.freeze([
   // is surfaced fail-closed - it always yields >=1 finding, mirroring the trust
   // family's "fail closed toward surfacing" (TRUST-INVALID-PRINCIPAL).
   'RESOURCE-UNSUPPORTED-PRINCIPAL',
+  // IAM-1402 (Phase 14): S3 per-service refinements, ADDITIVE to the generic
+  // findings above (never a suppression of them). A bucket-CONTROL action
+  // (s3:PutBucketPolicy / PutBucketAcl / PutBucketPublicAccessBlock /
+  // DeleteBucketPolicy) granted to an anonymous "*" or a principal outside the
+  // bucket-owning account is a resource-policy TAKEOVER / self-expansion primitive
+  // ranked above a data-plane action (never over-claimed as proven effective
+  // takeover).
+  'S3-BUCKET-POLICY-TAKEOVER',
+  // IAM-1402 (Phase 14): a companion note on a genuinely-public S3 "*" grant that
+  // carries an S3-specific condition/Deny which could be MISREAD as narrowing it to
+  // authenticated principals but does not: a network selector (aws:SourceIp /
+  // SourceVpc / SourceVpce - anonymous WITHIN that network), s3:ResourceAccount /
+  // aws:ResourceAccount (pins the bucket-OWNER account, not the caller), or a
+  // request-property Deny (aws:SecureTransport / s3:TlsVersion /
+  // s3:x-amz-server-side-encryption - constrains the request, not WHO may act). It
+  // states these do NOT privatize/narrow the public grant; it never downgrades the
+  // generic critical PUBLIC-ACCESS finding.
+  'S3-PUBLIC-NOT-NARROWED',
+  // IAM-1403 (Phase 14): KMS key-policy per-service refinements, ADDITIVE to the
+  // generic findings above and scoped to the kms-key token ONLY (the KMS
+  // not-anonymous reframing is structurally incapable of altering the S3/SNS/SQS
+  // anonymous-public classification - trap 4). A companion note on a genuinely-broad
+  // KMS "*" grant that carries kms:ViaService (or a network selector) which could be
+  // MISREAD as narrowing it to authenticated principals but does not: kms:ViaService
+  // pins the SERVICE CHANNEL a request flows through, not WHO the caller is, so a "*"
+  // narrowed only by it stays open to every account whose requests flow through that
+  // service (grounding 3.3). Only kms:CallerAccount / aws:PrincipalAccount /
+  // aws:PrincipalOrgID pin WHO. Never downgrades the generic KMS "*" over-grant.
+  'KMS-VIASERVICE-NOT-SCOPING',
+  // IAM-1403 (Phase 14): kms:CreateGrant granted to "*" or a cross-account / account-
+  // undetermined principal is an onward-DELEGATION primitive - the grantee can create
+  // grants that let OTHER principals (in any account/org, including AWS services) use
+  // the key, and need not hold the permission itself (grounding 3.4). Ranked above
+  // ordinary key use; NEVER over-claimed as a proven decrypt or as effective access.
+  // kms:GrantIsForAWSResource narrows CreateGrant to AWS-service-created grants.
+  'KMS-CREATE-GRANT-DELEGATION',
+  // IAM-1403 (Phase 14): kms:PutKeyPolicy granted to "*" (critical) or a cross-account
+  // / account-undetermined principal (high) is a key-policy TAKEOVER / self-expansion
+  // primitive - the grantee can rewrite the key's own policy to grant itself (or
+  // anyone) any further access (grounding 3.4, "much like" kms:CreateGrant). Never
+  // fired for a confirmed same-account principal, and never over-claimed as effective.
+  'KMS-KEY-POLICY-TAKEOVER',
+  // IAM-1403 (Phase 14): the KMS silent-key-policy inversion (grounding 3.5). A key
+  // policy that OMITS the account-delegation ("Enable IAM User Permissions") statement
+  // and grants no anonymous "*" means IAM identity policies CANNOT govern the key
+  // (unlike S3, where an absent bucket policy still lets the account's IAM policies
+  // grant access) - only the key-policy-named principals can use it, and per-principal
+  // effective access is fail-closed UNKNOWN from the key policy alone. Surfaced (never
+  // silently dropped); the absence of a finding does NOT mean the key is safe/private.
+  'KMS-SILENT-POLICY-UNKNOWN',
+  // IAM-1404 (Phase 14): shared SNS topic + SQS queue messaging per-service
+  // refinements, ADDITIVE to the generic findings above and scoped to the sns / sqs
+  // tokens only (the KMS not-anonymous carve-out is structurally incapable of leaking
+  // here - trap 4 - so a genuinely-anonymous SNS/SQS "*" grant stays critical
+  // PUBLIC-ACCESS via the generic path). A genuinely-public (anonymous "*", not
+  // narrowed by a principal-identity key) grant of a dangerous messaging DATA-PLANE
+  // action names the specific vector the generic PUBLIC-ACCESS enumeration does not:
+  // sns:Subscribe to "*" = anyone can attach an endpoint and EXFILTRATE every message
+  // published to the topic; sns:Publish to "*" = anyone can INJECT messages to the
+  // topic and its subscribers; sqs:ReceiveMessage (+ sqs:DeleteMessage) to "*" =
+  // anyone can DRAIN/read the queue; sqs:SendMessage to "*" = anyone can INJECT/poison
+  // the queue. Never downgrades or suppresses the generic critical PUBLIC-ACCESS.
+  'MESSAGING-PUBLIC-EXPOSURE',
+  // IAM-1404 (Phase 14): a messaging policy-CONTROL action - sns:AddPermission /
+  // sns:RemovePermission / sns:SetTopicAttributes, sqs:AddPermission /
+  // sqs:RemovePermission / sqs:SetQueueAttributes (or a full-service sns:* / sqs:*
+  // wildcard that INCLUDES them) - granted to an anonymous "*" (critical) or to a
+  // principal outside (or not confirmed inside) the resource-owning account (high) is
+  // a resource-policy TAKEOVER / self-expansion primitive: the grantee can rewrite the
+  // topic/queue access policy to grant itself (or anyone) any further access. Ranked
+  // above a data-plane messaging action; NEVER over-claimed as proven effective
+  // takeover (a cross-account grant still needs the caller's own account to allow it).
+  'MESSAGING-POLICY-TAKEOVER',
+  // IAM-1404 (Phase 14): aws:SourceOwner is a DEPRECATED legacy confused-deputy
+  // source-binding key on Amazon SNS ("new services can integrate with Amazon SNS only
+  // through aws:SourceArn and aws:SourceAccount"). It IS a present source binding (the
+  // generic RESOURCE-CONFUSED-DEPUTY treats a service grant carrying it as source-bound,
+  // not a missing binding), but this note recommends migrating to
+  // aws:SourceArn/aws:SourceAccount. Informational; never a missing-binding warning and
+  // never a public-write claim (a service principal is not "*").
+  'MESSAGING-DEPRECATED-SOURCE-OWNER',
 ]);
 
 // Rule revision for resource findings (provenance on every finding/export).
@@ -137,11 +218,39 @@ const DOC_EVAL_LOGIC =
 // S3 bucket-vs-object action/resource scoping (object actions need an object ARN).
 const DOC_S3_ACTIONS =
   'https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-actions.html';
+// S3 bucket-policy condition keys (s3:x-amz-server-side-encryption SSE enforcement,
+// s3:TlsVersion, s3:ResourceAccount / aws:ResourceAccount - the bucket-owner account,
+// not the caller) - docs/resource-per-service-semantics.md sections 1.3-1.4, source 3.
+const DOC_S3_POLICY_KEYS =
+  'https://docs.aws.amazon.com/AmazonS3/latest/userguide/amazon-s3-policy-keys.html';
 // KMS default key policy - "Enable IAM User Permissions": the account principal
 // delegates authority to the account (via IAM), not the root user only; Resource:*
 // is the attached key (resource-policy-semantics.md section 7.1 / 6).
 const DOC_KMS_KEY_POLICY =
   'https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-default.html';
+// KMS key-policy overview: "AWS":"*" = all AWS identities in all accounts (KMS has
+// no unauthenticated path); Resource:"*" = this attached key; account-root delegates
+// to the account + admins, not root-only (per-service semantics section 3.1-3.2).
+const DOC_KMS_OVERVIEW =
+  'https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-overview.html';
+// KMS condition keys: kms:ViaService pins the request CHANNEL (a service), NOT the
+// caller; kms:CallerAccount pins the caller's ACCOUNT (per-service section 3.3).
+const DOC_KMS_CONDITIONS =
+  'https://docs.aws.amazon.com/kms/latest/developerguide/conditions-kms.html';
+// Grants in AWS KMS: kms:CreateGrant delegates key use cross-account/org and the
+// grantee need not hold the permission itself; "much like" kms:PutKeyPolicy in blast
+// radius; kms:GrantIsForAWSResource narrows it (per-service section 3.4).
+const DOC_KMS_GRANTS =
+  'https://docs.aws.amazon.com/kms/latest/developerguide/grants.html';
+// SNS access-control example cases: Publish/Subscribe; the S3 -> SNS aws:SourceAccount
+// pattern; aws:PrincipalOrgID org-scoped publish; aws:SourceOwner deprecated in favor
+// of aws:SourceArn / aws:SourceAccount (per-service semantics section 4).
+const DOC_SNS_ACCESS =
+  'https://docs.aws.amazon.com/sns/latest/dg/sns-access-policy-use-cases.html';
+// SQS basic policy examples: Principal "*" = "all users (anonymous users)";
+// SendMessage / ReceiveMessage; cross-account exclusions (per-service section 4.1).
+const DOC_SQS_ACCESS =
+  'https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-basic-examples-of-sqs-policies.html';
 
 // Human labels for the UI / exports. Falls back to the raw token.
 export const RESOURCE_SERVICE_LABELS = Object.freeze({
@@ -398,12 +507,28 @@ const PRINCIPAL_SCOPING_KEYS = Object.freeze(new Set([
   'aws:sourcearn',
 ]));
 
+// KMS-ONLY principal-account scoping key (IAM-1403; per-service semantics section
+// 3.3). kms:CallerAccount pins the CALLER'S ACCOUNT ("all identities in an AWS
+// account"): combined with Principal:"*" it narrows the grant to all authenticated
+// identities in the named account, exactly like aws:PrincipalAccount. It is credited
+// as narrowing ONLY on a kms-key policy - it is a KMS-specific key and is never
+// treated as scoping on S3/SNS/SQS. Note kms:ViaService is deliberately NOT here: it
+// pins the SERVICE CHANNEL, not the caller, so it never narrows WHO may act (trap 2).
+const KMS_PRINCIPAL_SCOPING_KEYS = Object.freeze(new Set([
+  'kms:calleraccount',
+]));
+
 // True when a condition key names a principal-identity scoping key. aws:PrincipalTag
 // is written as `aws:PrincipalTag/<tag-key>` (the tag name is a suffix), so it is
 // matched by prefix; every other scoping key is an exact match. Case-insensitive.
-function isPrincipalScopingKey(keyLower) {
+// `service` (optional) credits the service-specific principal-account key set: on a
+// kms-key policy, kms:CallerAccount narrows WHO (the KMS analog of
+// aws:PrincipalAccount); it is never credited on any other service.
+function isPrincipalScopingKey(keyLower, service) {
   if (PRINCIPAL_SCOPING_KEYS.has(keyLower)) return true;
-  return keyLower.startsWith('aws:principaltag/');
+  if (keyLower.startsWith('aws:principaltag/')) return true;
+  if (service === RESOURCE_SERVICES.KMS_KEY && KMS_PRINCIPAL_SCOPING_KEYS.has(keyLower)) return true;
+  return false;
 }
 
 // True when an operator NEGATES its principal-scoping match - i.e. it is one of the
@@ -437,7 +562,7 @@ function operatorNegatesScope(operator, value) {
 // original-cased, sorted, deduped. Never rejects or interprets the condition VALUE -
 // a wildcard inside e.g. aws:PrincipalArn is a valid condition value, not a
 // partial-ARN principal wildcard (test 85); only the OPERATOR polarity is read.
-function principalScopingAnalysis(condition) {
+function principalScopingAnalysis(condition, service) {
   const scoping = new Set();
   const expanding = new Set();
   if (!condition || typeof condition !== 'object' || Array.isArray(condition)) {
@@ -447,7 +572,7 @@ function principalScopingAnalysis(condition) {
     const inner = condition[op];
     if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
     for (const key of Object.keys(inner)) {
-      if (!isPrincipalScopingKey(String(key).toLowerCase())) continue;
+      if (!isPrincipalScopingKey(String(key).toLowerCase(), service)) continue;
       if (operatorNegatesScope(op, inner[key])) expanding.add(key);
       else scoping.add(key);
     }
@@ -658,6 +783,14 @@ function sourceBindingAnalysis(condition) {
     sourceArn: { bound: false, account: null, accounts: [] },
     sourceAccount: { bound: false, account: null, accounts: [] },
     sourceOrg: false,
+    // aws:SourceOwner (IAM-1404): a DEPRECATED legacy confused-deputy source-binding
+    // key (chiefly Amazon SNS). It is still a REAL source binding when present under a
+    // positive, non-bypassable operator (the account id of the source owner), so it
+    // makes the service grant source-bound rather than a missing binding - but it is
+    // deprecated in favor of aws:SourceArn / aws:SourceAccount. Tracked separately from
+    // sourceArn/sourceAccount so it never participates in the SourceArn-vs-SourceAccount
+    // mismatch determination (it is a distinct key), only in whether ANY binding exists.
+    sourceOwner: false,
     boundKeys: [],
     bypassedKeys: [],
   };
@@ -676,7 +809,8 @@ function sourceBindingAnalysis(condition) {
       const key = String(rawKey).toLowerCase();
       const isSourceKey =
         key === 'aws:sourcearn' || key === 'aws:sourceaccount' ||
-        key === 'aws:sourceorgid' || key === 'aws:sourceorgpaths';
+        key === 'aws:sourceorgid' || key === 'aws:sourceorgpaths' ||
+        key === 'aws:sourceowner';
       if (!isSourceKey) continue;
       const values = toSourceValueList(inner[rawKey]);
       const binds = positive && !negated && !bypassable &&
@@ -704,6 +838,8 @@ function sourceBindingAnalysis(condition) {
         for (const a of sourceAccountSet(values)) {
           if (!out.sourceAccount.accounts.includes(a)) out.sourceAccount.accounts.push(a);
         }
+      } else if (key === 'aws:sourceowner') {
+        out.sourceOwner = true;
       } else {
         out.sourceOrg = true;
       }
@@ -980,7 +1116,14 @@ function makeResourceFinding(stmt, entries, opts) {
       service: opts.service || null,
       attachedArn: opts.attachedArn || null,
       principalTypes: [...new Set(entries.map((e) => e.type))].sort(),
-      anonymous: entries.some((e) => e.type === 'anonymous'),
+      // Whether this grant reaches an anonymous/unauthenticated caller. Defaults to
+      // "an anonymous "*" principal is present", but a per-service reframe may clear
+      // it: a KMS "*" uses the wildcard-principal FORM yet reaches only authenticated
+      // AWS identities (KMS has no unauthenticated path), so its reach is not
+      // anonymous even though the principal element is "*" (IAM-1403).
+      anonymous: opts.anonymousReach !== undefined
+        ? !!opts.anonymousReach
+        : entries.some((e) => e.type === 'anonymous'),
       // Principal-scoping condition keys narrowing an anonymous "*" grant to
       // authenticated principals; empty for a genuinely-public/unconditioned grant
       // and for non-anonymous findings. A non-empty value means the "*" is NARROWED
@@ -1098,7 +1241,15 @@ function resourceFindings(model, ctx) {
     // this narrowing (section 5).
     if (c.anonymous) {
       const anonEntries = c.entries.filter((e) => e.type === 'anonymous');
-      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition);
+      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service);
+      // A KMS key policy's "*" is NOT anonymous/public: KMS has no unauthenticated
+      // request path, so "*" = every AWS identity in every account (cross-account
+      // still double-authorized). This service-scoped reframe changes ONLY the KMS
+      // wording/doc of the same PUBLIC-ACCESS finding (never its id, never a
+      // suppression) and is structurally unreachable for S3/SNS/SQS, which stay
+      // genuinely anonymous-public (IAM-1403; per-service semantics section 3.1,
+      // trap 1 / trap 4).
+      const isKms = service === RESOURCE_SERVICES.KMS_KEY;
       // A NEGATED principal-scoping operator (StringNotEquals aws:PrincipalOrgID,
       // ArnNotEquals aws:PrincipalArn, Null-absent, ...) is an EXCLUSION/expansion,
       // NOT a narrowing, and dominates: it must never downgrade the "*" grant to
@@ -1164,6 +1315,33 @@ function resourceFindings(model, ctx) {
           'pattern is broader and easier to get wrong than a named principal. Confirm ' +
           'the condition value (e.g. the aws:PrincipalArn pattern) scopes access to ' +
           'exactly the intended principals, and tighten it if it is broader than needed.';
+      } else if (isKms) {
+        // KMS "*" is a severe over-grant but is NOT anonymous/public: KMS has no
+        // unauthenticated path, so "*" = every AWS identity in every account. Drop the
+        // "anonymous / unauthenticated / anyone on the internet" wording (trap 1);
+        // Resource:"*" = the attached key only (never every key in the account).
+        severity = 'critical';
+        title = 'KMS key policy grants key use to every AWS identity in every account';
+        why =
+          `The resource policy grants Principal "*" ({"AWS":"*"}) permission to ` +
+          `${stmt.actions.join(', ')} on this ${serviceLabel}. On a KMS key policy this ` +
+          'wildcard principal does NOT mean anonymous or public access: KMS has no ' +
+          'unauthenticated request path (every KMS API call is SigV4-signed), so "*" ' +
+          'represents every AWS identity in every account. Any principal in any AWS ' +
+          'account can use this key - subject to cross-account double-authorization, ' +
+          'i.e. a caller in another account must ALSO be allowed by its own account\'s ' +
+          'IAM policies - which is a severe over-grant of the key rather than reach by ' +
+          'callers who present no AWS credentials. The Resource element ("*") in a KMS key policy ' +
+          'means THIS attached key only (the key the policy is attached to), not every ' +
+          'KMS key in the account, so it is not an identity-style all-resources ' +
+          'wildcard and creates no per-key blast surface.';
+        remediation =
+          'Remove Principal "*" / {"AWS":"*"} and name the specific accounts, roles, ' +
+          'or services that must use this key. To scope WHO may use the key, use a ' +
+          'principal-account / org condition (kms:CallerAccount, aws:PrincipalAccount, ' +
+          'or aws:PrincipalOrgID); note that kms:ViaService pins only the SERVICE ' +
+          'CHANNEL a request flows through, not the caller, so it does not by itself ' +
+          'restrict which accounts can use the key.';
       } else {
         // Bare, unconditioned "*" -> genuine anonymous / public access.
         severity = 'critical';
@@ -1189,16 +1367,28 @@ function resourceFindings(model, ctx) {
       why += describeConditionComposition(stmt.condition);
       if (transportOnlyDeny) {
         // The transport Deny does not neutralize the Allow. Its framing depends on
-        // whether the Allow is public (bare "*") or already principal-scoped.
-        why += principalScoped
-          ? ' A same-policy Deny gated only on aws:SecureTransport=false is a ' +
+        // whether the Allow is public (bare "*") or already principal-scoped, and (for
+        // KMS) avoids the "publicly accessible" wording the KMS "*" is not.
+        if (principalScoped) {
+          why +=
+            ' A same-policy Deny gated only on aws:SecureTransport=false is a ' +
             'TRANSPORT constraint (it forces HTTPS) and constrains transport, not WHO ' +
             'may act; it neither widens nor narrows the principal-scoping condition ' +
-            'above.'
-          : ' A same-policy Deny gated only on aws:SecureTransport=false is a ' +
+            'above.';
+        } else if (isKms) {
+          why +=
+            ' A same-policy Deny gated only on aws:SecureTransport=false is a ' +
+            'TRANSPORT constraint (it forces HTTPS) and constrains transport, not WHO ' +
+            'may act; it does NOT make this key private - the "*" grant (every AWS ' +
+            'identity in every account) stays in effect over TLS, so the Deny must not ' +
+            'be read as suppressing the grant.';
+        } else {
+          why +=
+            ' A same-policy Deny gated only on aws:SecureTransport=false is a ' +
             'TRANSPORT constraint (it forces HTTPS); it does NOT make this public ' +
             'grant private - the resource stays publicly accessible over TLS, so the ' +
             'Deny must not be read as suppressing the public Allow.';
+        }
       }
       if (isS3 && !principalScoped) {
         // S3 Block Public Access is only relevant to a genuinely-public grant.
@@ -1213,7 +1403,7 @@ function resourceFindings(model, ctx) {
         title,
         why,
         remediation,
-        docRef: isS3 ? DOC_S3_BPA : DOC_PRINCIPAL,
+        docRef: isS3 ? DOC_S3_BPA : (isKms ? DOC_KMS_OVERVIEW : DOC_PRINCIPAL),
         // A grant is literally in the policy; a same-policy transport Deny does not
         // lower it, but reachability still depends on the condition / BPA / other
         // layers, so a conditioned Allow caps path-exploitability at medium.
@@ -1225,6 +1415,12 @@ function resourceFindings(model, ctx) {
         // authenticated principals (empty for a genuinely-public grant). Carried on
         // the resource enrichment so the graph/render never assert anonymous reach.
         principalScopedBy: scopeKeys,
+        // A KMS "*" grant reaches every AWS identity in every account but NOT an
+        // anonymous/unauthenticated caller (KMS has no unauthenticated path), so the
+        // resource-enrichment `anonymous` flag is cleared for KMS - the metadata must
+        // not contradict the finding text (trap 1). S3/SNS/SQS keep the structural
+        // anonymous flag.
+        anonymousReach: isKms ? false : undefined,
       }));
       continue;
     }
@@ -1494,7 +1690,8 @@ function resourceFindings(model, ctx) {
       const mismatch = binding.sourceArn.bound && binding.sourceAccount.bound &&
         arnAccounts.length > 0 && acctAccounts.length > 0 &&
         arnAccounts.every((a) => !acctAccounts.includes(a));
-      const anyBinding = binding.sourceArn.bound || binding.sourceAccount.bound || binding.sourceOrg;
+      const anyBinding = binding.sourceArn.bound || binding.sourceAccount.bound ||
+        binding.sourceOrg || binding.sourceOwner;
       const bypassedNote = binding.bypassedKeys.length > 0
         ? ` A source condition key IS present (${binding.bypassedKeys.join(', ')}) but ` +
           'does NOT bind the source: it uses a negated operator, a bypassable ' +
@@ -1666,6 +1863,1040 @@ function resourceFindings(model, ctx) {
   return findings;
 }
 
+// --- Per-service dispatch scaffolding (IAM-1401) -----------------------------
+//
+// After parseResourceContext() accepts a context, the analyzer selects a
+// per-service rule set by the DETECTED service token (serviceForArn:
+// s3-bucket / s3-object / kms-key / sns / sqs) and runs it IN ADDITION to the
+// generic principal-centric resourceFindings() loop - never instead of it, and
+// never routing to identity rules. The generic loop stays the SAFETY NET: an
+// unmodeled sub-shape still yields the generic PUBLIC-ACCESS / CROSS-ACCOUNT /
+// CONFUSED-DEPUTY / UNSUPPORTED-PRINCIPAL findings and the INCOMPLETE coverage
+// flag, so a per-service rule can only ever ADD or REFINE, never SUPPRESS.
+//
+// This tranche (IAM-1401) is PURE ROUTING: every per-service handler is a stub
+// that emits NO findings yet. The concrete finding rules are the subsequent
+// Phase-14 stories - S3 (IAM-1402), KMS (IAM-1403), and the shared SNS/SQS
+// messaging family (IAM-1404). The dispatch table exists to PROVE the wiring and
+// to make dispatch bleed (trap 4) structurally impossible:
+//   - Each handler is keyed by an EXACT service token. Selection is a single
+//     Map.get(service) with no fall-through, so a handler is structurally
+//     incapable of running for a service it is not registered under - the KMS
+//     "Principal * is not anonymous" reframing (IAM-1403) cannot alter the
+//     S3 / SNS / SQS anonymous-public classification because the KMS handler is
+//     only ever reached for the kms-key token.
+//   - A service with NO registered handler (generic / unknown) contributes
+//     nothing and relies on the generic path. Dispatch NEVER throws.
+// Each service maps to its own distinct handler function reference; S3 bucket and
+// object share one handler (they are the same bucket policy at different resource
+// scope), and SNS and SQS share one messaging handler (near-identical resource-
+// policy semantics, differing only in action namespace - grounding section 4).
+
+// --- S3 bucket-policy per-service finding rules (IAM-1402) --------------------
+//
+// The S3 bucket policy is the canonical anonymous-public-exposure surface: S3
+// object reads can be made by UNAUTHENTICATED HTTP clients, so Principal:"*" on S3
+// is public in the strongest sense (docs/resource-per-service-semantics.md
+// section 1). These rules run IN ADDITION to the generic principal-centric loop
+// (which already emits the critical PUBLIC-ACCESS / RESOURCE-CROSS-ACCOUNT /
+// RESOURCE-SAME-ACCOUNT-GRANT / RESOURCE-ACTION-RESOURCE-MISMATCH findings). They
+// add the S3-specific REFINEMENTS the generic path cannot produce, never suppress a
+// generic finding, and are scoped to the s3-bucket / s3-object tokens only.
+
+// Bucket-CONTROL actions: the grantee can REWRITE the bucket's own resource policy
+// or ACLs (resource-policy takeover / self-expansion), a far higher blast radius
+// than a data-plane action (section 1.5). Lowercased action name after the s3:
+// prefix. Wildcards (s3:*, s3:Put*) are intentionally NOT classified here - s3:* to
+// "*" already surfaces as the generic critical PUBLIC-ACCESS, and the analyzer never
+// guesses a control-plane takeover from a wildcard (mirrors S3_OBJECT_ACTIONS).
+const S3_BUCKET_CONTROL_ACTIONS = Object.freeze(new Set([
+  'putbucketpolicy', 'deletebucketpolicy', 'putbucketacl',
+  'putbucketpublicaccessblock',
+]));
+
+function isS3BucketControlAction(action) {
+  const m = /^s3:(.+)$/.exec(String(action).toLowerCase());
+  return m ? S3_BUCKET_CONTROL_ACTIONS.has(m[1]) : false;
+}
+
+// Request-property condition keys: they constrain the REQUEST (its transport, TLS
+// version, or the object's server-side-encryption header), NOT which principal may
+// act (section 1.3). A Deny gated only on these keys is exactly like the
+// aws:SecureTransport Deny of test 28 - good hygiene, but it never makes a public
+// "*" Allow private. Lowercased. aws:SecureTransport is shared with the generic
+// transport-only recognition; s3:TlsVersion and s3:x-amz-server-side-encryption are
+// the S3-specific additions this per-service rule recognizes (trap 3).
+const S3_REQUEST_PROPERTY_KEYS = Object.freeze(new Set([
+  'aws:securetransport', 's3:tlsversion', 's3:x-amz-server-side-encryption',
+]));
+
+// s3:ResourceAccount / aws:ResourceAccount pin the BUCKET-OWNER account, not the
+// caller's identity (section 1.4), so they never narrow a "*" principal to
+// authenticated callers. Lowercased.
+const S3_RESOURCE_ACCOUNT_KEYS = Object.freeze(new Set([
+  's3:resourceaccount', 'aws:resourceaccount',
+]));
+
+// A single Condition block is REQUEST-PROPERTY-only when every key it names is a
+// request-property key (transport / TLS / SSE). Mirrors isTransportOnlyCondition's
+// fail-closed shape: an unrecognized key makes it "not request-property-only", so a
+// real identity constraint is never understated. Case-insensitive.
+function isRequestPropertyOnlyCondition(condition) {
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return false;
+  const ops = Object.keys(condition);
+  if (ops.length === 0) return false;
+  for (const op of ops) {
+    const inner = condition[op];
+    if (!inner || typeof inner !== 'object') return false;
+    for (const key of Object.keys(inner)) {
+      if (!S3_REQUEST_PROPERTY_KEYS.has(String(key).toLowerCase())) return false;
+    }
+  }
+  return true;
+}
+
+// The request-property keys named by any Deny statement whose condition is
+// request-property-ONLY, deduped, sorted, original-cased. Such a Deny never
+// privatizes a public Allow (section 1.3). Empty when no such Deny is present.
+function collectRequestPropertyDenyKeys(statements) {
+  const keys = new Set();
+  for (const s of statements) {
+    if (!s || s.effect !== 'Deny') continue;
+    if (!isRequestPropertyOnlyCondition(s.condition)) continue;
+    const cond = s.condition;
+    for (const op of Object.keys(cond)) {
+      const inner = cond[op];
+      if (!inner || typeof inner !== 'object') continue;
+      for (const key of Object.keys(inner)) keys.add(key);
+    }
+  }
+  return [...keys].sort();
+}
+
+// The S3-specific NON-principal condition keys present on a single statement that a
+// reader might mistake for narrowing a "*" grant, split by role: network selectors
+// (aws:SourceIp / SourceVpc / SourceVpce - anonymous WITHIN that network) and
+// resource-account keys (s3:ResourceAccount / aws:ResourceAccount - the bucket owner,
+// not the caller). Deduped, sorted, original-cased. Never includes a principal-
+// identity key (those genuinely narrow and are handled by the generic path).
+function s3NonPrincipalDecoyKeys(condition) {
+  const network = new Set();
+  const resourceAccount = new Set();
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) {
+    return { network: [], resourceAccount: [] };
+  }
+  for (const op of Object.keys(condition)) {
+    const inner = condition[op];
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    for (const key of Object.keys(inner)) {
+      const kl = String(key).toLowerCase();
+      if (NETWORK_SELECTOR_KEYS.has(kl)) network.add(key);
+      else if (S3_RESOURCE_ACCOUNT_KEYS.has(kl)) resourceAccount.add(key);
+    }
+  }
+  return { network: [...network].sort(), resourceAccount: [...resourceAccount].sort() };
+}
+
+// S3 per-service finding rules (IAM-1402). Pure, deterministic, dependency-free;
+// returns a fresh array; never throws; additive to the generic findings.
+function s3PerServiceRules(model, ctx) {
+  const out = [];
+  const service = ctx && typeof ctx.service === 'string' ? ctx.service : null;
+  if (service !== RESOURCE_SERVICES.S3_BUCKET && service !== RESOURCE_SERVICES.S3_OBJECT) {
+    return out;
+  }
+  const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
+  const attachedArn = ctx && ctx.arn ? ctx.arn : null;
+  const serviceLabel = RESOURCE_SERVICE_LABELS[service] || 'Amazon S3 bucket';
+  // The bucket's OWNING account (explicit context account; S3 ARNs carry none), used
+  // to distinguish a confirmed in-account admin grant from a cross-account takeover.
+  const resourceAccount = ctx && ctx.ownerAccount != null && /^\d{12}$/.test(String(ctx.ownerAccount))
+    ? String(ctx.ownerAccount)
+    : null;
+  const transportOnlyDeny = hasTransportOnlyDeny(model);
+
+  // Model-level request-property-only Denys (SSE / TLS / SecureTransport). A Deny on
+  // any of these constrains the request, not WHO may act, so it never privatizes a
+  // public Allow (section 1.3; generalizes test 28 to the S3-specific keys, trap 3).
+  const requestPropertyDenyKeys = collectRequestPropertyDenyKeys(statements);
+
+  // The Block-Public-Access fail-closed caveat carried on every S3 public/broad
+  // per-service finding (section 1.5): BPA is a separate external control that is not
+  // part of the policy and is not supplied - the analyzer never assumes it on or off.
+  const pabCaveat =
+    ' Whether this grant is actually reachable ALSO depends on S3 Block Public ' +
+    'Access (BPA), a separate account/bucket/access-point/org-level control that ' +
+    'overrides a public bucket policy and is enforced regardless of how the resource ' +
+    'was created. BPA is not part of this policy document and is not supplied here; ' +
+    'the analyzer never assumes BPA is on or off, and unsupported context does not ' +
+    'mean the resource is exposure-free.';
+
+  const externalTypes = new Set(['aws-account', 'aws-root', 'aws-principal-arn']);
+
+  for (const stmt of statements) {
+    if (!stmt || stmt.effect !== 'Allow') continue;
+    const c = classifyPrincipals(stmt.principal);
+    const actions = Array.isArray(stmt.actions) ? stmt.actions : [];
+
+    // (c) Bucket-CONTROL takeover. A bucket-control action granted to an anonymous
+    // "*" or to a principal outside the bucket-owning account is a resource-policy
+    // TAKEOVER / self-expansion primitive, ranked above a data-plane action. It is
+    // NEVER over-claimed as proven effective takeover (a cross-account grant still
+    // needs the caller's own account to allow it).
+    const controlActions = actions.filter(isS3BucketControlAction);
+    if (controlActions.length > 0) {
+      const anonEntries = c.entries.filter((e) => e.type === 'anonymous');
+      if (anonEntries.length > 0) {
+        out.push(makeResourceFinding(stmt, anonEntries, {
+          id: 'S3-BUCKET-POLICY-TAKEOVER',
+          severity: 'critical',
+          title: 'Public grant of an S3 bucket-policy control action (resource-policy takeover)',
+          policyEvidence: 'high',
+          pathExploitability: 'medium',
+          why:
+            `The resource policy grants Principal "*" the bucket-CONTROL action(s) ` +
+            `${controlActions.join(', ')} on this ${serviceLabel}. These are not ` +
+            'data-plane actions: s3:PutBucketPolicy / s3:DeleteBucketPolicy / ' +
+            's3:PutBucketAcl / s3:PutBucketPublicAccessBlock let the grantee REWRITE ' +
+            'the bucket\'s own resource policy, ACLs, or public-access-block settings - ' +
+            'a resource-policy TAKEOVER / self-expansion primitive with a far higher ' +
+            'blast radius than a single object read or write, because the grantee can ' +
+            'rewrite the policy to grant itself (or anyone) any further access. ' +
+            'Granting it to "*" means any principal, including anonymous callers, ' +
+            'could take over the bucket policy. This reports the direct resource-policy ' +
+            'grant only; it does NOT prove the takeover is effective.' + pabCaveat,
+          remediation:
+            'Never grant bucket-control actions (s3:PutBucketPolicy, s3:PutBucketAcl, ' +
+            's3:PutBucketPublicAccessBlock, s3:DeleteBucketPolicy) to Principal "*". ' +
+            'Restrict them to a specific administrative role in the bucket-owning ' +
+            'account and manage the bucket policy through change-controlled automation ' +
+            'rather than a broad in-policy grant.',
+          docRef: DOC_S3_BPA,
+          service,
+          attachedArn,
+          transportOnlyDeny,
+        }));
+      }
+      const externalEntries = c.entries.filter((e) => {
+        if (!externalTypes.has(e.type)) return false;
+        const acct = accountOfEntry(e);
+        // Exclude a CONFIRMED same-account principal (owner known AND principal
+        // account known and equal): an in-account admin grant is not a takeover
+        // exposure. An external or account-undetermined principal fails closed here.
+        return !(resourceAccount !== null && acct !== null && acct === resourceAccount);
+      });
+      if (externalEntries.length > 0) {
+        const who = summarizeEntries(externalEntries);
+        out.push(makeResourceFinding(stmt, externalEntries, {
+          id: 'S3-BUCKET-POLICY-TAKEOVER',
+          severity: 'high',
+          title: 'Cross-account grant of an S3 bucket-policy control action (resource-policy takeover)',
+          policyEvidence: 'high',
+          pathExploitability: 'medium',
+          why:
+            `The resource policy grants a principal outside (or not confirmed inside) ` +
+            `the bucket-owning account (${who}) the bucket-CONTROL action(s) ` +
+            `${controlActions.join(', ')} on this ${serviceLabel}. These are not ` +
+            'data-plane actions: they let the grantee REWRITE the bucket\'s own ' +
+            'resource policy, ACLs, or public-access-block settings (resource-policy ' +
+            'TAKEOVER / self-expansion), a far higher blast radius than an object read ' +
+            'or write - the grantee could rewrite the policy to grant itself or anyone ' +
+            'any further access. This is a cross-account grant, so it is a NECESSARY ' +
+            'but not SUFFICIENT condition: the caller\'s own account must ALSO allow ' +
+            'the action, and this reports the direct resource-policy grant only - it ' +
+            'does NOT prove the takeover is effective.' + pabCaveat,
+          remediation:
+            'Do not grant bucket-control actions (s3:PutBucketPolicy, s3:PutBucketAcl, ' +
+            's3:PutBucketPublicAccessBlock, s3:DeleteBucketPolicy) to an external or ' +
+            'cross-account principal. Keep bucket-policy management inside the ' +
+            'bucket-owning account, scoped to a specific administrative role.',
+          docRef: DOC_CROSS_ACCOUNT,
+          service,
+          attachedArn,
+          transportOnlyDeny,
+        }));
+      }
+    }
+
+    // (a)/(b) Public "*" NOT narrowed by a decoy condition/Deny. Fires ONLY when a
+    // genuinely-public "*" grant (not narrowed by a principal-IDENTITY key - that is
+    // the generic "narrowed" finding) carries an S3-specific NON-principal condition
+    // or a request-property Deny that could be MISREAD as narrowing it: a network
+    // selector, s3:ResourceAccount, or an SSE/TLS/SecureTransport Deny. It states
+    // plainly that the decoy does NOT privatize/narrow the grant - the "*" still
+    // reaches anonymous callers. It never downgrades the generic critical
+    // PUBLIC-ACCESS finding.
+    if (c.anonymous) {
+      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service);
+      const principalScoped = expansionKeys.length === 0 && scopingKeys.length > 0;
+      if (!principalScoped) {
+        const decoys = s3NonPrincipalDecoyKeys(stmt.condition);
+        const hasDecoy = decoys.network.length > 0 || decoys.resourceAccount.length > 0
+          || requestPropertyDenyKeys.length > 0;
+        if (hasDecoy) {
+          const anonEntries = c.entries.filter((e) => e.type === 'anonymous');
+          let why =
+            `This ${serviceLabel} grants Principal "*" permission to ` +
+            `${actions.join(', ')}, and it carries an S3-specific condition or Deny ` +
+            'that could be MISREAD as restricting the grant to authenticated ' +
+            'principals - but it does not. The "*" still reaches ANONYMOUS, ' +
+            'unauthenticated callers (S3 object access can be made by unauthenticated ' +
+            'HTTP clients).';
+          if (decoys.network.length > 0) {
+            why +=
+              ` A network selector (${decoys.network.join(', ')}) scopes the grant to a ` +
+              'network range, but a network selector is NOT a principal-identity ' +
+              'constraint: any caller - including an anonymous, unauthenticated one - ' +
+              'whose request originates from that network range is still permitted. S3 ' +
+              'may classify such a policy as no longer open to the whole internet, but ' +
+              'that is not the same as restricting access to authenticated principals.';
+          }
+          if (decoys.resourceAccount.length > 0) {
+            why +=
+              ` A resource-account key (${decoys.resourceAccount.join(', ')}) pins the ` +
+              'BUCKET-OWNER account, not the caller\'s identity, so it does not exclude ' +
+              'anonymous callers and does not narrow WHO may act.';
+          }
+          if (requestPropertyDenyKeys.length > 0) {
+            why +=
+              ` A request-property Deny (${requestPropertyDenyKeys.join(', ')}) ` +
+              'constrains the REQUEST (its transport, TLS version, or the object\'s ' +
+              'server-side-encryption header) - exactly like an aws:SecureTransport ' +
+              'Deny (test 28) - and does NOT constrain WHO may act, so it does not make ' +
+              'this public grant private.';
+          }
+          why += pabCaveat;
+          out.push(makeResourceFinding(stmt, anonEntries, {
+            id: 'S3-PUBLIC-NOT-NARROWED',
+            severity: 'high',
+            title: 'S3 public "*" grant not narrowed by its network / resource-account / request-property condition',
+            policyEvidence: 'high',
+            pathExploitability: 'medium',
+            why,
+            remediation:
+              'Do not rely on a network selector (aws:SourceIp / aws:SourceVpc / ' +
+              'aws:SourceVpce), a resource-account key (s3:ResourceAccount), or a ' +
+              'request-property Deny (aws:SecureTransport / s3:TlsVersion / ' +
+              's3:x-amz-server-side-encryption) to make a Principal "*" grant private - ' +
+              'none of them restrict WHO may act. Remove Principal "*" and name the ' +
+              'specific principals, or add a principal-identity condition ' +
+              '(aws:PrincipalOrgID / aws:PrincipalArn / aws:PrincipalAccount). Verify S3 ' +
+              'Block Public Access as well.',
+            docRef: DOC_S3_POLICY_KEYS,
+            service,
+            attachedArn,
+            transportOnlyDeny,
+            // Deliberately empty: this "*" is NOT narrowed to authenticated
+            // principals, so no principal-scoping key is credited (the graph must not
+            // read an anonymous origin as condition-scoped).
+            principalScopedBy: [],
+          }));
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// --- KMS key-policy per-service finding rules (IAM-1403) ---------------------
+//
+// A KMS key policy is the primary access control for the key and its semantics
+// differ sharply from S3 (docs/resource-per-service-semantics.md section 3). These
+// rules run IN ADDITION to the generic principal-centric loop, which already emits
+// the KMS "*" over-grant as PUBLIC-ACCESS with KMS-correct wording (the
+// not-anonymous reframe lives in resourceFindings, scoped to the kms-key token),
+// plus RESOURCE-KMS-ACCOUNT-DELEGATION / RESOURCE-CROSS-ACCOUNT /
+// RESOURCE-SAME-ACCOUNT-GRANT. They add the KMS-specific refinements the generic
+// path cannot produce (channel-not-scoping, CreateGrant delegation, PutKeyPolicy
+// takeover, the silent-policy inversion), never suppress a generic finding, and are
+// scoped to the kms-key token only (trap 4: cannot alter S3/SNS/SQS).
+
+// kms:ViaService pins the SERVICE CHANNEL a request flows through, NOT the caller
+// (trap 2). kms:GrantIsForAWSResource narrows kms:CreateGrant to AWS-service-created
+// grants. Lowercased.
+const KMS_VIA_SERVICE_KEY = 'kms:viaservice';
+const KMS_GRANT_IS_FOR_AWS_RESOURCE_KEY = 'kms:grantisforawsresource';
+
+// The lowercased KMS action name after the "kms:" prefix, or null for a non-KMS or
+// wildcarded action (kms:* / kms:Generate* / "*" is never guessed into a specific
+// dangerous-action classification - a full "*" already surfaces via the generic
+// branches, mirroring S3_OBJECT_ACTIONS / S3_BUCKET_CONTROL_ACTIONS).
+function kmsActionName(action) {
+  const m = /^kms:([a-z0-9]+)$/i.exec(String(action));
+  return m ? m[1].toLowerCase() : null;
+}
+
+// The KMS channel/network decoy keys on a statement's condition (kms:ViaService and
+// the aws:Source* network selectors). A "*" narrowed ONLY by these is still
+// account-open. Deduped, sorted, original-cased.
+function kmsChannelDecoyKeys(condition) {
+  const viaService = new Set();
+  const network = new Set();
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) {
+    return { viaService: [], network: [] };
+  }
+  for (const op of Object.keys(condition)) {
+    const inner = condition[op];
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    for (const key of Object.keys(inner)) {
+      const kl = String(key).toLowerCase();
+      if (kl === KMS_VIA_SERVICE_KEY) viaService.add(key);
+      else if (NETWORK_SELECTOR_KEYS.has(kl)) network.add(key);
+    }
+  }
+  return { viaService: [...viaService].sort(), network: [...network].sort() };
+}
+
+// True when a condition names kms:GrantIsForAWSResource (any operator). Presence-only
+// annotation on a CreateGrant finding; never credited as a full mitigation.
+function namesGrantIsForAwsResource(condition) {
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return false;
+  for (const op of Object.keys(condition)) {
+    const inner = condition[op];
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    for (const key of Object.keys(inner)) {
+      if (String(key).toLowerCase() === KMS_GRANT_IS_FOR_AWS_RESOURCE_KEY) return true;
+    }
+  }
+  return false;
+}
+
+// Whether the key policy contains an account / account-root delegation Allow (the
+// "Enable IAM User Permissions"-style statement). Its presence means IAM identity
+// policies CAN govern the key; its absence (with no anonymous "*") is the
+// silent-key-policy inversion (grounding 3.5).
+function kmsHasAccountDelegation(statements) {
+  return statements.some((s) => {
+    if (!s || s.effect !== 'Allow') return false;
+    const c = classifyPrincipals(s.principal);
+    return c.entries.some((e) => e.type === 'aws-account' || e.type === 'aws-root');
+  });
+}
+
+// Whether the key policy contains any anonymous "*" Allow (every AWS identity in
+// every account). When present, no principal is "silent" about the key, so the
+// silent-policy inversion warning does not apply.
+function kmsHasAnonymousAllow(statements) {
+  return statements.some(
+    (s) => s && s.effect === 'Allow' && classifyPrincipals(s.principal).anonymous,
+  );
+}
+
+// KMS key-policy per-service finding rules (IAM-1403). Pure, deterministic,
+// dependency-free; returns a fresh array; never throws; additive to the generic
+// findings. Scoped to the kms-key token ONLY.
+function kmsPerServiceRules(model, ctx) {
+  const out = [];
+  const service = ctx && typeof ctx.service === 'string' ? ctx.service : null;
+  if (service !== RESOURCE_SERVICES.KMS_KEY) return out;
+  const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
+  const attachedArn = ctx && ctx.arn ? ctx.arn : null;
+  const serviceLabel = RESOURCE_SERVICE_LABELS[service] || 'AWS KMS key';
+  // The key's OWNING account (KMS key ARNs carry it in field 4, or an explicit
+  // context account). Distinguishes a confirmed in-account grant from cross-account.
+  const resourceAccount = ctx && ctx.ownerAccount != null && /^\d{12}$/.test(String(ctx.ownerAccount))
+    ? String(ctx.ownerAccount)
+    : null;
+  const transportOnlyDeny = hasTransportOnlyDeny(model);
+  const externalTypes = new Set(['aws-account', 'aws-root', 'aws-principal-arn']);
+
+  for (const stmt of statements) {
+    if (!stmt || stmt.effect !== 'Allow') continue;
+    const c = classifyPrincipals(stmt.principal);
+    const actions = Array.isArray(stmt.actions) ? stmt.actions : [];
+    const names = actions.map(kmsActionName).filter((n) => n !== null);
+    const anonEntries = c.entries.filter((e) => e.type === 'anonymous');
+    // External or account-undetermined named principals (exclude a CONFIRMED
+    // same-account principal: owner known AND principal account known and equal).
+    const externalEntries = c.entries.filter((e) => {
+      if (!externalTypes.has(e.type)) return false;
+      const acct = accountOfEntry(e);
+      return !(resourceAccount !== null && acct !== null && acct === resourceAccount);
+    });
+
+    // (a) kms:CreateGrant = onward-DELEGATION primitive (grounding 3.4, trap 5). To
+    // "*" or a cross-account / account-undetermined principal, the grantee can create
+    // grants letting OTHER principals in any account/org (incl. AWS services) use the
+    // key, and need not hold the permission itself. Ranked above ordinary key use;
+    // NEVER over-claimed as decrypt or effective access.
+    if (names.includes('creategrant')) {
+      const narrowNote = namesGrantIsForAwsResource(stmt.condition)
+        ? ' A kms:GrantIsForAWSResource condition is present, which can narrow ' +
+          'kms:CreateGrant to grants created by AWS services on the caller\'s behalf; ' +
+          'confirm its operator and value (Bool true) actually constrain the grant.'
+        : '';
+      const delegWhy = (who) =>
+        `The resource policy grants kms:CreateGrant on this ${serviceLabel} to ${who}. ` +
+        'kms:CreateGrant is an onward-DELEGATION primitive, not mere key use: a ' +
+        'principal that can create grants can issue grants allowing OTHER principals - ' +
+        'in your own account or in a different account or organization, including AWS ' +
+        'services - to use this key, and those principals need not already hold the ' +
+        'permission. Its blast radius is much like kms:PutKeyPolicy. This reports the ' +
+        'delegation capability read from the key policy only: it does NOT by itself ' +
+        'turn ciphertext into plaintext and does NOT establish that the resulting ' +
+        'access is granted - and because the grantee is outside (or not confirmed ' +
+        'inside) the key\'s owning account, a request from that account must also be ' +
+        'allowed by its own IAM policies.' + narrowNote;
+      if (anonEntries.length > 0) {
+        out.push(makeResourceFinding(stmt, anonEntries, {
+          id: 'KMS-CREATE-GRANT-DELEGATION',
+          severity: 'high',
+          title: 'kms:CreateGrant granted to every AWS account (onward key-use delegation)',
+          policyEvidence: 'high',
+          pathExploitability: 'medium',
+          why: delegWhy('Principal "*" (every AWS identity in every account)'),
+          remediation:
+            'Do not grant kms:CreateGrant to Principal "*" or a broad principal. ' +
+            'Restrict it to the specific administrative role that manages grants, and ' +
+            'where AWS services must create grants on your behalf add ' +
+            'kms:GrantIsForAWSResource (Bool true). Treat kms:CreateGrant as a ' +
+            'key-control action on par with kms:PutKeyPolicy.',
+          docRef: DOC_KMS_GRANTS,
+          service,
+          attachedArn,
+          transportOnlyDeny,
+          anonymousReach: false,
+        }));
+      }
+      if (externalEntries.length > 0) {
+        out.push(makeResourceFinding(stmt, externalEntries, {
+          id: 'KMS-CREATE-GRANT-DELEGATION',
+          severity: 'high',
+          title: 'kms:CreateGrant granted cross-account (onward key-use delegation)',
+          policyEvidence: 'high',
+          pathExploitability: 'medium',
+          why: delegWhy(
+            `a principal outside (or not confirmed inside) the key's owning account ` +
+            `(${summarizeEntries(externalEntries)})`,
+          ),
+          remediation:
+            'Do not grant kms:CreateGrant to an external or cross-account principal ' +
+            'unless the delegation is required. Scope it to a specific role, and where ' +
+            'AWS services must create grants add kms:GrantIsForAWSResource (Bool true). ' +
+            'Treat kms:CreateGrant as a key-control action on par with kms:PutKeyPolicy.',
+          docRef: DOC_KMS_GRANTS,
+          service,
+          attachedArn,
+          transportOnlyDeny,
+        }));
+      }
+    }
+
+    // (b) kms:PutKeyPolicy = key-policy TAKEOVER / self-expansion (grounding 3.4). To
+    // "*" (critical) or a cross-account / account-undetermined principal (high). Never
+    // fires for a CONFIRMED same-account principal; never over-claimed as effective.
+    if (names.includes('putkeypolicy')) {
+      if (anonEntries.length > 0) {
+        out.push(makeResourceFinding(stmt, anonEntries, {
+          id: 'KMS-KEY-POLICY-TAKEOVER',
+          severity: 'critical',
+          title: 'kms:PutKeyPolicy granted to every AWS account (key-policy takeover)',
+          policyEvidence: 'high',
+          pathExploitability: 'medium',
+          why:
+            `The resource policy grants kms:PutKeyPolicy on this ${serviceLabel} to ` +
+            'Principal "*" (every AWS identity in every account). kms:PutKeyPolicy ' +
+            'rewrites the key\'s OWN policy - a key-policy TAKEOVER / self-expansion ' +
+            'primitive: the grantee can replace the policy to grant itself (or anyone) ' +
+            'any further access to the key, a far higher blast radius than a single ' +
+            'decrypt. This reports the direct grant only; it does NOT prove the ' +
+            'takeover is in effect.',
+          remediation:
+            'Never grant kms:PutKeyPolicy to Principal "*". Restrict key-policy ' +
+            'management to a specific administrative role in the key\'s owning account.',
+          docRef: DOC_KMS_GRANTS,
+          service,
+          attachedArn,
+          transportOnlyDeny,
+          anonymousReach: false,
+        }));
+      }
+      if (externalEntries.length > 0) {
+        out.push(makeResourceFinding(stmt, externalEntries, {
+          id: 'KMS-KEY-POLICY-TAKEOVER',
+          severity: 'high',
+          title: 'kms:PutKeyPolicy granted cross-account (key-policy takeover)',
+          policyEvidence: 'high',
+          pathExploitability: 'medium',
+          why:
+            `The resource policy grants kms:PutKeyPolicy on this ${serviceLabel} to a ` +
+            `principal outside (or not confirmed inside) the key's owning account ` +
+            `(${summarizeEntries(externalEntries)}). kms:PutKeyPolicy rewrites the ` +
+            'key\'s OWN policy (key-policy TAKEOVER / self-expansion): the grantee ' +
+            'could replace the policy to grant itself or anyone any further access. ' +
+            'This is cross-account, so the caller\'s own account must also allow it, ' +
+            'and this reports the direct grant only - it does NOT prove the takeover ' +
+            'is in effect.',
+          remediation:
+            'Do not grant kms:PutKeyPolicy to an external or cross-account principal. ' +
+            'Keep key-policy management inside the owning account, scoped to a specific ' +
+            'administrative role.',
+          docRef: DOC_KMS_GRANTS,
+          service,
+          attachedArn,
+          transportOnlyDeny,
+        }));
+      }
+    }
+
+    // (c) A genuinely-broad KMS "*" grant narrowed ONLY by kms:ViaService (or a
+    // network selector) - NOT by a principal-identity / account key - is still
+    // account-open (trap 2). State the channel selector narrows the request VECTOR,
+    // not WHO may act; never downgrade the generic "*" over-grant.
+    if (c.anonymous) {
+      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service);
+      const principalScoped = expansionKeys.length === 0 && scopingKeys.length > 0;
+      if (!principalScoped) {
+        const decoys = kmsChannelDecoyKeys(stmt.condition);
+        if (decoys.viaService.length > 0 || decoys.network.length > 0) {
+          let why =
+            `This ${serviceLabel} grants Principal "*" permission to ` +
+            `${actions.join(', ')}, and it carries a condition that could be MISREAD ` +
+            'as restricting the grant to a specific account or to authenticated ' +
+            'principals - but it does not. On KMS, "*" is every AWS identity in every ' +
+            'account (KMS has no unauthenticated path), and the following key does not ' +
+            'narrow WHO may act:';
+          if (decoys.viaService.length > 0) {
+            why +=
+              ` kms:ViaService (${decoys.viaService.join(', ')}) pins the SERVICE ` +
+              'CHANNEL a request must flow through (for example requests made via a ' +
+              'service in a Region), not the caller\'s identity - so the key stays open ' +
+              'to any account\'s principals whose requests flow through that service.';
+          }
+          if (decoys.network.length > 0) {
+            why +=
+              ` A network selector (${decoys.network.join(', ')}) scopes the request ` +
+              'to a network path, not to authenticated principals.';
+          }
+          why +=
+            ' Only kms:CallerAccount, aws:PrincipalAccount, or aws:PrincipalOrgID ' +
+            'would pin WHO may use the key. This does not downgrade the "*" over-grant.';
+          out.push(makeResourceFinding(stmt, anonEntries, {
+            id: 'KMS-VIASERVICE-NOT-SCOPING',
+            severity: 'high',
+            title: 'KMS "*" grant not narrowed by its service-channel / network condition',
+            policyEvidence: 'high',
+            pathExploitability: 'medium',
+            why,
+            remediation:
+              'Do not rely on kms:ViaService or a network selector to restrict WHO may ' +
+              'use a Principal "*" key grant - they pin the request channel/path, not ' +
+              'the caller. Add kms:CallerAccount (or aws:PrincipalAccount / ' +
+              'aws:PrincipalOrgID) to scope the account, or name the specific ' +
+              'principals in the key policy.',
+            docRef: DOC_KMS_CONDITIONS,
+            service,
+            attachedArn,
+            transportOnlyDeny,
+            principalScopedBy: [],
+            anonymousReach: false,
+          }));
+        }
+      }
+    }
+  }
+
+  // (d) The KMS silent-key-policy inversion (grounding 3.5, tests 115/127). A key
+  // policy that OMITS the account-delegation statement AND grants no anonymous "*"
+  // means IAM identity policies CANNOT govern the key (inverted vs S3): only the
+  // key-policy-named principals can use it, and per-principal effective access is
+  // fail-closed UNKNOWN from the key policy alone. Emitted ONCE, policy-level, and
+  // surfaced (never dropped) so an empty/near-empty analysis is never read as "safe".
+  if (statements.length > 0 && !kmsHasAccountDelegation(statements) && !kmsHasAnonymousAllow(statements)) {
+    // Anchor to the first Allow statement (else the first statement) for evidence.
+    const anchor = statements.find((s) => s && s.effect === 'Allow') || statements[0];
+    const grantsPutKeyPolicy = statements.some(
+      (s) => s && s.effect === 'Allow' &&
+        (Array.isArray(s.actions) ? s.actions : []).some((a) => kmsActionName(a) === 'putkeypolicy'),
+    );
+    const putKeyPolicyNote = grantsPutKeyPolicy
+      ? ' Note the granted kms:PutKeyPolicy is a key-policy-takeover primitive: it ' +
+        'rewrites the key\'s own policy, so a named principal holding it can expand ' +
+        'access to the key.'
+      : '';
+    out.push(makeResourceFinding(anchor, [], {
+      id: 'KMS-SILENT-POLICY-UNKNOWN',
+      severity: 'info',
+      policyEvidence: 'high',
+      pathExploitability: 'low',
+      title: 'KMS key policy omits account delegation - IAM cannot govern the key (effective access UNKNOWN)',
+      why:
+        'This KMS key policy does NOT include the account-delegation ("Enable IAM ' +
+        'User Permissions") statement (an Allow to the owning account / account-root ' +
+        'principal) and grants no "*". This INVERTS the S3 rule: unlike an S3 bucket ' +
+        '(where an absent bucket policy still lets the account\'s IAM policies grant ' +
+        'access), a KMS key policy does NOT let the owning account\'s IAM identity ' +
+        'policies govern the key unless this delegation statement is present - without ' +
+        'it IAM allow policies are ineffective (an IAM Deny still applies). So ONLY ' +
+        'the principals named in this key policy can use the key, and for any ' +
+        'principal the policy is silent about, effective access is fail-closed ' +
+        'UNKNOWN from the key policy alone: whether an IAM policy grants use of the ' +
+        'key cannot be determined here. This is surfaced rather than dropped - the ' +
+        'absence of a broad finding does NOT mean the key is safe or unreachable.' +
+        putKeyPolicyNote,
+      remediation:
+        'Confirm this omission is intentional. If the owning account\'s IAM policies ' +
+        'are meant to govern the key, add the standard account-delegation statement ' +
+        '(Allow the account-root principal kms:* on Resource "*"). To reason about ' +
+        'per-principal access, review the key policy together with the identity ' +
+        'policies of every principal it names; the key policy alone is not sufficient.',
+      docRef: DOC_KMS_KEY_POLICY,
+      service,
+      attachedArn,
+      transportOnlyDeny,
+    }));
+  }
+
+  return out;
+}
+
+// --- Shared SNS topic + SQS queue messaging per-service finding rules (IAM-1404) -
+//
+// SNS topic access policies and SQS queue access policies are messaging resource
+// policies with near-identical semantics that differ only in their action namespace
+// (docs/resource-per-service-semantics.md section 4), so Phase 14 models them with
+// ONE shared rule family registered for BOTH the sns and sqs tokens. These rules run
+// IN ADDITION to the generic principal-centric loop, which already emits the
+// genuinely-anonymous SNS/SQS "*" grant as critical PUBLIC-ACCESS (SQS docs label a
+// Principal "*" grant "all users (anonymous users)"; SNS treats it as a public
+// wildcard-principal grant), the "*"-narrowed-by-a-principal-condition high finding,
+// RESOURCE-CROSS-ACCOUNT, and RESOURCE-CONFUSED-DEPUTY for a service principal. They
+// add the messaging-specific REFINEMENTS the generic path cannot produce (the named
+// data-plane exfiltration/injection/drain vector, the topic/queue policy-takeover
+// action ranking, and the deprecated aws:SourceOwner note), never suppress a generic
+// finding, and are scoped to the sns / sqs tokens only (trap 4: the KMS not-anonymous
+// carve-out is a distinct handler and is structurally incapable of running here, so a
+// genuinely-anonymous SNS/SQS "*" grant stays critical PUBLIC-ACCESS via the generic
+// path).
+
+// Dangerous messaging DATA-PLANE actions and the specific blast-radius vector each
+// grants to an anonymous "*" principal. Keyed by "<ns>:<action>" lowercased.
+const MESSAGING_DATA_PLANE_VECTORS = Object.freeze({
+  'sns:subscribe':
+    'anyone can attach their own endpoint as a subscriber and EXFILTRATE every ' +
+    'message published to the topic thereafter',
+  'sns:publish':
+    'anyone can INJECT arbitrary messages into the topic, which are then fanned out ' +
+    'to every subscriber',
+  'sqs:receivemessage':
+    'anyone can DRAIN/read the messages in the queue',
+  'sqs:sendmessage':
+    'anyone can INJECT/poison the queue with arbitrary messages',
+  'sqs:deletemessage':
+    'anyone can DELETE messages from the queue (denying them to legitimate consumers)',
+});
+
+// Messaging policy-CONTROL actions (lowercased action name after the ns: prefix): the
+// grantee can rewrite the topic/queue access policy or its attributes - a
+// resource-policy TAKEOVER / self-expansion primitive. Per namespace so an sns action
+// is never matched against the sqs set (and vice-versa). Wildcards (sns:* / sqs:* /
+// "*") are handled separately as a superset that INCLUDES these, mirroring how the S3
+// and KMS rules never guess a control-plane takeover from an opaque wildcard yet the
+// story asks a messaging service-wildcard to be named as including queue/topic control.
+const SNS_CONTROL_ACTIONS = Object.freeze(new Set([
+  'addpermission', 'removepermission', 'settopicattributes',
+]));
+const SQS_CONTROL_ACTIONS = Object.freeze(new Set([
+  'addpermission', 'removepermission', 'setqueueattributes',
+]));
+
+// The {ns, name} of a messaging action, or null for a non-sns/sqs or wildcarded
+// action. A full-service wildcard (sns:* / sqs:*) and the global "*" are reported via
+// isMessagingServiceWildcard(); a specific action name is matched exactly.
+function messagingActionParts(action) {
+  const m = /^(sns|sqs):([a-z0-9]+)$/i.exec(String(action));
+  return m ? { ns: m[1].toLowerCase(), name: m[2].toLowerCase() } : null;
+}
+
+// True when an action is a full messaging-service wildcard for this service (sns:* on
+// an SNS topic, sqs:* on an SQS queue) or the global "*". Such a wildcard LITERALLY
+// includes the policy-control actions (AddPermission / SetTopicAttributes /
+// SetQueueAttributes), so naming it as including topic/queue control is a fact about
+// the wildcard's superset, not a guess about an opaque action.
+function isMessagingServiceWildcard(action, ns) {
+  const a = String(action).trim().toLowerCase();
+  return a === '*' || a === `${ns}:*`;
+}
+
+// The control-action set for a messaging namespace.
+function messagingControlSet(ns) {
+  return ns === 'sns' ? SNS_CONTROL_ACTIONS : SQS_CONTROL_ACTIONS;
+}
+
+// Whether a statement's condition names aws:SourceOwner (any operator). Presence-only:
+// the deprecated legacy source-binding key (chiefly SNS). Case-insensitive.
+function namesSourceOwner(condition) {
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return false;
+  for (const op of Object.keys(condition)) {
+    const inner = condition[op];
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    for (const key of Object.keys(inner)) {
+      if (String(key).toLowerCase() === 'aws:sourceowner') return true;
+    }
+  }
+  return false;
+}
+
+// Shared SNS/SQS messaging per-service finding rules (IAM-1404). Pure, deterministic,
+// dependency-free; returns a fresh array; never throws; additive to the generic
+// findings. Scoped to the sns / sqs tokens ONLY.
+function messagingPerServiceRules(model, ctx) {
+  const out = [];
+  const service = ctx && typeof ctx.service === 'string' ? ctx.service : null;
+  if (service !== RESOURCE_SERVICES.SNS && service !== RESOURCE_SERVICES.SQS) return out;
+  const ns = service === RESOURCE_SERVICES.SNS ? 'sns' : 'sqs';
+  const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
+  const attachedArn = ctx && ctx.arn ? ctx.arn : null;
+  const serviceLabel = RESOURCE_SERVICE_LABELS[service] || (ns === 'sns' ? 'Amazon SNS topic' : 'Amazon SQS queue');
+  const resourceLabel = ns === 'sns' ? 'topic' : 'queue';
+  // The resource's OWNING account (explicit context account, else the SNS/SQS ARN's
+  // account). Distinguishes a confirmed in-account grant from a cross-account takeover.
+  const resourceAccount = ctx && ctx.ownerAccount != null && /^\d{12}$/.test(String(ctx.ownerAccount))
+    ? String(ctx.ownerAccount)
+    : null;
+  const transportOnlyDeny = hasTransportOnlyDeny(model);
+  const externalTypes = new Set(['aws-account', 'aws-root', 'aws-principal-arn']);
+  const controlSet = messagingControlSet(ns);
+
+  for (const stmt of statements) {
+    if (!stmt || stmt.effect !== 'Allow') continue;
+    const c = classifyPrincipals(stmt.principal);
+    const actions = Array.isArray(stmt.actions) ? stmt.actions : [];
+    const anonEntries = c.entries.filter((e) => e.type === 'anonymous');
+    // External or account-undetermined named principals (exclude a CONFIRMED
+    // same-account principal: owner known AND principal account known and equal).
+    const externalEntries = c.entries.filter((e) => {
+      if (!externalTypes.has(e.type)) return false;
+      const acct = accountOfEntry(e);
+      return !(resourceAccount !== null && acct !== null && acct === resourceAccount);
+    });
+    const serviceEntries = c.entries.filter((e) => e.type === 'service');
+
+    // (a) Public data-plane exposure. Fires ONLY when a genuinely-public "*" grant
+    // (anonymous, not narrowed by a principal-identity key - that is the generic
+    // "narrowed" high finding) names a dangerous messaging data-plane action. Names
+    // the specific vector (exfiltrate / inject / drain / poison). Additive to the
+    // generic critical PUBLIC-ACCESS: it never downgrades or suppresses it.
+    if (c.anonymous) {
+      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service);
+      const principalScoped = expansionKeys.length === 0 && scopingKeys.length > 0;
+      if (!principalScoped) {
+        const vectors = [];
+        for (const a of actions) {
+          const parts = messagingActionParts(a);
+          if (!parts || parts.ns !== ns) continue;
+          const desc = MESSAGING_DATA_PLANE_VECTORS[`${parts.ns}:${parts.name}`];
+          if (desc) vectors.push({ action: a, desc });
+        }
+        if (vectors.length > 0) {
+          const vectorList = vectors
+            .map((v) => `${v.action} to Principal "*" means ${v.desc}`)
+            .join('; ');
+          out.push(makeResourceFinding(stmt, anonEntries, {
+            id: 'MESSAGING-PUBLIC-EXPOSURE',
+            severity: 'high',
+            title: `Public messaging grant on this ${serviceLabel} exposes a data-plane vector`,
+            policyEvidence: 'high',
+            pathExploitability: 'medium',
+            why:
+              `This ${serviceLabel} grants Principal "*" a dangerous messaging ` +
+              `data-plane action, so ${vectorList}. On ${ns === 'sqs' ? 'Amazon SQS a ' +
+                'Principal "*" grant is "all users (anonymous users)" per AWS, i.e. ' +
+                'genuinely anonymous public access' : 'Amazon SNS a Principal "*" grant ' +
+                'is a public wildcard-principal grant'} - anyone can perform the action ` +
+              'on the attached resource. This names the specific blast-radius vector ' +
+              'in addition to the generic public-access finding; it does NOT downgrade ' +
+              'that finding, and it reports the direct resource-policy grant only, not ' +
+              'proven effective access.',
+            remediation:
+              `Remove Principal "*" from this ${resourceLabel} policy and name the ` +
+              'specific accounts, roles, or (source-bound) services that must use the ' +
+              `${resourceLabel}. If a broad audience is genuinely intended, scope it ` +
+              'with a principal-identity condition (aws:PrincipalOrgID, ' +
+              'aws:PrincipalArn, aws:PrincipalAccount) - a network/transport condition ' +
+              'does not restrict WHO may act.',
+            docRef: ns === 'sns' ? DOC_SNS_ACCESS : DOC_SQS_ACCESS,
+            service,
+            attachedArn,
+            transportOnlyDeny,
+            // This "*" is genuinely anonymous (not narrowed), so no principal-scoping
+            // key is credited; the anonymous reach flag stays true (structural default).
+            principalScopedBy: [],
+          }));
+        }
+      }
+    }
+
+    // (b) Policy-CONTROL takeover. A messaging control action (AddPermission /
+    // RemovePermission / SetTopicAttributes / SetQueueAttributes), or a full-service
+    // sns:*/sqs:*/"*" wildcard that INCLUDES them, granted to an anonymous "*"
+    // (critical) or to a principal outside (or not confirmed inside) the owning
+    // account (high), is a topic/queue-policy TAKEOVER / self-expansion primitive.
+    // Ranked above a data-plane action; NEVER over-claimed as effective takeover.
+    const explicitControl = actions.filter((a) => {
+      const parts = messagingActionParts(a);
+      return parts && parts.ns === ns && controlSet.has(parts.name);
+    });
+    const wildcardControl = actions.some((a) => isMessagingServiceWildcard(a, ns));
+    if (explicitControl.length > 0 || wildcardControl) {
+      const controlNames = ns === 'sns'
+        ? 'sns:AddPermission / sns:RemovePermission / sns:SetTopicAttributes'
+        : 'sqs:AddPermission / sqs:RemovePermission / sqs:SetQueueAttributes';
+      const includedVia = explicitControl.length > 0
+        ? `the ${resourceLabel}-policy control action(s) ${explicitControl.join(', ')}`
+        : `a full-service ${ns}:* (or "*") wildcard, which INCLUDES the ` +
+          `${resourceLabel}-policy control actions (${controlNames})`;
+      if (anonEntries.length > 0) {
+        out.push(makeResourceFinding(stmt, anonEntries, {
+          id: 'MESSAGING-POLICY-TAKEOVER',
+          severity: 'critical',
+          title: `Public grant of a messaging ${resourceLabel}-policy control action (resource-policy takeover)`,
+          policyEvidence: 'high',
+          pathExploitability: 'medium',
+          why:
+            `This ${serviceLabel} grants Principal "*" ${includedVia}. These are not ` +
+            `data-plane actions: ${controlNames} let the grantee REWRITE the ` +
+            `${resourceLabel}'s own access policy or attributes - a resource-policy ` +
+            'TAKEOVER / self-expansion primitive with a far higher blast radius than a ' +
+            'single publish/subscribe/send/receive, because the grantee can rewrite the ' +
+            'policy to grant itself (or anyone) any further access. Granting it to "*" ' +
+            'means any principal could take over the ' + resourceLabel + ' policy. This ' +
+            'reports the direct resource-policy grant only; it does NOT prove the ' +
+            'takeover is effective.',
+          remediation:
+            `Never grant ${resourceLabel}-policy control actions (${controlNames}) - or ` +
+            `a ${ns}:* / "*" wildcard that includes them - to Principal "*". Restrict ` +
+            'them to a specific administrative role in the resource-owning account.',
+          docRef: ns === 'sns' ? DOC_SNS_ACCESS : DOC_SQS_ACCESS,
+          service,
+          attachedArn,
+          transportOnlyDeny,
+        }));
+      }
+      if (externalEntries.length > 0) {
+        const who = summarizeEntries(externalEntries);
+        out.push(makeResourceFinding(stmt, externalEntries, {
+          id: 'MESSAGING-POLICY-TAKEOVER',
+          severity: 'high',
+          title: `Cross-account grant of a messaging ${resourceLabel}-policy control action (resource-policy takeover)`,
+          policyEvidence: 'high',
+          pathExploitability: 'medium',
+          why:
+            `This ${serviceLabel} grants a principal outside (or not confirmed inside) ` +
+            `the resource-owning account (${who}) ${includedVia}. These are not ` +
+            `data-plane actions: they let the grantee REWRITE the ${resourceLabel}'s ` +
+            'own access policy or attributes (resource-policy TAKEOVER / self-expansion), ' +
+            'a far higher blast radius than a single send/receive/publish/subscribe - the ' +
+            'grantee could rewrite the policy to grant itself or anyone any further ' +
+            'access. This is a cross-account grant, so it is a NECESSARY but not ' +
+            'SUFFICIENT condition: the caller\'s own account must ALSO allow the action, ' +
+            'and this reports the direct resource-policy grant only - it does NOT prove ' +
+            'the takeover is effective.',
+          remediation:
+            `Do not grant ${resourceLabel}-policy control actions (${controlNames}) - or ` +
+            `a ${ns}:* / "*" wildcard that includes them - to an external or ` +
+            'cross-account principal. Keep policy management inside the resource-owning ' +
+            'account, scoped to a specific administrative role.',
+          docRef: DOC_CROSS_ACCOUNT,
+          service,
+          attachedArn,
+          transportOnlyDeny,
+        }));
+      }
+    }
+
+    // (c) Deprecated aws:SourceOwner legacy source binding. When a SERVICE principal
+    // grant carries aws:SourceOwner, the generic RESOURCE-CONFUSED-DEPUTY already
+    // treats it as source-bound (a present binding, not a missing one). This additive
+    // note recognizes it as a LEGACY (deprecated) key and recommends migrating to
+    // aws:SourceArn / aws:SourceAccount (chiefly an SNS consideration). Info; never a
+    // missing-binding warning and never a public-write claim (a service is not "*").
+    if (serviceEntries.length > 0 && namesSourceOwner(stmt.condition)) {
+      const svcWho = summarizeEntries(serviceEntries);
+      out.push(makeResourceFinding(stmt, serviceEntries, {
+        id: 'MESSAGING-DEPRECATED-SOURCE-OWNER',
+        severity: 'info',
+        title: 'Service grant uses the deprecated aws:SourceOwner legacy source binding',
+        policyEvidence: 'high',
+        pathExploitability: 'low',
+        why:
+          `This ${serviceLabel} grants an AWS service principal (${svcWho}) with an ` +
+          'aws:SourceOwner condition. aws:SourceOwner IS a present (legacy) ' +
+          'confused-deputy source binding - so this is NOT a missing source binding, and ' +
+          'the service principal is NOT public write (a service is not "*") - but it is ' +
+          'DEPRECATED: AWS states new services can integrate with Amazon SNS only through ' +
+          'aws:SourceArn and aws:SourceAccount, though existing integrations retain ' +
+          'backward compatibility. The binding still governs only the confused-deputy ' +
+          'vector and does not by itself establish that the overall grant is safe or ' +
+          'effective.',
+        remediation:
+          'Migrate the source binding from the deprecated aws:SourceOwner to ' +
+          'aws:SourceArn (ArnEquals / ArnLike, scoped to the specific calling source ' +
+          'resource) and/or aws:SourceAccount (StringEquals, the source account). Keep ' +
+          'the binding in sync with the intended calling source.',
+        docRef: DOC_SNS_ACCESS,
+        service,
+        attachedArn,
+        transportOnlyDeny,
+      }));
+    }
+  }
+
+  return out;
+}
+
+// The per-service dispatch table: an exact service token -> its rule-set handler.
+// A Map (not a plain object) so a lookup for a non-registered token - including a
+// dangerous key such as "__proto__" / "constructor" - returns undefined rather
+// than an inherited/prototype value (fail closed to "no per-service rules"). Not
+// exported directly; perServiceRuleSetFor() is the read accessor.
+const PER_SERVICE_RULES = new Map([
+  [RESOURCE_SERVICES.S3_BUCKET, s3PerServiceRules],
+  [RESOURCE_SERVICES.S3_OBJECT, s3PerServiceRules],
+  [RESOURCE_SERVICES.KMS_KEY, kmsPerServiceRules],
+  [RESOURCE_SERVICES.SNS, messagingPerServiceRules],
+  [RESOURCE_SERVICES.SQS, messagingPerServiceRules],
+]);
+
+/**
+ * The per-service rule-set handler registered for a service token, or null when
+ * none is (generic / unknown / unmodeled / a non-string / a dangerous key). Pure
+ * lookup; never throws. Exported so the dispatch wiring is directly testable and
+ * so callers can tell whether a service has per-service rules without running
+ * them.
+ *
+ * @param {*} service a service token (one of RESOURCE_SERVICES) or anything else
+ * @returns {((model:object, ctx:object)=>Array<object>)|null}
+ */
+export function perServiceRuleSetFor(service) {
+  if (typeof service !== 'string' || service.length === 0) return null;
+  const handler = PER_SERVICE_RULES.get(service);
+  return typeof handler === 'function' ? handler : null;
+}
+
+/**
+ * Run the per-service rule set registered for the accepted context's service
+ * token, IN ADDITION to the generic findings. Returns a (possibly empty) array of
+ * findings in the canonical resource-finding shape. A service with no registered
+ * handler (generic / unknown) contributes nothing. Defensive and fail-closed
+ * toward the generic path: it NEVER throws and never mutates the generic finding
+ * set - the generic findings + INCOMPLETE coverage always stand on their own, so
+ * a per-service rule can only add to them, never remove one. A handler that
+ * returned a non-array is ignored (treated as "no per-service findings"), so a
+ * malformed handler can never corrupt the combined result.
+ *
+ * @param {object} model normalized, frozen model
+ * @param {object} ctx the accepted resource context (parseResourceContext ok:true)
+ * @returns {Array<object>} per-service findings (empty in the IAM-1401 tranche)
+ */
+export function dispatchPerServiceRules(model, ctx) {
+  const service = ctx && typeof ctx.service === 'string' ? ctx.service : null;
+  const handler = perServiceRuleSetFor(service);
+  if (!handler) return [];
+  const out = handler(model, ctx);
+  return Array.isArray(out) ? out : [];
+}
+
 /**
  * Analyze a resource-based policy from the resource's perspective.
  *
@@ -1730,8 +2961,17 @@ export function analyzeResource(model, resourceContext) {
 
   const service = parsed.service;
 
-  // Principal-centric findings for the validated, accepted context.
-  const findings = resourceFindings(model, parsed);
+  // Principal-centric (generic) findings for the validated, accepted context.
+  // This is the SAFETY NET and always runs first.
+  const genericFindings = resourceFindings(model, parsed);
+  // Per-service dispatch (IAM-1401): select the rule set for the detected service
+  // token and run it IN ADDITION to the generic loop, never instead of it. The S3
+  // (IAM-1402), KMS (IAM-1403), and shared SNS/SQS messaging (IAM-1404) finding rules
+  // add their service-specific refinements to the generic set here. Concatenated in a
+  // fixed order (generic first, then per-service) so exports/coverage/UI all read
+  // from this single combined finding set and the ordering stays deterministic.
+  const perServiceFindings = dispatchPerServiceRules(model, parsed);
+  const findings = genericFindings.concat(perServiceFindings);
 
   const note =
     'Resource-based policy accepted and routed to the resource evaluator (never ' +
@@ -1740,9 +2980,13 @@ export function analyzeResource(model, resourceContext) {
     'direct grants + service-principal confused-deputy grants are reported, plus S3 ' +
     'object-action / bucket-resource type mismatches, KMS key-policy account ' +
     'delegation (Resource:* = the attached key only), and resource-policy condition ' +
-    'composition (AND across distinct keys, OR within a key\'s values). The remaining ' +
-    'service-specific resource rules (the Deny + NotPrincipal hazard) are not yet ' +
-    'applied in this release, so this analysis is ' +
+    'composition (AND across distinct keys, OR within a key\'s values). The policy is ' +
+    'additionally routed to the per-service rule set for its detected service ' +
+    '(Amazon S3, KMS, SNS, or SQS) alongside the generic evaluator; the S3 ' +
+    'bucket-policy, KMS key-policy, and shared SNS topic / SQS queue messaging ' +
+    'per-service finding rules are applied. The remaining ' +
+    'service-specific resource rules (the Deny + NotPrincipal ' +
+    'hazard) are not yet applied, so this analysis is ' +
     'INCOMPLETE: the absence of a finding does NOT mean the resource is safe. ' +
     'Effective access also depends on identity policies, permissions boundaries, ' +
     'session policies, SCPs/RCPs, and service controls that are not supplied here.';

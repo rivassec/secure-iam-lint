@@ -1,0 +1,30 @@
+{
+  "id": "test-126",
+  "suite4Test": 126,
+  "story": "IAM-1404",
+  "name": "Cross-account full queue control (sqs:*)",
+  "note": "acceptance-suite-4 test 126. sqs:* granted to external account 999900001111: the generic RESOURCE-CROSS-ACCOUNT fires high, and the messaging rule ADDS MESSAGING-POLICY-TAKEOVER (high) because sqs:* is a full-service wildcard that INCLUDES the queue-policy control actions (sqs:AddPermission / sqs:SetQueueAttributes) = takeover, ranked above data-plane send/receive. Never over-claimed as effective, and not same-account.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sqs", "arn": "arn:aws:sqs:us-east-2:123456789012:queue1" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Principal": { "AWS": "999900001111" }, "Action": "sqs:*", "Resource": "arn:aws:sqs:us-east-2:123456789012:queue1" }
+    ]
+  },
+  "expect": { "valid": true },
+  "expectMessaging": {
+    "coverageIncomplete": true,
+    "findingIds": ["RESOURCE-CROSS-ACCOUNT", "MESSAGING-POLICY-TAKEOVER"],
+    "findingSeverities": { "RESOURCE-CROSS-ACCOUNT": "high", "MESSAGING-POLICY-TAKEOVER": "high" },
+    "notFindingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE", "RESOURCE-CONFUSED-DEPUTY", "RESOURCE-SAME-ACCOUNT-GRANT"],
+    "whyIncludes": { "MESSAGING-POLICY-TAKEOVER": ["TAKEOVER", "sqs:*", "sqs:AddPermission"] },
+    "forbidWhy": {
+      "MESSAGING-POLICY-TAKEOVER": ["effective takeover proven", "same-account"],
+      "RESOURCE-CROSS-ACCOUNT": ["same-account"]
+    }
+  }
+}

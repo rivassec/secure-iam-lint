@@ -1,0 +1,38 @@
+{
+  "id": "test-121",
+  "suite4Test": 121,
+  "story": "IAM-1404",
+  "name": "Deprecated aws:SourceOwner legacy binding on SNS",
+  "note": "acceptance-suite-4 test 121. An SNS topic grants ses.amazonaws.com sns:Publish with the DEPRECATED legacy source-binding key aws:SourceOwner. It IS a present source binding, so the generic RESOURCE-CONFUSED-DEPUTY is source-bound (info), NOT a missing binding, and the service principal is NOT public write. The messaging rule ADDS MESSAGING-DEPRECATED-SOURCE-OWNER (info) recommending migration to aws:SourceArn/aws:SourceAccount.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sns", "arn": "arn:aws:sns:us-east-2:444455556666:MyTopic" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "Service": "ses.amazonaws.com" },
+        "Action": "sns:Publish",
+        "Resource": "arn:aws:sns:us-east-2:444455556666:MyTopic",
+        "Condition": { "StringEquals": { "aws:SourceOwner": "111122223333" } }
+      }
+    ]
+  },
+  "expect": { "valid": true },
+  "expectMessaging": {
+    "coverageIncomplete": true,
+    "findingIds": ["RESOURCE-CONFUSED-DEPUTY", "MESSAGING-DEPRECATED-SOURCE-OWNER"],
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "info", "MESSAGING-DEPRECATED-SOURCE-OWNER": "info" },
+    "notFindingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE", "MESSAGING-POLICY-TAKEOVER", "RESOURCE-CROSS-ACCOUNT"],
+    "sourceBindingState": { "RESOURCE-CONFUSED-DEPUTY": "source-bound" },
+    "sourceBindingBound": { "RESOURCE-CONFUSED-DEPUTY": ["aws:SourceOwner"] },
+    "whyIncludes": { "MESSAGING-DEPRECATED-SOURCE-OWNER": ["DEPRECATED", "aws:SourceOwner", "aws:SourceArn"] },
+    "forbidWhy": {
+      "MESSAGING-DEPRECATED-SOURCE-OWNER": ["publicly writable", "anyone can"],
+      "RESOURCE-CONFUSED-DEPUTY": ["missing", "anyone can"]
+    }
+  }
+}

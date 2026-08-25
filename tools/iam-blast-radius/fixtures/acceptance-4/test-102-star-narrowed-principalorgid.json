@@ -1,0 +1,66 @@
+{
+  "id": "test-102",
+  "suite4Test": 102,
+  "story": "IAM-1402",
+  "name": "'*' narrowed by aws:PrincipalOrgID is NOT anonymous public",
+  "note": "acceptance-suite-4 test 102. Principal '*' gated by a POSITIVE aws:PrincipalOrgID condition restricts use to authenticated principals in the organization, so it is NOT unconditioned anonymous/public access. The generic path reports it high (narrowed by a principal condition) with principalScopedBy=[aws:PrincipalOrgID]; the S3 per-service NOT-NARROWED note MUST NOT fire (the '*' really is narrowed by a principal-identity key).",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "s3-bucket",
+      "arn": "arn:aws:s3:::org-shared",
+      "account": "123456789012"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::org-shared/*",
+        "Condition": {
+          "StringEquals": {
+            "aws:PrincipalOrgID": "o-example"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectS3": {
+    "findingIds": [
+      "PUBLIC-ACCESS"
+    ],
+    "findingSeverities": {
+      "PUBLIC-ACCESS": "high"
+    },
+    "notCritical": [
+      "PUBLIC-ACCESS"
+    ],
+    "notFindingIds": [
+      "S3-PUBLIC-NOT-NARROWED",
+      "S3-BUCKET-POLICY-TAKEOVER"
+    ],
+    "scopedBy": {
+      "PUBLIC-ACCESS": [
+        "aws:PrincipalOrgID"
+      ]
+    },
+    "whyIncludes": {
+      "PUBLIC-ACCESS": [
+        "NARROWED",
+        "aws:PrincipalOrgID"
+      ]
+    },
+    "forbidWhy": {
+      "PUBLIC-ACCESS": [
+        "anyone can"
+      ]
+    }
+  }
+}

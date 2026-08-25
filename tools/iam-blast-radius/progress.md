@@ -81,6 +81,11 @@ human-review.
 | IAM-1301 | Phase 13 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
 | IAM-1302 | Phase 13 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
 | IAM-1303 | Phase 13 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1400 | Phase 14 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1401 | Phase 14 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1402 | Phase 14 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1403 | Phase 14 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
+| IAM-1404 | Phase 14 | accepted | 1 | 0 | Accepted on iteration 1. LAST ROUND = ALL-PASS: every required critic RAN to completion and returned a valid result of PASS - NO critic returned ERROR, TIMEOUT, or INVALID_RESPONSE, and none was null/missing/malformed, so acceptance is a genuine all-PASS panel approval (not an implicit approval from a critic non-pass); arbiter accepted on the all-PASS panel. No remaining blockers in the authoring loop. |
 
 ## Release-gate items requiring CI/browser (not the authoring loop)
 - [ ] Playwright Chromium/Firefox/WebKit matrix green
@@ -250,3 +255,33 @@ resource evaluator (from the IAM-1202/1203 principal + source-binding logic, NOT
       silently dropped -> 0 findings; breaks "fail closed toward surfacing".
 RESOLUTION: fold into IAM-1208 (resource-family adversarial hardening), run before
 Phase 13. Core suite unaffected; these are edge over/under-claims + a fail-open.
+
+## Phase 14 IAM-1403 - KMS key-policy per-service finding rules (2026-08-24)
+DONE. KMS per-service rules layered on the generic resource evaluator (kms-key
+token ONLY; structurally scoped so the not-anonymous carve-out cannot bleed to
+S3/SNS/SQS - trap 4). Engine (content/tools/iam-blast-radius/engine/resource.js):
+  - Generic PUBLIC-ACCESS reframed for KMS "*": drops anonymous/unauthenticated/
+    anyone-on-the-internet wording -> "every AWS identity in every account,
+    cross-account still double-authorized; KMS has no unauthenticated path";
+    Resource:"*" = the attached key only; resource.anonymous cleared (metadata not
+    contradicting text). Critical over-grant. (109, 116; trap 1)
+  - principalScopingAnalysis made service-aware: kms:CallerAccount narrows WHO on a
+    kms-key ONLY (KMS analog of aws:PrincipalAccount); kms:ViaService is NEVER
+    credited (it pins the service CHANNEL, not the caller). (111 vs 112; trap 2)
+  - New RESOURCE_IDS + kmsPerServiceRules(): KMS-VIASERVICE-NOT-SCOPING (a "*"
+    narrowed only by ViaService/network is still account-open, principalScopedBy
+    empty; 111), KMS-CREATE-GRANT-DELEGATION (onward delegation ranked above key
+    use, never over-claimed as decrypt/effective, kms:GrantIsForAWSResource
+    annotated; 114, trap 5), KMS-KEY-POLICY-TAKEOVER (PutKeyPolicy to "*"=critical /
+    external=high, never for a confirmed same-account admin), KMS-SILENT-POLICY-
+    UNKNOWN (key policy omitting the account-delegation Allow and no "*" => IAM
+    cannot govern the key, inverted vs S3, fail-closed UNKNOWN, never "safe"; 115,
+    127). RESOURCE-KMS-ACCOUNT-DELEGATION (test 51) unchanged (110 medium, 113 high).
+Fixtures: fixtures/acceptance-4-kms/ (9: tests 109-116 + 127). Test:
+tests/acceptance-suite-4-kms.test.js (per-service contract + determinism +
+dispatch-bleed guard [S3/SQS "*" stay anonymous-critical] + KMS-KEY-POLICY-TAKEOVER
+direction coverage).
+Gates: full node --test 1464 pass / 0 fail (was 1442; +22); gate:no-network +
+gate:no-unsafe-dom exit 0; ASCII-only; shipped-tree-hygiene green. No regression to
+suites 1/2/3, suite-2 test 51, suite-4 S3 (101-108/128), resource-dispatch, the
+resource negative corpus, or grounding-per-service.

@@ -1,0 +1,61 @@
+{
+  "id": "test-109",
+  "suite4Test": 109,
+  "story": "IAM-1403",
+  "name": "KMS '*' is NOT anonymous (the sharpest trap)",
+  "note": "acceptance-suite-4 test 109. A Principal {AWS:'*'} KMS key policy is NOT anonymous/public: KMS has no unauthenticated request path, so '*' represents every AWS identity in every account (cross-account still double-authorized). The generic PUBLIC-ACCESS finding is emitted with KMS-correct wording (the not-anonymous reframe is scoped to the kms-key token) - critical over-grant, no anonymous/unauthenticated/anyone-on-the-internet wording, and Resource:'*' = the attached key only (no per-key node explosion). resource.anonymous is cleared for KMS so metadata does not contradict the text.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "kms-key",
+      "arn": "arn:aws:kms:us-east-1:111122223333:key/abcd-1234"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "AWS": "*" },
+        "Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectKms": {
+    "findingIds": ["PUBLIC-ACCESS"],
+    "findingSeverities": { "PUBLIC-ACCESS": "critical" },
+    "notFindingIds": [
+      "KMS-VIASERVICE-NOT-SCOPING",
+      "KMS-CREATE-GRANT-DELEGATION",
+      "KMS-KEY-POLICY-TAKEOVER",
+      "KMS-SILENT-POLICY-UNKNOWN",
+      "RESOURCE-KMS-ACCOUNT-DELEGATION",
+      "WILDCARD-RESOURCE",
+      "WILDCARD-ACTION",
+      "DATA-EXFIL"
+    ],
+    "scopedByEmpty": ["PUBLIC-ACCESS"],
+    "anonymousFalse": ["PUBLIC-ACCESS"],
+    "whyIncludes": {
+      "PUBLIC-ACCESS": [
+        "every AWS identity in every account",
+        "no unauthenticated request path",
+        "attached key only"
+      ]
+    },
+    "forbidWhy": {
+      "PUBLIC-ACCESS": [
+        "including anonymous",
+        "unauthenticated callers",
+        "anyone on the internet",
+        "public to the internet",
+        "means every KMS key"
+      ]
+    }
+  }
+}

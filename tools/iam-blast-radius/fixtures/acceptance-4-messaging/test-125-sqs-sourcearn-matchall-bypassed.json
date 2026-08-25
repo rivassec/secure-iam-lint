@@ -1,0 +1,38 @@
+{
+  "id": "test-125",
+  "suite4Test": 125,
+  "story": "IAM-1404",
+  "name": "SQS SourceArn match-all is bypassed; SourceAccount still binds",
+  "note": "acceptance-suite-4 test 125 (match-all variant). aws:SourceArn 'arn:aws:s3:::*' pins no account (S3 ARNs carry none) and is match-all, so it is a BYPASSED key, while StringEquals aws:SourceAccount binds account 111122223333. The effective binding is on aws:SourceAccount (source-bound info); the match-all aws:SourceArn is flagged bypassed. Not a clean mismatch, and not public write.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sqs", "arn": "arn:aws:sqs:us-east-2:111122223333:cloudtrail-queue" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "Service": "s3.amazonaws.com" },
+        "Action": "sqs:SendMessage",
+        "Resource": "arn:aws:sqs:us-east-2:111122223333:cloudtrail-queue",
+        "Condition": {
+          "StringEquals": { "aws:SourceAccount": "111122223333" },
+          "ArnLike": { "aws:SourceArn": "arn:aws:s3:::*" }
+        }
+      }
+    ]
+  },
+  "expect": { "valid": true },
+  "expectMessaging": {
+    "coverageIncomplete": true,
+    "findingIds": ["RESOURCE-CONFUSED-DEPUTY"],
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "info" },
+    "notFindingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE", "MESSAGING-POLICY-TAKEOVER", "RESOURCE-CROSS-ACCOUNT"],
+    "sourceBindingState": { "RESOURCE-CONFUSED-DEPUTY": "source-bound" },
+    "sourceBindingBound": { "RESOURCE-CONFUSED-DEPUTY": ["aws:SourceAccount"] },
+    "sourceBindingBypassed": { "RESOURCE-CONFUSED-DEPUTY": ["aws:SourceArn"] },
+    "forbidWhy": { "RESOURCE-CONFUSED-DEPUTY": ["anyone can", "publicly writable"] }
+  }
+}

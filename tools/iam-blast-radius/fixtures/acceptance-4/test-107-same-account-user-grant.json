@@ -1,0 +1,57 @@
+{
+  "id": "test-107",
+  "suite4Test": 107,
+  "story": "IAM-1402",
+  "name": "Same-account direct user grant (resource-vs-identity)",
+  "note": "acceptance-suite-4 test 107. A named IAM user in the bucket-owning account (supplied explicitly, since S3 ARNs carry no account) is a direct same-account resource-policy grant: it can be effective even when Alice's identity policy is silent; an applicable explicit Deny still blocks. Not generalized to role/cross-account. Medium RESOURCE-SAME-ACCOUNT-GRANT.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "s3-bucket",
+      "arn": "arn:aws:s3:::finance-reports",
+      "account": "123456789012"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::123456789012:user/Alice"
+        },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::finance-reports/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectS3": {
+    "findingIds": [
+      "RESOURCE-SAME-ACCOUNT-GRANT"
+    ],
+    "findingSeverities": {
+      "RESOURCE-SAME-ACCOUNT-GRANT": "medium"
+    },
+    "notFindingIds": [
+      "RESOURCE-CROSS-ACCOUNT",
+      "PUBLIC-ACCESS",
+      "S3-BUCKET-POLICY-TAKEOVER",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "whyIncludes": {
+      "RESOURCE-SAME-ACCOUNT-GRANT": [
+        "123456789012",
+        "IAM user"
+      ]
+    },
+    "forbidWhy": {
+      "RESOURCE-SAME-ACCOUNT-GRANT": [
+        "identity policy must also allow"
+      ]
+    }
+  }
+}

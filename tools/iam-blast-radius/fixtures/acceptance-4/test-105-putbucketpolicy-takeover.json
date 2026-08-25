@@ -1,0 +1,67 @@
+{
+  "id": "test-105",
+  "suite4Test": 105,
+  "story": "IAM-1402",
+  "name": "s3:PutBucketPolicy to an external account is policy takeover",
+  "note": "acceptance-suite-4 test 105. s3:PutBucketPolicy lets the grantee rewrite the bucket's own resource policy (takeover / self-expansion), far more dangerous than a data-plane action. The generic path reports it high RESOURCE-CROSS-ACCOUNT; the S3 per-service takeover rule ADDS S3-BUCKET-POLICY-TAKEOVER (high, cross-account), naming PutBucketPolicy as takeover, ranked above data-plane, cross-account necessary-not-sufficient, never over-claimed as effective takeover.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "s3-bucket",
+      "arn": "arn:aws:s3:::corp-data",
+      "account": "123456789012"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::999900001111:role/Partner"
+        },
+        "Action": "s3:PutBucketPolicy",
+        "Resource": "arn:aws:s3:::corp-data"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectS3": {
+    "findingIds": [
+      "RESOURCE-CROSS-ACCOUNT",
+      "S3-BUCKET-POLICY-TAKEOVER"
+    ],
+    "findingSeverities": {
+      "RESOURCE-CROSS-ACCOUNT": "high",
+      "S3-BUCKET-POLICY-TAKEOVER": "high"
+    },
+    "notFindingIds": [
+      "PUBLIC-ACCESS",
+      "RESOURCE-SAME-ACCOUNT-GRANT",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "whyIncludes": {
+      "S3-BUCKET-POLICY-TAKEOVER": [
+        "s3:PutBucketPolicy",
+        "TAKEOVER",
+        "does NOT prove the takeover is effective",
+        "NECESSARY"
+      ]
+    },
+    "pabCaveatOn": [
+      "S3-BUCKET-POLICY-TAKEOVER"
+    ],
+    "forbidWhy": {
+      "S3-BUCKET-POLICY-TAKEOVER": [
+        "effective takeover proven",
+        "same-account"
+      ],
+      "RESOURCE-CROSS-ACCOUNT": [
+        "same-account"
+      ]
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "id": "test-106",
+  "suite4Test": 106,
+  "story": "IAM-1402",
+  "name": "Cross-account object read to an external account",
+  "note": "acceptance-suite-4 test 106. A bare external account id (999900001111) granted s3:GetObject on a bucket owned by 123456789012 (explicit owner account) is a confirmed cross-account grant: the caller's own account must also allow it. No takeover (data-plane action), no public, no same-account.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "s3-bucket",
+      "arn": "arn:aws:s3:::corp-data",
+      "account": "123456789012"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "999900001111"
+        },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::corp-data/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectS3": {
+    "findingIds": [
+      "RESOURCE-CROSS-ACCOUNT"
+    ],
+    "findingSeverities": {
+      "RESOURCE-CROSS-ACCOUNT": "high"
+    },
+    "notFindingIds": [
+      "PUBLIC-ACCESS",
+      "RESOURCE-SAME-ACCOUNT-GRANT",
+      "S3-BUCKET-POLICY-TAKEOVER",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "whyIncludes": {
+      "RESOURCE-CROSS-ACCOUNT": [
+        "999900001111",
+        "cross-account"
+      ]
+    },
+    "forbidWhy": {
+      "RESOURCE-CROSS-ACCOUNT": [
+        "same-account"
+      ]
+    }
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "id": "test-103",
+  "suite4Test": 103,
+  "story": "IAM-1402",
+  "name": "'*' narrowed only by aws:SourceIp is still anonymous within the network (near-miss)",
+  "note": "acceptance-suite-4 test 103. A network selector (aws:SourceIp) is NOT a principal-identity constraint: a '*' Allow scoped only by aws:SourceIp still reaches anonymous, unauthenticated callers originating from that network. The generic path keeps it critical PUBLIC-ACCESS with principalScopedBy=[] (network keys are never credited as principal scoping); the S3 per-service NOT-NARROWED note fires and names aws:SourceIp as a network selector that does NOT narrow WHO may act.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "s3-bucket",
+      "arn": "arn:aws:s3:::ip-scoped",
+      "account": "123456789012"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::ip-scoped/*",
+        "Condition": {
+          "IpAddress": {
+            "aws:SourceIp": "203.0.113.0/24"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectS3": {
+    "findingIds": [
+      "PUBLIC-ACCESS",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "findingSeverities": {
+      "PUBLIC-ACCESS": "critical",
+      "S3-PUBLIC-NOT-NARROWED": "high"
+    },
+    "notFindingIds": [
+      "S3-BUCKET-POLICY-TAKEOVER"
+    ],
+    "scopedByEmpty": [
+      "PUBLIC-ACCESS",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "whyIncludes": {
+      "S3-PUBLIC-NOT-NARROWED": [
+        "aws:SourceIp",
+        "network selector",
+        "ANONYMOUS"
+      ],
+      "PUBLIC-ACCESS": [
+        "anonymous"
+      ]
+    },
+    "pabCaveatOn": [
+      "PUBLIC-ACCESS",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "forbidWhy": {
+      "S3-PUBLIC-NOT-NARROWED": [
+        "authenticated principals only",
+        "not public"
+      ],
+      "PUBLIC-ACCESS": [
+        "authenticated principals only",
+        "not public"
+      ]
+    }
+  }
+}

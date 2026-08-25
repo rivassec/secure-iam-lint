@@ -1,0 +1,38 @@
+{
+  "id": "test-119",
+  "suite4Test": 119,
+  "story": "IAM-1404",
+  "name": "Properly source-bound SNS service publish (negative control)",
+  "note": "acceptance-suite-4 test 119. An SNS topic grants events.amazonaws.com sns:Publish, ANDing ArnEquals aws:SourceArn with StringEquals aws:SourceAccount. That is the AWS-documented confused-deputy mitigation, so RESOURCE-CONFUSED-DEPUTY drops to an INFORMATIONAL negative control (source-bound), not an exposure and not a missing binding.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sns", "arn": "arn:aws:sns:us-west-2:123456789012:security-events" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "Service": "events.amazonaws.com" },
+        "Action": "sns:Publish",
+        "Resource": "arn:aws:sns:us-west-2:123456789012:security-events",
+        "Condition": {
+          "ArnEquals": { "aws:SourceArn": "arn:aws:events:us-west-2:123456789012:rule/alerts" },
+          "StringEquals": { "aws:SourceAccount": "123456789012" }
+        }
+      }
+    ]
+  },
+  "expect": { "valid": true },
+  "expectMessaging": {
+    "coverageIncomplete": true,
+    "findingIds": ["RESOURCE-CONFUSED-DEPUTY"],
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "info" },
+    "notFindingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE", "MESSAGING-POLICY-TAKEOVER", "RESOURCE-CROSS-ACCOUNT"],
+    "sourceBindingState": { "RESOURCE-CONFUSED-DEPUTY": "source-bound" },
+    "sourceBindingBound": { "RESOURCE-CONFUSED-DEPUTY": ["aws:SourceAccount", "aws:SourceArn"] },
+    "whyIncludes": { "RESOURCE-CONFUSED-DEPUTY": ["source-binding", "NEGATIVE control"] },
+    "forbidWhy": { "RESOURCE-CONFUSED-DEPUTY": ["missing source binding", "anyone can"] }
+  }
+}

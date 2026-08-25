@@ -1,0 +1,28 @@
+{
+  "id": "test-118",
+  "suite4Test": 118,
+  "story": "IAM-1404",
+  "name": "SNS service-principal publish without source binding (confused deputy)",
+  "note": "acceptance-suite-4 test 118. An SNS topic grants the EventBridge service principal sns:Publish with NO aws:SourceArn/aws:SourceAccount. The generic RESOURCE-CONFUSED-DEPUTY fires medium (unbound). A service principal is NOT public write and is NOT anonymous, so no PUBLIC-ACCESS / MESSAGING-PUBLIC-EXPOSURE / MESSAGING-POLICY-TAKEOVER fires.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": { "type": "sns", "arn": "arn:aws:sns:us-west-2:123456789012:security-events" }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Principal": { "Service": "events.amazonaws.com" }, "Action": "sns:Publish", "Resource": "arn:aws:sns:us-west-2:123456789012:security-events" }
+    ]
+  },
+  "expect": { "valid": true },
+  "expectMessaging": {
+    "coverageIncomplete": true,
+    "findingIds": ["RESOURCE-CONFUSED-DEPUTY"],
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "medium" },
+    "notFindingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE", "MESSAGING-POLICY-TAKEOVER", "RESOURCE-CROSS-ACCOUNT"],
+    "sourceBindingState": { "RESOURCE-CONFUSED-DEPUTY": "unbound" },
+    "whyIncludes": { "RESOURCE-CONFUSED-DEPUTY": ["confused-deputy", "NOT public write"] },
+    "forbidWhy": { "RESOURCE-CONFUSED-DEPUTY": ["anonymous", "anyone can"] }
+  }
+}

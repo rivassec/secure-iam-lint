@@ -1,0 +1,57 @@
+{
+  "id": "test-128",
+  "suite4Test": 128,
+  "story": "IAM-1402",
+  "name": "CanonicalUser principal surfaces fail-closed (never zero findings)",
+  "note": "acceptance-suite-4 test 128. A CanonicalUser grant is a recognized-but-unmodeled S3 account-principal form: WHO it resolves to is UNKNOWN, so it is surfaced fail-closed (RESOURCE-UNSUPPORTED-PRINCIPAL, medium), never silently dropped, never zero findings. It is not anonymous '*' and not a bucket-control action, so neither the S3 NOT-NARROWED note nor the takeover rule fires.",
+  "options": {
+    "family": "resource",
+    "requireExplicitFamily": true,
+    "resourceContext": {
+      "type": "s3-bucket",
+      "arn": "arn:aws:s3:::legacy-acl-bucket",
+      "account": "123456789012"
+    }
+  },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "CanonicalUser": "79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be"
+        },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::legacy-acl-bucket/*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  },
+  "expectS3": {
+    "findingIds": [
+      "RESOURCE-UNSUPPORTED-PRINCIPAL"
+    ],
+    "findingSeverities": {
+      "RESOURCE-UNSUPPORTED-PRINCIPAL": "medium"
+    },
+    "notFindingIds": [
+      "PUBLIC-ACCESS",
+      "S3-BUCKET-POLICY-TAKEOVER",
+      "S3-PUBLIC-NOT-NARROWED"
+    ],
+    "whyIncludes": {
+      "RESOURCE-UNSUPPORTED-PRINCIPAL": [
+        "CanonicalUser",
+        "UNKNOWN"
+      ]
+    },
+    "forbidWhy": {
+      "RESOURCE-UNSUPPORTED-PRINCIPAL": [
+        "no grant",
+        "zero findings"
+      ]
+    }
+  }
+}
