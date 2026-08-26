@@ -64,6 +64,47 @@ test('lookup: known concrete action carries service + name + access level', () =
   assert.equal(r2.accessLevel, ACCESS_LEVELS.READ);
 });
 
+// S1-breadth-classify (iter 7): catalog "Read" is necessary but NOT sufficient for
+// resource-scopability. A subset of READ-level actions have NO resource-level
+// permission support and AWS REQUIRES Resource "*"; the catalog carries a
+// `requiresWildcardResource` bit so a reader can tell a genuinely-scopable read
+// (whose "*" is over-broad) from a service-mandated wildcard read (whose "*" is
+// correct least privilege). Guards the iter-7 over-correction false positive.
+test('lookup: requiresWildcardResource distinguishes required-wildcard READs from scopable READs', () => {
+  // READ-level actions AWS grants only on Resource "*" (no resource-level support).
+  const requiresWildcard = [
+    'sts:GetCallerIdentity', 'sts:GetSessionToken', 'sts:GetFederationToken',
+    'ec2:DescribeTags', 'cloudtrail:LookupEvents', 'cloudtrail:DescribeTrails',
+  ];
+  for (const a of requiresWildcard) {
+    const r = lookupAction(a);
+    assert.equal(r.known, true, `${a} is a known action`);
+    assert.equal(r.accessLevel, ACCESS_LEVELS.READ, `${a} is catalog READ level`);
+    assert.equal(r.requiresWildcardResource, true, `${a} requires Resource "*"`);
+    assert.equal(defaultCatalog.requiresWildcardResource(a), true, `${a} via helper`);
+    // Case-insensitive, matching lookup semantics.
+    assert.equal(lookupAction(a.toLowerCase()).requiresWildcardResource, true, `${a} lower-cased`);
+  }
+  // Genuinely resource-scopable READs: their "*" IS an over-broad scope.
+  const scopable = [
+    'dynamodb:GetItem', 'iam:GetRole', 'kms:DescribeKey',
+    's3:GetBucketPolicy', 's3:GetObject', 'secretsmanager:DescribeSecret',
+  ];
+  for (const a of scopable) {
+    const r = lookupAction(a);
+    assert.equal(r.known, true, `${a} is known`);
+    assert.equal(r.accessLevel, ACCESS_LEVELS.READ, `${a} is catalog READ level`);
+    assert.equal(r.requiresWildcardResource, false, `${a} supports resource-level scoping`);
+    assert.equal(defaultCatalog.requiresWildcardResource(a), false, `${a} via helper`);
+  }
+  // Wildcards, unknowns, and non-READ actions default to false (never assume a
+  // required wildcard for something the snapshot cannot vouch for).
+  for (const a of ['s3:*', '*', 'fakesvc:DoThing', 'iam:TotallyMadeUp', 'iam:PassRole', 'ec2:DescribeInstances']) {
+    assert.equal(lookupAction(a).requiresWildcardResource, false, `${a} defaults false`);
+    assert.equal(defaultCatalog.requiresWildcardResource(a), false, `${a} helper false`);
+  }
+});
+
 test('lookup: unknown action on a KNOWN service is knownService but not known', () => {
   const r = lookupAction('iam:TotallyMadeUpAction');
   assert.equal(r.known, false);

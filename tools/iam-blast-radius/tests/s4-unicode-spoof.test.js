@@ -342,11 +342,21 @@ test('S4 (rendered SVG - SINK ISOLATION): render-graph strips even when fed un-n
   const doc = fakeDocument();
   const svg = createGraphRenderer(doc).render(graph, new FakeElement('div'), { reducedMotion: true });
   let sawText = false;
+  let sawAria = false;
   for (const el of svg.walk()) {
     if (el.tag === 'text' || el.tag === 'title') sawText = true;
     assert.ok(!hasFormatControl(el.ownText()), `rendered <${el.tag}> text carried a format control (sink strip failed)`);
+    // The edge <g> aria-label embeds the (un-normalized) edge label: it is an
+    // assistive-tech trust surface exactly like the visible <text>/<title>, so it
+    // MUST be de-spoofed too. Before the render-graph fix it carried the raw le.label.
+    const aria = el.getAttribute('aria-label');
+    if (aria !== null) {
+      sawAria = true;
+      assert.ok(!hasFormatControl(aria), `rendered <${el.tag}> aria-label carried a format control (aria sink strip failed): ${JSON.stringify(aria)}`);
+    }
   }
   assert.ok(sawText, 'sanity: the render produced <text>/<title> label nodes');
+  assert.ok(sawAria, 'sanity: the render produced an aria-label carrying the edge label');
 });
 
 test('S4 (rendered DOM - evidence panel): renderEvidence strips hostile evidence values', () => {
@@ -604,12 +614,22 @@ test('S4 iter-3 (rendered SVG - SINK ISOLATION): render-graph clamps strong-RTL/
   const doc = fakeDocument();
   const svg = createGraphRenderer(doc).render(graph, new FakeElement('div'), { reducedMotion: true });
   let sawText = false;
+  let sawAria = false;
   for (const el of svg.walk()) {
     if (el.tag === 'text' || el.tag === 'title') sawText = true;
     assertNoSpoofChars(el.ownText(), `rendered <${el.tag}>`);
     assertOnlyAsciiOrReplacement(el.ownText(), `rendered <${el.tag}>`);
+    // aria-label sink parity: the edge <g> accessible name is clamped like the
+    // visible text (no strong-RTL / Zs / homograph survives).
+    const aria = el.getAttribute('aria-label');
+    if (aria !== null) {
+      sawAria = true;
+      assertNoSpoofChars(aria, `rendered <${el.tag}> aria-label`);
+      assertOnlyAsciiOrReplacement(aria, `rendered <${el.tag}> aria-label`);
+    }
   }
   assert.ok(sawText, 'sanity: render produced <text>/<title> nodes');
+  assert.ok(sawAria, 'sanity: render produced an aria-label carrying the edge label');
 });
 
 test('S4 iter-3 (rendered DOM - evidence panel): renderEvidence clamps strong-RTL/Zs values', () => {

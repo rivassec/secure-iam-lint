@@ -235,6 +235,8 @@ test('Part B: the masked-grant guard set is exactly the known fail-closed codes'
       'UNSPECIFIED_RESOURCE_SCOPE',
       // S1-breadth-failclosed addition.
       'MALFORMED_RESOURCE_ARN',
+      // A-condition-budget addition.
+      'TOO_MANY_CONDITION_VALUES',
     ].slice().sort(),
   );
 });

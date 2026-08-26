@@ -96,6 +96,37 @@ export const KNOWN_PRINCIPAL_TYPES = Object.freeze(new Set([
   'AWS', 'Service', 'Federated', 'CanonicalUser',
 ]));
 
+// S3-trust-calibration (2): AWS service principals for which a role trust REQUIRES
+// an aws:SourceArn / aws:SourceAccount confused-deputy binding. These services
+// assume a role to act on behalf of a SOURCE resource/account that a caller in
+// ANOTHER account controls (an EventBridge rule, an S3 bucket, an SNS topic, a
+// CloudTrail trail, ...), so an unauthorized actor who can make the service act -
+// e.g. by configuring it in their own account - can induce it to assume this role
+// on their behalf: the cross-service confused-deputy problem. AWS documents
+// aws:SourceArn / aws:SourceAccount as the required mitigation for exactly these
+// services. A trust that names one of them WITHOUT a positive, non-vacuous source
+// binding is a real exposure - NOT a benign informational service trust - so it is
+// raised out of the info band (this is the ROLE-TRUST analogue of resource.js's
+// RESOURCE-CONFUSED-DEPUTY unbound case).
+//
+// Ordinary EXECUTION-role service principals (lambda / ec2 / ecs-tasks / ... assume
+// the role to run YOUR OWN workload IN your account; there is no cross-account
+// source vector) are deliberately NOT listed, so a normal lambda.amazonaws.com
+// trust stays an informational TRUST-SERVICE and this table never over-fires on the
+// most common service trusts. Compared case-insensitively against the exact service
+// identifier (a partial-wildcard Service member is already failed closed upstream as
+// service-wildcard, so it never reaches this table).
+export const SOURCE_BINDING_SERVICES = Object.freeze(new Set([
+  'events.amazonaws.com',      // EventBridge (rules can be created cross-account)
+  'scheduler.amazonaws.com',   // EventBridge Scheduler
+  'pipes.amazonaws.com',       // EventBridge Pipes
+  'cloudtrail.amazonaws.com',  // CloudTrail delivery to SNS / S3
+  's3.amazonaws.com',          // S3 (batch operations / replication / notifications)
+  'sns.amazonaws.com',         // SNS
+  'ses.amazonaws.com',         // SES
+  'config.amazonaws.com',      // AWS Config
+]));
+
 // The trust finding ids this module can emit. Kept as an exported, frozen set so
 // tests (evidence.test.js catalog, etc.) can recognize trust findings without
 // hard-coding the strings, and so the ids stay DISTINCT from the identity
@@ -220,6 +251,45 @@ function arnAccountPinned(s) {
   const segs = String(s).split(':');
   const account = segs.length > 4 ? segs[4] : '';
   return account !== '' && !hasGlob(account);
+}
+
+// The CONCRETE account id an ARN pins in its account segment (field index 4), or
+// null when that segment is empty or wildcarded. Used by the cross-account foreign-
+// scope check (S3-trust-calibration 3): a tight aws:PrincipalArn whose pinned
+// account is not one of the named Principal's accounts is itself a cross-account
+// ARN and must not narrow the trust WITHIN the trusted account.
+function arnPinnedAccount(s) {
+  const segs = String(s).split(':');
+  const account = segs.length > 4 ? segs[4] : '';
+  return account !== '' && !hasGlob(account) ? account : null;
+}
+
+// The set of concrete AWS account ids the named external Principal(s) pin, plus
+// whether EVERY account-bearing principal resolved to a concrete account. An
+// account/root Principal pins its account; a specific principal-ARN pins its
+// account segment; a canonical-user pins none (so `complete` is false). Used to
+// decide whether a tight aws:PrincipalArn condition value is SAME-account (a
+// genuine sub-account narrowing) or FOREIGN (a cross-account ARN that must not
+// lower the finding). When `complete` is false and the account is not found, the
+// caller conservatively treats the tight value as foreign (fail closed).
+function namedPrincipalAccounts(principals) {
+  const set = new Set();
+  let complete = true;
+  for (const e of (principals && Array.isArray(principals.entries) ? principals.entries : [])) {
+    if (e.type === 'aws-account') {
+      set.add(String(e.value));
+    } else if (e.type === 'aws-root') {
+      const m = /^arn:[^:]*:iam::(\d{12}):root$/i.exec(String(e.value));
+      if (m) set.add(m[1]); else complete = false;
+    } else if (e.type === 'aws-principal-arn') {
+      const acct = arnPinnedAccount(e.value);
+      if (acct) set.add(acct); else complete = false;
+    } else if (e.type === 'canonical-user') {
+      complete = false;
+    }
+    // federated / service / anonymous entries pin no AWS account for this purpose.
+  }
+  return { set, complete };
 }
 
 // Common AWS ARN resource-TYPE keywords. In an ARN resource of the form
@@ -570,6 +640,14 @@ function conditionSignals(condition, principals) {
     // does not falsely claim anonymous/other-account principals are trusted when
     // a present condition excludes them.
     principalArnScope: null, // 'broad' | 'tight' | null (positive aws:PrincipalArn match)
+    // S3-trust-calibration (3): a tight (exact) positive aws:PrincipalArn value
+    // whose pinned account is NOT one of the named Principal's accounts. Such an
+    // ARN is itself cross-account: it does NOT narrow WHICH principal within the
+    // trusted account may assume the role (the intersection names a principal
+    // OUTSIDE the trusted account), so it must not drop a cross-account external
+    // trust below high. Only a SAME-account exact aws:PrincipalArn is a genuine
+    // sub-account narrowing (the designed medium case).
+    principalArnForeign: false,
     principalAccount: false, // positive aws:PrincipalAccount match (non-wildcard)
     // Would-be constraints defeated by a bypassable operator qualifier
     // (...IfExists / ForAllValues:). Tracked as "<key> (<operator>)" strings so a
@@ -641,6 +719,25 @@ function conditionSignals(condition, principals) {
           const broad = values.some((v) => principalArnValueIsBroad(v, pinsAccount));
           // A tight (exact-ARN) scope wins over a broad one if both appear.
           if (sig.principalArnScope !== 'tight') sig.principalArnScope = broad ? 'broad' : 'tight';
+          // S3-trust-calibration (3): a TIGHT (non-broad) aws:PrincipalArn value
+          // that pins a CONCRETE account outside the named Principal's account set
+          // is a cross-account ARN - it does not narrow within the trusted account.
+          // Broad values are skipped (already high); a value with no concrete pinned
+          // account (e.g. arn:aws:iam::*:role/deploy, whose account is fixed by the
+          // Principal) is NOT foreign. IAM ORs the values, so ANY foreign value keeps
+          // the trust cross-account (fail closed). Only meaningful when the Principal
+          // names concrete account(s): with an anonymous "*" Principal there is no
+          // reference account, so publicScopeConstraint's single-principal medium is
+          // left intact (named.set is empty -> never foreign).
+          const named = namedPrincipalAccounts(principals);
+          if (named.set.size > 0) {
+            for (const v of values) {
+              if (principalArnValueIsBroad(v, pinsAccount)) continue;
+              const acct = arnPinnedAccount(v);
+              if (acct === null) continue;
+              if (!named.set.has(acct)) sig.principalArnForeign = true;
+            }
+          }
         }
       } else if (key === 'aws:principalaccount') {
         if (scopesValue) sig.principalAccount = true;
@@ -845,6 +942,16 @@ function subsetPrincipals(principals, types) {
   return { anonymous, categories, entries, unknownTypes: [] };
 }
 
+// Build a classified-principals object from an explicit LIST of entries (a
+// value-level subset, unlike subsetPrincipals which selects by principal TYPE).
+// Used to split service principals into the source-binding-requiring subset and
+// the ordinary subset (S3-trust-calibration 2) so each gets its own finding.
+function principalsFromEntries(entries) {
+  const categories = new Set(entries.map((e) => e.type));
+  const anonymous = entries.some((e) => e.type === 'anonymous');
+  return { anonymous, categories, entries, unknownTypes: [] };
+}
+
 // IAM-903 / IAM-1006: build the fail-closed TRUST-INVALID-PRINCIPAL finding for a
 // SUBSET of invalid partial-wildcard principal members (an AWS Principal ARN
 // wildcard, or a Service/Federated member carrying a '*'/'?'). Computes the exact
@@ -893,6 +1000,46 @@ function makeInvalidPrincipalFinding(stmt, invalid, { title, buildWhy, remediati
 function findingsForStatement(stmt) {
   const allPrincipals = classifyPrincipals(stmt.principal);
   const found = [];
+
+  // S3-trust-calibration (1) - defense in depth. model.js normalizePrincipal() now
+  // rejects an empty principal object / empty value array before analysis, so a
+  // member-less principal cannot reach here through the real pipeline. But this
+  // module is also called on hand-built models (tests, alternate callers), so treat
+  // a principal.byType that classifies to ZERO members - not the wildcard "*"
+  // (anyPrincipal) and carrying no unknown type key the family gate would own - as
+  // MALFORMED and fail CLOSED, rather than falling through every substantive branch
+  // to an empty finding list (a fail-OPEN that reports CLEAN on sts:AssumeRole). It
+  // is surfaced as TRUST-INVALID-PRINCIPAL so analyze() also marks coverage
+  // incomplete (the trusted set is undetermined, never a confident clean pass).
+  if (!allPrincipals.anonymous &&
+      allPrincipals.entries.length === 0 &&
+      allPrincipals.unknownTypes.length === 0) {
+    const path = `Statement[${stmt.index}].Principal`;
+    const finding = makeFinding(stmt, allPrincipals, {
+      id: 'TRUST-INVALID-PRINCIPAL',
+      severity: 'high',
+      title: 'Empty / member-less Principal (fail closed)',
+      why:
+        'The trust policy names a Principal element that contains NO principal value ' +
+        '(an empty principal object {} or an empty principal value array). This is not ' +
+        'a valid IAM Principal - AWS requires at least one principal value - so the ' +
+        'trusted set is UNDETERMINED from this document. It must NOT be read as a ' +
+        'benign, non-firing trust: the statement is fail-closed and surfaced as a ' +
+        'coverage warning rather than a clean pass.',
+      remediation:
+        'Name at least one concrete principal (an account id / :root ARN, a specific ' +
+        'role/user ARN, a Service principal, or a Federated provider ARN) in the ' +
+        'Principal element, or use Principal "*" only if truly public trust is ' +
+        'intended. An empty principal object or empty value array is invalid.',
+      docRef: DOC_PRINCIPAL,
+      pathExploitability: 'low',
+    });
+    finding.invalidPrincipalPaths = Object.freeze([
+      Object.freeze({ path, value: '(empty principal)', key: null, index: null }),
+    ]);
+    found.push(finding);
+    return found;
+  }
 
   // IAM-903: fail closed on an INVALID partial-wildcard Principal-element ARN
   // (arn:aws:iam::123456789012:role/application/*, .../role/app-*,
@@ -1263,6 +1410,15 @@ function findingsForStatement(stmt) {
     const principalScopePresent = sig.principalArnScope !== null;
     const principalScopeName = 'aws:PrincipalArn';
     const scopeSeverity = sig.principalArnScope === 'broad' ? 'high' : 'medium';
+    // S3-trust-calibration (3): a positive aws:PrincipalArn only NARROWS this
+    // finding when it scopes WITHIN the trusted account. A tight aws:PrincipalArn
+    // whose pinned account is FOREIGN to the named Principal (sig.principalArnForeign)
+    // is itself a cross-account ARN: it names a principal OUTSIDE the trusted
+    // account, so the whole-account external trust is not narrowed at all and must
+    // stay HIGH (it must NOT be scored one band below the direct-external baseline).
+    // A SAME-account exact aws:PrincipalArn is a genuine sub-account narrowing and
+    // still drops to medium as designed.
+    const principalScopeNarrows = principalScopePresent && !sig.principalArnForeign;
     // A present aws:PrincipalAccount that does NOT narrow below whole-account: named
     // so the (still-high) finding explains why the present-looking condition is not
     // a sub-account guardrail, instead of silently ignoring it.
@@ -1306,15 +1462,27 @@ function findingsForStatement(stmt) {
         'principal set may assume the role, so it lowers exploitability only and ' +
         'does not drop this below high.'
       : '';
+    // A present aws:PrincipalArn that pins a principal in a DIFFERENT account than
+    // the trusted Principal: named on the (still-high) baseline finding so it
+    // explains why the present-looking scoping condition is not a sub-account
+    // narrowing, instead of silently understating the trust. Non-empty only when a
+    // foreign-account principal-ARN scope is present.
+    const noteForeignScope = (principalScopePresent && sig.principalArnForeign)
+      ? ' A positive aws:PrincipalArn condition is also present, but it pins a ' +
+        'principal ARN in a DIFFERENT account than the trusted Principal (a ' +
+        'cross-account ARN). AWS evaluates Principal AND Condition, so it does NOT ' +
+        'narrow WHICH principal within the trusted account may assume the role, and ' +
+        'it does not lower this finding below high.'
+      : '';
 
     let severity;
     if (constrainedLowers) severity = 'low';
-    else if (principalScopePresent) severity = scopeSeverity;
+    else if (principalScopeNarrows) severity = scopeSeverity;
     else severity = 'high';
 
     let pathExpl;
     if (constrained || defenseInDepth) pathExpl = 'low';
-    else if (principalScopePresent) pathExpl = scopeSeverity === 'high' ? 'medium' : 'low';
+    else if (principalScopeNarrows) pathExpl = scopeSeverity === 'high' ? 'medium' : 'low';
     else pathExpl = 'medium';
 
     let whyText;
@@ -1332,7 +1500,7 @@ function findingsForStatement(stmt) {
         'assume this role and keep the confused-deputy constraint. Do not treat ' +
         'the external ID as a secret; rotate the trust if the vendor relationship ends.';
       docRefUsed = DOC_CONFUSED_DEPUTY;
-    } else if (principalScopePresent) {
+    } else if (principalScopeNarrows) {
       whyText =
         `The trust policy names an external/other-account principal (${extWho}), ` +
         `but a positive principal-scoping condition (${principalScopeName}) pins ` +
@@ -1363,7 +1531,8 @@ function findingsForStatement(stmt) {
         'user); a wildcard-ARN principal that spans every account trusts a ' +
         'correspondingly unbounded set: any identity the trusted account(s) ' +
         'authorize can assume this role.' +
-        noteAccountScope + noteDefense + noteOrgExclusion + noteBroadConstraint + bypassNote;
+        noteAccountScope + noteDefense + noteOrgExclusion + noteBroadConstraint +
+        noteForeignScope + bypassNote;
       remediationText =
         'Scope the trusted Principal to specific role/user ARNs, and add a ' +
         'confused-deputy constraint (sts:ExternalId for a third party, or ' +
@@ -1387,23 +1556,71 @@ function findingsForStatement(stmt) {
   // acceptance test 18, the negative control).
   if (principals.categories.has('service')) {
     const svc = subsetPrincipals(principals, ['service']);
-    const svcOnly = svc.entries.map((e) => e.value).join(', ');
-    found.push(makeFinding(stmt, svc, {
-      id: 'TRUST-SERVICE',
-      severity: 'info',
-      title: 'AWS service role trust',
-      why:
-        `The trust policy lets an AWS service principal (${svcOnly}) assume this ` +
-        'role - a normal service-role relationship. No external-account or public ' +
-        'trust is present. Whether this is risky depends entirely on the role\'s ' +
-        'own permissions, which are not in this document.',
-      remediation:
-        'For a service trust that acts on a specific resource, consider adding an ' +
-        'aws:SourceArn / aws:SourceAccount confused-deputy constraint. Otherwise ' +
-        'no change is indicated by the trust policy alone.',
-      docRef: DOC_PRINCIPAL,
-      pathExploitability: 'low',
-    }));
+    // S3-trust-calibration (2): split the service principals into those that
+    // REQUIRE a confused-deputy source binding (SOURCE_BINDING_SERVICES) and are
+    // NOT source-bound here, versus ordinary/execution-role service trusts.
+    // sig.sourceArnAccount is true ONLY for a POSITIVE, value-narrowing (non-
+    // bypassable, non-match-all) aws:SourceArn / aws:SourceAccount match, so a
+    // vacuous / negated / ...IfExists / ForAllValues / match-all source condition
+    // still counts as UNBOUND and fails closed here (the same non-vacuous gate the
+    // cross-account confused-deputy branch uses).
+    const sourceBound = sig.sourceArnAccount;
+    const isCd = (e) => SOURCE_BINDING_SERVICES.has(String(e.value).toLowerCase());
+    const unboundCd = sourceBound ? [] : svc.entries.filter(isCd);
+    const infoEntries = svc.entries.filter((e) => !unboundCd.includes(e));
+
+    if (unboundCd.length > 0) {
+      const cd = principalsFromEntries(unboundCd);
+      const cdWho = unboundCd.map((e) => e.value).join(', ');
+      found.push(makeFinding(stmt, cd, {
+        id: 'TRUST-SERVICE',
+        // HIGH (not info): a confused-deputy-relevant service trust with no source
+        // binding is a real cross-service exposure, and it must be BLOCKING - it
+        // must never read clean / exit 0 on the default threshold. pathExploitability
+        // stays medium because viability depends on whether the calling service
+        // supports and populates the source request context (hedged, truthful).
+        severity: 'high',
+        title: 'Service role trust without a confused-deputy source binding',
+        why:
+          `The trust policy lets an AWS service principal (${cdWho}) assume this role ` +
+          'with NO effective aws:SourceArn / aws:SourceAccount binding. This service ' +
+          'acts on behalf of a SOURCE resource/account that a caller in another account ' +
+          'can control, so without a source binding an actor who can make the service ' +
+          'act - for example by configuring it (an EventBridge rule, an S3 bucket, an ' +
+          'SNS topic, ...) in their own account - may be able to induce it to assume ' +
+          'this role on their behalf: the cross-service confused-deputy problem. ' +
+          'Whether the exposure is reachable is subject to whether the calling service ' +
+          'supports and populates the source request context. The assumed role\'s own ' +
+          'permissions are out of scope / unknown from this document.' + bypassNote,
+        remediation:
+          'Add a confused-deputy source binding to this trust statement: aws:SourceArn ' +
+          '(ArnEquals / ArnLike) scoped to the specific calling source resource, and/or ' +
+          'aws:SourceAccount (StringEquals) scoped to the source account, using the keys ' +
+          'the calling service supports.',
+        docRef: DOC_CONFUSED_DEPUTY,
+        pathExploitability: 'medium',
+      }));
+    }
+    if (infoEntries.length > 0) {
+      const info = principalsFromEntries(infoEntries);
+      const svcOnly = infoEntries.map((e) => e.value).join(', ');
+      found.push(makeFinding(stmt, info, {
+        id: 'TRUST-SERVICE',
+        severity: 'info',
+        title: 'AWS service role trust',
+        why:
+          `The trust policy lets an AWS service principal (${svcOnly}) assume this ` +
+          'role - a normal service-role relationship. No external-account or public ' +
+          'trust is present. Whether this is risky depends entirely on the role\'s ' +
+          'own permissions, which are not in this document.',
+        remediation:
+          'For a service trust that acts on a specific resource, consider adding an ' +
+          'aws:SourceArn / aws:SourceAccount confused-deputy constraint. Otherwise ' +
+          'no change is indicated by the trust policy alone.',
+        docRef: DOC_PRINCIPAL,
+        pathExploitability: 'low',
+      }));
+    }
   }
 
   return found;

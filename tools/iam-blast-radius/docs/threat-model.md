@@ -43,6 +43,29 @@ overrun and report gracefully. Reject circular structures.
 T6. **Unsafe export** -> Prefer JSON/Markdown export. If HTML export is
 offered, escape all interpolated policy values. Downloads via Blob only.
 
+**Output-surface neutralization contract (which surfaces are display-safe).** A
+policy-derived value is HOSTILE (T1) and can carry invisible / bidi-reordering /
+homograph code points (see `engine/format-control.js`). Every HUMAN-FACING trust
+surface neutralizes it: the browser DOM findings table, the SVG graph, the
+Markdown export, and the SARIF report all run values through
+`neutralizeForDisplay` (format-control removal + non-ASCII charset clamp) so a
+Trojan-Source spoof cannot ride into a reviewer's eyes.
+
+The CLI `--format json` output is the DELIBERATE exception: it is a
+**BYTE-FAITHFUL machine artifact, NOT a display surface.** It emits the engine's
+finding strings verbatim (no neutralization) so downstream tooling that keys on
+partialFingerprints / ARNs / action names receives the EXACT bytes of the
+analyzed policy - neutralizing them would corrupt the machine contract and could
+change a fingerprint. Hostile Unicode/bidi therefore rides through the JSON
+INERT: it is never executed, never interpolated into a page, and cannot escalate
+into XSS or code exec (it is data in a JSON string). The residual risk is purely
+VISUAL, and only if a human treats the raw JSON as a display surface: a
+`cat report.json` in a bidi-aware terminal could render a spoofed grant. A human
+reviewing findings MUST use `--format sarif` (or the browser tool / a renderer
+that neutralizes), and MUST NOT trust raw `cat report.json` as a visual review
+surface. Machines consume `--format json`; humans read `--format sarif`. This is
+why the JSON path is intentionally NOT in the neutralization list above.
+
 T7. **Supply chain** -> Minimal, self-hosted, pinned deps. The SHIPPED tool
 (engine + app + worker + CLI + Action) has ZERO runtime dependencies and NO
 build step (architecture invariants 2 + 7): what is committed is what runs, so

@@ -354,3 +354,16 @@ Last-round reason per story:
 - S5-cli-hardening: accepted (all-pass)
 - S6-action-aggregate-cap: accepted (all-pass)
 - S7-ci-doc-hygiene: accepted (all-pass)
+
+## Phase 20 - verdict-core story outcomes (2026-08-26)
+All Phase-20 stories accepted.
+Last-round reason per story:
+- S1-breadth-classify[semantic]: accepted (all-pass (2336 tests))
+- S2-airtight-incomplete[semantic]: accepted (all-pass (2357 tests))
+- S3-trust-calibration[semantic]: accepted (all-pass (2377 tests))
+- S4-guardrail-polarity[semantic]: accepted (all-pass (2389 tests))
+- S5-graph-dataread-edge[mechanical]: accepted (all-pass (2390 tests))
+- A-condition-budget[mechanical]: accepted (all-pass (2400 tests))
+- B-aria-label[mechanical]: accepted (all-pass (2400 tests))
+- D-byte-cap[mechanical]: accepted (all-pass (2412 tests))
+- C-doc-note[mechanical]: accepted (all-pass (2418 tests))

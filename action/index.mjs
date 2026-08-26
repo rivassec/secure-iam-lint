@@ -36,6 +36,11 @@ import { buildSarifLog } from '../cli/sarif.mjs';
 // READ-ONLY canonical version manifest (browser-safe, no Node deps) so the SARIF
 // semanticVersion ties to the same identifiers the engine reports.
 import { VERSION_MANIFEST } from '../content/tools/iam-blast-radius/engine/version.js';
+// READ-ONLY: the SINGLE source of the input byte cap. The per-file statSync pre-guard
+// (main()'s io.readFile) rejects an over-cap file BEFORE reading it into memory
+// (threat-model T5), importing LIMITS.MAX_BYTES from the SAME module the engine's
+// validate() enforces so the pre-guard and the engine guard can never drift.
+import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 
 export { EXIT };
 
@@ -43,6 +48,18 @@ export { EXIT };
 
 function isNonEmptyString(v) {
   return typeof v === 'string' && v.trim().length > 0;
+}
+
+// Tagged-error code raised by the per-file statSync pre-guard when a file exceeds
+// LIMITS.MAX_BYTES. The scan loop recognizes it and fails THAT file closed to exit 3
+// (TOO_LARGE) - the same verdict the engine's validate() would produce - never exit 4
+// (an unreadable-file internal error) and never a clean pass.
+const INPUT_TOO_LARGE = 'INPUT_TOO_LARGE';
+
+// Does an on-disk size exceed the shared input byte cap? Pure (no fs), so the pre-guard
+// decision is unit-testable without touching the filesystem.
+export function exceedsInputByteCap(size) {
+  return Number.isFinite(size) && size > LIMITS.MAX_BYTES;
 }
 
 // The default SARIF output path (mirrors action.yml). Used as the fallback whenever a
@@ -625,6 +642,31 @@ function internalFileResult(family, note) {
   });
 }
 
+// A minimal fail-closed (exit 3) result for a single file rejected by the MAX_BYTES
+// pre-guard (threat-model T5) BEFORE it was read into memory. It mirrors the engine's
+// own TOO_LARGE verdict (validate() -> scan() maps TOO_LARGE to a MALFORMED, exit-3
+// fail-closed), so the browser and Action surfaces agree: an over-cap policy is
+// could-not-analyze (exit 3), NEVER a clean pass and never an internal error (exit 4).
+// The message carries only the limit - never the filename or policy content.
+function oversizeFileResult(family) {
+  return Object.freeze({
+    analysisStatus: 'failed',
+    analysisStates: Object.freeze([Object.freeze({
+      analysisState: 'malformed', code: 'TOO_LARGE',
+      message: `Policy file exceeds the ${LIMITS.MAX_BYTES}-byte input limit and was `
+        + 'rejected before being read into memory. Zero findings here does NOT mean the '
+        + 'policy is safe - it means the policy could not be analyzed.',
+      path: null,
+    })]),
+    findings: Object.freeze([]),
+    findingsCount: 0,
+    blockingCount: 0,
+    exitCode: EXIT.FAIL_CLOSED,
+    reason: 'TOO_LARGE',
+    family: family != null ? family : null,
+  });
+}
+
 // A synthetic fail-closed (exit 3) result appended when the AGGREGATE resource ceiling is
 // breached mid-loop (S6-action-aggregate-cap). It carries an explicit 'incomplete'
 // analyzer-state so the partial scan is surfaced as fail-closed - NEVER clean - and projects
@@ -858,9 +900,16 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
       try {
         text = io.readFile(rel);
       } catch (e) {
-        // A read throw fails THAT unit closed to INTERNAL (exit 4) - never 0 - and still
-        // consumes a count slot so the ceiling accounts for the attempt.
-        units.push({ file: rel, result: internalFileResult(inputs.family, `Could not read a file: ${(e && e.message) || 'error'}`) });
+        if (e && e.code === INPUT_TOO_LARGE) {
+          // The statSync pre-guard rejected an over-cap file before reading it into
+          // memory (T5). Fail THAT file closed to exit 3 (TOO_LARGE) - the engine's own
+          // verdict - not exit 4, and never a clean pass.
+          units.push({ file: rel, result: oversizeFileResult(inputs.family) });
+        } else {
+          // Any other read throw fails THAT unit closed to INTERNAL (exit 4) - never 0.
+          units.push({ file: rel, result: internalFileResult(inputs.family, `Could not read a file: ${(e && e.message) || 'error'}`) });
+        }
+        // Either way the attempt consumes a count slot so the ceiling accounts for it.
         scannedCount += 1;
         continue;
       }
@@ -1052,7 +1101,18 @@ export async function main() {
 
   const io = {
     listFiles: () => walkFiles(nodeFs, nodePath, baseDir),
-    readFile: (rel) => nodeFs.readFileSync(nodePath.join(baseDir, rel), 'utf8'),
+    // Enforce the MAX_BYTES cap via statSync BEFORE readFileSync (threat-model T5): an
+    // over-cap policy file is rejected with a tagged INPUT_TOO_LARGE error and is never
+    // read into memory. runAction routes that to a fail-closed exit-3 unit for the file.
+    readFile: (rel) => {
+      const abs = nodePath.join(baseDir, rel);
+      if (exceedsInputByteCap(nodeFs.statSync(abs).size)) {
+        const e = new Error('policy file exceeds the input byte limit');
+        e.code = INPUT_TOO_LARGE;
+        throw e;
+      }
+      return nodeFs.readFileSync(abs, 'utf8');
+    },
     // S4-action-hardening (ROUND 2): the fs-aware half of sarif-output containment.
     // runAction folds this into its sarifSafe gate so a sarif-output that traverses (or
     // is) a symlink escaping the workspace fails CLOSED (exit 2, UNSAFE_SARIF_OUTPUT) and

@@ -592,9 +592,14 @@ export function createGraphRenderer(doc) {
     // Accessible name names the lane, the relationship, and the certainty, as
     // inert text (IAM-401: the lane grouping is exposed to assistive tech, not
     // only visually). The lane label is our own fixed vocabulary.
+    // le.label may embed HOSTILE policy text -> neutralize the invisible/reordering
+    // spoof class before it reaches the aria-label attribute, mirroring the visible
+    // <text>/<title> sibling nodes (which route through setSvgText). aria-label is a
+    // human-facing (assistive-tech) trust surface just like the visible label
+    // (S4-unicode-spoof). The lane/certainty text is our own fixed vocabulary.
     g.setAttribute(
       'aria-label',
-      `${laneLabel(laneOf(le.lane))}. ${le.label}. ${certaintyLabel(le.certainty)}. ` +
+      `${laneLabel(laneOf(le.lane))}. ${neutralizeForDisplay(le.label)}. ${certaintyLabel(le.certainty)}. ` +
         'Activate to inspect evidence.',
     );
 

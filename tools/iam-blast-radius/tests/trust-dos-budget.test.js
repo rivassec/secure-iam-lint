@@ -105,8 +105,17 @@ test('trust-family worst case analyzes BOUNDED under the DEFAULT budget and is N
   if (!a.coverage.summary.incomplete) {
     assert.ok(a.findings.length >= 1, 'a COMPLETE verdict MUST still carry the cross-account trust finding (no fail-open clean pass)');
     assert.ok(a.findings.some((f) => typeof f.id === 'string' && f.id.startsWith('TRUST-')), 'the surfaced risk is a trust finding');
+  } else if (a.coverage.summary.analysisAborted) {
+    // A budget-abort incomplete never ran to a conclusion, so it asserts no findings.
+    assert.equal(a.findings.length, 0, 'a budget-aborted incomplete verdict asserts no findings (fail closed)');
   } else {
-    assert.equal(a.findings.length, 0, 'an incomplete verdict asserts no findings (fail closed)');
+    // S2-airtight-incomplete (b): this within-caps worst case names 2000 principals,
+    // so its attack-path graph exceeds the node bound and TRUNCATES -> incomplete via
+    // GRAPH_TRUNCATED. That is a fail-closed (never-clean) verdict, and unlike a
+    // budget abort the findings TABLE is authoritative and still carries the
+    // cross-account trust (the graph, not the analysis, was bounded).
+    assert.ok(a.coverage.summary.codes.includes('GRAPH_TRUNCATED'), 'the incomplete is the bounded-graph truncation signal');
+    assert.ok(a.findings.some((f) => typeof f.id === 'string' && f.id.startsWith('TRUST-')), 'a truncated-graph incomplete still surfaces the cross-account trust finding');
   }
 });
 
@@ -124,12 +133,18 @@ test('CLI scan() on the trust worst case fails CLOSED under a wall-clock budget 
   assert.equal(r.findings.length, 0);
 });
 
-test('CLI scan() on the trust worst case under the DEFAULT budget is exit 1 / FINDINGS (bounded, never clean)', () => {
+test('CLI scan() on the trust worst case under the DEFAULT budget is BOUNDED and never clean (exit 3 via graph truncation)', () => {
   const text = buildTrustDosPolicy(DOS_N, DOS_M);
   const r = scan({ text, family: 'role-trust' }); // no budgetMs: only the deterministic work budget
   assert.notEqual(r.exitCode, EXIT.CLEAN, 'the cross-account trust risk must never report clean');
-  assert.equal(r.exitCode, EXIT.FINDINGS, 'the within-caps trust policy analyzes COMPLETE to exit 1 (findings)');
-  assert.equal(r.analysisStatus, ANALYSIS_STATUS.COMPLETE);
+  // S2-airtight-incomplete (b): the 2000-principal graph TRUNCATES, so the bounded
+  // analysis fails closed to exit 3 (INCOMPLETE / GRAPH_TRUNCATED) rather than exit 1.
+  // The budget is NOT tripped (this proves boundedness): reason is COVERAGE_INCOMPLETE,
+  // never RESOURCE_BUDGET_EXCEEDED.
+  assert.notEqual(r.reason, 'RESOURCE_BUDGET_EXCEEDED', 'a within-caps trust policy must not trip the work budget (bounded, not aborted)');
+  assert.equal(r.exitCode, EXIT.FAIL_CLOSED, 'the truncated-graph within-caps trust policy fails closed to exit 3 (never clean)');
+  assert.equal(r.analysisStatus, ANALYSIS_STATUS.PARTIAL);
+  assert.ok(r.analysisStates.some((s) => s.code === 'GRAPH_TRUNCATED'), 'the fail-closed reason is the bounded-graph truncation');
 });
 
 test('BROWSER analyze() and CLI scan() agree on the trust worst case (parity: analyze() is never MORE permissive than scan())', () => {

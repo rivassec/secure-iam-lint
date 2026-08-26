@@ -100,8 +100,16 @@ test('the cross-account (disjoint-Deny) many-principal shape analyzes BOUNDED an
   if (!a.coverage.summary.incomplete) {
     assert.ok(a.findings.length >= 1, 'a COMPLETE verdict MUST keep the cross-account trust finding (no fail-open clean pass)');
     assert.ok(a.findings.some((f) => typeof f.id === 'string' && f.id.startsWith('TRUST-')), 'the surfaced risk is a trust finding');
+  } else if (a.coverage.summary.analysisAborted) {
+    // A budget-abort incomplete never ran to a conclusion -> zero findings.
+    assert.equal(a.findings.length, 0, 'a budget-aborted incomplete verdict asserts no findings (fail closed)');
   } else {
-    assert.equal(a.findings.length, 0, 'an incomplete verdict asserts no findings (fail closed)');
+    // S2-airtight-incomplete (b): 8000 principals overflow the graph node bound, so
+    // the graph TRUNCATES -> incomplete via GRAPH_TRUNCATED. Fail-closed (never clean),
+    // and the authoritative findings table still carries the cross-account trust (only
+    // the graph was bounded, not the analysis).
+    assert.ok(a.coverage.summary.codes.includes('GRAPH_TRUNCATED'), 'the incomplete is the bounded-graph truncation signal');
+    assert.ok(a.findings.some((f) => typeof f.id === 'string' && f.id.startsWith('TRUST-')), 'a truncated-graph incomplete still surfaces the cross-account trust finding');
   }
 });
 
@@ -114,12 +122,15 @@ test('CLI scan() on the many-principal trust shape does NOT overrun a wall-clock
 
   // "No seconds-long overrun" is proved DETERMINISTICALLY by the terminal verdict, not a
   // wall-clock upper-bound: had the now-charged trust path overrun the wall-clock budget it
-  // would carry reason RESOURCE_BUDGET_EXCEEDED and exit FAIL_CLOSED; a COMPLETE exit-1
-  // FINDINGS result IS the "bounded, budget not tripped" proof, independent of CPU load.
+  // would carry reason RESOURCE_BUDGET_EXCEEDED. The bounded run instead fails closed via
+  // graph truncation (S2-airtight-incomplete (b)): 8000 principals overflow the graph node
+  // bound, so the within-caps policy is INCOMPLETE / exit 3 (GRAPH_TRUNCATED) - non-clean
+  // and bounded, NOT a budget abort. reason COVERAGE_INCOMPLETE proves the budget held.
   assert.notEqual(r.reason, 'RESOURCE_BUDGET_EXCEEDED', 'a within-caps trust policy must not falsely trip a generous budget');
   assert.notEqual(r.exitCode, EXIT.CLEAN, 'the cross-account trust risk must never report clean');
-  assert.equal(r.exitCode, EXIT.FINDINGS, 'it analyzes COMPLETE to exit 1 (findings), bounded');
-  assert.equal(r.analysisStatus, ANALYSIS_STATUS.COMPLETE);
+  assert.equal(r.exitCode, EXIT.FAIL_CLOSED, 'the truncated-graph within-caps trust policy fails closed to exit 3 (bounded, never clean)');
+  assert.equal(r.analysisStatus, ANALYSIS_STATUS.PARTIAL);
+  assert.ok(r.analysisStates.some((s) => s.code === 'GRAPH_TRUNCATED'), 'the fail-closed reason is the bounded-graph truncation');
 });
 
 test('CLI scan() on the many-principal trust shape fails CLOSED under a past wall-clock deadline -> exit 3, never clean', () => {

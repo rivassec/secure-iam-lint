@@ -27,11 +27,17 @@
 // The output FORMAT never changes the exit code: a fail-closed run is exit 3 whether
 // it is printed as JSON or SARIF.
 
-import { readFileSync, writeFileSync, realpathSync, lstatSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, realpathSync, lstatSync, mkdirSync, statSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { scan, EXIT, SELECTABLE_FAMILIES, DEFAULT_BUDGET_MS } from './scan.mjs';
+// READ-ONLY: the SINGLE source of the input byte cap. The pre-guards below (readStdin /
+// readFileCapped) reject an over-cap input BEFORE materializing it (threat-model T5);
+// they import LIMITS.MAX_BYTES from the SAME module the engine's validate() enforces, so
+// the pre-guard and the engine guard can never drift. validate.js is browser-safe (no
+// node: deps), so importing it here never leaks Node into the browser engine graph.
+import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 // The SARIF 2.1.0 adapter (story P15-sarif): a PURE projection of a scan() result.
 // The CLI just picks it when --format sarif; the exit code is unaffected.
 import { formatSarif } from './sarif.mjs';
@@ -63,6 +69,22 @@ const VALUE_FLAGS = Object.freeze(new Set([
 const BOOLEAN_FLAGS = Object.freeze(new Set(['--version', '--help', '--verbose', '--debug']));
 
 const FORMATS = Object.freeze(new Set(['json', 'sarif']));
+
+// Tagged-error code raised by the input pre-guards (readStdin / readFileCapped) when the
+// input exceeds LIMITS.MAX_BYTES. run() recognizes it and routes the run down the EXISTING
+// TOO_LARGE/exit-3 fail-closed path (via scan -> validate), so an over-cap input can never
+// report clean/exit-0 - and it is enforced BEFORE the whole input is materialized (T5).
+const INPUT_TOO_LARGE = 'INPUT_TOO_LARGE';
+
+function inputTooLargeError(bytes) {
+  const e = new Error(
+    `input exceeds the ${LIMITS.MAX_BYTES}-byte limit` +
+    (Number.isFinite(bytes) ? ` (${bytes} bytes)` : ''),
+  );
+  e.code = INPUT_TOO_LARGE;
+  if (Number.isFinite(bytes)) e.bytes = bytes;
+  return e;
+}
 
 function isNonEmptyString(v) {
   return typeof v === 'string' && v.trim().length > 0;
@@ -477,22 +499,32 @@ export async function run(argv, io) {
     }
 
     // Resolve the policy text: a file argument, else STDIN.
+    // `oversize` records that a pre-guard tripped the MAX_BYTES cap BEFORE the whole
+    // input was materialized (threat-model T5). It is routed down the existing
+    // TOO_LARGE/exit-3 path below - never a clean pass.
     let text;
+    let oversize = false;
     if (opts.file != null) {
       try {
         text = io.readFile(opts.file);
       } catch (e) {
-        // A missing or unreadable input path is a usage/config error (exit 2),
-        // NOT a clean scan and NOT a fail-closed analysis. The DEFAULT message is
-        // deliberately GENERIC (no errno, no path): distinguishing ENOENT / EISDIR /
-        // EACCES / ELOOP would be an FS existence/type/permission oracle over
-        // arbitrary paths. The errno detail is surfaced ONLY under --verbose/--debug.
-        if (opts.verbose) {
-          err(`iam-br: cannot read policy file '${opts.file}': ${(e && (e.code || e.message)) || 'error'}\n`);
+        if (e && e.code === INPUT_TOO_LARGE) {
+          // The statSync pre-guard rejected an over-cap file before readFileSync. Fail
+          // CLOSED down the shared TOO_LARGE/exit-3 path, not the usage-error path.
+          oversize = true;
         } else {
-          err('iam-br: cannot read policy file (use --verbose for details).\n');
+          // A missing or unreadable input path is a usage/config error (exit 2),
+          // NOT a clean scan and NOT a fail-closed analysis. The DEFAULT message is
+          // deliberately GENERIC (no errno, no path): distinguishing ENOENT / EISDIR /
+          // EACCES / ELOOP would be an FS existence/type/permission oracle over
+          // arbitrary paths. The errno detail is surfaced ONLY under --verbose/--debug.
+          if (opts.verbose) {
+            err(`iam-br: cannot read policy file '${opts.file}': ${(e && (e.code || e.message)) || 'error'}\n`);
+          } else {
+            err('iam-br: cannot read policy file (use --verbose for details).\n');
+          }
+          return EXIT.USAGE;
         }
-        return EXIT.USAGE;
       }
     } else {
       if (io.stdinIsTTY) {
@@ -500,7 +532,26 @@ export async function run(argv, io) {
         err('iam-br: pass a file path or pipe a policy in. Run with --help for usage.\n');
         return EXIT.USAGE;
       }
-      text = await io.readStdin();
+      try {
+        text = await io.readStdin();
+      } catch (e) {
+        if (e && e.code === INPUT_TOO_LARGE) {
+          // The STDIN pre-guard aborted once accumulated bytes exceeded MAX_BYTES,
+          // before buffering the whole stream. Fail CLOSED down the shared exit-3 path.
+          oversize = true;
+        } else {
+          throw e; // any other stdin failure fails closed to INTERNAL via the catch-all
+        }
+      }
+    }
+
+    if (oversize) {
+      // The input tripped the byte cap. Route it down the EXISTING TOO_LARGE/exit-3
+      // path so the verdict is produced by the SAME engine gate the browser uses
+      // (scan -> validate -> TOO_LARGE -> fail-closed exit 3), with no drift. The real
+      // (potentially huge) input is NOT materialized - this bounded, inert filler only
+      // stands in to trip validate()'s byte gate; it is rejected before any parse.
+      text = 'x'.repeat(LIMITS.MAX_BYTES + 1);
     }
 
     if (!isNonEmptyString(text)) {
@@ -574,20 +625,85 @@ export async function run(argv, io) {
 
 // --- Process entry point ------------------------------------------------------
 
-function readStdin() {
+// Read STDIN, enforcing the MAX_BYTES cap BEFORE the whole stream is materialized
+// (threat-model T5). We accumulate RAW Buffer chunks and count ENCODED bytes as they
+// arrive; the moment the running total exceeds LIMITS.MAX_BYTES we STOP consuming and
+// reject with a tagged INPUT_TOO_LARGE error - so an unbounded / multi-GB producer can
+// never fill memory. Decoding to a UTF-8 string happens ONCE, at end, over the
+// concatenated buffer - never per chunk - so a multibyte character split across a chunk
+// boundary is neither miscounted (bytes are counted on the raw buffers) nor mis-decoded
+// (the whole buffer is decoded together). `stream` is injectable for tests; it defaults
+// to process.stdin. Deliberately does NOT call setEncoding - we want Buffer chunks.
+export function readStdin(stream = process.stdin) {
   return new Promise((resolve, reject) => {
-    let data = '';
-    try {
-      process.stdin.setEncoding('utf8');
-    } catch {
-      // stdin may be unavailable; treat as empty.
+    if (!stream || typeof stream.on !== 'function') {
+      // stdin unavailable; treat as empty (matches the prior fail-safe behavior).
       resolve('');
       return;
     }
-    process.stdin.on('data', (chunk) => { data += chunk; });
-    process.stdin.on('end', () => resolve(data));
-    process.stdin.on('error', reject);
+    const chunks = [];
+    let bytes = 0;
+    let done = false;
+
+    const cleanup = () => {
+      try {
+        stream.removeListener('data', onData);
+        stream.removeListener('end', onEnd);
+        stream.removeListener('error', onErr);
+      } catch { /* best effort */ }
+    };
+
+    function onData(chunk) {
+      if (done) return;
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytes += buf.length;
+      if (bytes > LIMITS.MAX_BYTES) {
+        // Over the cap: abort NOW, before buffering any more of the stream. Drop the
+        // accumulated chunks so nothing over-cap lingers, stop the source, and fail
+        // closed with the tagged error (run() routes it to exit 3).
+        done = true;
+        chunks.length = 0;
+        cleanup();
+        try { stream.pause(); } catch { /* best effort */ }
+        try { if (typeof stream.destroy === 'function') stream.destroy(); } catch { /* best effort */ }
+        reject(inputTooLargeError(bytes));
+        return;
+      }
+      chunks.push(buf);
+    }
+
+    function onEnd() {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    }
+
+    function onErr(e) {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(e);
+    }
+
+    stream.on('data', onData);
+    stream.on('end', onEnd);
+    stream.on('error', onErr);
   });
+}
+
+// Read a policy FILE, enforcing the MAX_BYTES cap BEFORE the file is read into memory
+// (threat-model T5). statSync reports the on-disk size cheaply; an over-cap file is
+// rejected with the tagged INPUT_TOO_LARGE error and is NEVER readFileSync'd, so a
+// multi-GB file cannot be materialized. A file at or under the cap is read as UTF-8.
+// A statSync failure (missing / unreadable path) propagates as the original error so
+// run()'s usage-error path (exit 2) still handles it exactly as before.
+export function readFileCapped(path) {
+  const size = statSync(path).size;
+  if (Number.isFinite(size) && size > LIMITS.MAX_BYTES) {
+    throw inputTooLargeError(size);
+  }
+  return readFileSync(path, 'utf8');
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -596,7 +712,8 @@ export async function main(argv = process.argv.slice(2)) {
   // containment guard and the write sink so they cannot disagree.
   const outputBase = process.cwd();
   const io = {
-    readFile: (p) => readFileSync(p, 'utf8'),
+    // readFileCapped enforces the MAX_BYTES cap via statSync BEFORE readFileSync (T5).
+    readFile: (p) => readFileCapped(p),
     readStdin,
     // The fs-aware half of --output containment (symlink-escape + no-overwrite).
     // run() consults this BEFORE writing; parseArgs already handled the lexical layer.

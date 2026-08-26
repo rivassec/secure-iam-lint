@@ -24,7 +24,8 @@
     "mustFind": [],
     "mustNotFind": ["DATA-EXFIL"],
     "maxSeverity": {},
-    "maxPathExploitability": {}
+    "maxPathExploitability": {},
+    "expectClean": true
   },
   "rationale": "NotResource in a Deny statement applies the Deny to every resource EXCEPT those listed. Here s3:GetObject is denied on all resources except arn:aws:s3:::approved-data/*, so the broad Allow is fenced down to a single bucket. Because explicit Deny wins and the Deny covers everything outside approved-data/*, there is no broad object-read (DATA-EXFIL) capability - the effective reach is one approved bucket. Flagging broad exfil here would overstate the risk. Ref: AWS docs, 'IAM JSON policy elements: NotResource' + explicit-Deny precedence."
 }

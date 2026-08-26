@@ -36,6 +36,19 @@ export const LIMITS = Object.freeze({
   // matcher itself is now linear (engine/glob.js), so this cap is defense in depth,
   // not the sole control.
   MAX_STRING_LENGTH: 2048,
+  // Max number of Condition VALUES on any SINGLE statement (summed across every
+  // operator block and key in that statement's Condition). Real policies carry a
+  // handful of condition values (an allowlist of a few VPCs / IP ranges / accounts);
+  // 50000 (5x the MAX_ACTIONS / MAX_RESOURCES caps) is far beyond any legitimate policy
+  // yet bounds an adversarial value-array flood (the Condition-axis companion to
+  // MAX_ACTIONS / MAX_RESOURCES). Unlike those
+  // whole-document count caps this is NOT a hard reject: a value-array flood is a DoS
+  // work-budget concern (the classifier does O(values) work per key - now charged; see
+  // engine/conditions.js), not a malformed document, so an over-cap statement routes to
+  // coverage.summary.incomplete via engine/masked-grant.js (TOO_MANY_CONDITION_VALUES)
+  // rather than discarding the whole document. Values are NEVER silently dropped or
+  // truncated. See the enforceCounts note below.
+  MAX_CONDITION_VALUES: 50000,
 });
 
 // Keys that enable prototype pollution. Rejected at ANY depth, as object keys.
@@ -391,6 +404,16 @@ function enforceCounts(raw, errors) {
   // clean pass - while still surfacing whatever the rest of the policy grants. This is
   // the "undecidable, not rejected" resolution (threat-model T8); do not add a hard
   // ARN-shape reject here without moving that contract.
+  // NOTE (A-condition-budget): validate() likewise does NOT hard-reject a statement whose
+  // Condition carries more than LIMITS.MAX_CONDITION_VALUES values. As with the malformed-
+  // resource case above, a hard reject here (ok:false / BLOCKED) would discard the whole
+  // document and lose the findings the rest of the policy yields. A value-array flood is a
+  // DoS work-budget concern (the classifier does O(values) work per key - now charged in
+  // engine/conditions.js), not a malformed document, so the SHARED engine routes an over-
+  // cap statement to coverage.summary.incomplete via engine/masked-grant.js
+  // (TOO_MANY_CONDITION_VALUES) - fail CLOSED, never a bare clean pass, and NEVER by
+  // silently dropping/truncating values. Both surfaces (browser analyze() + CLI scan())
+  // observe it from that one source. Do not add a hard reject here.
   if (actions > LIMITS.MAX_ACTIONS) {
     errors.push(
       err('TOO_MANY_ACTIONS', `Policy has ${actions} actions; limit is ${LIMITS.MAX_ACTIONS}.`),

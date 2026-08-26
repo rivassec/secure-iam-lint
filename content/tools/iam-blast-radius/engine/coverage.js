@@ -299,6 +299,24 @@ export function enrichCoverage(coverage, context) {
   // conclusion, so its (empty) findings prove nothing. It flips `incomplete` and
   // surfaces a stable code + a recognized-but-uncompleted element so the UI's
   // incomplete panel and every export name it, and NEVER read as a clean pass.
+  // S1-breadth-classify: broad-but-undecidable resource globs ("?*", "*/*") on Allow
+  // statements the rule catalog left finding-free (a non-exfil read like
+  // dynamodb:GetItem). Supplied by analyze() (it needs the fired findings to know a
+  // statement is uncovered). Each flips `incomplete` and carries a stable code + the
+  // statement location, so a broad grant the rules could not cover is never a bare
+  // CLEAN. Frozen structured entries for the CLI/SARIF adapters + the UI panel.
+  const broadUndecidableUncovered = Array.isArray(ctx.broadUndecidableUncovered)
+    ? ctx.broadUndecidableUncovered.map((u) => Object.freeze({
+      statementIndex: Number.isFinite(u && u.statementIndex) ? u.statementIndex : null,
+      statementSid: u && u.statementSid != null ? String(u.statementSid) : null,
+      // Which policy axis the broad-but-uncovered scope rode on: 'Resource' (a broad
+      // Resource glob/ARN) or 'NotResource' (a non-empty complement). Defaults to
+      // 'Resource' for backward compatibility with entries that predate the axis field.
+      axis: (u && u.axis === 'NotResource') ? 'NotResource' : 'Resource',
+      value: u && u.value != null ? String(u.value) : '',
+    }))
+    : [];
+
   const analysisAborted = ctx.analysisAborted === true;
   const abortedElements = analysisAborted
     ? [Object.freeze({
@@ -318,6 +336,12 @@ export function enrichCoverage(coverage, context) {
     .filter((l) => !represented.includes(l.key))
     .map((l) => Object.freeze({ key: l.key, label: l.label }));
 
+  // S2-airtight-incomplete fix (b): a TRUNCATED graph dropped nodes/edges to stay
+  // within its bound, so the attack-path model is INCOMPLETE - some capability the
+  // policy grants could not be represented. It must flip coverage.summary.incomplete
+  // (folded into `incomplete` below) and carry a stable GRAPH_TRUNCATED code, so no
+  // surface (browser CLEAN or CLI exit 0) ever reads a truncated analysis as a
+  // complete pass. A truncated graph does NOT mean the policy is safe.
   const truncated = !!(graph && graph.truncated);
 
   // IAM-806: same-policy trust Deny caveat (from summarizeTrustDeny). A trust
@@ -350,9 +374,16 @@ export function enrichCoverage(coverage, context) {
     // IAM-1508: any masked-grant shape makes the analysis INCOMPLETE - a masked
     // full-admin/broad-resource grant must never read as a clean, complete pass.
     || maskedGrants.length > 0
+    // S1-breadth-classify: a broad-but-undecidable resource glob the rules left
+    // finding-free is INCOMPLETE (never a bare CLEAN).
+    || broadUndecidableUncovered.length > 0
     // S3-dos-budget: an analysis stopped by the resource budget never ran to a
     // conclusion, so it is INCOMPLETE by construction (never a clean pass).
-    || analysisAborted;
+    || analysisAborted
+    // S2-airtight-incomplete (b): a truncated attack-path graph dropped edges to
+    // stay within its bound, so the analysis could not be fully represented and is
+    // INCOMPLETE (a truncated graph is never a bare CLEAN pass).
+    || truncated;
 
   // Stable machine-readable codes carried into exports. Today this mirrors the
   // family gate's blocking codes; future non-blocking coverage codes append here
@@ -381,6 +412,15 @@ export function enrichCoverage(coverage, context) {
   if (analysisAborted && !codes.includes('RESOURCE_BUDGET_EXCEEDED')) {
     codes.push('RESOURCE_BUDGET_EXCEEDED');
   }
+  // S1-breadth-classify: one stable code when any broad-but-undecidable uncovered
+  // resource glob is present.
+  if (broadUndecidableUncovered.length > 0 && !codes.includes('BROAD_RESOURCE_UNDECIDABLE')) {
+    codes.push('BROAD_RESOURCE_UNDECIDABLE');
+  }
+  // S2-airtight-incomplete (b): a stable code for a truncated attack-path graph.
+  if (truncated && !codes.includes('GRAPH_TRUNCATED')) {
+    codes.push('GRAPH_TRUNCATED');
+  }
 
   const summary = Object.freeze({
     detectedFamily: cov.detected || 'unknown',
@@ -406,6 +446,10 @@ export function enrichCoverage(coverage, context) {
     // 'incomplete' (suppressed would-be grant left a trace). Empty for a policy
     // that carries none.
     maskedGrants: Object.freeze(maskedGrants),
+    // S1-breadth-classify: broad-but-undecidable resource globs on statements the
+    // rule catalog left finding-free (dynamodb:GetItem on "?*"). Each { statementIndex,
+    // statementSid, value }. Empty for a policy that carries none.
+    broadUndecidableUncovered: Object.freeze(broadUndecidableUncovered),
     // IAM-1201: the attached-resource context recorded for a resource-family
     // analysis (null for every other family). Names the detected service, the
     // attached ARN, and the principal types the policy names, as inert evidence.

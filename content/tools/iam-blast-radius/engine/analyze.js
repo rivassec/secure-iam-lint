@@ -12,7 +12,7 @@
 // structured { ok:false, errors[] } result.
 
 import { modelFromText } from './model.js';
-import { analyzeRules, ruleFindingDenySuppressed, actionResourceTypeMismatches } from './rules.js';
+import { analyzeRules, ruleFindingDenySuppressed, actionResourceTypeMismatches, survivingBroadReadActions } from './rules.js';
 import { analyzeEscalations } from './escalation.js';
 import { analyzeTrust, trustFindingDenyState, summarizeTrustDeny } from './trust.js';
 import { analyzeEnvelope } from './envelope.js';
@@ -24,7 +24,16 @@ import { buildGraph, buildTrustGraph, buildResourceGraph, GRAPH_LIMITS } from '.
 import { detectFamily, FAMILIES, isRcpShape } from './family.js';
 import { enrichCoverage, duplicateSids } from './coverage.js';
 import { classifyConditions, unsupportedConditionKeys } from './conditions.js';
-import { defaultCatalog, unrecognizedActions } from './catalog.js';
+// S1-breadth-classify: the shared Resource-ARN classifier. Used here (post-rules) to
+// close the last breadth fail-open the rule engine cannot: ANY value classifyResource()
+// reports BROAD - a non-ARN glob ("?*", "*/*") OR a broad WELL-FORMED ARN
+// ("arn:aws:dynamodb::*:table/foo", wildcard ACCOUNT) - riding on an Allow statement the
+// rule engine covered with NO finding (a non-exfil read like dynamodb:GetItem, which
+// fires neither DATA-EXFIL nor WILDCARD-RESOURCE). "broad implies a rule fired" is
+// exactly the assumption that fails open (and it fails open identically for a glob and a
+// well-formed ARN); this checks the fired findings instead, symmetric across spellings.
+import { classifyResource, RESOURCE_CLASS } from './resource-arn.js';
+import { defaultCatalog, unrecognizedActions, ACCESS_LEVELS } from './catalog.js';
 // Cooperative resource budgets (S3-dos-budget). analyze() arms a DETERMINISTIC
 // WORK budget (an op-count ceiling, not a clock - so architecture invariant 8 holds)
 // on EVERY run, including the browser/worker path, so a pathological within-caps
@@ -720,6 +729,54 @@ function resourceResult(model, coverage, effectiveFamily, options) {
   });
 }
 
+// A statement carries a RESOURCE-SCOPABLE READ on the bare "*" when at least one of
+// its CONCRETE actions resolves (in the action catalog) to the "Read" access level -
+// a read that CAN be scoped to a specific ARN (dynamodb:GetItem, iam:GetRole,
+// kms:DescribeKey, s3:GetBucketPolicy, secretsmanager:DescribeSecret). Reading such
+// an action on Resource "*" is an account-wide broad read the rule catalog leaves
+// finding-free (WILDCARD-RESOURCE needs a non-read action; DATA-EXFIL needs the
+// s3-bulk/secret catalog), so the bare "*" must NOT be waved through as a decided
+// scope - it flips coverage.summary.incomplete exactly as the equally-broad "?*"
+// does (broadUndecidableUncovered), symmetric across analyze() and scan().
+//
+// This is DELIBERATELY the catalog "Read" level, NOT the rules.js verb heuristic:
+// an ENUMERATION/LIST action (ec2:DescribeInstances, s3:ListAllMyBuckets, iam:ListRoles)
+// is "List" - it genuinely has NO resource-level scoping and AWS REQUIRES Resource "*"
+// for it, so flagging its mandatory wildcard would be a false positive (the
+// aws-required-wildcard-resource-not-penalized negative fixture). Only CONCRETE tokens
+// are consulted: a wildcard action pattern (ec2:Describe*, iam:Get*) spans both Read
+// and List members, so it is never treated as a decidably-scopable read here. A
+// mutating action would already fire WILDCARD-RESOURCE and cover the statement, so it
+// never reaches this net.
+//
+// Iteration 7: catalog "Read" is NECESSARY but NOT SUFFICIENT for resource-scopability.
+// A subset of READ-level actions have NO resource-level permission support and AWS
+// REQUIRES Resource "*" for them (ec2:DescribeTags, cloudtrail:LookupEvents /
+// DescribeTrails, sts:GetCallerIdentity / GetSessionToken / GetFederationToken). Their
+// "*" is service-mandated least privilege, not an avoidable account-wide over-scope, so
+// treating it as a decidably-scopable read flipped a minimal, correct policy to
+// incomplete - a false positive that re-broke the read-only-wildcard-resource negative
+// fixture. The catalog now carries a `requiresWildcardResource` bit (consulted here, NOT
+// the READ level alone): only a READ that GENUINELY supports a resource-level ARN
+// (dynamodb:GetItem, iam:GetRole, kms:DescribeKey, s3:GetBucketPolicy,
+// secretsmanager:DescribeSecret) counts as scopable-on-"*" and flips incomplete; a
+// required-wildcard READ stays a decided scope (CLEAN, exit 0). Fail-closed by
+// construction: an unlisted required-wildcard action defaults to scopable -> incomplete,
+// never a bare CLEAN.
+// Returns the statement's resource-scopable READ actions (the list backing
+// statementHasScopableReadOnStar). analyze.js's broad-uncovered net then filters
+// this list through survivingBroadReadActions() so a read a same-policy Deny fully
+// removes or fences-to-narrow is not counted as a surviving broad read.
+function statementScopableReadActions(stmt) {
+  if (!stmt || !Array.isArray(stmt.actions)) return [];
+  return stmt.actions.filter((a) => {
+    const res = defaultCatalog.lookup(a);
+    return res.known
+      && res.accessLevel === ACCESS_LEVELS.READ
+      && !res.requiresWildcardResource;
+  });
+}
+
 /**
  * Run the full analysis pipeline on raw policy text.
  *
@@ -825,9 +882,136 @@ export function analyze(text, options) {
     // blocked, or a broad bulk-read fenced to a narrow set). Escalation findings
     // already have Deny folded in by escalation.js. The graph below still
     // receives the FULL `combined` set, so blocked-by-deny edges are preserved.
+    // Computed HERE (before the broad-uncovered net) because that net keys its
+    // "covered" decision off the DENY-SURVIVING findings, not the pre-suppression
+    // set - see the coveredStatementIndexes note below.
     const tableFindings = combined.filter(
       (f) => !ruleFindingDenySuppressed(f, m.model),
     );
+
+    // S1-breadth-classify (iter 2): close the residual breadth fail-open the rule
+    // catalog is structurally blind to. A resource value classifyResource() reports
+    // BROAD - the bare "*", a wildcard high in the ARN (partition/service/ACCOUNT), a
+    // whole-collection identifier wildcard (role/*), a bucket-name-segment wildcard, or
+    // a boundary-crossing non-ARN glob ("?*"/"*/*") - matches essentially every resource
+    // of a service or spans the account boundary. When a finding fired on its Allow
+    // statement (s3:GetObject on "?*" -> DATA-EXFIL; iam:PassRole on "arn:aws:iam::*:role/*"
+    // -> WILDCARD-RESOURCE) the risk is already surfaced. When NO finding fired the grant
+    // would otherwise read as a bare CLEAN: a fail-OPEN (threat-model T8). This is the
+    // exact shape of a broad-resource READ: the rule catalog DELIBERATELY treats a
+    // read-only wildcard as routine (grantsNonReadAction gates WILDCARD-RESOURCE;
+    // DATA-EXFIL needs the s3-bulk/secret catalog), so dynamodb:GetItem / iam:GetRole /
+    // kms:DescribeKey / s3:GetBucketPolicy on a BROAD resource fires NEITHER rule.
+    //
+    // The control MUST hold SYMMETRICALLY across spellings of "read broadly": the glob
+    // "?*" and the equally-broad WELL-FORMED ARN "arn:aws:dynamodb::*:table/foo" (wildcard
+    // ACCOUNT - a cross-account read) are the SAME broadness from the one shared classifier
+    // and must BOTH route to incomplete. So this nets on ONLY two facts: (a) the shared
+    // classifier's BROAD verdict, and (b) whether a rule finding actually COVERED the
+    // statement - NEVER on "a well-formed ARN implies a rule fired", which is precisely the
+    // assumption that fails open (iter-1 excluded well-formed ARNs here via parseArn, which
+    // re-instated that assumption and left every broad-well-formed-ARN read a bare CLEAN).
+    // Allow-only; the bare "*" is excluded (its scope is fully decided and it is the single
+    // most-recognized wildcard the rule catalog owns).
+    //
+    // Iteration 4: the covered set is built from the DENY-SURVIVING findings
+    // (`tableFindings`), NOT the pre-suppression `combined` set. Keying it off
+    // `combined` re-instated the forbidden assumption this design warns against:
+    // a rule DID fire on a statement, so the statement was marked "covered" and
+    // the net SKIPPED it - but the authoritative table later DROPS that finding
+    // via ruleFindingDenySuppressed (same-policy Deny precedence / NotResource
+    // fence). "A rule fired" then no longer implies "a risk was surfaced": a
+    // DIFFERENT surviving broad read on that same statement (dynamodb:GetItem next
+    // to a Deny-suppressed s3:GetObject on "arn:aws:...:table/*") was never
+    // flagged and the tool returned a bare CLEAN. Keying "covered" off findings
+    // that ACTUALLY SURVIVE into the table means a statement whose only finding is
+    // Deny-suppressed re-enters this net and its surviving broad read flips
+    // incomplete - never a bare CLEAN. Symmetric across both Deny mechanisms
+    // (full action-Deny AND NotResource fence) and both covering rules
+    // (DATA-EXFIL bulk-read AND secret-read), since both are folded out of
+    // tableFindings by the same ruleFindingDenySuppressed filter.
+    const coveredStatementIndexes = new Set(
+      tableFindings
+        .map((f) => (typeof f.statementIndex === 'number' ? f.statementIndex : null))
+        .filter((i) => i !== null),
+    );
+    //
+    // Iteration 3: this net must cover the NotResource axis too, symmetric with
+    // masked-grant.js's both-axis MALFORMED handling (which already covers Resource
+    // AND NotResource). rules.js resourceIsBroad() treats a NON-EMPTY NotResource as
+    // broad (Allow-everything-EXCEPT-a-narrow-set spans essentially every ARN), so a
+    // routine-read Allow scoped by NotResource (dynamodb:GetItem NotResource
+    // arn:aws:s3:::my-bucket/*) fires NO rule yet is account-wide broad. Inspecting
+    // only s.resources left that grant a bare CLEAN on the NotResource axis - an
+    // internal asymmetry (a malformed NotResource was already caught, a broad-but-
+    // well-formed one was not). Both axes now flip incomplete.
+    const broadUndecidableUncovered = [];
+    for (const s of m.model.statements) {
+      if (!s || s.effect !== 'Allow') continue;
+      if (coveredStatementIndexes.has(s.index)) continue;
+      const sid = (typeof s.sid === 'string' && s.sid.length > 0) ? s.sid : `(index ${s.index})`;
+      // Iteration 6: the bare "*" is NOT unconditionally a decided/covered scope. For a
+      // RESOURCE-SCOPABLE READ (catalog "Read" level: dynamodb:GetItem, iam:GetRole,
+      // kms:DescribeKey, s3:GetBucketPolicy, secretsmanager:DescribeSecret) that no rule
+      // covered, Resource "*" is an account-wide broad read the rule catalog is blind to
+      // ("*" >= "?*", yet only "?*" was flipping) - it must flip incomplete exactly as
+      // "?*" does. An ENUMERATION/LIST read (ec2:DescribeInstances, s3:ListAllMyBuckets,
+      // iam:ListRoles) genuinely REQUIRES "*" (no resource-level scoping), so its "*" is
+      // still waved through - flagging it would be a false positive. A mutating "*"
+      // already fired WILDCARD-RESOURCE, so it never reaches this uncovered net.
+      // Iteration 8: EXCLUDE the scope a same-policy explicit Deny covers before
+      // treating this statement's broad resource as a surviving broad read. A
+      // Deny-suppressed rule finding drops out of tableFindings, so its statement
+      // re-enters this net (see the coveredStatementIndexes note) - but if the SAME
+      // same-policy Deny fully removes the scopable read (explicit-deny-suppresses-
+      // exfil: Deny s3:GetObject "*") or fences its broad scope down to a narrow set
+      // (notresource-deny-fences-exfil: Deny NotResource approved-data/*), there is
+      // NO surviving broad read and the correct verdict is CLEAN. Keying off the
+      // literal "*" resource instead of the fenced effective scope re-flagged those
+      // as BROAD_RESOURCE_UNDECIDABLE - a false positive that contradicts Control B
+      // (a Deny-suppressed statement with a NARROW surviving resource stays CLEAN).
+      // survivingBroadReadActions() applies the identical Deny semantics
+      // ruleFindingDenySuppressed() uses (no drift). When the statement HAD scopable
+      // reads but a Deny covered them ALL, the broad resource is Deny-decided: skip
+      // it (a statement with no scopable reads is unaffected; a partially-surviving
+      // read still flips incomplete).
+      const scopableReads = statementScopableReadActions(s);
+      const survivingReads = survivingBroadReadActions(scopableReads, s, m.model);
+      if (scopableReads.length > 0 && survivingReads.length === 0) continue;
+      const starIsScopableRead = survivingReads.length > 0;
+      // Resource axis: a broad Resource value the rule catalog left uncovered.
+      let flagged = false;
+      if (Array.isArray(s.resources)) {
+        for (const v of s.resources) {
+          // The bare "*" is a decided scope EXCEPT when a resource-scopable read rides
+          // it uncovered (then it is the broadest possible undecidable-for-coverage read).
+          if (String(v).trim() === '*' && !starIsScopableRead) continue;
+          if (classifyResource(v) !== RESOURCE_CLASS.BROAD) continue; // narrow/malformed handled elsewhere
+          broadUndecidableUncovered.push(Object.freeze({
+            statementIndex: s.index,
+            statementSid: sid,
+            axis: 'Resource',
+            value: String(v),
+          }));
+          flagged = true;
+          break; // one entry per statement is enough to mark it incomplete
+        }
+      }
+      if (flagged) continue; // a statement carries either Resource or NotResource, never both
+      // NotResource axis: a NON-EMPTY NotResource complement is inherently broad
+      // (resourceIsBroad() true). An empty complement is handled by masked-grant
+      // (EMPTY_NOTRESOURCE_COMPLEMENT); a malformed member is handled by masked-grant
+      // (MALFORMED_RESOURCE_ARN). A broad well-formed complement on an uncovered read
+      // fell through both - close it here.
+      if (Array.isArray(s.notResources) && s.notResources.length > 0) {
+        broadUndecidableUncovered.push(Object.freeze({
+          statementIndex: s.index,
+          statementSid: sid,
+          axis: 'NotResource',
+          value: s.notResources.map((v) => String(v)).join(', '),
+        }));
+      }
+    }
 
     // IAM-105: fold subordinate wildcard/broad-resource rows into the compound
     // escalation path that already accounts for them, so the table shows one
@@ -876,6 +1060,10 @@ export function analyze(text, options) {
       // evidence-identity advisory (statements stay keyed on their distinct
       // index; the collision is named, never allowed to overwrite a record).
       duplicateSids: duplicateSids(m.model),
+      // S1-breadth-classify: broad-but-undecidable resource globs on statements the
+      // rule catalog left finding-free (dynamodb:GetItem on "?*"). Flips incomplete so
+      // an under-covered broad grant is never a bare CLEAN.
+      broadUndecidableUncovered,
     });
 
     return Object.freeze({

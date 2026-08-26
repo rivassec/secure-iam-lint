@@ -207,6 +207,32 @@ function normalizePrincipal(value, errors, path, element) {
     }
     byType[key] = arr.values;
   }
+  // S3-trust-calibration (1): fail CLOSED on a principal that names NO actual
+  // principal member. Two shapes collapse to a member-less byType and would
+  // otherwise read as a benign, non-firing trust/resource grant (a fail-OPEN that
+  // reports CLEAN on `Principal: {}` + sts:AssumeRole):
+  //   - an empty principal object `{}`               -> byType has ZERO keys;
+  //   - a principal whose value array is empty `{"AWS": []}` (or any key mapping
+  //     to `[]`)                                      -> an empty VALUE ARRAY.
+  // AWS requires at least one principal value; both are malformed. Reject them as
+  // INVALID_PRINCIPAL / INVALID_NOTPRINCIPAL so buildModel fails (ok:false ->
+  // analyze() is not-ok, CLI exit 3) rather than emitting a member-less principal
+  // the trust family flattens to no finding. Principal "*" is handled ABOVE
+  // (anyPrincipal:true, byType:{}) and returns before this guard, so a wildcard
+  // principal - which legitimately has an empty byType - is never rejected here.
+  const presentKeys = Object.keys(byType);
+  const hasEmptyValueArray = presentKeys.some((k) => byType[k].length === 0);
+  if (presentKeys.length === 0 || hasEmptyValueArray) {
+    errors.push(
+      err(
+        element === 'NotPrincipal' ? 'INVALID_NOTPRINCIPAL' : 'INVALID_PRINCIPAL',
+        `${name} must name at least one principal value; an empty principal ` +
+          'object or an empty principal value array is not a valid principal.',
+        `${path}.${name}`,
+      ),
+    );
+    return null;
+  }
   return { anyPrincipal: false, byType };
 }
 

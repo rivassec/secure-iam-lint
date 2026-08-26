@@ -692,16 +692,22 @@ test('(e) analyze() on the policy-variable-Deny runaway is DETERMINISTIC (op-cou
   assert.equal(a1.coverage.summary.analysisAborted && a2.coverage.summary.analysisAborted, true, 'both runs abort (deterministic trip point)');
 });
 
-test('(e) NO over-correction: a SMALL policy-variable-Deny policy still analyzes to a COMPLETE verdict', () => {
+test('(e) NO over-correction: a SMALL policy-variable-Deny policy does NOT trip the resource budget', () => {
   // The charge is PROPORTIONAL to real traversal work, not a blanket "any ${...} Deny
   // aborts". A tiny policy-variable-Deny policy does little deny-coverage work and MUST
-  // complete normally (no false positive), or the fix would over-correct legitimate
-  // variable-scoped Denies into fail-closed.
+  // NOT trip the budget (no false positive), or the fix would over-correct legitimate
+  // variable-scoped Denies into a budget-aborted fail-closed.
   const text = buildPolicyVarDenyPolicy(3, 2, 3, true);
   assert.equal(validate(text).ok, true, 'the small policy-variable-Deny policy is within caps');
   const a = analyze(text);
   assert.equal(a.coverage.summary.analysisAborted, false, 'a small ${...}-Deny policy does NOT trip the budget');
-  assert.equal(a.coverage.summary.incomplete, false, 'it reaches a COMPLETE verdict');
+  // S2-airtight-incomplete (a): the Allow statements name `<svc>:*` wildcards on
+  // services the small curated catalog does not model (sns/logs/ecr/eks/athena), so the
+  // coverage is honestly INCOMPLETE (an unmodeled-service wildcard cannot be vouched for -
+  // unsupported does NOT mean safe), exactly as a concrete `sns:Publish` already is. That
+  // incompleteness is a CATALOG-coverage signal, NOT a budget abort - the two are
+  // orthogonal, and this test asserts only the budget did not over-fire.
+  assert.equal(a.coverage.summary.analysisAborted, false, 'the incompleteness is catalog coverage, not a resource-budget abort');
   const r = scan({ text, family: 'identity' });
   assert.notEqual(r.reason, 'RESOURCE_BUDGET_EXCEEDED', 'scan() does not fail closed on a small legitimate ${...}-Deny policy');
 });

@@ -77,6 +77,18 @@
 // spoof code point EMBEDDED inside a parsed string value, where it has no legitimate
 // meaning.
 //
+// WHICH SURFACES NEUTRALIZE (the display-safe contract). The DISPLAY / EXPORT sinks that
+// run values through neutralizeForDisplay / sanitizeTree are: the browser DOM findings
+// table (app.js), the SVG graph labels (render-graph.js), the Markdown export and the SARIF
+// export (report.js + cli/sarif.mjs). The CLI `--format json` plain-JSON output is the
+// DELIBERATE exception and is NOT in that list: it is a BYTE-FAITHFUL machine artifact, not
+// a human display surface, so it emits engine strings verbatim (neutralizing them would
+// corrupt the fingerprint/ARN/action bytes downstream tooling consumes). Hostile Unicode
+// rides through that JSON INERT (data in a JSON string - never executed, never interpolated
+// into a page); the residual risk is purely visual and only if a human treats raw
+// `cat report.json` as a display surface, which is why the docs route humans to
+// `--format sarif`. See docs/threat-model.md (T6 output-surface neutralization contract).
+//
 // Pure, deterministic, browser-safe (no node: imports, no DOM, no network).
 
 export const INVISIBLE_SPOOF =

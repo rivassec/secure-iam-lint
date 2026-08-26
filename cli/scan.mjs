@@ -237,6 +237,11 @@ const MASKED_GRANT_MESSAGES = Object.freeze({
     'decide what the value scopes - a suffix/infix glob (e.g. "*.pem") or a bare ' +
     'literal would otherwise read as a narrow scope and let a bulk read pass clean. ' +
     'The policy fails closed rather than reporting a clean pass.',
+  TOO_MANY_CONDITION_VALUES:
+    'A statement Condition carries more values than the analyzer will process in a ' +
+    'single pass (a value-array flood). Rather than silently analyzing or dropping the ' +
+    'excess values, the analysis is reported as incomplete (a flood does NOT mean the ' +
+    'policy is safe). The policy fails closed rather than reporting a clean pass.',
 });
 
 function maskedGrantMessage(code) {
@@ -304,6 +309,18 @@ function incompleteStatesFromCoverage(coverage) {
       s.trustDeny.note || 'A same-policy trust Deny could not be fully modeled.',
     ));
   }
+  // S2-airtight-incomplete (b): a truncated attack-path graph dropped nodes/edges
+  // to stay within its bound, so the analysis could not be fully represented. It is
+  // a non-clean INCOMPLETE state (exit 3), never a clean pass.
+  if (s.graph && s.graph.truncated) {
+    out.push(state(
+      ANALYSIS_STATE.INCOMPLETE,
+      'GRAPH_TRUNCATED',
+      'The attack-path graph exceeded its node/edge bound and was truncated, so ' +
+        'some edges were dropped and the analysis could not be fully represented ' +
+        '(a truncated graph does NOT mean the policy is safe).',
+    ));
+  }
   if (s.resourceContext && s.resourceContext.incomplete) {
     out.push(state(
       ANALYSIS_STATE.INCOMPLETE,
@@ -311,6 +328,25 @@ function incompleteStatesFromCoverage(coverage) {
       s.resourceContext.note ||
         'Resource policy accepted, but service-specific resource rules are not yet ' +
         'implemented (zero findings does NOT mean safe).',
+    ));
+  }
+  for (const u of (s.broadUndecidableUncovered || [])) {
+    const axis = u.axis === 'NotResource' ? 'NotResource' : 'Resource';
+    const message = axis === 'NotResource'
+      ? 'An Allow statement grants on every resource EXCEPT a narrow NotResource ' +
+        'complement - an account-wide broad scope - and no rule covered the statement, ' +
+        'so the grant could not be analyzed (a broad grant left unanalyzed does NOT ' +
+        'mean the policy is safe).'
+      : 'An Allow statement grants a broad but malformed (non-ARN) Resource glob whose ' +
+        'concrete scope cannot be established, and no rule covered the statement, so ' +
+        'the grant could not be analyzed (a broad grant left unanalyzed does NOT mean ' +
+        'the policy is safe).';
+    out.push(state(
+      ANALYSIS_STATE.INCOMPLETE,
+      'BROAD_RESOURCE_UNDECIDABLE',
+      message,
+      { path: u.statementIndex != null ? `Statement[${u.statementIndex}].${axis}` : null,
+        details: { statementIndex: u.statementIndex, axis, value: u.value } },
     ));
   }
   return out;
@@ -664,7 +700,11 @@ export function scan(input) {
       blockingCount,
       findingsCount,
       exitCode: EXIT.FAIL_CLOSED,
-      reason: 'SUPPRESSED_NEVER_MATCH_ALLOW',
+      // Report the actual first suppressed/incomplete masked-grant code (e.g.
+      // TOO_MANY_CONDITION_VALUES) rather than a hardcoded label; falls back to the
+      // never-match code when the list is somehow empty. Same value as before for the
+      // suppressed ForAnyValue case (its code IS SUPPRESSED_NEVER_MATCH_ALLOW).
+      reason: suppressed.length ? suppressed[0].code : 'SUPPRESSED_NEVER_MATCH_ALLOW',
       family: effectiveFamily,
       coverage,
       engineOk: true,

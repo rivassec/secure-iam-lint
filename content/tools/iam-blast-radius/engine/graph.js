@@ -636,6 +636,28 @@ const RULE_MAP = {
       lane: LANES.DATA_ACCESS,
     });
   },
+  // IAM-706: a resource-scoped read whose sensitivity is INFERRED from naming, or
+  // whose ARN is policy-variable scoped. Mirrors DATA-EXFIL's data-access lane
+  // `can-read` edge so a DATA-READ finding is never silently edgeless, but the
+  // target node PRESERVES the finding's actual resource scope (DATA-EXFIL is a
+  // broad/unscoped bulk read, keyed to a single generic sensitive-data node),
+  // and its certainty stays the deny-aware base passed in (CONTEXT_REQUIRED for
+  // the rule's `medium` policyEvidence) - a scoped, inferred read must never
+  // claim a confirmed bulk-exfil reach (threat-model T8).
+  'DATA-READ': (f, b, certainty) => {
+    const key = firstResource(f);
+    b.addEdge({
+      toId: `datastore:scoped-read:${key}`,
+      toType: NODE_TYPES.DATA_STORE,
+      toLabel: `Data (scoped read): ${key}`,
+      type: EDGE_TYPES.CAN_READ,
+      certainty,
+      finding: f,
+      statementIndex: f.statementIndex,
+      label: 'can read scoped data',
+      lane: LANES.DATA_ACCESS,
+    });
+  },
   'KMS-DECRYPT': (f, b, certainty) => {
     b.addEdge({
       toId: 'datastore:kms-decrypt',
