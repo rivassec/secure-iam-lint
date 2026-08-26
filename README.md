@@ -1,5 +1,7 @@
 # secure-iam-lint
 
+[![CI](https://github.com/rivassec/secure-iam-lint/actions/workflows/ci.yml/badge.svg)](https://github.com/rivassec/secure-iam-lint/actions/workflows/ci.yml) [![Security](https://github.com/rivassec/secure-iam-lint/actions/workflows/security.yml/badge.svg)](https://github.com/rivassec/secure-iam-lint/actions/workflows/security.yml)
+
 **An AWS IAM policy blast-radius analyzer.** Paste an IAM policy and see its
 *potential blast radius* - privilege-escalation paths, role-assumption reach, and
 data exposure - computed entirely client-side, with a strict Content-Security-Policy
