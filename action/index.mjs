@@ -166,6 +166,10 @@ export function readInputs(env) {
     // value falls back to the default; a policy whose analysis overruns fails CLOSED
     // (exit 3, RESOURCE_BUDGET_EXCEEDED), never a clean pass.
     budgetMs: budgetMsInput(getInput(env, 'budget-ms')),
+    // Aggregate resource ceiling across the WHOLE matched-file set (S6-action-aggregate-cap).
+    // Both are positive integers; absent / non-numeric / <= 0 falls back to the sane default.
+    maxFiles: positiveIntInput(getInput(env, 'max-files'), DEFAULT_MAX_FILES),
+    maxTotalBytes: positiveIntInput(getInput(env, 'max-total-bytes'), DEFAULT_MAX_TOTAL_BYTES),
   };
 }
 
@@ -175,6 +179,47 @@ function budgetMsInput(raw) {
   const n = Number(String(raw).trim());
   return Number.isFinite(n) ? n : DEFAULT_BUDGET_MS;
 }
+
+// --- Aggregate resource ceiling (S6-action-aggregate-cap) ---------------------
+// resolveFiles + the per-file scan loop budget EACH file independently (the engine's
+// per-file 1 MiB byte cap; a per-file work/wall-clock budgetMs). Nothing bounded the
+// CUMULATIVE cost across MANY files beyond the static walkFiles MAX_FILES=200000: a fork
+// PR matching thousands of near-cap policy files scales CI runtime linearly into tens of
+// minutes (the plan's ~200 files ~= 20s -> thousands -> minutes). Each file still fails
+// CLOSED, so this is NOT a fail-OPEN - it is an availability/cost DoS on the fork-PR
+// surface. The ceiling is DETERMINISTIC on TWO axes measured in the loop:
+//   - a matched-file COUNT ceiling (bounds the fixed per-file parser/setup overhead of
+//     very many tiny files), AND
+//   - an aggregate UTF-8 BYTE ceiling (bounds parser work; count alone misses a few giant
+//     files, bytes alone misses the per-file overhead of a huge file count).
+// No wall-clock is consulted here: a wall-clock-primary cap makes tests flaky and CI
+// nondeterministic; the per-file budgetMs stays the ONLY time-based guard. Both ceilings
+// are CONFIGURABLE (max-files / max-total-bytes inputs) with GENEROUS defaults, because a
+// too-tight hardcoded cap would false-fail-closed on a legitimate large monorepo - an
+// adoption-killing false positive for a Marketplace security gate. Files are traversed in
+// the STABLE sorted order resolveFiles already produces, so which files fall under vs over
+// the cap is reproducible. On breach the loop STOPS, the findings gathered so far are still
+// emitted, and an explicit fail-closed 'incomplete' analyzer-state (exit 3) is appended -
+// the partial scan is NEVER reported as clean.
+export const DEFAULT_MAX_FILES = 1000;
+export const DEFAULT_MAX_TOTAL_BYTES = 64 * 1024 * 1024; // 64 MiB (67108864 bytes) aggregate
+export const AGGREGATE_CAP_REASON = 'AGGREGATE_CAP_EXCEEDED';
+
+// Coerce a positive-integer input, defaulting when absent / non-numeric / non-integer /
+// <= 0. A zero or negative ceiling is nonsensical (it would fail-closed on the very first
+// file); such a value falls back to the sane default rather than bricking the Action.
+function positiveIntInput(raw, dflt) {
+  if (!isNonEmptyString(raw)) return dflt;
+  const n = Number(String(raw).trim());
+  return Number.isInteger(n) && n > 0 ? n : dflt;
+}
+
+// UTF-8 byte length of a string, for the aggregate BYTE ceiling. TextEncoder is a Node +
+// Web global (no import, pure, deterministic); String.prototype.length UNDER-counts
+// multibyte content, so bytes - not UTF-16 code units - are what the ceiling measures. One
+// shared instance avoids per-file churn.
+const AGG_UTF8 = new TextEncoder();
+function utf8ByteLength(s) { return AGG_UTF8.encode(String(s)).length; }
 
 // --- paths / glob resolution --------------------------------------------------
 
@@ -580,6 +625,30 @@ function internalFileResult(family, note) {
   });
 }
 
+// A synthetic fail-closed (exit 3) result appended when the AGGREGATE resource ceiling is
+// breached mid-loop (S6-action-aggregate-cap). It carries an explicit 'incomplete'
+// analyzer-state so the partial scan is surfaced as fail-closed - NEVER clean - and projects
+// into SARIF as a kind:'fail' / category:'analysis-state' result with NO security-severity
+// (the tool-level truncation notification), exactly like every other could-not-analyze
+// state. analysisStatus is 'partial' (some files WERE analyzed, the rest were not); the exit
+// code is FAIL_CLOSED so the aggregate worst-code is at least 3 and the check fails. The
+// message carries ONLY counts + the configured ceiling - never a filename or policy content
+// - so it stays deterministic and leaks nothing into the SARIF / Security tab.
+function aggregateCapResult(reason, message, family) {
+  return Object.freeze({
+    analysisStatus: 'partial',
+    analysisStates: Object.freeze([Object.freeze({
+      analysisState: 'incomplete', code: reason, message, path: null,
+    })]),
+    findings: Object.freeze([]),
+    findingsCount: 0,
+    blockingCount: 0,
+    exitCode: EXIT.FAIL_CLOSED,
+    reason,
+    family: family != null ? family : null,
+  });
+}
+
 // --- SARIF assembly -----------------------------------------------------------
 
 // Build one multi-run SARIF 2.1.0 log: one run per scanned unit (each carrying its
@@ -760,12 +829,62 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
       }], inputs, manifest);
     }
 
-    // --- Scan each resolved file READ-ONLY. -----------------------------------
+    // --- Scan each resolved file READ-ONLY, under the AGGREGATE ceiling. -------
+    // `files` is already in a STABLE sorted order (resolveFiles), so which files fall
+    // under vs over the cap is deterministic. Two cumulative counters bound the whole set:
+    // scannedCount (matched-file COUNT ceiling) and totalBytes (aggregate UTF-8 BYTE
+    // ceiling). On breach the loop STOPS and a fail-closed 'incomplete' unit is appended;
+    // the findings gathered so far are preserved. See the S6-action-aggregate-cap note.
     const units = [];
+    let scannedCount = 0;
+    let totalBytes = 0;
+    let capBreach = null;
     for (const rel of files) {
+      // COUNT ceiling: once maxFiles files have been fully analyzed, the NEXT file trips
+      // the cap. Checked before any read/scan so no further work is done past the ceiling.
+      if (scannedCount >= inputs.maxFiles) {
+        capBreach = {
+          message: `Aggregate file-count ceiling reached (max-files=${inputs.maxFiles}): `
+            + `${files.length} file(s) matched but only the first ${scannedCount} were analyzed `
+            + 'in a stable sorted order. The remaining '
+            + `${files.length - scannedCount} file(s) were NOT analyzed, so this run is INCOMPLETE `
+            + 'and FAILS CLOSED (exit 3) - it is never reported as a clean pass. Raise max-files '
+            + 'for a legitimately large policy set.',
+        };
+        break;
+      }
+
+      let text;
+      try {
+        text = io.readFile(rel);
+      } catch (e) {
+        // A read throw fails THAT unit closed to INTERNAL (exit 4) - never 0 - and still
+        // consumes a count slot so the ceiling accounts for the attempt.
+        units.push({ file: rel, result: internalFileResult(inputs.family, `Could not read a file: ${(e && e.message) || 'error'}`) });
+        scannedCount += 1;
+        continue;
+      }
+
+      // BYTE ceiling: if analyzing this file would push the cumulative UTF-8 byte total
+      // past maxTotalBytes, STOP before scanning it. (A single file larger than the ceiling
+      // trips here with zero prior scans - still a fail-closed exit 3, never a clean pass;
+      // the engine's per-file 1 MiB cap already fails a genuinely oversized file closed.)
+      const bytes = utf8ByteLength(text);
+      if (totalBytes + bytes > inputs.maxTotalBytes) {
+        capBreach = {
+          message: `Aggregate byte ceiling reached (max-total-bytes=${inputs.maxTotalBytes}): `
+            + `${scannedCount} of ${files.length} matched file(s), totalling ${totalBytes} bytes, `
+            + 'were analyzed before the next file would exceed the budget. The remaining file(s) '
+            + 'were NOT analyzed, so this run is INCOMPLETE and FAILS CLOSED (exit 3) - it is never '
+            + 'reported as a clean pass. Raise max-total-bytes for a legitimately large policy set.',
+        };
+        break;
+      }
+      totalBytes += bytes;
+      scannedCount += 1;
+
       let result;
       try {
-        const text = io.readFile(rel);
         if (!isNonEmptyString(text)) {
           // An empty/unreadable file is a usage error for that unit (exit 2), not a
           // clean scan.
@@ -791,6 +910,12 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
         result = internalFileResult(inputs.family, `Scan threw for a file: ${(e && e.message) || 'error'}`);
       }
       units.push({ file: rel, result });
+    }
+
+    // On an aggregate-ceiling breach, append the explicit fail-closed 'incomplete' unit so
+    // the partial scan reports exit 3 + an analyzer-state SARIF notification - NEVER clean.
+    if (capBreach) {
+      units.push({ file: null, result: aggregateCapResult(AGGREGATE_CAP_REASON, capBreach.message, inputs.family) });
     }
 
     return finalize(units, inputs, manifest);

@@ -130,6 +130,8 @@ run the Action **multiple times** with different `paths` globs and a different
 | `fail-on` | no | `high` | Minimum severity that fails the check: `critical`, `high`, `medium`, `low`, `info`, `none`. `none` does not turn a fail-closed `3` into `0`. |
 | `sarif-output` | no | `iam-blast-radius.sarif` | Relative path (inside the workspace) to write the SARIF 2.1.0 output file. An absolute path, one escaping the workspace via `..`, one containing a control character, or one whose directory component or target file is a symlink escaping the workspace is rejected as a usage error (exit `2`) and nothing is written outside the workspace. |
 | `budget-ms` | no | `10000` | Per-policy wall-clock analysis budget, in milliseconds. If a policy's analysis overruns this budget it fails closed (exit `3`, `RESOURCE_BUDGET_EXCEEDED`) - it never reports a clean pass. A non-numeric value falls back to the default. |
+| `max-files` | no | `1000` | Aggregate ceiling on the **number** of matched files analyzed in one run. Files are analyzed in a stable sorted order; once this many have been analyzed, the run stops, emits the findings gathered so far, and fails closed (exit `3`, `AGGREGATE_CAP_EXCEEDED`) with a SARIF analyzer-state notification - the partial scan is never reported clean. Bounds the linear CI-runtime cost of a fork PR matching thousands of near-cap policy files. Raise it for a legitimately large policy set; a non-positive/non-integer value falls back to the default. |
+| `max-total-bytes` | no | `67108864` | Aggregate ceiling on the **total UTF-8 bytes** analyzed across all matched files in one run (default 64 MiB). When analyzing the next file would exceed this budget the run stops, emits the findings gathered so far, and fails closed (exit `3`, `AGGREGATE_CAP_EXCEEDED`) with a SARIF analyzer-state notification - never a clean pass. Bounds cumulative parser work that the file-count cap alone would miss (a few giant files). Raise it for a legitimately large policy set; a non-positive/non-integer value falls back to the default. |
 
 ## Outputs
 
@@ -226,7 +228,17 @@ could-not-analyze (exit `3`), never a silent pass:
 
 These are far larger than any real IAM policy (the AWS managed-policy hard cap is
 about 6 KB) yet cheap to reject, and they bound the work an adversarial PR can
-force. This Action is an MVP: built-in SARIF upload, Terraform plan parsing,
+force.
+
+Those caps are **per file**. A run also has an **aggregate** ceiling across the
+whole matched-file set - a matched-file count (`max-files`) and a total-bytes
+budget (`max-total-bytes`) - so a fork PR matching thousands of near-cap files
+cannot scale CI runtime without bound. Breaching either ceiling stops the run,
+emits the findings gathered so far, and fails closed (exit `3`,
+`AGGREGATE_CAP_EXCEEDED`) with a SARIF analyzer-state notification; it is never
+reported as a clean pass. See the `max-files` / `max-total-bytes` inputs.
+
+This Action is an MVP: built-in SARIF upload, Terraform plan parsing,
 family auto-detection, baseline suppressions, and PR review comments are
 intentionally out of scope.
 

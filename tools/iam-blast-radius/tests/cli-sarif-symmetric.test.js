@@ -37,6 +37,20 @@ import {
 const MANIFEST = { ruleVersion: '1' };
 
 const CONTROL_AND_BACKTICK = /[\u0000-\u001F\u007F-\u009F`]/;
+// C0/C1 control chars only (no backtick). A BARE properties field is markdown-INERT:
+// it KEEPS backticks (backslash-escaped) but must carry no control char.
+const CONTROL = /[\u0000-\u001F\u007F-\u009F]/;
+
+// Assert a BARE (not code-span-wrapped) properties string is markdown-inert: no control
+// char, and no UNESCAPED link boundary / image / autolink / backtick can form.
+function assertInertBare(s, label) {
+  assert.equal(typeof s, 'string', `${label}: is a string`);
+  assert.ok(!CONTROL.test(s), `${label}: no control chars`);
+  assert.ok(!s.includes(']('), `${label}: no unescaped inline-link boundary`);
+  assert.ok(!/(^|[^\\])!\[/.test(s), `${label}: no unescaped image`);
+  assert.ok(!/(^|[^\\])`/.test(s), `${label}: no unescaped backtick (no code span opens)`);
+  assert.ok(!/<https?:/i.test(s), `${label}: no unescaped autolink`);
+}
 
 // Strip inline-code spans: a SECURITY-finding message wraps every attacker token in a
 // backtick code span, which makes the token inert (GitHub does not render markdown
@@ -178,7 +192,7 @@ test('S5: a hostile evidence NOTE is markdown-inert (no live link/image/autolink
   assert.ok(/runs/.test(row.note) && /via/.test(row.note), 'the human-readable prose survives');
 });
 
-test('S5: hostile evidence Sid / role / actions / resources are stripped of control chars + backticks', () => {
+test('S5: hostile evidence Sid / role / actions / resources are rendered markdown-inert (bare fields)', () => {
   const row = syntheticEvidenceRow({
     statementIndex: 0,
     statementSid: 'sid[31m`x`\nline2',
@@ -187,10 +201,14 @@ test('S5: hostile evidence Sid / role / actions / resources are stripped of cont
     resources: ['arn:aws:s3:::b`x`', 'r \nnl'],
     condition: null, note: 'ok',
   });
-  assert.ok(!CONTROL_AND_BACKTICK.test(row.statementSid), 'evidence Sid: no control chars / backticks');
-  assert.ok(!CONTROL_AND_BACKTICK.test(row.role), 'evidence role: no control chars / backticks');
-  for (const a of row.actions) assert.ok(!CONTROL_AND_BACKTICK.test(a), `evidence action clean: ${a}`);
-  for (const r of row.resources) assert.ok(!CONTROL_AND_BACKTICK.test(r), `evidence resource clean: ${r}`);
+  // These fields are emitted BARE in the properties bag (never code-span-wrapped), so the
+  // S2-sarif-sanitize-all contract renders them MARKDOWN-INERT (control stripped; every
+  // markdown-active punctuation char - including backticks - backslash-escaped), NOT merely
+  // backtick-stripped: a bare `[x](url)` / `<url>` would otherwise render live here.
+  assertInertBare(row.statementSid, 'evidence Sid');
+  assertInertBare(row.role, 'evidence role');
+  row.actions.forEach((a, i) => assertInertBare(a, `evidence action ${i}`));
+  row.resources.forEach((r, i) => assertInertBare(r, `evidence resource ${i}`));
 });
 
 test('S5: a 10KB evidence token is length-capped (no hostile blow-up in properties)', () => {
@@ -209,9 +227,16 @@ test('S5: a benign evidence row rides through readably (no over-correction)', ()
     resources: ['arn:aws:iam::123456789012:role/app'], condition: null,
     note: 'runs code as the passed role via lambda',
   });
-  assert.equal(row.role, 'pass');
-  assert.deepEqual(row.actions, ['iam:PassRole']);
-  assert.deepEqual(row.resources, ['arn:aws:iam::123456789012:role/app']);
+  // No over-correction: a benign row stays READABLE. Its punctuation is backslash-escaped
+  // for markdown-inertness (exactly like a benign condition value), so the content is
+  // recovered by dropping the escaping backslashes; the alphanumerics are untouched.
+  const unescape = (s) => s.replace(/\\(.)/g, '$1');
+  assert.equal(row.role, 'pass'); // no punctuation -> byte-identical
+  assert.deepEqual(row.actions.map(unescape), ['iam:PassRole']);
+  assert.deepEqual(row.resources.map(unescape), ['arn:aws:iam::123456789012:role/app']);
+  // And the escaped forms are themselves markdown-inert (no live construct can form).
+  row.actions.forEach((a, i) => assertInertBare(a, `benign action ${i}`));
+  row.resources.forEach((r, i) => assertInertBare(r, `benign resource ${i}`));
   assert.ok(/runs code as the passed role via lambda/.test(row.note), 'benign note prose survives');
 });
 

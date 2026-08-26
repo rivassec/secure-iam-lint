@@ -28,6 +28,7 @@
 
 import { validate } from './validate.js';
 import { parse } from './parse.js';
+import { stripModelSpoof } from './format-control.js';
 
 // Prototype-pollution guard, mirrored from validate.js so this module is safe
 // even if a caller hands it raw that did not pass through validate().
@@ -65,7 +66,16 @@ function toStringArray(value, field, path) {
     return { ok: true, values: [] };
   }
   if (typeof value === 'string') {
-    return { ok: true, values: [value] };
+    // S4-unicode-spoof: normalization boundary. Strip the NARROW model class
+    // (stripModelSpoof: zero-width / bidi / default-ignorable) as the string enters
+    // the model. Collapsing an obfuscated spelling onto its real token is fail-CLOSED
+    // (more rules may fire) and can never hide a grant; legit tokens are alphanumeric
+    // per AWS grammar, so it is a no-op on valid policies. The narrow class PRESERVES
+    // \p{Cc} controls + U+2028/U+2029 on purpose: a control/separator in an ARN keeps
+    // the value non-canonical so viability fails CLOSED (UNKNOWN), rather than being
+    // "cleaned" into a canonical ARN and mis-resolved. Display sinks re-strip the
+    // broad class, so nothing invisible reaches a human trust surface (format-control.js).
+    return { ok: true, values: [stripModelSpoof(value)] };
   }
   if (Array.isArray(value)) {
     const values = [];
@@ -80,7 +90,7 @@ function toStringArray(value, field, path) {
           ),
         };
       }
-      values.push(value[i]);
+      values.push(stripModelSpoof(value[i]));
     }
     return { ok: true, values };
   }
@@ -113,7 +123,15 @@ function normalizeCondition(value, errors, path) {
 // Recursively copy a plain data value into fresh objects/arrays, rejecting
 // prototype-pollution keys. Strings/numbers/booleans/null pass through.
 function copyGuarded(value, errors, path) {
-  if (value === null || typeof value !== 'object') return value;
+  // S4-unicode-spoof: normalization boundary. A Condition carries attacker-
+  // controlled OBJECT KEYS (operators, condition keys) and string VALUES. Strip the
+  // invisible/reordering spoof class from both. The key is stripped BEFORE the
+  // dangerous-key check so an obfuscated `__pro<ZWSP>to__` collapses to `__proto__`
+  // and is still rejected (closes a would-be prototype-pollution fail-open); it is
+  // stripped BEFORE recursion so nested keys are de-spoofed too.
+  if (value === null) return value;
+  if (typeof value === 'string') return stripModelSpoof(value);
+  if (typeof value !== 'object') return value;
   if (Array.isArray(value)) {
     const out = [];
     for (let i = 0; i < value.length; i++) {
@@ -122,7 +140,8 @@ function copyGuarded(value, errors, path) {
     return out;
   }
   const out = {};
-  for (const key of Object.getOwnPropertyNames(value)) {
+  for (const rawKey of Object.getOwnPropertyNames(value)) {
+    const key = stripModelSpoof(rawKey);
     if (DANGEROUS_KEYS.has(key)) {
       errors.push(
         err(
@@ -133,7 +152,7 @@ function copyGuarded(value, errors, path) {
       );
       continue;
     }
-    out[key] = copyGuarded(value[key], errors, `${path}.${key}`);
+    out[key] = copyGuarded(value[rawKey], errors, `${path}.${key}`);
   }
   return out;
 }
@@ -166,7 +185,11 @@ function normalizePrincipal(value, errors, path, element) {
     return null;
   }
   const byType = {};
-  for (const key of Object.getOwnPropertyNames(value)) {
+  for (const rawKey of Object.getOwnPropertyNames(value)) {
+    // S4-unicode-spoof: strip the spoof class from the principal-type key BEFORE
+    // the dangerous-key check (same rationale as copyGuarded); values are stripped
+    // inside toStringArray.
+    const key = stripModelSpoof(rawKey);
     if (DANGEROUS_KEYS.has(key)) {
       errors.push(
         err(
@@ -177,7 +200,7 @@ function normalizePrincipal(value, errors, path, element) {
       );
       continue;
     }
-    const arr = toStringArray(value[key], key, `${path}.${name}`);
+    const arr = toStringArray(value[rawKey], key, `${path}.${name}`);
     if (!arr.ok) {
       errors.push(arr.error);
       continue;
@@ -211,7 +234,7 @@ function normalizeStatement(stmt, index, errors) {
   let sid = null;
   if (stmt['Sid'] !== undefined) {
     if (typeof stmt['Sid'] === 'string') {
-      sid = stmt['Sid'];
+      sid = stripModelSpoof(stmt['Sid']); // S4-unicode-spoof: normalization boundary
     } else {
       errors.push(err('INVALID_SID', 'Sid must be a string.', `${path}.Sid`));
     }
@@ -357,8 +380,11 @@ export function buildModel(raw) {
     }
 
     const model = deepFreeze({
-      version: parsed.version,
-      id: parsed.id,
+      // S4-unicode-spoof: the policy Version/Id are policy-derived display strings
+      // that ride into the model + exports, so they are de-spoofed at the boundary
+      // too (no-op on a valid "2012-10-17"; a non-string passes through untouched).
+      version: typeof parsed.version === 'string' ? stripModelSpoof(parsed.version) : parsed.version,
+      id: typeof parsed.id === 'string' ? stripModelSpoof(parsed.id) : parsed.id,
       statements,
     });
 

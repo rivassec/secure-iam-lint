@@ -1,0 +1,18 @@
+{
+  "name": "Trojan-Source bidi/zero-width spoof on the Markdown COVERAGE path (md-coverage-bidi-spoof)",
+  "note": "S3-md-coverage-escape iteration-2 (threat-model T1/T6/T8): the structure-forging Markdown class was closed, but invisible/reordering format-control code points (bidi RLO/PDF/isolates U+202A-202E/U+2066-2069, zero-width U+200B-200F, BOM U+FEFF, Arabic letter mark U+061C, SOFT HYPHEN U+00AD, Braille blank U+2800, CGJ U+034F, variation selector U+FE0F, astral tag U+E0061) still rode through mdEscape/mdSafe and JSON.stringify VERBATIM into the exported .md and .json - a Trojan-Source visual spoof where a downloaded/opened report displays a benign-looking grant that differs from the real policy. This policy sets an unsupported Version carrying that invisible set; it fails closed (UNSUPPORTED_POLICY_VERSION, coverage.blocked) and the Version rides onto the coverage/blockingCodes message. The fix strips the invisible spoof class (matched by Unicode property, not enumeration) in mdSafe() and in a deep key+value pass in toJSON(). 'evil.example' is left as readable inert text to prove only the width-less controls are removed. Not hostile:true because this witnesses export codepoint-inertness (asserted in report.test.js), not the analyze()-time rendering matrix.",
+  "policy": {
+    "Version": "2012-10-17‮nimda‬⁦resu⁩​‍﻿؜­⠀͏️󠁡 evil.example",
+    "Statement": [
+      {
+        "Sid": "s",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  }
+}

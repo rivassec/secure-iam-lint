@@ -16,6 +16,7 @@ import { toJSON, toMarkdown, analysisStatus } from './engine/report.js';
 import { createGraphRenderer } from './engine/render-graph.js';
 import { noFindingsMessage } from './engine/coverage.js';
 import { checkVersionCoherence } from './engine/version.js';
+import { sanitizeTree } from './engine/format-control.js';
 import { SAMPLES } from './samples.js';
 
 // Wall-clock budget for a single worker run before we terminate it (T5).
@@ -830,7 +831,22 @@ function renderGraph(graph, counts, findings) {
 
 // --- Result handling ---------------------------------------------------------
 
-function handleResult(result) {
+function handleResult(rawResult) {
+  // S4-unicode-spoof (sink defense-in-depth, threat-model T1/T8): the engine
+  // already de-spoofs policy strings at the model normalization boundary, but the
+  // browser render path is a DISTINCT human-facing trust surface (the findings
+  // table + SVG graph are the reviewer's PR-approval signal on fork-PR content),
+  // and textContent gives NO protection against the bidi algorithm. Re-neutralize
+  // BOTH visual-spoof mechanisms - the invisible/reordering format-control class AND
+  // (iteration 3) the strong-RTL / homograph-space / homograph-letter class (non-ASCII
+  // clamped to U+FFFD) - from EVERY string value and object key of the result at this
+  // single chokepoint (sanitizeTree -> neutralizeForDisplay), before any of it reaches
+  // the DOM or the SVG renderer. One pass here closes the class for all app.js sinks
+  // (findings cells, coverage codes/paths, error messages, detail prose, graph
+  // labels) instead of hunting every textContent assignment - sink-only
+  // enumeration is exactly the brittle pattern the fail-open hunter reopens. No-op
+  // on an already-clean engine result; deterministic; bounded by input limits.
+  const result = sanitizeTree(rawResult);
   state.lastAnalysis = result;
   // IAM-1001: publish the machine-readable status on the browser surface so it
   // agrees with the JSON/Markdown exports (test 71).

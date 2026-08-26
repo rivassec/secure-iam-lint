@@ -79,8 +79,33 @@
 // and key spellings, so the JSON paths this emits match what the old raw-text guards
 // produced (e.g. "Statement[1].Condition.ForAnyValue:StringEquals.aws:SourceVpc").
 //
+// S1-breadth-failclosed extends the net once more, on the RESOURCE-VALUE SHAPE:
+//
+//   MALFORMED_RESOURCE_ARN  A Resource / NotResource element value that is neither
+//     the bare "*" nor arn:-shaped (does not start with "arn:"). Per the AWS IAM
+//     policy grammar a Resource element MUST be "*" or an ARN; anything else is
+//     MalformedPolicyDocument - AWS rejects it and the engine cannot decide what it
+//     scopes. validate.js does ZERO ARN-shape validation, so such a value reaches
+//     the rules engine, which (via the semantic probe battery) can only ever PROVE
+//     a value BROAD, never NARROW - a non-ARN value that fails to match >= 2 probe
+//     accounts (a suffix/infix key glob like "*.pem"/"*-prod", a bare literal, a
+//     URL) was read as NARROW and returned a bare CLEAN on a bulk read: a DATA-EXFIL
+//     fail-OPEN (threat-model T8). Per the never-silent-clean north star, an
+//     UNDECIDABLE (malformed) value is routed to coverage.summary.incomplete, NOT a
+//     fabricated confident DATA-EXFIL finding (firing would overstate certainty and
+//     also over-broaden adversarial edges like "?rn:my-bucket"). This runs ONLY when
+//     the value is not already provably broad (isBroadArnResource): a non-ARN glob
+//     that DOES span >= 2 probe accounts ("*/*", "?*", ...) is a confident broad
+//     read that the rules engine surfaces as DATA-EXFIL, so it is left to fire and is
+//     not additionally masked. Every non-ARN-non-star value is therefore fail-CLOSED
+//     either way - broad-and-firing, or undecidable-and-incomplete - never clean.
+//     -> kind 'malformed'.
+//
 // Vanilla ES module. No network APIs. No eval/Function. No DOM. No 'node:' imports.
 // Deterministic: same model -> same masked-grant list, same order, every run.
+
+import { isBroadArnResource } from './rules.js';
+import { withoutBudget } from './glob.js';
 
 // Stable, machine-readable codes. Frozen so callers can reference them by name and
 // the SARIF/CLI adapters can map them without re-deriving.
@@ -92,7 +117,30 @@ export const MASKED_GRANT_CODES = Object.freeze({
   // S1-shape-failclosed additions.
   MALFORMED_CONDITION_BLOCK: 'MALFORMED_CONDITION_BLOCK',
   UNSPECIFIED_RESOURCE_SCOPE: 'UNSPECIFIED_RESOURCE_SCOPE',
+  // S1-breadth-failclosed addition.
+  MALFORMED_RESOURCE_ARN: 'MALFORMED_RESOURCE_ARN',
 });
+
+// A Resource / NotResource element value the engine cannot decide the scope of: it
+// is neither the bare "*" nor arn:-shaped (AWS IAM grammar requires one of those),
+// AND it is not already PROVABLY broad (isBroadArnResource - a broad non-ARN glob is
+// a confident DATA-EXFIL finding, left to the rules engine). Such a residual value
+// is malformed/undecidable and must route to coverage.incomplete, never a clean pass.
+// Trimmed to mirror isBroadArnResource's own leading-whitespace normalization.
+function isUndecidableResourceValue(value) {
+  const v = String(value == null ? '' : value).trim();
+  if (v === '') return false; // an empty element is benign (matches nothing)
+  if (v === '*') return false; // the bare star is a decided broad scope
+  if (v.startsWith('arn:')) return false; // arn:-shaped: decided by rules breadth
+  // A provably-broad non-ARN glob ("*/*", "?*", ...) fires DATA-EXFIL, so it is NOT
+  // additionally masked here (that would flip the CLI verdict from a real FINDING to
+  // a malformed rejection). The broadness oracle is the shared budgeted matcher, but
+  // this runs during POST-analysis coverage enrichment, so it is called WITHOUT the
+  // budget: the fixed 7-probe check must neither trip a borderline analysis's work
+  // ceiling nor re-throw when the analysis has already aborted (glob.js withoutBudget).
+  if (withoutBudget(() => isBroadArnResource(v))) return false;
+  return true; // non-ARN, non-star, not provably broad -> undecidable/malformed
+}
 
 // Detection kinds:
 //   'malformed'  -> the analyzer could not faithfully model the statement (or AWS
@@ -265,6 +313,26 @@ export function detectMaskedGrants(model) {
         `Statement[${i}]`,
         MASKED_GRANT_KINDS.MALFORMED,
       ));
+    }
+
+    // MALFORMED_RESOURCE_ARN (S1-breadth-failclosed): a Resource / NotResource value
+    // that is neither "*" nor arn:-shaped is malformed per the AWS IAM grammar and
+    // the engine cannot decide what it scopes. Routed to coverage.incomplete so a
+    // bulk read on such a value (s3:GetObject on "*.pem", "*-prod", a bare literal,
+    // a URL) can never return a silent CLEAN (threat-model T8). Emitted at most once
+    // per axis per statement (element granularity), pointing at the axis; a value
+    // that is already provably broad is excluded (it fires DATA-EXFIL instead - see
+    // isUndecidableResourceValue). Allow-only, symmetric to the empty-complement
+    // shapes: a malformed Resource on a Deny cannot mask an Allow finding.
+    for (const [axis, list] of [['Resource', s.resources], ['NotResource', s.notResources]]) {
+      if (Array.isArray(list) && list.some(isUndecidableResourceValue)) {
+        out.push(entry(
+          axis,
+          MASKED_GRANT_CODES.MALFORMED_RESOURCE_ARN,
+          `Statement[${i}].${axis}`,
+          MASKED_GRANT_KINDS.MALFORMED,
+        ));
+      }
     }
   }
   return out;

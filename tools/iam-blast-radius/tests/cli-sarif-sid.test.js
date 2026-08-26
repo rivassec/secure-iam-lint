@@ -28,6 +28,9 @@ const MANIFEST = { ruleVersion: '1' };
 
 // A run of every char the sanitizer must strip: C0 controls, DEL, C1 controls, backtick.
 const CONTROL_AND_BACKTICK = /[\u0000-\u001F\u007F-\u009F`]/;
+// C0/C1 control chars only (no backtick): a BARE markdown-inert field KEEPS backticks
+// (backslash-escaped) but must carry no control char.
+const CONTROL = /[\u0000-\u001F\u007F-\u009F]/;
 
 // An admin-identity policy (iam:* on *) fires DIRECT-IAM-ADMIN, whose finding carries
 // the statement Sid verbatim - the exact injection channel under test.
@@ -85,8 +88,14 @@ test('S4: control characters and backticks never survive into a rendered field',
   // ESC (0x1B) + ANSI, a C1 control (0x9F), and a backtick breakout attempt.
   const sid = 'Ok\u001B[31mred' + '`breakout`' + '\u0007\u009FEnd';
   const res = securityResult(adminPolicy(sid));
-  assert.ok(!CONTROL_AND_BACKTICK.test(res.properties.statementSid),
-    'no control chars or backticks in properties.statementSid');
+  // properties.statementSid is emitted BARE (not code-span-wrapped), so it is MARKDOWN-
+  // INERT (S2-sarif-sanitize-all): control chars are stripped and every backtick is
+  // backslash-ESCAPED (kept, but `\`` opens no code span) rather than removed. The
+  // invariant is therefore "no control char + no UNESCAPED backtick", not "no backtick".
+  const ps = res.properties.statementSid;
+  assert.ok(!CONTROL.test(ps), 'no control chars in properties.statementSid');
+  assert.ok(!/(^|[^\\])`/.test(ps), 'no unescaped backtick in properties.statementSid (no code span opens)');
+  assert.ok(!ps.includes(']('), 'no unescaped markdown link boundary in properties.statementSid');
   assert.ok(!CONTROL_AND_BACKTICK.test(res.message.text.replace(/`/g, '')),
     'no control chars in message.text (backticks are only the two wrapper delimiters)');
   // A backtick pair inside the Sid cannot close the wrapper and open a new span.

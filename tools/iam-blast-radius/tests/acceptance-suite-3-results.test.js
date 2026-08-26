@@ -137,7 +137,16 @@ const MANIFEST = {
   96: { campaign: 'F', verdict: 'COMPLETE_WITH_WARNINGS', ...fx('acceptance-3/test-96-forallvalues-with-null-protection.json') },
   97: { campaign: 'F', verdict: 'COMPLETE_WITH_WARNINGS', ...fx('acceptance-3/test-97-empty-foranyvalue-never-matches.json') },
   98: { campaign: 'F', verdict: 'COMPLETE', ...proc('tests/phase10-parser-hardening.test.js', 'tests/e2e/ui-shell.spec.js') },
-  99: { campaign: 'F', verdict: 'COMPLETE', ...fx('acceptance-3/test-99-rendering-export-injection.json') },
+  // S1-breadth-failclosed: this fixture's Resource array carries attacker-controlled
+  // injection witnesses that are non-ARN, non-star strings (https://evil.example.com/leak,
+  // http://..., ftp://..., www.evil.com/track). Per the AWS IAM grammar a Resource must
+  // be "*" or an ARN, so those values are MALFORMED and the engine now routes them to
+  // coverage.summary.incomplete (MALFORMED_RESOURCE_ARN) instead of reading them as a
+  // narrow scope - so the derived verdict is COMPLETE_WITH_WARNINGS. The rendering/export
+  // injection coverage is unchanged: WILDCARD-ACTION still fires (Action "*"), so the
+  // hostile witnesses still reach the findings section of every surface (asserted by
+  // tests/phase10-parser-hardening.test.js).
+  99: { campaign: 'F', verdict: 'COMPLETE_WITH_WARNINGS', ...fx('acceptance-3/test-99-rendering-export-injection.json') },
   100: { campaign: 'F', verdict: 'COMPLETE', ...proc('tests/phase10-parser-hardening.test.js') },
 };
 

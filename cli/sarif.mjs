@@ -30,6 +30,25 @@
 //   result.partialFingerprints     = normalized SEMANTIC identity (never message
 //                                    text, line, timestamp, or object key order)
 
+// Depth bound for the recursive condition neutralizer. REUSED from the engine's input
+// validator (do NOT invent a second, unbounded recursive walker): the same MAX_DEPTH
+// that gates parse also gates how deep an evidence Condition may be walked for output.
+// validate.js is a pure engine module (no Node APIs); importing it here keeps this
+// adapter pure and Node-free. This module is never in the browser graph (it is only
+// imported by cli/ + action/), so no `node:` dependency can leak through it.
+import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
+// S4-unicode-spoof iteration 3: the strong-RTL / homograph-space / homograph-letter class,
+// shared with the browser display sinks so BOTH surfaces neutralize the SAME charset (the
+// superset/parity invariant is structural, not just regex-compared). CONTROL_AND_FORMAT
+// below closes the invisible/format-control mechanism; NON_ASCII_SPOOF closes the second,
+// code-point-free bidi Trojan-Source mechanism - a strong-RTL LETTER reorders its neighbours
+// with no format-control char, and a \p{Zs} space / Cyrillic homograph masquerades as ASCII.
+// IAM tokens are ASCII per the AWS grammar, so any non-ASCII in a value bound for the
+// (markdown-rendered) Security tab is a spoof vector, clamped to U+FFFD. format-control.js is
+// a pure engine module (no node: APIs), so importing it keeps this adapter Node-free; it is
+// never in the browser graph (cli/ + action/ only), so no node: dependency can leak through.
+import { NON_ASCII_SPOOF, REPLACEMENT } from '../content/tools/iam-blast-radius/engine/format-control.js';
+
 // Severity -> SARIF level + GitHub `security-severity`. Mirrors the design doc.
 // `info` maps to `note` and OMITS security-severity (it is not a vulnerability
 // score). This is the ONLY severity->level authority in the SARIF path.
@@ -227,70 +246,175 @@ function evidenceOf(finding) {
   return f.evidence.map((e) => {
     const row = {};
     if (e && e.statementIndex != null) row.statementIndex = e.statementIndex;
-    // SECURITY (S4/S5-sarif): EVERY attacker-controlled string in an evidence row is
-    // neutralized before it reaches properties.evidence - symmetrically with the Sid,
-    // never verbatim. A fork PR owns the whole policy JSON, so the Sid, role label,
-    // action tokens, resource ARNs, and the free-prose note are all hostile. Token-like
-    // fields (Sid / role / actions / resources) get the token treatment (strip control
-    // chars/newlines/backticks, cap length); the NOTE is engine-authored FREE PROSE that
-    // interpolates raw actions + ARNs (engine/rules.js ACTION_RESOURCE_TYPE_MISMATCH),
-    // so it gets the SAME markdown-inert treatment as an analyzer-state message
-    // (sanitizeStateMessage) - a consumer that renders an evidence field as markdown can
-    // never get a live link/image/autolink out of it.
+    // SECURITY (S2/S4/S5-sarif): EVERY attacker-controlled string in an evidence row is
+    // neutralized before it reaches properties.evidence - symmetrically, never verbatim.
+    // A fork PR owns the whole policy JSON, so the Sid, role label, action tokens,
+    // resource ARNs, the free-prose note, AND the raw Condition block are all hostile.
+    // These fields are emitted BARE (un-wrapped) in the properties bag, so - like the
+    // note and the condition - EVERY one is rendered MARKDOWN-INERT (inertLeaf: strip
+    // control + bidi/zero-width, cap length, then backslash-escape EVERY ASCII-punctuation
+    // char). A backtick-only strip would be INERT here (a live `[x](url)` / `![x](url)` /
+    // `<url>` only defuses inside a code span, and these values are NOT code-span-wrapped),
+    // so the token-like fields go through inertLeaf / inertTokenList, NOT sanitizeSid.
+    // The NOTE is engine-authored FREE PROSE that interpolates raw actions + ARNs
+    // (engine/rules.js ACTION_RESOURCE_TYPE_MISMATCH), so it gets sanitizeStateMessage
+    // (same escape). The CONDITION is a NESTED object whose operator + key names AND leaf
+    // values are ALL attacker-controlled: neutralized RECURSIVELY (keys and values alike
+    // markdown-inert) and bounded three ways PER ROW (per-leaf length, aggregate node/char
+    // budget, recursion depth) so it cannot carry a live link/image/autolink into a consumer
+    // (see neutralizeCondition). The action / resource token lists are likewise COUNT- and
+    // aggregate-char-capped (inertTokenList). Nothing in this row is emitted raw. NOTE: these
+    // caps are PER ROW and cannot bound the SUM across a document; the cross-row amplification
+    // (thousands of findings summing past GitHub's ~10 MB upload cap) is closed SEPARATELY by
+    // the DOCUMENT-level budget in buildResults - not here.
     if (e && e.statementSid != null) {
-      const safeSid = sanitizeSid(e.statementSid);
+      const safeSid = inertLeaf(e.statementSid, MAX_SID_LEN);
       if (safeSid) row.statementSid = safeSid;
     }
     if (e && e.role != null) {
-      const safeRole = sanitizeSid(e.role);
+      const safeRole = inertLeaf(e.role, MAX_SID_LEN);
       if (safeRole) row.role = safeRole;
     }
-    if (e && Array.isArray(e.actions)) row.actions = neutralizeTokenList(e.actions);
-    if (e && Array.isArray(e.resources)) row.resources = neutralizeTokenList(e.resources);
-    if (e && e.condition != null) row.condition = e.condition;
+    if (e && Array.isArray(e.actions)) row.actions = inertTokenList(e.actions);
+    if (e && Array.isArray(e.resources)) row.resources = inertTokenList(e.resources);
+    if (e && e.condition != null) {
+      const { value, truncated } = neutralizeCondition(e.condition);
+      if (truncated) {
+        // A bound was hit (depth / aggregate node / aggregate char). Emit a bounded,
+        // markdown-inert SUMMARY of the sanitized partial + an explicit flag, NEVER the
+        // raw object: this is the amplification/injection fail-closed for the Condition.
+        let summaryRaw = '';
+        try { summaryRaw = JSON.stringify(value); } catch { summaryRaw = ''; }
+        row.conditionSummary = inertSummary(summaryRaw, MAX_CONDITION_SUMMARY_LEN)
+          || '(condition omitted)';
+        row.conditionTruncated = true;
+      } else if (value != null) {
+        row.condition = value;
+      }
+    }
     if (e && e.note != null) row.note = sanitizeStateMessage(e.note);
     return row;
   });
 }
 
+// The invisible / reordering code points that EVERY attacker string must be stripped of
+// before it reaches a SARIF sink. Left in, these are not markdown punctuation and are not
+// caught by the ASCII-punctuation escape (nor, for most, by `\s`), so a fork PR could
+// bidi-REORDER or zero-width-HIDE/SPLIT an ARN / Sid / condition token so a hostile value
+// renders as a benign one in a consumer's Security-tab alert detail (an RTL / homograph /
+// hidden-text spoof) - a fail-OPEN distinct from, and not covered by, the markdown-link
+// class.
+//
+// The CLASS is "code points that occupy no visible width or reorder their neighbours." A
+// hand-enumerated range can only ever cover the SUBSET the author happened to list. Two
+// earlier drafts proved it: a "codepoint-exhaustive" BMP range missed the astral tag
+// block, the Hangul fillers, the variation selectors and U+180E; a follow-up that added
+// \p{Cc}\p{Cf} plus a hand-list of the non-Cc/Cf invisibles STILL missed the combining
+// grapheme joiner U+034F, the Khmer inherent vowels U+17B4/U+17B5, and the reserved tag-
+// block base U+E0000 - all zero-width, none caught. Each patch closed one spelling; the
+// hunter found the next. So the class is matched by Unicode PROPERTY, not enumeration:
+//   \p{Cc}  - every C0 (0x00-0x1F) + DEL + C1 (0x7F-0x9F) control.
+//   \p{Cf}  - every format char: SOFT HYPHEN U+00AD, ARABIC LETTER MARK U+061C, the ZW /
+//             bidi-mark + embedding + isolate + deprecated-format set (U+200B-200F,
+//             U+202A-202E, U+2060-206F), BOM U+FEFF, interlinear annotation U+FFF9-FFFB,
+//             MONGOLIAN VOWEL SEPARATOR U+180E, and the ASTRAL tag block U+E0001/E0020-
+//             E007F.
+//   \p{Default_Ignorable_Code_Point}  - the property Unicode itself defines for "code
+//             points that should render as nothing when unsupported": it SUBSUMES the CGJ
+//             U+034F, the Khmer inherent vowels, EVERY Hangul filler (U+115F U+1160 U+3164
+//             U+FFA0), EVERY variation selector (U+FE00-FE0F + the U+E0100-E01EF
+//             supplement), the whole U+2060-206F block INCLUDING the currently-unassigned-
+//             but-reserved U+2065 and the reserved tag-block base U+E0000 - and, crucially,
+//             any FUTURE default-ignorable assignment. This is what closes the "next
+//             spelling" regress at the property level instead of one code point at a time.
+// Plus the ONE spoofing invisible Unicode files under none of those properties:
+//   U+2800  BRAILLE PATTERN BLANK (category So, NOT Default_Ignorable) - renders as blank
+//           width, so it can pad/hide a token, yet no property above matches it. It is the
+//           sole code point that still needs to be named explicitly.
+// This is the SINGLE definition every leaf sanitizer below strips against, so the class is
+// closed once, not per-field. The `u` flag is REQUIRED: it enables the \p{...} property
+// escapes and makes the astral code points match as whole code points. Reusing one global
+// regex across .replace() calls is safe (String.prototype.replace resets a global regex's
+// lastIndex at the start of every call).
+// Exported so tests/s4-unicode-spoof.test.js can assert the engine's canonical
+// INVISIBLE_SPOOF class is a SUPERSET of this one - if a future edit ever narrows
+// the engine class below this SARIF class, the browser JSON/DOM output surface
+// would become MORE permissive toward invisible/control code points than the CLI
+// SARIF surface (a display-parity regression), and that test must fail.
+export const CONTROL_AND_FORMAT =
+  /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2800]/gu;
+
 // Max characters kept from a hostile Sid before ellipsizing. A 10KB Sid must never
 // land verbatim in message.text or properties.
 const MAX_SID_LEN = 128;
 
-// Neutralize an attacker-controlled statement Sid before it is embedded anywhere a
-// consumer might render it (SARIF message.text is rendered as MARKDOWN by GitHub's
-// Security tab; properties are shown in alert detail). It:
-//   - strips ASCII/C1 control chars and newlines (they break out of a line / an
-//     inline-code span and let a payload span multiple rendered lines),
-//   - strips backticks (so the value cannot escape the inline-code span it is wrapped
-//     in, which is what defuses markdown-link / image injection like [x](javascript:...)),
+// Bounds on an evidence token list (actions / resources) emitted BARE into the properties
+// bag. Like message.text's MAX_MSG_ACTIONS, this stops a policy carrying a huge Action /
+// Resource array from amplifying the SARIF: the entry COUNT is capped and the AGGREGATE
+// sanitized-char budget across the list is capped (many small tokens cannot sum past it).
+// The full normalized lists still ride in partialFingerprints identity, unaffected.
+const MAX_EVIDENCE_TOKENS = 32;
+const MAX_EVIDENCE_TOKEN_CHARS = 4096;
+// Tool-authored, markdown-inert marker appended when a token list is capped, so the
+// truncation is TRUTHFUL (fail-closed ethos) rather than a silent drop.
+const EVIDENCE_TRUNCATED_MARKER = '(list truncated)';
+
+// Neutralize an attacker-controlled Sid/Action token for embedding INSIDE A BACKTICK
+// INLINE-CODE SPAN (message.text via findingMessage / renderActionClause - the ONLY
+// remaining callers). GitHub renders message.text as MARKDOWN; a code span makes its
+// contents inert, so the neutralization here only has to (a) keep the value from escaping
+// its span and (b) bound its size:
+//   - strips C0/C1 control chars, DEL, and the bidi/zero-width/format set (CONTROL_AND_
+//     FORMAT) so a payload cannot break the line, inject ANSI, or bidi/zero-width-spoof
+//     the rendered token,
+//   - strips backticks (so the value cannot close its inline-code wrapper and open a
+//     markdown construct outside it - the defense that makes the code span inert),
 //   - collapses remaining runs of whitespace to a single space, and
 //   - caps length + ellipsizes (a multi-KB Sid cannot bloat or dominate the output).
 // Returns '' when nothing printable survives (caller then falls back to the index).
-// Pure + deterministic: same Sid -> same token, every run.
+//
+// SECURITY: this backtick-strip defense is INERT for a value emitted BARE (not code-span-
+// wrapped) - there `[x](url)` / `![x](url)` / `<url>` still render live. Every BARE
+// properties-bag field (evidence statementSid/role/actions/resources, top-level
+// properties.statementSid, condition, note, path) therefore goes through the markdown-
+// inert `inertLeaf` (ASCII-punctuation backslash-escape), NOT this function. Do not route
+// a bare field here. Pure + deterministic: same Sid -> same token, every run.
 function sanitizeSid(sid) {
   let s = String(sid);
-  // Control chars (C0 0x00-0x1F incl. newlines/tabs, DEL, C1 0x80-0x9F) + backticks
-  // -> space. Backtick removal keeps the value inside its inline-code wrapper so a
-  // markdown payload cannot escape it.
-  // eslint-disable-next-line no-control-regex
-  s = s.replace(/[\u0000-\u001F\u007F-\u009F`]/g, ' ');
+  // Control + bidi/zero-width (CONTROL_AND_FORMAT) + backticks -> space. Backtick removal
+  // keeps the value inside its inline-code wrapper so a markdown payload cannot escape it.
+  // S4 iteration 3: after the control/format strip, clamp remaining non-ASCII to U+FFFD
+  // (strong-RTL letter / Zs homograph space / homograph letter) so the code-span token
+  // cannot bidi-reorder or homograph-spoof in the rendered Security tab.
+  s = s.replace(CONTROL_AND_FORMAT, ' ').replace(NON_ASCII_SPOOF, REPLACEMENT).replace(/`/g, ' ');
   s = s.replace(/\s+/g, ' ').trim();
   if (s.length > MAX_SID_LEN) s = `${s.slice(0, MAX_SID_LEN)}...`;
   return s;
 }
 
-// Neutralize an attacker-controlled token list (evidence actions / resources) for a
-// SARIF properties bag: each entry gets the same control-char/newline/backtick strip +
-// length cap as a Sid, and anything that leaves nothing printable is dropped. Preserves
-// order + count (minus fully-empty tokens); benign tokens (iam:PassRole, an ARN) ride
-// through unchanged. Pure + deterministic.
-function neutralizeTokenList(list) {
+// Neutralize an attacker-controlled token list (evidence actions / resources) for the
+// BARE properties bag. These entries are emitted un-wrapped (never inside a code span),
+// so each is rendered MARKDOWN-INERT via inertLeaf (ASCII-punctuation backslash-escape) -
+// the same treatment condition/note get - NOT merely backtick-stripped, which would leave
+// a live `[x](url)` / `![x](url)` / `<url>` in a resource or action. Empty tokens are
+// dropped; both the entry COUNT and the AGGREGATE sanitized-char budget across the list
+// are capped, with a truthful marker appended on truncation, so a huge Action/Resource
+// array cannot amplify the SARIF. Order is preserved. Benign ARNs ride through with their
+// punctuation backslash-escaped (readable, inert), exactly like a benign condition value.
+// Pure + deterministic.
+function inertTokenList(list) {
   const out = [];
+  let chars = 0;
+  let truncated = false;
   for (const v of list) {
-    const safe = sanitizeSid(v);
-    if (safe) out.push(safe);
+    if (out.length >= MAX_EVIDENCE_TOKENS) { truncated = true; break; }
+    const safe = inertLeaf(v, MAX_SID_LEN);
+    if (!safe) continue;
+    if (chars + safe.length > MAX_EVIDENCE_TOKEN_CHARS) { truncated = true; break; }
+    chars += safe.length;
+    out.push(safe);
   }
+  if (truncated) out.push(EVIDENCE_TRUNCATED_MARKER);
   return out;
 }
 
@@ -325,8 +449,10 @@ const ASCII_PUNCT = /[!-/:-@[-`{-~]/g;
 // Rather than trust each engine call site to pre-sanitize (a CLASS the fail-open hunter
 // reopens with the next new message), we neutralize at the sink so ANY analyzer-state
 // message - named or not-yet-written - renders inert. It:
-//   - strips C0/C1 control chars + newlines (they break the rendered line / inject ANSI
-//     if the same text is ever shown on a terminal),
+//   - strips C0/C1 control chars + newlines AND the bidi/zero-width/format set
+//     (CONTROL_AND_FORMAT) - the former break the rendered line / inject ANSI, the latter
+//     reorder or hide/split a token to spoof it (neither is caught by the punctuation
+//     escape below),
 //   - collapses whitespace, caps length + ellipsizes (bounds a hostile blow-up), and
 //   - backslash-escapes EVERY ASCII-punctuation char, so NO markdown construct can form:
 //     not an inline or reference link, image, autolink `<url>`, bare-URL / www / email
@@ -337,14 +463,197 @@ const ASCII_PUNCT = /[!-/:-@[-`{-~]/g;
 // Pure + deterministic: same message -> same text, every run.
 function sanitizeStateMessage(msg) {
   let s = isNonEmptyString(msg) ? String(msg) : '';
-  // eslint-disable-next-line no-control-regex
-  s = s.replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
+  // S4 iteration 3: control/format strip THEN non-ASCII charset clamp (strong-RTL /
+  // Zs homograph / homograph letter -> U+FFFD), before whitespace collapse + escape.
+  s = s.replace(CONTROL_AND_FORMAT, " ").replace(NON_ASCII_SPOOF, REPLACEMENT);
   s = s.replace(/\s+/g, ' ').trim();
   if (!s) return STATE_MSG_FALLBACK;
   if (s.length > MAX_STATE_MSG_LEN) s = `${s.slice(0, MAX_STATE_MSG_LEN)}...`;
   // One pass over the ORIGINAL chars, so a literal `\` becomes `\\` and a `[` becomes
   // `\[` with no double-escaping.
   return s.replace(ASCII_PUNCT, '\\$&');
+}
+
+// --- Condition neutralization (S2-sarif-sanitize-all) -------------------------
+//
+// An evidence row's `condition` is the raw IAM Condition block copied off the statement
+// (engine escalation/resource/trust/graph). It is a NESTED object whose OPERATOR + key
+// names AND leaf VALUES are ALL attacker-controlled (a fork PR owns the whole policy
+// JSON). The old `row.condition = e.condition` emitted it VERBATIM - the one evidence
+// field the sibling code sanitized, that this one did not - so:
+//   (1) a markdown/control payload in a condition key OR value reached a SARIF property
+//       un-neutralized (GitHub renders alert detail; a live link/image could form), and
+//   (2) it was uncapped PER-FIELD: bounded only by validate.js MAX_BYTES (1 MiB whole
+//       document) across up to MAX_STATEMENTS statements, a large Condition per statement
+//       could amplify a ~200 KB policy into a multi-hundred-KB SARIF and breach GitHub's
+//       ~10 MB SARIF upload limit, SILENTLY DROPPING findings from the Security tab.
+// So the block is neutralized RECURSIVELY (keys AND values markdown-inert) and bounded
+// THREE ways: a per-leaf length cap, an AGGREGATE node/char budget (so many small
+// entries cannot sum to hundreds of KB), and recursion DEPTH reusing validate.js
+// MAX_DEPTH. Cycles are handled defensively (a JSON policy cannot contain one, but a
+// synthetic caller could). On ANY breach the caller emits a bounded conditionSummary +
+// conditionTruncated:true instead of the object - fail CLOSED on the Condition.
+//
+// NOTE: findingIdentity() hashes f.conditions via stableStringify for the
+// partialFingerprint and is DELIBERATELY untouched by this path - that input is
+// hash-only, never rendered, and changing it would auto-un-suppress every previously
+// dismissed alert on every consumer repo.
+
+// Per-leaf (value or key) length cap. Real condition keys/values are short; a rendered
+// evidence leaf need not carry a multi-KB blob.
+const MAX_CONDITION_LEAF_LEN = 256;
+// Aggregate caps across the WHOLE condition block: max sanitized leaves+keys visited and
+// max total sanitized characters. This is the amplification bound - many small entries
+// cannot sum past it.
+const MAX_CONDITION_NODES = 256;
+const MAX_CONDITION_CHARS = 4096;
+// Cap on the EMITTED conditionSummary fallback string (breach path). This bounds the
+// string AS RENDERED, not merely its pre-escape length: inertLeaf caps the RAW length,
+// but ASCII-punctuation backslash-escaping can up to ~double the output (a JSON summary
+// is punctuation-dense), so inertLeaf(raw, N) alone could emit ~2N. inertSummary below
+// hard-clamps the escaped output to this cap (+ a clean ellipsis) so the emitted summary
+// honours the documented bound for ANY partial shape - flat-root or nested.
+const MAX_CONDITION_SUMMARY_LEN = 480;
+
+// Markdown-inert rendering of a SINGLE BARE leaf: a condition leaf/key, an evidence
+// statementSid/role, a token in an action/resource list, or a top-level statementSid.
+// The shared neutralizer for EVERY properties-bag string that is emitted un-wrapped (not
+// inside a code span). Same treatment the analyzer-state message/note gets: strip C0/C1
+// control chars + newlines AND the bidi/zero-width/format set (CONTROL_AND_FORMAT - so a
+// token cannot be reordered or zero-width-hidden/split into a spoof), collapse whitespace,
+// cap length, then backslash-escape EVERY ASCII-punctuation char so NO markdown construct
+// (link/image/autolink/code span/HTML/emphasis) can form - and, incidentally, so a literal
+// `__proto__`/`constructor` key can never survive as such (the underscores/letters are
+// escaped, and the sanitized tree uses null-prototype objects regardless). Pure +
+// deterministic.
+// Exported for tests/s4-unicode-spoof.test.js: the strengthened superset invariant compares
+// this leaf sanitizer's EFFECTIVE per-codepoint neutralization against the browser display
+// neutralizer (neutralizeForDisplay), not merely the underlying regexes - so the CLI's
+// whitespace-run collapse of the Zs class and the shared non-ASCII clamp are both in scope.
+export function inertLeaf(value, maxLen) {
+  let s = String(value);
+  // S4 iteration 3: control/format strip THEN non-ASCII charset clamp (strong-RTL /
+  // Zs homograph / homograph letter -> U+FFFD), before whitespace collapse + escape.
+  s = s.replace(CONTROL_AND_FORMAT, ' ').replace(NON_ASCII_SPOOF, REPLACEMENT);
+  s = s.replace(/\s+/g, ' ').trim();
+  let truncated = false;
+  if (s.length > maxLen) { s = s.slice(0, maxLen); truncated = true; }
+  // Escape the (already length-bounded) content, THEN append a CLEAN ellipsis. Escaping
+  // first keeps the cap bounded on the RAW length and avoids splitting a `\x` escape pair
+  // mid-sequence; the appended `...` is left unescaped because a period forms no markdown
+  // construct, so a truncated value still reads with a normal trailing ellipsis.
+  s = s.replace(ASCII_PUNCT, '\\$&');
+  return truncated ? `${s}...` : s;
+}
+
+// Markdown-inert summary of the sanitized-partial condition emitted on a breach, bounded
+// AS RENDERED. inertLeaf(raw, N) caps the RAW pre-escape length; escaping can up to ~double
+// it (a JSON summary is punctuation-dense), so inertLeaf alone can emit ~2N - contradicting
+// the documented MAX_CONDITION_SUMMARY_LEN and the suite's `<= cap + ellipsis` invariant for
+// a flat-root partial (a nested partial happens to collapse to "{}"). This hard-clamps the
+// ESCAPED output to `cap` (+ a clean "..."), trimming a dangling trailing backslash first so
+// a `\x` escape pair is never split. Bounded output for ANY partial shape. Pure + deterministic.
+function inertSummary(raw, cap) {
+  const inert = inertLeaf(raw, cap);
+  if (inert.length <= cap) return inert;
+  // Drop a lone (odd-count) trailing backslash so the slice never ends mid escape-pair, then
+  // mark the elision. `\\` pairs (escaped backslashes) are complete and kept.
+  const clipped = inert.slice(0, cap).replace(/\\+$/, (m) => (m.length % 2 ? m.slice(0, -1) : m));
+  return `${clipped}...`;
+}
+
+// Recursively neutralize an evidence Condition. Returns { value, truncated }:
+//   - value:     a sanitized copy (nested null-prototype objects / arrays / inert
+//                strings) with EVERY key and leaf rendered markdown-inert, or a partial
+//                copy when a bound was hit, or null when nothing survived;
+//   - truncated: true iff any bound (depth / aggregate nodes / aggregate chars / cycle)
+//                was hit, signalling the caller to emit a bounded summary instead.
+// A single shared budget threads through the whole walk so the caps are AGGREGATE, not
+// per-branch. Cycle-safe via a visited Set. Never throws.
+function neutralizeCondition(root) {
+  const budget = { nodes: 0, chars: 0, truncated: false, seen: new Set() };
+
+  function walk(value, depth) {
+    if (budget.truncated) return null;
+    if (depth > LIMITS.MAX_DEPTH) { budget.truncated = true; return null; }
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'object') {
+      const s = inertLeaf(value, MAX_CONDITION_LEAF_LEN);
+      budget.nodes += 1;
+      budget.chars += s.length;
+      if (budget.nodes > MAX_CONDITION_NODES || budget.chars > MAX_CONDITION_CHARS) {
+        budget.truncated = true;
+        return null;
+      }
+      return s;
+    }
+    if (budget.seen.has(value)) { budget.truncated = true; return null; }
+    budget.seen.add(value);
+    // Charge the CONTAINER itself, not only its keys/leaves. An empty (or all-empty-child)
+    // container serializes to "{}"/"[]" and costs bytes, yet an earlier walker charged only
+    // the keys + scalar leaves - so an array/object of thousands of EMPTY containers summed
+    // to ZERO against the node/char budget and slipped past the aggregate cap (an
+    // amplification hole in the same class). Every container now costs one node + its two
+    // bracket bytes, so N empty containers cost N nodes and trip the cap like any other
+    // fan-out. Checked BEFORE recursing so the breach is caught at this level.
+    budget.nodes += 1;
+    budget.chars += 2;
+    if (budget.nodes > MAX_CONDITION_NODES || budget.chars > MAX_CONDITION_CHARS) {
+      budget.truncated = true;
+      budget.seen.delete(value);
+      return null;
+    }
+    let out;
+    if (Array.isArray(value)) {
+      out = [];
+      for (const el of value) {
+        const child = walk(el, depth + 1);
+        if (budget.truncated) break;
+        out.push(child);
+      }
+    } else {
+      // Null-prototype output: a sanitized key that happens to spell a dangerous key
+      // becomes a plain own property, never a prototype mutation. (validate.js already
+      // rejects such keys upstream; this keeps the adapter safe for synthetic callers.)
+      out = Object.create(null);
+      for (const k of Object.keys(value)) {
+        const safeKey = inertLeaf(k, MAX_CONDITION_LEAF_LEN);
+        budget.nodes += 1;
+        budget.chars += safeKey.length;
+        if (budget.nodes > MAX_CONDITION_NODES || budget.chars > MAX_CONDITION_CHARS) {
+          budget.truncated = true;
+          break;
+        }
+        const child = walk(value[k], depth + 1);
+        if (budget.truncated) break;
+        out[safeKey] = child;
+      }
+    }
+    budget.seen.delete(value);
+    return out;
+  }
+
+  const value = walk(root, 0);
+  return { value, truncated: budget.truncated };
+}
+
+// Max chars kept from an artifact URI. A URI is a location, NOT markdown-rendered prose
+// (GitHub shows it as a file path, not markdown), so it is neutralized DIFFERENTLY from a
+// message: C0/C1 control chars + newlines AND the bidi/zero-width/format set
+// (CONTROL_AND_FORMAT) are STRIPPED - the controls can never legitimately appear in a
+// path/URI, and the bidi/zero-width set would otherwise RTL-reorder or zero-width-hide a
+// path segment so a hostile scanned-file name spoofs a benign one in the alert location -
+// and the length is capped. Path punctuation (`/`, `.`) is PRESERVED (not escaped) so a
+// legitimate repo-relative path is not mangled; markdown escaping is unnecessary here
+// because the uri is not rendered as markdown.
+const MAX_URI_LEN = 2048;
+function sanitizeUri(uri) {
+  let s = String(uri);
+  // S4 iteration 3: strip control/format, then clamp non-ASCII to U+FFFD so a strong-RTL /
+  // homograph path segment cannot reorder or homograph-spoof the alert location.
+  s = s.replace(CONTROL_AND_FORMAT, '').replace(NON_ASCII_SPOOF, REPLACEMENT);
+  if (s.length > MAX_URI_LEN) s = s.slice(0, MAX_URI_LEN);
+  return s;
 }
 
 // Max distinct action tokens rendered inline before the list is elided. Bounds the
@@ -462,41 +771,206 @@ function buildRules(result) {
   // fixed error-level, category analysis-state - the separation an adversary must not
   // be able to collapse.
   for (const s of (result.analysisStates || [])) {
-    const code = s && s.code != null ? String(s.code) : 'FAIL_CLOSED';
-    const ruleId = `analysis.${code}`;
+    const ruleId = `analysis.${s && s.code != null ? String(s.code) : 'FAIL_CLOSED'}`;
     if (index.has(ruleId)) continue;
-    const stateName = s && s.analysisState != null ? String(s.analysisState) : 'unknown';
-    const descriptor = {
-      id: ruleId,
-      name: ruleId,
-      shortDescription: {
-        text: `Analyzer state (${stateName}): ${code}. Fail-closed "could not analyze"; `
-          + 'this is NOT a vulnerability score.',
-      },
-      defaultConfiguration: { level: 'error' },
-      // No security-severity, by contract.
-      properties: { category: 'analysis-state', failClosed: true, analysisState: stateName },
-    };
     index.set(ruleId, rules.length);
-    rules.push(descriptor);
+    rules.push(stateDescriptor(s));
   }
 
   return { rules, index };
 }
 
+// The reportingDescriptor for one analyzer-state CODE. Extracted so the security-critical
+// contract (fixed error level, category analysis-state, NEVER a security-severity) is
+// defined ONCE and reused by both the normal states and the synthetic truncation state -
+// they can never drift apart into a shape a consumer could misread as a vulnerability.
+function stateDescriptor(s) {
+  const code = s && s.code != null ? String(s.code) : 'FAIL_CLOSED';
+  const ruleId = `analysis.${code}`;
+  const stateName = s && s.analysisState != null ? String(s.analysisState) : 'unknown';
+  return {
+    id: ruleId,
+    name: ruleId,
+    shortDescription: {
+      text: `Analyzer state (${stateName}): ${code}. Fail-closed "could not analyze"; `
+        + 'this is NOT a vulnerability score.',
+    },
+    defaultConfiguration: { level: 'error' },
+    // No security-severity, by contract.
+    properties: { category: 'analysis-state', failClosed: true, analysisState: stateName },
+  };
+}
+
+// One analyzer-state RESULT row. Extracted (mirrors stateDescriptor) so the normal states
+// and the synthetic truncation state share ONE definition: kind:'fail', level:'error',
+// category analysis-state, NO security-severity, message through the sanitizeStateMessage
+// sink, and a path rendered markdown-inert. The caller assigns ruleIndex.
+function stateResultRow(s, uri) {
+  const code = s && s.code != null ? String(s.code) : 'FAIL_CLOSED';
+  const properties = {
+    // NO security-severity here, by contract: an analyzer-state result is NOT a
+    // vulnerability and must never be mistakable for one.
+    category: 'analysis-state',
+    failClosed: true,
+    analysisState: s && s.analysisState != null ? String(s.analysisState) : 'unknown',
+  };
+  // SECURITY (S2-sarif-sanitize-all): an analyzer-state path can embed attacker-controlled
+  // policy KEY NAMES, so it is rendered markdown-inert before it lands in a property a
+  // consumer may display - never raw. (stateIdentity() hashes the RAW s.path separately for
+  // the fingerprint; that hash-only input is untouched.)
+  if (s && s.path != null) {
+    const safePath = inertLeaf(s.path, MAX_STATE_MSG_LEN);
+    if (safePath) properties.path = safePath;
+  }
+  return {
+    ruleId: `analysis.${code}`,
+    kind: 'fail',
+    level: 'error',
+    // SECURITY (S4-sarif-sid): the engine authors this message as free prose that can
+    // interpolate attacker-controlled policy text. GitHub renders message.text as MARKDOWN,
+    // so it MUST be neutralized here - the single chokepoint every analyzer-state message
+    // flows through - not at each engine call site. See sanitizeStateMessage.
+    message: { text: sanitizeStateMessage(s && s.message) },
+    locations: [locationFor(uri)],
+    partialFingerprints: { [FINGERPRINT_KEY]: hashIdentity(stateIdentity(s)) },
+    properties,
+  };
+}
+
+// --- Document-level output budget (S2-sarif-sanitize-all, iteration 4) ---------
+//
+// The per-condition-block budget (MAX_CONDITION_NODES/CHARS in neutralizeCondition) and
+// the per-field caps (inertTokenList, inertLeaf) each bound ONE evidence row. They are
+// re-created FRESH for every row, so they never bound the SUM across a whole document. A
+// within-limits policy (< validate.js MAX_BYTES, <= MAX_STATEMENTS) can still fan out to
+// THOUSANDS of findings whose small-but-nonzero evidence rows sum past GitHub's ~10 MB
+// SARIF upload cap - at which point GitHub SILENTLY DROPS every finding from the Security
+// tab, a total fail-OPEN of the security signal (the story's stated document-level harm).
+//
+// So the builder threads ONE budget across ALL result rows and fails CLOSED when it is hit:
+//   1. it stops attaching per-finding evidence (the amplifier), degrading to a bare-but-
+//      PRESENT finding row - the finding, its severity, message and fingerprint survive;
+//   2. if even bare rows would still breach, it stops emitting further finding rows and
+//      records how many were elided; and
+//   3. buildSarifLog then appends ONE truthful SARIF_OUTPUT_TRUNCATED analyzer-state result
+//      (kind:fail, level:error, category analysis-state, NO security-severity) announcing
+//      the truncation - so findings are TRUNCATED, never SILENTLY dropped.
+// The ceiling is kept comfortably below GitHub's ~10 MB cap. This bounds the SARIF
+// regardless of how many findings a within-limits policy produces.
+const MAX_SARIF_BYTES = 8 * 1024 * 1024;
+// Headroom reserved for the fixed document scaffold (schema, tool.driver + rules[], run
+// properties) and the appended analyzer-state rows (including the truncation state), so the
+// per-row budget alone can never consume the whole ceiling.
+const SARIF_OVERHEAD_RESERVE = 512 * 1024;
+
+// UTF-8 byte length of a string. The whole SARIF size budget is denominated in BYTES
+// (MAX_SARIF_BYTES, GitHub's upload cap) - NOT UTF-16 code units. String.prototype.length
+// UNDER-counts any multibyte content (a BMP CJK char is 1 code unit but 3 UTF-8 bytes; an
+// accented Latin char 1 code unit but 2 bytes), so a within-limits multibyte fan-out could
+// serialize PAST the byte ceiling while a .length-based estimate still read as fitting -
+// the tool would then believe it fit and emit no truncation state. TextEncoder is a Web +
+// Node global (no import, pure, deterministic); one shared instance avoids per-row churn.
+const UTF8 = new TextEncoder();
+function utf8Bytes(s) { return UTF8.encode(s).length; }
+
+// A CONSERVATIVE over-estimate of a result row's contribution to the FINAL pretty-printed
+// SARIF, in UTF-8 BYTES (the unit the budget names). buildSarifLog serializes with 2-space
+// indentation and every result object lives at nesting depth 4 (runs[0].results[i]), so
+// each line of a row carries >= 8 leading spaces beyond what JSON.stringify(row, null, 2)
+// emits at depth 0. The row content is measured in real UTF-8 bytes (utf8Bytes, not
+// .length, so multibyte fields are not under-counted); the indentation (ASCII spaces, 1
+// byte each) and trailing separator are added as bytes too. Adding 8 bytes per line (an
+// over-count) makes the SUMMED estimate always >= the real serialized byte size, so
+// staying under the byte budget is GUARANTEED, not merely likely. Line count is taken over
+// code units by scanning for '\n' (an ASCII code point, so the count is exact). Pure +
+// deterministic (no clock, no randomness).
+function estimateRowBytes(row) {
+  const s = JSON.stringify(row, null, 2);
+  let lines = 1;
+  for (let i = 0; i < s.length; i += 1) if (s.charCodeAt(i) === 10) lines += 1;
+  return utf8Bytes(s) + lines * 8 + 2;
+}
+
+// The synthetic analyzer-state describing a document-level truncation. Tool-authored (no
+// attacker content); the count is deterministic. Routed through the SAME analyzer-state
+// descriptor + row builders + sanitizeStateMessage sink as every other state, so it carries
+// the load-bearing fail-closed shape by construction.
+function truncationState(budget) {
+  const elided = budget.elidedFindings;
+  const findingNote = elided > 0
+    ? `${elided} finding result${elided === 1 ? ' was' : 's were'} elided entirely; `
+    : '';
+  const evidenceNote = budget.evidenceElided
+    ? 'per-finding evidence was omitted from some results; '
+    : '';
+  const stateNote = budget.elidedStates > 0
+    ? `${budget.elidedStates} analyzer-state result${budget.elidedStates === 1 ? ' was' : 's were'} `
+      + 'elided entirely; '
+    : '';
+  return {
+    code: 'SARIF_OUTPUT_TRUNCATED',
+    analysisState: 'output-truncated',
+    message: 'SARIF output reached the safe size budget and was truncated to stay below the '
+      + `code-scanning upload limit: ${findingNote}${evidenceNote}${stateNote}`
+      + 'results were TRUNCATED, not cleared. Re-run the analyzer (the CLI JSON output has '
+      + 'no such cap) to retrieve every result. This is an analyzer-state signal, not a '
+      + 'vulnerability score.',
+    path: null,
+  };
+}
+
 // --- Result rows --------------------------------------------------------------
 
 function locationFor(uri) {
-  return { physicalLocation: { artifactLocation: { uri } } };
+  // SECURITY (S2-sarif-sanitize-all): the artifact URI can be attacker-influenced - in
+  // the Action a fork PR names the scanned file, and a hostile name could carry control
+  // chars / newlines into a SARIF location. Strip them (path punctuation is preserved so
+  // a legitimate repo-relative path is not mangled). See sanitizeUri.
+  return { physicalLocation: { artifactLocation: { uri: sanitizeUri(uri) } } };
 }
 
 // Build the two DISJOINT result groups. Security findings first (in engine order),
 // then analyzer-state results (in scan order). The separation is the whole point of
 // the fail-closed design and must survive any refactor.
+//
+// Returns { results, budget }. `budget` reports whether the DOCUMENT-level output cap was
+// hit (see MAX_SARIF_BYTES): buildSarifLog reads it to append the truthful truncation
+// state. Security findings are charged against the budget FIRST; the analyzer-state rows
+// (the load-bearing fail-closed signal) are charged against the SAME budget AFTER findings,
+// so they are preserved as far as the budget allows but can be TRUNCATED (with an announced
+// SARIF_OUTPUT_TRUNCATED state) when their attacker-controlled, unbounded count would breach
+// the cap - the class is bounded document-level and TYPE-AGNOSTICALLY, not per row type. The
+// SARIF_OVERHEAD_RESERVE keeps room for the fixed scaffold, the bounded rules[] catalog, and
+// the appended truncation state, so the fail-closed analysis-state category always survives.
 function buildResults(result, uri, ruleIndex) {
   const out = [];
+  const budget = {
+    bytes: 0,
+    // Ceiling for finding-row content; the reserve protects the fixed scaffold + the always-
+    // emitted analyzer-state rows (including the appended truncation state).
+    max: MAX_SARIF_BYTES - SARIF_OVERHEAD_RESERVE,
+    evidenceStopped: false, // sticky: once tripped, no later finding carries evidence
+    evidenceElided: false, // >=1 finding had its evidence dropped to fit
+    elidedFindings: 0, // findings dropped ENTIRELY (even bare rows would breach)
+    elidedStates: 0, // analyzer-state rows dropped ENTIRELY (would breach the budget)
+    truncated: false,
+  };
 
-  for (const f of (result.findings || [])) {
+  const findings = result.findings || [];
+
+  // DOCUMENT-level output cap (S2-sarif-sanitize-all, iteration 4). The per-block +
+  // per-field caps bound ONE row; NONE of them bound the SUM across ALL rows, so a within-
+  // limits policy fanning out to thousands of findings can still breach GitHub's ~10 MB
+  // upload cap and get the WHOLE Security-tab signal silently dropped. Two ordered passes
+  // fail CLOSED while preserving the MOST signal:
+  //   Pass A builds every finding's BARE row (no evidence) and its evidence aside.
+  //   Then evidence - the amplifier - is shed GLOBALLY FIRST (it is detail, not the finding)
+  //   before any finding is dropped, so a finding is elided ENTIRELY only if even the bare
+  //   rows overflow the budget. buildSarifLog then appends ONE truthful
+  //   SARIF_OUTPUT_TRUNCATED analyzer-state result so anything trimmed is ANNOUNCED, never
+  //   silently dropped (the exit code, owned by scan(), is unaffected either way).
+  const built = [];
+  for (const f of findings) {
     const id = f && f.id != null ? String(f.id) : 'finding';
     const sev = String(f && f.severity != null ? f.severity : 'info').toLowerCase();
     const map = sevMap(sev);
@@ -512,11 +986,13 @@ function buildResults(result, uri, ruleIndex) {
     if (evidence) properties.evidence = evidence;
     const pointer = jsonPointerFor(f);
     if (pointer) properties.jsonPointer = pointer;
-    // SECURITY (S4-sarif-sid): the Sid is attacker-controlled; sanitize (strip control
-    // chars/newlines/backticks, cap length) before embedding in a rendered property.
-    // Omit when nothing printable survives rather than emit an empty token.
+    // SECURITY (S2/S4-sarif): the Sid is attacker-controlled and this property is emitted
+    // BARE (not code-span-wrapped), so it is rendered MARKDOWN-INERT (inertLeaf: strip
+    // control + bidi/zero-width, cap length, backslash-escape ASCII punctuation) - a
+    // backtick-only strip would leave a live `[x](url)` / `<url>` here. Omit when nothing
+    // printable survives rather than emit an empty token.
     if (f && f.statementSid != null) {
-      const safeSid = sanitizeSid(f.statementSid);
+      const safeSid = inertLeaf(f.statementSid, MAX_SID_LEN);
       if (safeSid) properties.statementSid = safeSid;
     }
 
@@ -529,39 +1005,95 @@ function buildResults(result, uri, ruleIndex) {
       properties,
     };
     if (ruleIndex.has(id)) row.ruleIndex = ruleIndex.get(id);
-    out.push(row);
+
+    // fullCost includes evidence (natural key position preserved); bareCost is measured on a
+    // shallow clone with evidence removed, so the REAL row is never reordered in the common
+    // (no-truncation) case - existing byte-for-byte SARIF output is unchanged.
+    const fullCost = estimateRowBytes(row);
+    let bareCost = fullCost;
+    if (evidence) {
+      const bareClone = { ...row, properties: { ...properties } };
+      delete bareClone.properties.evidence;
+      bareCost = estimateRowBytes(bareClone);
+    }
+    built.push({ row, properties, hasEvidence: Boolean(evidence), fullCost, bareCost });
   }
 
-  for (const s of (result.analysisStates || [])) {
-    const code = s && s.code != null ? String(s.code) : 'FAIL_CLOSED';
-    const ruleId = `analysis.${code}`;
-    const properties = {
-      // NO security-severity here, by contract: an analyzer-state result is NOT a
-      // vulnerability and must never be mistakable for one.
-      category: 'analysis-state',
-      failClosed: true,
-      analysisState: s && s.analysisState != null ? String(s.analysisState) : 'unknown',
-    };
-    if (s && s.path != null) properties.path = String(s.path);
-    const row = {
-      ruleId,
-      kind: 'fail',
-      level: 'error',
-      // SECURITY (S4-sarif-sid): the engine authors this message as free prose that can
-      // interpolate attacker-controlled policy text (e.g. a duplicate condition-key
-      // spelling). GitHub renders message.text as MARKDOWN, so it MUST be neutralized
-      // here - the single chokepoint every analyzer-state message flows through - not at
-      // each engine call site. See sanitizeStateMessage.
-      message: { text: sanitizeStateMessage(s && s.message) },
-      locations: [locationFor(uri)],
-      partialFingerprints: { [FINGERPRINT_KEY]: hashIdentity(stateIdentity(s)) },
-      properties,
-    };
+  // How many findings fit at their BARE cost (in engine order). Findings are dropped only
+  // when even bare rows overflow - the genuine extreme.
+  let bareUsed = 0;
+  let emitCount = built.length;
+  for (let i = 0; i < built.length; i += 1) {
+    if (bareUsed + built[i].bareCost > budget.max) { emitCount = i; break; }
+    bareUsed += built[i].bareCost;
+  }
+  if (emitCount < built.length) {
+    budget.elidedFindings = built.length - emitCount;
+    budget.truncated = true;
+  }
+
+  // Spend the REMAINING budget on evidence, in order, until it is exhausted; thereafter
+  // evidence is shed (sticky) and the row carries an explicit evidenceElided marker.
+  let used = bareUsed;
+  for (let i = 0; i < emitCount; i += 1) {
+    const b = built[i];
+    if (!b.hasEvidence) { out.push(b.row); continue; }
+    if (!budget.evidenceStopped) {
+      const evMarginal = b.fullCost - b.bareCost;
+      if (used + evMarginal <= budget.max) {
+        used += evMarginal; // keep this row's evidence (already attached)
+      } else {
+        budget.evidenceStopped = true;
+      }
+    }
+    if (budget.evidenceStopped) {
+      delete b.properties.evidence;
+      b.properties.evidenceElided = true;
+      budget.evidenceElided = true;
+      budget.truncated = true;
+    }
+    out.push(b.row);
+  }
+  // Analyzer-state rows (S2-sarif-sanitize-all, iteration 5). These carry the load-bearing
+  // fail-closed signal, but their COUNT is attacker-controlled and UNBOUNDED within validate()
+  // limits: e.g. validate.findDuplicateKeys emits one DUPLICATE_JSON_KEY error PER duplicate
+  // condition key (uncapped), and scan()->errorStates maps each 1:1 to a state; likewise the
+  // per-statement fan-out in incompleteStatesFromCoverage (which rides on ok:TRUE results and
+  // COEXISTS with real security findings). An earlier version emitted every state row here
+  // WITHOUT charging the budget - so a within-limits policy (< MAX_BYTES, <= MAX_STATEMENTS)
+  // could still sum thousands of state rows PAST GitHub's ~10 MB upload cap, at which point the
+  // WHOLE SARIF is silently dropped and even the fail-closed block never reaches the Security
+  // tab (a total fail-OPEN, strictly worse than a finding overflow because it announced nothing).
+  //
+  // So the state rows are charged against the SAME document byte budget as findings, at the
+  // DOCUMENT level, TYPE-AGNOSTICALLY - the class is closed once, not per row type. Findings were
+  // charged FIRST (above), so genuine security findings are preserved over voluminous states.
+  // When a state row would breach the budget we STOP, count the elided states, and set
+  // budget.truncated so buildSarifLog appends the truthful SARIF_OUTPUT_TRUNCATED analyzer-state
+  // result. That truncation row is itself protected by SARIF_OVERHEAD_RESERVE (kept for the fixed
+  // scaffold + rules[] catalog + the appended truncation state, all bounded), so the fail-closed
+  // analysis-state CATEGORY always survives in the SARIF even in the extreme where every real
+  // state row is elided - and the serialized SARIF can never exceed the cap regardless of how many
+  // states a within-limits policy produces.
+  const states = result.analysisStates || [];
+  let stateEmit = 0;
+  for (const s of states) {
+    const row = stateResultRow(s, uri);
+    const ruleId = row.ruleId;
     if (ruleIndex.has(ruleId)) row.ruleIndex = ruleIndex.get(ruleId);
+    const cost = estimateRowBytes(row);
+    if (used + cost > budget.max) break;
+    used += cost;
     out.push(row);
+    stateEmit += 1;
   }
+  if (stateEmit < states.length) {
+    budget.elidedStates = states.length - stateEmit;
+    budget.truncated = true;
+  }
+  budget.bytes = used;
 
-  return out;
+  return { results: out, budget };
 }
 
 // The tool's SARIF semanticVersion: the rule-catalog version (the finding contract),
@@ -582,7 +1114,25 @@ export function buildSarifLog(result, opts, manifest) {
   const res = result || {};
   const uri = artifactUri(opts);
   const { rules, index } = buildRules(res);
-  const results = buildResults(res, uri, index);
+  const { results, budget } = buildResults(res, uri, index);
+
+  // DOCUMENT-level fail-closed (S2-sarif-sanitize-all, iteration 4): if buildResults hit the
+  // output cap, append ONE truthful analyzer-state result announcing the truncation. It
+  // reuses the same descriptor + row builders as every other state (kind:fail, level:error,
+  // category analysis-state, NO security-severity), so it can never be misread as a
+  // vulnerability. Emitted here - not in buildResults - because it must be ordered LAST
+  // (after all real results) and needs a rule descriptor + index that may not yet exist.
+  if (budget.truncated) {
+    const st = truncationState(budget);
+    const ruleId = `analysis.${st.code}`;
+    if (!index.has(ruleId)) {
+      index.set(ruleId, rules.length);
+      rules.push(stateDescriptor(st));
+    }
+    const row = stateResultRow(st, uri);
+    row.ruleIndex = index.get(ruleId);
+    results.push(row);
+  }
 
   return {
     $schema: 'https://json.schemastore.org/sarif-2.1.0.json',

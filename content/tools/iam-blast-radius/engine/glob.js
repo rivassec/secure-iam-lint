@@ -146,6 +146,38 @@ export function getWorkLimit() {
   return workLimit;
 }
 
+/**
+ * Run `fn` with BOTH cooperative budgets temporarily disarmed, then restore the
+ * exact prior budget state (deadline, work limit, and the running counters) in a
+ * finally. Returns fn()'s result.
+ *
+ * This is for BOUNDED, post-analysis bookkeeping that legitimately calls the shared
+ * matcher a fixed, tiny number of times (e.g. masked-grant.js testing a Resource
+ * value against the fixed probe battery during coverage enrichment) and must be
+ * INERT with respect to the enclosing analyze() budget: it must neither (a) charge
+ * work that could push a borderline-but-completing analysis over its work ceiling
+ * (a spurious abort / over-correction), nor (b) re-throw the budget sentinel when it
+ * runs AFTER an analysis has ALREADY aborted (the deadline/limit is in the past, so
+ * even one tiny match would throw). Disarming for the duration makes chargeWork a
+ * no-op, so the call is deterministic and side-effect-free on the budget.
+ */
+export function withoutBudget(fn) {
+  const savedDeadline = budgetDeadline;
+  const savedLimit = workLimit;
+  const savedDone = workDone;
+  const savedNext = nextWorkCheck;
+  budgetDeadline = Infinity;
+  workLimit = Infinity;
+  try {
+    return fn();
+  } finally {
+    budgetDeadline = savedDeadline;
+    workLimit = savedLimit;
+    workDone = savedDone;
+    nextWorkCheck = savedNext;
+  }
+}
+
 // Charge `n` units of work and, when accumulated work crosses the next checkpoint,
 // test both ceilings. Cheap in the common (disarmed) case: a single comparison and
 // early return. When armed, an integer add plus an occasional checkpoint test.

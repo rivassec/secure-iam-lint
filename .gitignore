@@ -4,3 +4,6 @@ scratchpad/
 **/err_*.txt
 **/timing_*.txt
 node_modules/
+**/run_*.txt
+**/tmperr.txt
+**/tmp*.txt

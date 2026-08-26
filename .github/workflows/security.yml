@@ -34,8 +34,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: zizmor (pinned version via pipx; job exit gates)
-        run: pipx run zizmor==1.29.0 --persona=regular .
+      - name: zizmor (pinned binary, checksum-verified; job exit gates)
+        run: |
+          set -euo pipefail
+          VER=1.29.0
+          SHA=dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839
+          curl -fsSL -o zizmor.tgz "https://github.com/zizmorcore/zizmor/releases/download/v${VER}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${SHA}  zizmor.tgz" | sha256sum -c -
+          tar -xzf zizmor.tgz zizmor
+          ./zizmor --persona=regular .
 
   gitleaks:
     runs-on: ubuntu-latest

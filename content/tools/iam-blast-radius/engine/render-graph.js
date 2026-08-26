@@ -14,6 +14,13 @@
 //      deterministic layout, never values from input. No markup is ever built
 //      from policy text. `class` attributes come from a FIXED internal
 //      vocabulary (the certainty classes below), never from input.
+//   T1/T8 Trojan-Source (S4-unicode-spoof): textContent does NOT stop the Unicode
+//      bidi algorithm, so a policy label carrying bidi/zero-width/default-ignorable
+//      format controls could render a visual spoof in the SVG (the human's PR trust
+//      signal). Every policy-derived label/title/evidence value is stripped of the
+//      invisible/reordering spoof class (format-control.js) at its sink here
+//      (setSvgText for SVG text; htmlEl for the evidence panel), defense-in-depth
+//      behind the engine's model-boundary strip.
 //   T2 Code injection: no eval/Function/inline handlers; events bound via
 //      addEventListener only.
 //   No network APIs. No storage. Deterministic: same graph -> same SVG geometry
@@ -26,6 +33,8 @@
 //        { render(graph, mountEl, opts) -> svg,
 //          renderEvidence(edge, panelEl, opts),
 //          clear(mountEl, panelEl) }
+
+import { neutralizeForDisplay } from './format-control.js';
 
 export const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -476,7 +485,25 @@ export function createGraphRenderer(doc) {
   function htmlEl(tag, text, className) {
     const el = doc.createElement(tag);
     if (className) el.setAttribute('class', className);
-    if (text !== undefined && text !== null) el.textContent = String(text);
+    // S4-unicode-spoof (SVG/DOM sink): every evidence-panel value (Sid, ARN,
+    // action, condition JSON) flows through here, so this is the single chokepoint
+    // that neutralizes BOTH visual-spoof mechanisms in the rendered text - the
+    // invisible/reordering format-control class AND (iteration 3) the strong-RTL /
+    // homograph-space / homograph-letter class (neutralizeForDisplay: strip format
+    // controls, then clamp remaining non-ASCII to U+FFFD). textContent alone does NOT
+    // stop the bidi algorithm; the neutralizer, not the text node, is the control.
+    // No-op on fixed-vocabulary ASCII strings; inert markup either way.
+    if (text !== undefined && text !== null) el.textContent = neutralizeForDisplay(String(text));
+    return el;
+  }
+
+  // S4-unicode-spoof: set the textContent of an SVG <text>/<title> node from a
+  // policy-derived (HOSTILE) label, neutralizing both visual-spoof mechanisms
+  // (format-control strip + non-ASCII charset clamp; see neutralizeForDisplay). The
+  // SVG label/title is the human's visual trust signal, and textContent gives no bidi
+  // protection - so the neutralizer, not the text node, is the control.
+  function setSvgText(el, value) {
+    el.textContent = neutralizeForDisplay(String(value));
     return el;
   }
 
@@ -538,13 +565,15 @@ export function createGraphRenderer(doc) {
       y: node.y + 36,
       class: 'node-label',
     });
-    // HOSTILE policy string (ARN/Sid) -> textContent only. Inert.
-    labelText.textContent = shorten(node.label, 40);
+    // HOSTILE policy string (ARN/Sid) -> textContent only, with the invisible/
+    // reordering spoof class stripped (S4-unicode-spoof). Strip BEFORE shorten() so
+    // truncation counts visible characters and no invisible survives at the cut.
+    setSvgText(labelText, shorten(neutralizeForDisplay(node.label), 40));
     g.appendChild(labelText);
 
     // Full label available to assistive tech / tooltip without markup.
     const title = svgEl('title');
-    title.textContent = String(node.label);
+    setSvgText(title, node.label);
     g.appendChild(title);
     return g;
   }
@@ -587,11 +616,13 @@ export function createGraphRenderer(doc) {
       class: 'edge-label',
       'text-anchor': 'middle',
     });
-    label.textContent = shorten(le.label, 42); // edge label may embed policy text
+    // Edge label may embed policy text -> strip the spoof class before shorten
+    // (S4-unicode-spoof).
+    setSvgText(label, shorten(neutralizeForDisplay(le.label), 42));
     g.appendChild(label);
 
     const title = svgEl('title');
-    title.textContent = `${le.label} - ${certaintyLabel(le.certainty)}`;
+    setSvgText(title, `${le.label} - ${certaintyLabel(le.certainty)}`);
     g.appendChild(title);
 
     if (typeof onSelect === 'function' && typeof g.addEventListener === 'function') {

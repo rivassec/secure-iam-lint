@@ -157,14 +157,23 @@ test('Test 62: only ONE leading BOM is stripped; a second leading BOM still fail
   assert.ok(codes(v).includes('INVALID_JSON'));
 });
 
-test('Test 62: an embedded U+FEFF inside a string is PRESERVED, never stripped', () => {
+test('Test 62: a leading BOM is a decode concern; an embedded U+FEFF is a spoof stripped at the model boundary (S4-unicode-spoof)', () => {
   const sid = `Report${BOM}Access`; // BOM in the middle of a Sid value
   const policy = { Version: '2012-10-17', Statement: [{ Sid: sid, Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::reports/*' }] };
   const v = validate(JSON.stringify(policy));
   assert.equal(v.ok, true);
-  assert.equal(v.raw.Statement[0].Sid, sid, 'embedded U+FEFF rides through as inert data');
+  // validate() is the DECODE boundary: it only strips exactly one *leading* BOM
+  // (JSON.parse would reject it). An embedded U+FEFF is not a decode artifact, so
+  // validate.raw carries it verbatim - the leading-BOM strip must never over-reach.
+  assert.equal(v.raw.Statement[0].Sid, sid, 'validate.raw keeps the embedded U+FEFF verbatim (decode boundary only strips a LEADING BOM)');
+  // S4-unicode-spoof: the model is the NORMALIZATION boundary. An embedded U+FEFF
+  // is a Trojan-Source invisible-spoof code point with no legitimate meaning inside
+  // a Sid, so it is stripped as the string enters the model - the legible text is
+  // preserved. This closes the class for every downstream sink (findings, graph,
+  // exports), not just the export sinks.
   const r = analyze(JSON.stringify(policy), { family: 'identity' });
-  assert.equal(r.model.statements[0].sid, sid, 'the model keeps the embedded BOM verbatim');
+  assert.equal(r.model.statements[0].sid, 'ReportAccess', 'the model de-spoofs the embedded BOM, keeping legible text');
+  assert.ok(!r.model.statements[0].sid.includes(BOM), 'no U+FEFF survives into the model');
 });
 
 // --- Test 63: paste / import / harness parity --------------------------------

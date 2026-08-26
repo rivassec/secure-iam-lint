@@ -233,6 +233,8 @@ test('Part B: the masked-grant guard set is exactly the known fail-closed codes'
       // S1-shape-failclosed additions.
       'MALFORMED_CONDITION_BLOCK',
       'UNSPECIFIED_RESOURCE_SCOPE',
+      // S1-breadth-failclosed addition.
+      'MALFORMED_RESOURCE_ARN',
     ].slice().sort(),
   );
 });

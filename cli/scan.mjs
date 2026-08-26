@@ -230,6 +230,13 @@ const MASKED_GRANT_MESSAGES = Object.freeze({
     'element here; with neither key the analyzer reads the scope as narrow and ' +
     'suppresses its wildcard-resource / data-exfil findings. The policy fails closed ' +
     'rather than reporting a clean pass.',
+  MALFORMED_RESOURCE_ARN:
+    'An Allow statement carries a Resource (or NotResource) value that is neither ' +
+    '"*" nor an ARN. The AWS IAM grammar requires a Resource element to be "*" or an ' +
+    'ARN, so AWS rejects this as MalformedPolicyDocument and the analyzer cannot ' +
+    'decide what the value scopes - a suffix/infix glob (e.g. "*.pem") or a bare ' +
+    'literal would otherwise read as a narrow scope and let a bulk read pass clean. ' +
+    'The policy fails closed rather than reporting a clean pass.',
 });
 
 function maskedGrantMessage(code) {
@@ -606,6 +613,7 @@ export function scan(input) {
       'EMPTY_NOTACTION_COMPLEMENT',
       'EMPTY_NOTRESOURCE_COMPLEMENT',
       'UNSPECIFIED_RESOURCE_SCOPE',
+      'MALFORMED_RESOURCE_ARN',
       'MALFORMED_CONDITION_BLOCK',
       'MALFORMED_CONDITION_VALUE',
     ];

@@ -14,12 +14,38 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..', '..');
+
+// Is `relPath` (repo-root-relative, forward-slashed) COMMITTED to git?
+//
+// The parity oracle must measure git-tracked state, NOT working-tree presence:
+// `tools/iam-blast-radius/package-lock.json` is gitignored, and `npm install`
+// (ci.yml e2e job + any dev machine) GENERATES it on disk. An existsSync() probe
+// would flip true for that untracked artifact and silently skip the no-lockfile
+// disclosure guard below - the phantom-control fail-open the hunter found. Keying
+// on `git ls-files --error-unmatch` makes the check environment-independent:
+// only a genuinely committed lockfile counts as the claimed supply-chain control.
+//
+// Fails CLOSED: any inability to confirm tracked state (git missing, exit != 0)
+// reads as NOT committed, which forces the disclosure guard to run rather than
+// letting an unverifiable file pose as a control.
+function gitTracked(relPath) {
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', relPath], {
+      cwd: repoRoot,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const threatModel = readFileSync(join(here, '..', 'docs', 'threat-model.md'), 'utf8');
 const securityYml = readFileSync(join(repoRoot, '.github', 'workflows', 'security.yml'), 'utf8');
@@ -84,4 +110,125 @@ test('T7 does not claim un-wired supply-chain controls as enforced', () => {
 test('T7 states the shipped tool has zero runtime deps and no build step', () => {
   assert.match(T7, /zero runtime dependenc/i, 'T7 must state zero runtime dependencies');
   assert.match(T7, /no\s+build step/i, 'T7 must state there is no build step');
+});
+
+// S7-A (CLASS): every external tool download in security.yml must be
+// checksum-verified. The story flagged zizmor specifically (it used
+// `pipx run`, version-pinned but NOT hash-verified, unlike the adjacent
+// actionlint/gitleaks which do `sha256sum -c`). Patching only zizmor would
+// leave the CLASS open - a future step could add another unverified download.
+// This asserts the invariant over ALL steps: any step that curls a tool to a
+// local file must verify it with `sha256sum -c`, and the unverified `pipx run`
+// install pattern must not return.
+test('security.yml checksum-verifies every downloaded tool (no unverified installs)', () => {
+  // Split the file into steps (each begins with "- name:" or "- uses:" at step indent).
+  const steps = securityYml.split(/\n(?=      - (?:name|uses):)/);
+  let downloads = 0;
+  for (const step of steps) {
+    // A tool download: curl fetching an artifact to a local file (-o <file>).
+    if (/\bcurl\b[^\n]*\s-o\s/.test(step)) {
+      downloads += 1;
+      assert.match(
+        step,
+        /sha256sum\s+-c/,
+        `security.yml downloads a tool without 'sha256sum -c' verification:\n${step.slice(0, 400)}`,
+      );
+    }
+  }
+  // Guard against a stale test: actionlint, gitleaks, and zizmor are all fetched this way.
+  assert.ok(downloads >= 3, `expected >=3 checksum-verified tool downloads, found ${downloads}`);
+  // The pipx-run pattern installs from PyPI without pinning a hash; it must not come back.
+  assert.ok(
+    !/pipx\s+run/.test(securityYml),
+    'pipx run installs without hash verification - pin a checksum-verified binary instead',
+  );
+  // zizmor specifically must now be the checksum-verified binary, not an unpinned install.
+  assert.match(securityYml, /zizmor\.tgz/, 'zizmor must be fetched as a checksum-verified binary');
+});
+
+// S7-B (CLASS): T7 must not assert a supply-chain control artifact that does not
+// exist. It previously claimed dev deps were "locked in package-lock.json" while
+// no such file is committed and ci.yml runs `npm install` (not `npm ci`) - a
+// false control (T8-style misleading assurance). This ties every lockfile /
+// npm-ci claim in T7 to the actual repo + ci.yml state, in both directions.
+const LOCK_REL = 'tools/iam-blast-radius/package-lock.json';
+// The load-bearing signal: is the lockfile a COMMITTED control? Git-tracked state,
+// not existsSync - a gitignored, npm-generated on-disk lockfile is NOT a control.
+const lockCommitted = gitTracked(LOCK_REL);
+
+test('T7 package-lock / npm-ci claims match repo + ci.yml reality (no phantom controls)', () => {
+  // Positive claim that deps are LOCKED by a committed lockfile.
+  const claimsLock = /locked in\s*`?package-lock\.json`?/i.test(T7);
+  // Positive claim that CI installs with `npm ci` (exclude the "not npm ci" disclosure).
+  const claimsNpmCi = /\bnpm ci\b/.test(T7) && !/not[^.]*`?npm ci`?/i.test(T7);
+
+  if (claimsLock) {
+    assert.ok(
+      lockCommitted,
+      'T7 claims deps are "locked in package-lock.json" but no such file is committed to git',
+    );
+  }
+  if (claimsNpmCi) {
+    assert.match(ciYml, /npm ci\b/, 'T7 claims CI uses `npm ci` but ci.yml does not run it');
+  }
+  if (!lockCommitted) {
+    // Reality: CI must be using npm install, and T7 must DISCLOSE the no-lockfile posture
+    // rather than asserting a lock that does not exist. This branch runs regardless of
+    // whether `npm install` has left an untracked lockfile on disk.
+    assert.match(ciYml, /npm install/, 'no committed lockfile, but ci.yml is not using npm install - doc/CI drift');
+    assert.match(
+      T7,
+      /no committed `?package-lock\.json`?|not lockfile-pinned/i,
+      'with no committed lockfile, T7 must disclose the no-lockfile reality, not claim a lock',
+    );
+    assert.ok(
+      !claimsLock,
+      'no committed lockfile, so T7 must not claim deps are "locked in package-lock.json"',
+    );
+  }
+});
+
+// REGRESSION (fail-open-hunter/medium): the S7-B oracle must key on git-tracked
+// state, not working-tree presence. Previously `existsSync(lockPath)` let a
+// gitignored, npm-generated package-lock.json present on disk flip lockExists=true,
+// satisfying `claimsLock` and SKIPPING the entire no-lockfile disclosure guard - so
+// a re-introduced false "locked in package-lock.json" claim would be greenlit on any
+// machine that had run `npm install`. This locks the class shut: an on-disk file
+// that git does not track must NOT count as a committed control.
+test('S7-B lockfile oracle keys on git-tracked state, not mere on-disk presence', () => {
+  // 1. The signal the parity gate consumes is the git-tracked one.
+  assert.equal(
+    lockCommitted,
+    gitTracked(LOCK_REL),
+    'parity gate must derive lockCommitted from git-tracked state',
+  );
+
+  // 2. existsSync and git-tracked genuinely diverge for a gitignored on-disk file.
+  //    Prove it with a known-gitignored probe so the assertion holds in CI too
+  //    (fresh checkout, where the real lockfile may be absent from disk entirely).
+  const scratchDir = join(repoRoot, 'tools', 'iam-blast-radius', 'scratchpad');
+  const probe = join(scratchDir, 'phantom-lock-probe.json');
+  const probeRel = 'tools/iam-blast-radius/scratchpad/phantom-lock-probe.json';
+  mkdirSync(scratchDir, { recursive: true });
+  writeFileSync(probe, '{}');
+  try {
+    assert.ok(existsSync(probe), 'probe must exist on disk');
+    assert.equal(
+      gitTracked(probeRel),
+      false,
+      'a gitignored on-disk file must read as NOT git-tracked (existsSync must not decide this)',
+    );
+  } finally {
+    rmSync(probe, { force: true });
+  }
+
+  // 3. The real lockfile, if npm install left it on disk, must still be untracked -
+  //    i.e. present-on-disk does not imply committed. (No-op when absent.)
+  if (existsSync(join(repoRoot, LOCK_REL))) {
+    assert.equal(
+      lockCommitted,
+      false,
+      'package-lock.json is gitignored; its on-disk presence must not count as a committed control',
+    );
+  }
 });

@@ -336,3 +336,21 @@ Last-round reason per story:
 - S4-action-hardening: accepted (all-pass)
 - S5-sarif-symmetric: accepted (all-pass)
 - S6-cigate-doc: accepted (all-pass)
+
+## Phase 19 - app-sec-round3 story outcomes (2026-08-26)
+Chain halted early at S2. Stories after the halt point un-reached (pending).
+Last-round reason per story:
+- S1-breadth-failclosed: accepted (all-pass)
+- S2-sarif-sanitize-all: human-review (1 blocking) - chain halted here
+- (subsequent stories): pending - un-reached due to early halt
+
+## Phase 19 - app-sec-round3 story outcomes (final 2026-08-26)
+All Phase-19 stories accepted.
+Last-round reason per story:
+- S1-breadth-failclosed: accepted (all-pass)
+- S2-sarif-sanitize-all: accepted (all-pass)
+- S3-md-coverage-escape: accepted (all-pass)
+- S4-unicode-spoof: accepted (all-pass)
+- S5-cli-hardening: accepted (all-pass)
+- S6-action-aggregate-cap: accepted (all-pass)
+- S7-ci-doc-hygiene: accepted (all-pass)

@@ -47,8 +47,12 @@ T7. **Supply chain** -> Minimal, self-hosted, pinned deps. The SHIPPED tool
 (engine + app + worker + CLI + Action) has ZERO runtime dependencies and NO
 build step (architecture invariants 2 + 7): what is committed is what runs, so
 there is no build-time transform and no transitive-runtime compromise surface.
-Dev-only tooling (test/e2e/mutation) is pinned in `package.json` and locked in
-`package-lock.json`; it never ships to consumers.
+Dev-only tooling (test/e2e/mutation) has its top-level versions exact-pinned in
+`package.json` (no `^`/`~`), but there is NO committed `package-lock.json`, so
+transitive dev-dependency versions are not lockfile-pinned and CI installs them
+with `npm install` (not `npm ci`). This is accepted because that tooling never
+ships to consumers: the shipped artifact has zero runtime dependencies, so an
+unpinned transitive dev dep cannot reach a consumer's build or runtime.
 Controls ENFORCED in CI today (`.github/workflows/security.yml` + `ci.yml`):
 - GH Actions pinned to full commit SHAs; the `zizmor` unpinned-uses audit gates
   it (any un-pinned `uses:` fails the Security workflow).

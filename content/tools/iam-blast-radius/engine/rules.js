@@ -610,7 +610,7 @@ function startsWithArnWildcard(segment) {
 // accesspoint) names the whole collection when wildcarded at the leaf, so it is
 // broad. Frozen so the set is stable and shared (deterministic, no per-call alloc).
 const OUTPOST_CONTENT_LEAF_KEYWORDS = Object.freeze(new Set(['object']));
-function isBroadArnResource(resource) {
+export function isBroadArnResource(resource) {
   const r = String(resource == null ? '' : resource).trim();
   if (r === '') return false;
   if (r === '*') return true;
@@ -621,7 +621,14 @@ function isBroadArnResource(resource) {
   // acts as a spelling-robust net for boundary-crossing ARN globs too. A concrete,
   // scoped resource (arn / non-arn) matches < 2 accounts and falls through.
   if (globReachesMultipleAccounts(r)) return true;
-  // Not an ARN and not boundary-crossing: a concrete non-ARN resource is scoped.
+  // Not an ARN and not boundary-crossing: this predicate returns NARROW here, but a
+  // non-ARN, non-star value is MALFORMED per the AWS IAM grammar and NARROW is only a
+  // "not provably broad" verdict - the probe battery can never PROVE narrow. S1-breadth-
+  // failclosed closes that residual fail-open OUTSIDE this predicate: engine/masked-
+  // grant.js routes any non-ARN-non-star value this predicate does NOT prove broad to
+  // coverage.summary.incomplete (MALFORMED_RESOURCE_ARN), so such a value is fail-CLOSED
+  // (undecidable -> incomplete) even though it returns false here. Keep this `false`:
+  // firing a confident broad finding on an undecidable value would overstate certainty.
   if (!r.startsWith('arn:')) return false;
   // arn:partition:service:region:account:resourceId (resourceId may hold ':').
   const seg = r.split(':');
@@ -658,6 +665,51 @@ function isBroadArnResource(resource) {
   // service.
   const head = resourceId.split('/')[0];
   if (startsWithArnWildcard(head)) return true;
+  // S1-breadth-failclosed (fix 2): an S3 bucket ARN (arn:aws:s3:...:bucket[/key])
+  // names its bucket in the HEAD. S3 bucket names are a GLOBALLY-UNIQUE, account-
+  // less namespace, so a wildcard ANYWHERE in the bucket-name segment - not only at
+  // its LEADING position - spans MANY distinct buckets across potentially different
+  // owning accounts: "my-bucket-*" matches my-bucket-prod, my-bucket-dev,
+  // my-bucket-<anything>, and each could be a different account. That is account/
+  // resource-boundary-crossing and therefore BROAD, exactly like the leading-
+  // wildcard head above - it is the INTERIOR/SUFFIX twin of that check for the case
+  // the wildcard sits after a concrete prefix (arn:aws:s3:::my-bucket-*/*.pem,
+  // arn:aws:s3:::probe-*/*.pem). The finite probe battery cannot catch these: a
+  // trailing key glob (…/*.pem) or a concrete key makes the value match ZERO
+  // fixed-key probes, so it reads narrow and fails OPEN (T8) - this must be caught
+  // STRUCTURALLY.
+  //
+  // Decided by SERVICE, NEVER by whether the region/account segments happen to be
+  // empty (S1 iteration-2 BLOCKER). A canonical S3 bucket ARN has EMPTY region AND
+  // account; a region and/or account DECORATING a bucket-name ARN
+  // (arn:aws:s3:us-east-1::my-bucket-*/key.pem, arn:aws:s3::123456789012:corp-*/db.sql)
+  // is itself MALFORMED per the AWS IAM grammar and must NEVER be read as a
+  // NARROWING signal. The earlier `region==='' && account===''` precondition did
+  // exactly that: the SAME account-spanning bucket-name wildcard, dressed with a
+  // spurious region/account plus a concrete key, skipped this check and - because
+  // the value starts with "arn:" - the non-ARN masked-grant path did not route it to
+  // incomplete either, so it read bare CLEAN (an instance patch that left the class
+  // open). So: for the s3 service, a wildcard in the HEAD is BROAD irrespective of
+  // the region/account segments.
+  //
+  // NOT s3-outposts: an s3-outposts bucket ARN
+  // (arn:aws:s3-outposts:region:acct:outpost/<id>/bucket/<name>/object/<key>) carries
+  // a MEANINGFUL, required account segment and nests the bucket name UNDER a concrete
+  // account+outpost, so a concrete-prefix bucket wildcard there scopes WITHIN one
+  // account (narrow, like arn:aws:iam::123456789012:role/app-*); its whole-collection
+  // leading wildcard (bucket/*) is caught by the s3-outposts logic below. Only PLAIN
+  // S3's account-less bucket namespace makes an interior/suffix name wildcard span
+  // across accounts.
+  //
+  // No false positive on valid non-bucket S3 ARNs: an access point / job /
+  // storage-lens ARN carries a CONCRETE type-keyword head ("accesspoint", "job",
+  // "storage-lens") with no wildcard, so this never fires on them - the wildcard, if
+  // any, lives one segment deeper and is handled by the type-prefix check below. A
+  // wildcard in an s3 HEAD is therefore always either a bucket-name glob or a
+  // wildcarded resource type, both account/collection-spanning. And a concrete bucket
+  // whose only wildcard is in the KEY path (arn:aws:s3:::my-bucket/prefix/* has head
+  // "my-bucket", no wildcard) stays NARROW.
+  if (service === 's3' && /[*?]/.test(head)) return true;
   // Resource-TYPE-prefixed ARNs, where the head is a CONCRETE resource TYPE and
   // the wildcard sits in the IDENTIFIER segment right AFTER the type:
   //   arn:aws:s3:region:acct:accesspoint/*/object/*   (every access point -> every object)

@@ -9,9 +9,17 @@
 // round-trip), Markdown via mdEscape() which backslash-escapes every
 // Markdown/HTML metacharacter so an attacker-controlled policy value cannot
 // forge an active link or executable HTML in a downloaded .md (threat-model
-// T1/T6, suite-3 test 99).
+// T1/T6, suite-3 test 99). BOTH paths additionally strip the invisible /
+// reordering spoof class (INVISIBLE_SPOOF, below): bidi/zero-width/default-
+// ignorable format controls that neither backslash-escaping nor JSON.stringify
+// neutralize, so a downloaded/opened report cannot carry a Trojan-Source visual
+// spoof (threat-model T8) - values still round-trip modulo those width-less
+// controls, which have no legitimate rendering in a report.
 
 import { noFindingsMessage } from './coverage.js';
+import {
+  INVISIBLE_SPOOF, NON_ASCII_SPOOF, REPLACEMENT, stripFormatControls, sanitizeTree,
+} from './format-control.js';
 
 const REPORT_TITLE = 'IAM Blast Radius - analysis report';
 
@@ -66,6 +74,22 @@ function warningsOf(analysis) {
   return bc.map((b) => String(b && b.code ? b.code : '')).filter((c) => c.length > 0);
 }
 
+// IAM-S3 / S4-unicode-spoof (Trojan-Source defense, threat-model T1/T6/T8): a
+// policy-derived value can carry INVISIBLE / REORDERING format-control code points
+// (bidi overrides/isolates, zero-width, BOM, SOFT HYPHEN, default-ignorable, ...)
+// that occupy no width or reorder their neighbours, so a downloaded/shared/opened
+// .md or .json report can display a benign-looking grant that differs from the
+// real policy. mdEscape's backslash-escaping never touches them, and JSON.stringify
+// emits them verbatim (they are not control chars), so neither export path stops
+// them. The CLASS - matched by Unicode PROPERTY, never a hand-enumerated range - is
+// defined ONCE for the whole engine in ./format-control.js (INVISIBLE_SPOOF); the
+// same definition is the normalization-boundary strip in model.js and the browser
+// DOM/SVG sink strip, so the class is closed in one place. stripInvisible is the
+// local alias the Markdown path uses; sanitizeTree deep-strips keys AND values for
+// the JSON export (a hostile Condition operator rides through as an object KEY).
+const stripInvisible = stripFormatControls;
+const sanitizeJsonValue = sanitizeTree;
+
 // Fixed, prominent caveat mirrored from the UI disclaimer so an exported file
 // cannot be mistaken for an "effective permissions" statement.
 const CAVEAT =
@@ -105,7 +129,13 @@ export function toJSON(analysis) {
     model: a.model || null,
     graph: a.graph || { nodes: [], edges: [] },
   };
-  return JSON.stringify(payload, null, 2);
+  // IAM-S3 (Trojan-Source defense): strip invisible/reordering format-control
+  // code points from every string value AND object key in the payload before
+  // serializing, so a downloaded/opened .json report cannot carry a bidi/
+  // zero-width visual spoof (a hostile Condition operator surfaces as an object
+  // KEY, so keys are sanitized too). Control chars stay for JSON.stringify to
+  // escape verbatim; only the invisible spoof class is removed.
+  return JSON.stringify(sanitizeJsonValue(payload), null, 2);
 }
 
 function line(parts) {
@@ -120,10 +150,31 @@ function line(parts) {
 // item and forge document structure in a downloaded report. Collapse CR/LF, the
 // Unicode line/paragraph separators, and C0/C1 control chars to a single space
 // so every interpolated value stays on its own line as inert text. Used ONLY by
-// the Markdown serializer; JSON stays byte-verbatim.
+// the Markdown serializer; JSON strips only the invisible spoof class (below),
+// leaving control chars for JSON.stringify to escape verbatim.
+//
+// IAM-S3: after the control/line-separator collapse, also strip the invisible /
+// reordering spoof class (INVISIBLE_SPOOF: bidi controls, zero-width, BOM,
+// default-ignorable, Braille blank). These are REMOVED, not spaced: mdEscape's
+// backslash-escaping never reaches them, so left in they would ride into the
+// exported .md and let a hostile value render reordered/hidden (Trojan-Source).
+// The control collapse runs first so C0/C1/line-separators still become a single
+// space (the line-forge defense); the strip then removes the width-less spoof
+// code points that a space would only make noisier.
+// S4-unicode-spoof iteration 3: after the control collapse + invisible-spoof strip, clamp
+// the value to the AWS-grammar ASCII charset - replace every remaining VISIBLE non-ASCII
+// code point with U+FFFD (NON_ASCII_SPOOF). This closes the SECOND, code-point-free bidi
+// Trojan-Source mechanism (a strong-RTL letter reorders its neutral/numeric neighbours in
+// the rendered .md with no format-control char) AND the \p{Zs} homograph-space class, so a
+// hostile Sid/ARN/condition can neither reorder nor homograph-spoof a downloaded report.
+// Runs BEFORE mdEscape's autolink breaks: U+FFFD is >= 0x80, so it is treated exactly like
+// any other non-ASCII domain letter there (no autolink fail-open reintroduced).
 function mdSafe(value) {
   // eslint-disable-next-line no-control-regex
-  return String(value).replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, ' ');
+  return String(value)
+    .replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, ' ')
+    .replace(INVISIBLE_SPOOF, '')
+    .replace(NON_ASCII_SPOOF, REPLACEMENT);
 }
 
 // IAM-1002 / suite-3 test 99 (threat-model T1/T6): a policy-derived value can be
@@ -359,11 +410,11 @@ export function toMarkdown(analysis) {
   // the browser) agree (test 71). A blocked report reads "blocked", never a
   // complete/authoritative status.
   out.push(`- Analysis status: ${analysisStatus(a)}`);
-  out.push(`- Selected family: ${selectedFamilyOf(a) || 'none'}`);
-  out.push(`- Rule catalog version: ${a.catalogVersion || '1'}`);
-  out.push(`- Policy family: ${a.family || 'unknown'}`);
+  out.push(`- Selected family: ${mdEscape(selectedFamilyOf(a) || 'none')}`);
+  out.push(`- Rule catalog version: ${mdEscape(a.catalogVersion || '1')}`);
+  out.push(`- Policy family: ${mdEscape(a.family || 'unknown')}`);
   const warnings = warningsOf(a);
-  out.push(`- Warnings: ${warnings.length > 0 ? warnings.join(', ') : '(none)'}`);
+  out.push(`- Warnings: ${warnings.length > 0 ? warnings.map((w) => mdEscape(w)).join(', ') : '(none)'}`);
   out.push(`- Findings: ${counts.findings}`);
   out.push(`- Graph nodes: ${counts.nodes}`);
   out.push(`- Graph edges: ${counts.edges}`);
@@ -380,8 +431,8 @@ export function toMarkdown(analysis) {
     out.push('A clean parse is NOT the same as complete coverage. Unsupported ' +
       'does NOT mean safe.');
     out.push('');
-    out.push(`- Detected family: ${coverage.detected || 'unknown'}`);
-    if (coverage.override) out.push(`- Manual family override: ${coverage.override}`);
+    out.push(`- Detected family: ${mdEscape(coverage.detected || 'unknown')}`);
+    if (coverage.override) out.push(`- Manual family override: ${mdEscape(coverage.override)}`);
     out.push(`- Supported for rule evaluation: ${coverage.supported ? 'yes' : 'no'}`);
     if (s) {
       out.push(`- Statements: ${s.statements.accepted} accepted, ` +
@@ -391,15 +442,15 @@ export function toMarkdown(analysis) {
       out.push('- Unsupported elements: ' +
         (Array.isArray(s.unsupportedElements) && s.unsupportedElements.length > 0
           ? s.unsupportedElements
-            .map((e) => `${String(e.element)}${e.path ? ` at ${String(e.path)}` : ''}`)
+            .map((e) => `${mdEscape(e.element)}${e.path ? ` at ${mdEscape(e.path)}` : ''}`)
             .join(', ')
           : '(none)'));
       out.push('- Evaluation layers NOT covered by this document: ' +
         (Array.isArray(s.missingLayers) && s.missingLayers.length > 0
-          ? s.missingLayers.map((l) => String(l.label)).join(', ')
+          ? s.missingLayers.map((l) => mdEscape(l.label)).join(', ')
           : '(none)'));
       if (s.trustDeny && s.trustDeny.present) {
-        out.push(`- Same-policy trust Deny: ${s.trustDeny.note}`);
+        out.push(`- Same-policy trust Deny: ${mdEscape(s.trustDeny.note)}`);
       }
       out.push(`- Attack-path graph: ${s.graph.truncated ? 'truncated (bounded; findings table stays authoritative)' : 'complete'}.`);
       out.push(`- Build SHA: ${s.versions.buildSha}`);
@@ -412,9 +463,9 @@ export function toMarkdown(analysis) {
       const codes = Array.isArray(coverage.blockingCodes) ? coverage.blockingCodes : [];
       for (const b of codes) {
         out.push(line([
-          '  - ', String(b.code || ''),
-          b.path ? ` at ${String(b.path)}` : '',
-          b.message ? `: ${String(b.message)}` : '',
+          '  - ', mdEscape(b.code || ''),
+          b.path ? ` at ${mdEscape(b.path)}` : '',
+          b.message ? `: ${mdEscape(b.message)}` : '',
         ]));
       }
     } else if (s && s.incomplete) {

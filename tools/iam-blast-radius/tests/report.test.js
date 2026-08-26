@@ -265,6 +265,264 @@ test('breakAutolinks stays linear on a large no-colon value (no quadratic hang)'
   assert.ok(md.includes(bigNoColon), 'no-colon value is carried through unaltered');
 });
 
+// A hostile policy-derived payload carrying EVERY Markdown structure-forging
+// vector: an inline link, an image link, a bare URL, a bare email, a "www." host,
+// a pipe (would forge a table cell), and an embedded newline (would forge a
+// heading/list item). Asserts the value emerged INERT in `md`.
+const MD_COVERAGE_PAYLOAD =
+  'X [click](https://evil.example/p) ![img](https://evil.example/i) ' +
+  'https://evil.example/bare admin@evil.example www.evil.test | forged\n## forged';
+
+function assertMdVectorsInert(md, ctx) {
+  // No live inline/image link: the "](" join is backslash-escaped, so the raw
+  // "](" that CommonMark/GFM/pandoc need for a link/image never appears.
+  assert.ok(!md.includes(']('), `${ctx}: inline/image link join "](" must be escaped`);
+  assert.ok(!md.includes('[click]('), `${ctx}: inline link must not survive`);
+  // No bare-URL autolink (scheme broken to "h\ttps://").
+  assert.ok(!md.includes('https://evil'), `${ctx}: bare URL scheme must be broken`);
+  // No "www." autolink (broken to "w\ww.").
+  assert.ok(!md.includes('www.evil'), `${ctx}: www. autolink must be broken`);
+  // No bare-email mailto autolink (domain broken to "@\evil"); no mailto emitted.
+  assert.ok(!md.includes('admin@evil'), `${ctx}: bare email must be broken`);
+  assert.ok(!/mailto:/i.test(md), `${ctx}: no mailto: token`);
+  // No forged table cell: every pipe is backslash-escaped, so no unescaped "|"
+  // survives to split a row.
+  assert.ok(!/(^|[^\\])\|/.test(md), `${ctx}: pipe must be escaped (no forged table cell)`);
+  // No forged heading: the embedded newline is collapsed to a space by mdSafe, so
+  // no line begins with the injected "## forged".
+  assert.ok(!md.split('\n').some((l) => l.startsWith('## forged')),
+    `${ctx}: embedded newline must not forge a heading`);
+}
+
+test('coverage blockingCodes path: hostile Version renders inert in Markdown (S3-md-coverage-escape)', () => {
+  // Confirmed reproduction: an unsupported Version carrying every vector fails
+  // closed (UNSUPPORTED_POLICY_VERSION), and family.js interpolates the Version
+  // VERBATIM into the blocking-code message emitted on the coverage path.
+  const fx = JSON.parse(readFileSync(
+    join(fixturesDir, 'adversarial', 'md-coverage-escape.json'), 'utf8'));
+  const result = analyze(JSON.stringify(fx.policy));
+  const md = toMarkdown(result);
+  // The coverage path actually fired (blocked + blocking code present).
+  assert.match(md, /Coverage: BLOCKED/);
+  assert.match(md, /UNSUPPORTED_POLICY_VERSION/);
+  assertMdVectorsInert(md, 'blockingCodes message');
+  // The Version text still survives as readable, inert content.
+  assert.ok(md.includes('evil.example'), 'host text preserved as inert content');
+});
+
+test('coverage summary path: hostile unsupportedElement / trustDeny.note render inert (S3-md-coverage-escape class)', () => {
+  // Close the CLASS: any future analyze() path that places attacker text in a
+  // coverage-summary field must already emerge inert. Drive the renderer directly
+  // with a synthetic analysis whose summary carries the hostile payload in
+  // unsupportedElements[].{element,path}, trustDeny.note, missingLayers[].label,
+  // unrecognizedActions/unsupportedConditions, and the family header lines.
+  const analysis = {
+    ok: true,
+    catalogVersion: MD_COVERAGE_PAYLOAD,
+    family: MD_COVERAGE_PAYLOAD,
+    findings: [],
+    counts: { findings: 0, edges: 0, nodes: 0 },
+    coverage: {
+      detected: MD_COVERAGE_PAYLOAD,
+      override: MD_COVERAGE_PAYLOAD,
+      supported: true,
+      blocked: false,
+      blockingCodes: [],
+      summary: {
+        incomplete: true,
+        codes: [MD_COVERAGE_PAYLOAD],
+        statements: { accepted: 1, rejected: 0, total: 1 },
+        unrecognizedActions: [MD_COVERAGE_PAYLOAD],
+        unsupportedConditions: [MD_COVERAGE_PAYLOAD],
+        unsupportedElements: [{ element: MD_COVERAGE_PAYLOAD, path: MD_COVERAGE_PAYLOAD }],
+        missingLayers: [{ key: 'x', label: MD_COVERAGE_PAYLOAD }],
+        trustDeny: { present: true, note: MD_COVERAGE_PAYLOAD },
+        graph: { truncated: false },
+        versions: { buildSha: 'dev', ruleVersion: '1', catalogVersion: '1' },
+      },
+    },
+  };
+  const md = toMarkdown(analysis);
+  assertMdVectorsInert(md, 'coverage summary fields');
+});
+
+test('coverage blockingCodes path: hostile code/path/message all render inert (synthetic)', () => {
+  // The blocking-code loop emits code, path, AND message; all three must be
+  // escaped, not only the confirmed message field.
+  const analysis = {
+    ok: true,
+    findings: [],
+    counts: { findings: 0, edges: 0, nodes: 0 },
+    coverage: {
+      detected: 'identity',
+      supported: false,
+      blocked: true,
+      blockingCodes: [{
+        code: MD_COVERAGE_PAYLOAD,
+        path: MD_COVERAGE_PAYLOAD,
+        message: MD_COVERAGE_PAYLOAD,
+      }],
+      summary: {
+        incomplete: true,
+        codes: [],
+        statements: { accepted: 0, rejected: 1, total: 1 },
+        unrecognizedActions: [],
+        unsupportedConditions: [],
+        unsupportedElements: [],
+        missingLayers: [],
+        trustDeny: { present: false, note: null },
+        graph: { truncated: false },
+        versions: { buildSha: 'dev', ruleVersion: '1', catalogVersion: '1' },
+      },
+    },
+  };
+  const md = toMarkdown(analysis);
+  assert.match(md, /Coverage: BLOCKED/);
+  assertMdVectorsInert(md, 'blockingCodes code/path/message');
+});
+
+// --- S3-md-coverage-escape iteration-2: Trojan-Source invisible/reordering spoof ---
+//
+// The structure-forging Markdown class (links/tables/headings) is closed above.
+// This block closes the sibling spelling the fail-open hunter measured as a ship
+// blocker: INVISIBLE / REORDERING format-control code points (bidi, zero-width,
+// BOM, default-ignorable, Braille blank) rode through mdEscape/mdSafe AND
+// JSON.stringify VERBATIM into the exported .md/.json - a Trojan-Source visual
+// spoof (threat-model T8). The fix strips the class (matched by Unicode PROPERTY,
+// not a hand-enumerated range) in mdSafe() and in a deep key+value pass in
+// toJSON(). These tests assert EXACT codepoint removal (not merely visual
+// inertness) on the coverage path, the finding path, the JSON object-KEY path
+// (a hostile Condition operator becomes a model object key), and the synthetic
+// coverage-summary fields - and assert legitimate RTL letters are preserved so
+// the strip introduces no false positive / over-strip.
+
+// Every invisible/reordering code point a report value could carry, including
+// spellings ONLY a property-based matcher catches (astral tag U+E0061, CGJ
+// U+034F, variation selector U+FE0F, the reserved-but-default-ignorable U+2065,
+// Hangul filler U+115F, Khmer inherent vowel U+17B4, Mongolian vowel sep U+180E).
+const INVISIBLE_SET = [
+  0x202a, 0x202b, 0x202c, 0x202d, 0x202e, // bidi embeddings/override
+  0x2066, 0x2067, 0x2068, 0x2069, // bidi isolates
+  0x200b, 0x200c, 0x200d, 0x200e, 0x200f, // zero-width + LRM/RLM
+  0x061c, // Arabic letter mark
+  0x2060, 0x2064, 0x2065, // word joiner / invisible-plus / reserved
+  0xfeff, // BOM / ZWNBSP
+  0x00ad, // soft hyphen
+  0x2800, // Braille pattern blank
+  0x034f, // combining grapheme joiner
+  0x115f, 0x17b4, 0x180e, // Hangul filler / Khmer / Mongolian vowel sep
+  0xfe0f, // variation selector-16
+  0xe0061, 0xe0000, // astral tag block
+];
+const INVISIBLE_PAYLOAD = INVISIBLE_SET.map((c) => String.fromCodePoint(c)).join('');
+// A property scan (non-global so lastIndex statefulness cannot skip a match).
+const FORMAT_CONTROL_RE = /[\p{Cf}\p{Default_Ignorable_Code_Point}⠀]/u;
+
+function assertNoFormatControls(text, ctx) {
+  const residual = [...text]
+    .filter((ch) => FORMAT_CONTROL_RE.test(ch))
+    .map((ch) => `U+${ch.codePointAt(0).toString(16)}`);
+  assert.deepEqual(residual, [], `${ctx}: exported report must carry NO invisible/reordering code points, found: ${residual.join(' ')}`);
+}
+
+test('coverage path: Trojan-Source bidi/zero-width Version is stripped from MD + JSON (S3 iter-2)', () => {
+  const fx = JSON.parse(readFileSync(
+    join(fixturesDir, 'adversarial', 'md-coverage-bidi-spoof.json'), 'utf8'));
+  const result = analyze(JSON.stringify(fx.policy));
+  // Sanity: the invisible payload really does ride onto the coverage path.
+  const md = toMarkdown(result);
+  const js = toJSON(result);
+  assert.match(md, /Coverage: BLOCKED/);
+  assert.match(md, /UNSUPPORTED_POLICY_VERSION/);
+  assertNoFormatControls(md, 'coverage/blockingCodes Markdown');
+  assertNoFormatControls(js, 'coverage/blockingCodes JSON');
+  // Readable inert text still survives (only width-less controls are removed).
+  assert.ok(md.includes('evil.example'), 'readable host text preserved as inert content');
+});
+
+test('finding path: Trojan-Source bidi/zero-width Sid is stripped from MD + JSON (S3 iter-2)', () => {
+  // Action:"*" produces findings, so the hostile Sid rides the FINDING path
+  // (mdEscape(f.statementSid) + model in JSON) - disjoint from the coverage path.
+  const pol = {
+    Version: '2012-10-17',
+    Statement: [{ Sid: `admin${INVISIBLE_PAYLOAD}root`, Effect: 'Allow', Action: '*', Resource: '*' }],
+  };
+  const result = analyze(JSON.stringify(pol));
+  assert.ok(result.findings.length > 0, 'finding path actually fired');
+  assertNoFormatControls(toMarkdown(result), 'finding-path Markdown');
+  assertNoFormatControls(toJSON(result), 'finding-path JSON');
+  // The Sid text stays legible once the invisibles are gone.
+  assert.ok(toMarkdown(result).includes('adminroot'), 'Sid readable text preserved');
+});
+
+test('JSON object-KEY path: hostile Condition operator key is stripped in toJSON (S3 iter-2)', () => {
+  // A Condition operator/key is carried through model.js copyGuarded as an OBJECT
+  // KEY, and the model rides in the JSON export. A value-only sanitizer would leave
+  // this spelling of the class OPEN, so toJSON deep-sanitizes keys too.
+  const pol = {
+    Version: '2012-10-17',
+    Statement: [{
+      Sid: 's', Effect: 'Allow', Action: '*', Resource: '*',
+      Condition: { [`StringEquals${INVISIBLE_PAYLOAD}`]: { 'aws:username': 'x' } },
+    }],
+  };
+  const js = toJSON(analyze(JSON.stringify(pol)));
+  assertNoFormatControls(js, 'JSON with hostile Condition operator key');
+  assert.ok(js.includes('StringEquals'), 'operator key readable text preserved');
+});
+
+test('coverage-summary fields: Trojan-Source payload stripped in Markdown (S3 iter-2 class)', () => {
+  // Drive the renderer directly so every coverage-summary field carries the
+  // invisible payload (unsupportedElements[].{element,path}, trustDeny.note,
+  // missingLayers[].label, unrecognized/unsupported lists, header lines).
+  const P = `X${INVISIBLE_PAYLOAD}Y`;
+  const analysis = {
+    ok: true, catalogVersion: P, family: P, findings: [],
+    counts: { findings: 0, edges: 0, nodes: 0 },
+    coverage: {
+      detected: P, override: P, supported: true, blocked: false, blockingCodes: [],
+      summary: {
+        incomplete: true, codes: [P],
+        statements: { accepted: 1, rejected: 0, total: 1 },
+        unrecognizedActions: [P], unsupportedConditions: [P],
+        unsupportedElements: [{ element: P, path: P }],
+        missingLayers: [{ key: 'x', label: P }],
+        trustDeny: { present: true, note: P },
+        graph: { truncated: false },
+        versions: { buildSha: 'dev', ruleVersion: '1', catalogVersion: '1' },
+      },
+    },
+  };
+  assertNoFormatControls(toMarkdown(analysis), 'coverage-summary Markdown');
+  assertNoFormatControls(toJSON(analysis), 'coverage-summary JSON');
+});
+
+test('S4 iteration 3: strong-RTL letters are charset-clamped at the display sink (Trojan-Source, not preserved)', () => {
+  // REVISED per the S4-unicode-spoof re-audit (BLOCKER 1). An earlier contract preserved
+  // RTL letters verbatim on the premise that IAM tokens are alphanumeric. That premise IS
+  // the vulnerability: a strong-RTL letter is the OTHER Trojan-Source mechanism
+  // (CVE-2021-42574) - it makes the Unicode bidi algorithm REORDER the neutral / numeric
+  // characters around it, so a downloaded .md can DISPLAY a grant in a different order than
+  // it is stored, with NO format-control code point at all. IAM tokens are ASCII per the AWS
+  // grammar, so the display sinks clamp every non-ASCII code point to U+FFFD. The RAW value
+  // still rides the model + analysis unchanged (fail-closed viability + S2 fingerprints
+  // intact); only the human-facing projection is charset-clamped.
+  const rtl = 'alephאעתbet arabicبہ';
+  const pol = {
+    Version: '2012-10-17',
+    Statement: [{ Sid: rtl, Effect: 'Allow', Action: '*', Resource: '*' }],
+  };
+  const md = toMarkdown(analyze(JSON.stringify(pol)));
+  assert.ok(!md.includes(rtl), 'strong-RTL letters must NOT survive verbatim (they reorder the display)');
+  for (const ch of 'אעתبہ') {
+    assert.ok(!md.includes(ch), `strong-RTL letter U+${ch.codePointAt(0).toString(16)} must not survive into the .md`);
+  }
+  // The ASCII halves stay legible as inert text (only the non-ASCII is clamped).
+  assert.match(md, /aleph/);
+  assert.match(md, /bet/);
+  assert.match(md, /arabic/);
+});
+
 test('report serializers never throw on a failed analysis', () => {
   const result = analyze('not valid json');
   assert.equal(result.ok, false);

@@ -379,6 +379,18 @@ function enforceCounts(raw, errors) {
     actions += countArrayOrString(s['Action']) + countArrayOrString(s['NotAction']);
     resources += countArrayOrString(s['Resource']) + countArrayOrString(s['NotResource']);
   }
+  // NOTE (S1-breadth-failclosed): validate() deliberately does NOT ARN-SHAPE-validate
+  // Resource / NotResource element values. Per the AWS IAM grammar a Resource element
+  // must be "*" or an ARN, so a value that is neither (a suffix/infix key glob like
+  // "*.pem", a bare literal, a URL) is MALFORMED - but rejecting it HERE (ok:false /
+  // BLOCKED) would discard the whole document and lose the findings the supported
+  // subset still yields (e.g. a co-located WILDCARD-ACTION on Action "*"). Instead the
+  // SHARED engine treats such a value as UNDECIDABLE and routes it to
+  // coverage.summary.incomplete via engine/masked-grant.js (MALFORMED_RESOURCE_ARN),
+  // so BOTH the browser (analyze()) and the CLI (scan()) fail CLOSED - never a bare
+  // clean pass - while still surfacing whatever the rest of the policy grants. This is
+  // the "undecidable, not rejected" resolution (threat-model T8); do not add a hard
+  // ARN-shape reject here without moving that contract.
   if (actions > LIMITS.MAX_ACTIONS) {
     errors.push(
       err('TOO_MANY_ACTIONS', `Policy has ${actions} actions; limit is ${LIMITS.MAX_ACTIONS}.`),
