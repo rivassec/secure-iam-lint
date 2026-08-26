@@ -23,22 +23,43 @@
           "sid": "AllowAllExceptIam",
           "effect": "Allow",
           "actions": [],
-          "notActions": ["iam:*"],
-          "resources": ["*"],
+          "notActions": [
+            "iam:*"
+          ],
+          "resources": [
+            "*"
+          ],
           "notResources": [],
           "condition": null,
           "principal": null,
           "notPrincipal": null,
           "notActionPresent": true,
-          "notResourcePresent": false
+          "notResourcePresent": false,
+          "resourcePresent": true
         }
       ]
     },
     "decide": [
-      { "action": "s3:GetObject", "resource": "*", "decision": "allowed-by-policy" },
-      { "action": "ec2:RunInstances", "resource": "*", "decision": "allowed-by-policy" },
-      { "action": "iam:CreateUser", "resource": "*", "decision": "not-granted-by-policy" },
-      { "action": "iam:PassRole", "resource": "*", "decision": "not-granted-by-policy" }
+      {
+        "action": "s3:GetObject",
+        "resource": "*",
+        "decision": "allowed-by-policy"
+      },
+      {
+        "action": "ec2:RunInstances",
+        "resource": "*",
+        "decision": "allowed-by-policy"
+      },
+      {
+        "action": "iam:CreateUser",
+        "resource": "*",
+        "decision": "not-granted-by-policy"
+      },
+      {
+        "action": "iam:PassRole",
+        "resource": "*",
+        "decision": "not-granted-by-policy"
+      }
     ]
   }
 }

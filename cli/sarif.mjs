@@ -171,6 +171,17 @@ export function findingIdentity(finding, family) {
     `principals=${findingPrincipals(f).join('|')}`,
     `condition=${f.conditions == null ? '' : stableStringify(f.conditions)}`,
     `viability=${requiredUnknowns.join('|')}`,
+    // S5-sarif-symmetric: an escalation path's TARGET SERVICE and TECHNIQUE are part of
+    // its semantic identity, not decoration. Several distinct PassRole routes share one
+    // finding TYPE (id=PASSROLE-SERVICE covers ecs/glue/cloudformation/sagemaker/
+    // codebuild/datapipeline) and, when the exec statement grants a wildcard action, the
+    // SAME anchor position + normalized action list ("*") + resource. Without the service
+    // + technique folded in, those routes hash to ONE partialFingerprint, so a maintainer
+    // dismissing one code-scanning alert SUPPRESSES every other route (a fail-OPEN). These
+    // are tool-controlled enum values (never attacker free-text), so they cannot be used
+    // to forge a collision; they can only SPLIT genuinely-distinct routes apart.
+    `escService=${esc && esc.service != null ? String(esc.service) : ''}`,
+    `escTechnique=${esc && esc.technique != null ? String(esc.technique) : ''}`,
   ];
   return parts.join('\n');
 }
@@ -216,17 +227,28 @@ function evidenceOf(finding) {
   return f.evidence.map((e) => {
     const row = {};
     if (e && e.statementIndex != null) row.statementIndex = e.statementIndex;
-    // SECURITY (S4-sarif-sid): evidence Sids are attacker-controlled too; sanitize
-    // before surfacing in properties.evidence. Omit when nothing printable survives.
+    // SECURITY (S4/S5-sarif): EVERY attacker-controlled string in an evidence row is
+    // neutralized before it reaches properties.evidence - symmetrically with the Sid,
+    // never verbatim. A fork PR owns the whole policy JSON, so the Sid, role label,
+    // action tokens, resource ARNs, and the free-prose note are all hostile. Token-like
+    // fields (Sid / role / actions / resources) get the token treatment (strip control
+    // chars/newlines/backticks, cap length); the NOTE is engine-authored FREE PROSE that
+    // interpolates raw actions + ARNs (engine/rules.js ACTION_RESOURCE_TYPE_MISMATCH),
+    // so it gets the SAME markdown-inert treatment as an analyzer-state message
+    // (sanitizeStateMessage) - a consumer that renders an evidence field as markdown can
+    // never get a live link/image/autolink out of it.
     if (e && e.statementSid != null) {
       const safeSid = sanitizeSid(e.statementSid);
       if (safeSid) row.statementSid = safeSid;
     }
-    if (e && e.role != null) row.role = e.role;
-    if (e && Array.isArray(e.actions)) row.actions = e.actions.slice();
-    if (e && Array.isArray(e.resources)) row.resources = e.resources.slice();
+    if (e && e.role != null) {
+      const safeRole = sanitizeSid(e.role);
+      if (safeRole) row.role = safeRole;
+    }
+    if (e && Array.isArray(e.actions)) row.actions = neutralizeTokenList(e.actions);
+    if (e && Array.isArray(e.resources)) row.resources = neutralizeTokenList(e.resources);
     if (e && e.condition != null) row.condition = e.condition;
-    if (e && e.note != null) row.note = e.note;
+    if (e && e.note != null) row.note = sanitizeStateMessage(e.note);
     return row;
   });
 }
@@ -256,6 +278,73 @@ function sanitizeSid(sid) {
   s = s.replace(/\s+/g, ' ').trim();
   if (s.length > MAX_SID_LEN) s = `${s.slice(0, MAX_SID_LEN)}...`;
   return s;
+}
+
+// Neutralize an attacker-controlled token list (evidence actions / resources) for a
+// SARIF properties bag: each entry gets the same control-char/newline/backtick strip +
+// length cap as a Sid, and anything that leaves nothing printable is dropped. Preserves
+// order + count (minus fully-empty tokens); benign tokens (iam:PassRole, an ARN) ride
+// through unchanged. Pure + deterministic.
+function neutralizeTokenList(list) {
+  const out = [];
+  for (const v of list) {
+    const safe = sanitizeSid(v);
+    if (safe) out.push(safe);
+  }
+  return out;
+}
+
+// Max characters kept from an analyzer-state message before ellipsizing. Some engine
+// error messages interpolate attacker-controlled policy text (e.g. a duplicate
+// condition-key spelling), so this bounds a hostile blow-up.
+const MAX_STATE_MSG_LEN = 480;
+
+// The fixed, tool-authored fallback when an analyzer-state carries no printable message.
+const STATE_MSG_FALLBACK = 'Analysis could not be completed for this policy (fail-closed).';
+
+// ASCII-punctuation code points (CommonMark's backslash-escapable set): 0x21-0x2F,
+// 0x3A-0x40, 0x5B-0x60 (backslash 0x5C included), 0x7B-0x7E. Escaping EVERY one of
+// these is what makes an analyzer-state message render inert.
+// eslint-disable-next-line no-useless-escape
+const ASCII_PUNCT = /[!-/:-@[-`{-~]/g;
+
+// Neutralize an analyzer-state (fail-closed) message before it becomes SARIF
+// message.text. This is the SINGLE CHOKEPOINT every analyzer-state message passes
+// through (buildResults below), and it is deliberately NOT the finding-message path:
+//
+//   - A security FINDING's message is assembled HERE from tool prose plus individually
+//     code-span-wrapped, pre-sanitized tokens (see findingMessage), so it is safe by
+//     construction.
+//   - An analyzer-state message is authored by the ENGINE (validate.js / model.js /
+//     scan.mjs) as FREE PROSE that may interpolate attacker-controlled policy text
+//     verbatim - a duplicate condition-key spelling, a rejected key name, a JSON path,
+//     or any message a FUTURE engine change adds. GitHub renders message.text as
+//     MARKDOWN in its Security tab, so a fork PR (which owns the whole policy JSON)
+//     could otherwise inject a clickable link/image into a maintainer's alert view.
+//
+// Rather than trust each engine call site to pre-sanitize (a CLASS the fail-open hunter
+// reopens with the next new message), we neutralize at the sink so ANY analyzer-state
+// message - named or not-yet-written - renders inert. It:
+//   - strips C0/C1 control chars + newlines (they break the rendered line / inject ANSI
+//     if the same text is ever shown on a terminal),
+//   - collapses whitespace, caps length + ellipsizes (bounds a hostile blow-up), and
+//   - backslash-escapes EVERY ASCII-punctuation char, so NO markdown construct can form:
+//     not an inline or reference link, image, autolink `<url>`, bare-URL / www / email
+//     autolink, code span, HTML tag, or emphasis. This is complete WITHOUT enumerating
+//     markdown's link grammar (which the next spelling would evade). CommonMark renders
+//     `\<punct>` as the literal punctuation, so the human text reads identically while
+//     every `[label](url)`, `<url>`, or bare `https://...` is inert.
+// Pure + deterministic: same message -> same text, every run.
+function sanitizeStateMessage(msg) {
+  let s = isNonEmptyString(msg) ? String(msg) : '';
+  // eslint-disable-next-line no-control-regex
+  s = s.replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
+  s = s.replace(/\s+/g, ' ').trim();
+  if (!s) return STATE_MSG_FALLBACK;
+  if (s.length > MAX_STATE_MSG_LEN) s = `${s.slice(0, MAX_STATE_MSG_LEN)}...`;
+  // One pass over the ORIGINAL chars, so a literal `\` becomes `\\` and a `[` becomes
+  // `\[` with no double-escaping.
+  return s.replace(ASCII_PUNCT, '\\$&');
 }
 
 // Max distinct action tokens rendered inline before the list is elided. Bounds the
@@ -458,11 +547,12 @@ function buildResults(result, uri, ruleIndex) {
       ruleId,
       kind: 'fail',
       level: 'error',
-      message: {
-        text: isNonEmptyString(s && s.message)
-          ? s.message
-          : 'Analysis could not be completed for this policy (fail-closed).',
-      },
+      // SECURITY (S4-sarif-sid): the engine authors this message as free prose that can
+      // interpolate attacker-controlled policy text (e.g. a duplicate condition-key
+      // spelling). GitHub renders message.text as MARKDOWN, so it MUST be neutralized
+      // here - the single chokepoint every analyzer-state message flows through - not at
+      // each engine call site. See sanitizeStateMessage.
+      message: { text: sanitizeStateMessage(s && s.message) },
       locations: [locationFor(uri)],
       partialFingerprints: { [FINGERPRINT_KEY]: hashIdentity(stateIdentity(s)) },
       properties,

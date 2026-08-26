@@ -553,6 +553,45 @@ function resourceListIsBroadForAssume(stmt) {
   });
 }
 
+// Order-invariant danger ranking of an exec statement's RESOURCE scope, used ONLY
+// as a tiebreak when several equally-un-denied service-execution statements exist
+// for one service (S2-passrole-allstmts iter5). Higher = broader/more dangerous.
+// The compound path must reflect the WORST-case exec grant, and its selection must
+// not depend on statement ORDER: a lowest-INDEX tiebreak let a reorder swap which
+// exec (broad "*" vs narrow) the path consumed, which - together with subsumption -
+// flipped the CLI exit 0<->1 on byte-content-identical statements. Ranking by
+// resource breadth (a content property) first makes the selected exec deterministic
+// across reorderings; the lowest-index tiebreak only settles equal-breadth ties.
+function execResourceBroadness(stmt) {
+  if (stmt.notResources.length > 0) return 2; // NotResource inverse - broad-except-a-few
+  if (stmt.resources.length === 0) return 2; // unspecified scope
+  if (stmt.resources.includes('*')) return 2; // bare "*"
+  if (stmt.resources.some((r) => r.includes('*') || r.includes('?'))) return 1; // glob ARN
+  return 0; // concrete ARN(s)
+}
+
+// Order-invariant TECHNIQUE severity of an exec statement's SURVIVING (post-Deny)
+// actions for a pass-role service. The compound path's tier is a MOST-SEVERE-across-
+// statements property, mirroring the pass side: a co-located staging-only exec must
+// never mask a launch-capable exec in another statement - regardless of statement
+// ORDER, resource breadth, or index (S2-passrole-allstmts axis 2). Only ECS splits
+// launch (ecs:RunTask / ecs:StartTask -> runs code as the passed role, CRITICAL) from
+// staging (ecs:RegisterTaskDefinition -> only stages a definition, HIGH); every other
+// pass-role service's exec actions are each a full code-execution technique, so they
+// rank uniformly (1). Ranked ABOVE resource breadth and index in exec selection so a
+// launch grant in ANY statement keeps the path critical. `effectiveActions` are the
+// granted PATTERNS that survived Deny, so membership is tested with actionGrants (a
+// wildcard covering ecs:RunTask counts as launch), not string equality.
+function execTechniqueSeverity(svc, effectiveActions) {
+  if (svc.service === 'ecs') {
+    const hasLaunch = ECS_LAUNCH_ACTIONS.some(
+      (la) => (effectiveActions || []).some((p) => actionGrants(p, la)),
+    );
+    return hasLaunch ? 1 : 0;
+  }
+  return 1; // every other service's exec actions are all full code-execution techniques
+}
+
 // IAM-102 severity discriminator: does an AssumeRole grant reach "effectively
 // ALL roles" - i.e. all roles across ARBITRARY accounts? Critical is reserved
 // for that boundary-crossing scope. Two axes must BOTH be unconstrained:
@@ -626,10 +665,19 @@ function assumeAccountReach(stmt) {
 // listed actions. Variable-bearing patterns cannot be resolved from text -> the
 // match is possible but not certain.
 export function denyActionApplies(stmt, action) {
+  // S3-dos-budget-all (Team1): charge per Action/NotAction pattern INSPECTED. A
+  // policy-variable pattern short-circuits via `continue` BEFORE actionGrants (the
+  // only charged call here), so a Deny whose Action/NotAction list is entirely
+  // ${...} variables advanced the budget zero times. denyActionApplies is called
+  // once per (deny x required-action) in denyEffectOnAction/applyDenyToActions, so an
+  // all-variable Deny made that whole dimension free -> a within-caps policy could run
+  // unbounded yet return a COMPLETE verdict (fail-OPEN, T5/T8). Charge one unit per
+  // pattern so the scan participates whether or not the matcher is reached.
   if (stmt.notActions.length > 0) {
     let concreteExcluded = false;
     let hasVar = false;
     for (const p of stmt.notActions) {
+      chargeWork(1);
       if (hasPolicyVariable(p)) { hasVar = true; continue; }
       if (actionGrants(p, action)) concreteExcluded = true;
     }
@@ -646,6 +694,7 @@ export function denyActionApplies(stmt, action) {
   let concreteMatch = false;
   let hasVar = false;
   for (const p of stmt.actions) {
+    chargeWork(1);
     if (hasPolicyVariable(p)) { hasVar = true; continue; }
     if (actionGrants(p, action)) concreteMatch = true;
   }
@@ -728,6 +777,19 @@ export function denyResourceCoverage(denyStmt, allowStmt) {
   // proven to fully cover the Allow scope from the policy text -> partial.
   if (denyStmt.notResources.length > 0) return 'partial';
   if (denyStmt.resources.length === 0) return 'partial';
+  // S2-passrole-allstmts axis 3 (DoS, iter-5): CHARGE the O(nDenyResources) star scan
+  // just below - it inspects EVERY Deny resource - so this call advances the work budget
+  // proportional to the Deny resource list even on the branches that return before the
+  // already-charged denyResourcesCover scan (:786). The star scan and the allowRes.length
+  // ===0 -> 'partial' gate (the NotResource-shaped Allow) previously let this whole call
+  // run its per-resource scan for ZERO budget; invoked 8 x nPassStmts x nDeny times
+  // (once per PassRole Allow x service x Deny) with a large Deny resource list, a
+  // within-caps policy ran unbounded yet returned a COMPLETE verdict (fail-open T5/T8),
+  // and on the browser (no wall-clock watchdog) this work counter is the only ceiling.
+  // Charging here makes the star scan participate so the run fails CLOSED
+  // (RESOURCE_BUDGET_EXCEEDED) if genuinely huge. This does NOT double-count
+  // denyResourcesCover's per-character compare charges (a distinct, later cost).
+  chargeWork(denyStmt.resources.length);
   // A Deny on "*" covers every resource the Allow could reach.
   if (denyStmt.resources.some(isStarResource)) return 'full';
 
@@ -942,6 +1004,20 @@ function evidenceOf(stmt, role, actions, note) {
 // (deduped, ordered by statement index). Derived from the same per-statement
 // evidence[] records, so header and evidence[] can never drift.
 function contributingStatementsFrom(evidence) {
+  // S3-dos-budget-all (iter-8, close-the-class): a finding's evidence[] records carry
+  // per-statement `actions` lists that grow with the policy's action patterns (a single
+  // statement can list up to MAX_ACTIONS=10000 grant patterns, all attributed to ONE
+  // statementIndex). The old `entry.actions.includes(a)` dedup was an O(A^2) Array-scan
+  // per statement with ZERO chargeWork - the SAME uncharged-quadratic dedup class as F1 /
+  // survivingGrantedActions / specificAccountsInRoleArns / the role-takeover dedupe. It is
+  // guarded upstream today (the matcher work that PRODUCED these actions is charged, so a
+  // pathological list already trips the budget before reaching here), but leaving the last
+  // includes-in-push O(n^2) in place is exactly the "another spelling" the fail-open hunter
+  // re-opens the class on. A per-entry Set makes membership O(1) (traversal O(A)); charge
+  // one unit per action inspected so this traversal ALSO participates in the work +
+  // wall-clock budget and a future regression that reaches here with an under-charged
+  // upstream fails CLOSED rather than grinding uncharged. Output (deduped, statement-index
+  // order) is byte-identical to the includes version.
   const byIndex = new Map();
   for (const ev of Array.isArray(evidence) ? evidence : []) {
     if (!ev || typeof ev.statementIndex !== 'number') continue;
@@ -951,14 +1027,23 @@ function contributingStatementsFrom(evidence) {
         statementIndex: ev.statementIndex,
         statementSid: ev.statementSid,
         actions: [],
+        seen: new Set(),
       };
       byIndex.set(ev.statementIndex, entry);
     }
-    for (const a of Array.isArray(ev.actions) ? ev.actions : []) {
-      if (!entry.actions.includes(a)) entry.actions.push(a);
+    const evActions = Array.isArray(ev.actions) ? ev.actions : [];
+    chargeWork(evActions.length);
+    for (const a of evActions) {
+      if (!entry.seen.has(a)) { entry.seen.add(a); entry.actions.push(a); }
     }
   }
-  return [...byIndex.keys()].sort((x, y) => x - y).map((i) => byIndex.get(i));
+  // Drop the internal `seen` Set from the returned entries so the shape is unchanged.
+  return [...byIndex.keys()]
+    .sort((x, y) => x - y)
+    .map((i) => {
+      const e = byIndex.get(i);
+      return { statementIndex: e.statementIndex, statementSid: e.statementSid, actions: e.actions };
+    });
 }
 
 // --- Prerequisite (AND/OR) helpers (IAM-703) ---------------------------------
@@ -989,12 +1074,21 @@ function prerequisitesOf(techniques) {
 // Deterministic order: statement order, then match order; deduped. Used to
 // ground a standalone technique's prerequisites in the policy's real grants.
 function survivingGrantedActions(allows, denies, catalog) {
+  // S3-dos-budget-all (iter-7): `found` accumulates the deny-surviving granted patterns
+  // across every Allow, so it grows with the policy's distinct action patterns. The old
+  // `found.includes(a)` Array-scan made the dedup O(found^2) with ZERO chargeWork on the
+  // dedup itself (grantedPatternsFor / applyDenyToActions charge their own work, but the
+  // includes-in-push dedup did not) - the same uncharged-quadratic dedup class as F1. A
+  // Set makes membership O(1); charge one unit per surviving action so the dedup traversal
+  // participates in the work + wall-clock budget.
   const found = [];
+  const seen = new Set();
   for (const stmt of allows) {
     const m = grantedPatternsFor(stmt, catalog);
     if (m.length === 0) continue;
     const d = applyDenyToActions(denies, m, stmt);
-    for (const a of d.actions) if (!found.includes(a)) found.push(a);
+    chargeWork(d.actions.length);
+    for (const a of d.actions) if (!seen.has(a)) { seen.add(a); found.push(a); }
   }
   return found;
 }
@@ -1026,9 +1120,24 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     ? rawSubjectAccount
     : null;
   // The subject's partition (aws / aws-us-gov / aws-cn / ...). Defaults to 'aws'.
-  const subjectPartition = ctx && typeof ctx.partition === 'string' && ctx.partition.trim()
-    ? ctx.partition.trim()
-    : 'aws';
+  // S2-passrole-allstmts (SUBJECT axis): the subject partition is validated with the
+  // SAME KNOWN_PARTITIONS rigor already applied to role-ARN partitions. It is fed into
+  // an EXACT-equality compare (partitionReaches), so a non-canonical spelling of the
+  // subject's OWN partition ('AWS', 'Aws', '*', 'aws-gov', 'AWS-US-GOV', ...) would make
+  // a viable same-account, same-real-partition critical PassRole->service path read as
+  // cross-partition and get CONFIDENTLY demoted critical->medium (PARTITION_MISMATCH) -
+  // the exact fail-open T8 forbids, and it makes analyze() MORE permissive than the
+  // partition-sanitizing scan() adapter for byte-identical input (browser==CLI parity
+  // violation). So an unrecognized SUBJECT partition token must fail CLOSED as
+  // unknown-viability, never drive a confident demotion. `partitionKnown` gates every
+  // pure-partition demotion below; a non-canonical token defaults to 'aws' ONLY for
+  // account-level reasoning (which never depends on the partition spelling). Absent ->
+  // default 'aws' and partitionKnown=true (long-standing behavior; the scan() adapter's
+  // partitionProvided guard already covers the "an account id does not encode a
+  // partition" nuance for the not-supplied case).
+  const rawSubjectPartition = ctx && typeof ctx.partition === 'string' ? ctx.partition.trim() : '';
+  const partitionKnown = rawSubjectPartition === '' || subjectPartitionKnown(rawSubjectPartition);
+  const subjectPartition = subjectPartitionKnown(rawSubjectPartition) ? rawSubjectPartition : 'aws';
   // Gather the Allow statements that grant iam:PassRole (concrete or via iam:*).
   const passStmts = [];
   for (const stmt of allows) {
@@ -1037,6 +1146,19 @@ function detectPassRolePaths(allows, out, denies, ctx) {
   }
   if (passStmts.length === 0) return; // PassRole alone is never flagged, and
   // without any PassRole grant there is no pass path at all.
+
+  // S2-passrole-allstmts axis 3 (iter-5 DoS): the "does an unconditional in-scope Deny
+  // remove EVERY subject role?" verdict depends only on (denies, subjectAccount,
+  // subjectPartition) - all invariant for this call - so compute it EXACTLY ONCE here
+  // (charged against the work budget) and reuse it for every (svc x passStmt) selection
+  // iteration and the metadata block below. Previously it was recomputed 8 x nPassStmts
+  // times (a full scan of every Deny resource each time), an unbudgeted multiplicative
+  // scan that ran unbounded on a within-caps policy yet returned a COMPLETE verdict
+  // (fail-open DoS, threat-model T5/T8). The value is a pure function of these inputs,
+  // so hoisting it changes no verdict - only the cost.
+  const subjectDenied = subjectAccount
+    ? denyRemovesAllSubjectRoles(denies, subjectAccount, subjectPartition)
+    : false;
 
   for (const svc of PASS_ROLE_SERVICES) {
     // Gather EVERY Allow granting a role-consuming action for this service, then
@@ -1047,11 +1169,17 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     // (docs/architecture.md #6, threat-model T8). We therefore keep a surviving
     // exec statement (not fully denied) and suppress only when EVERY exec
     // candidate is definitively, in-scope denied. Among survivors we prefer a
-    // fully-clear one over a merely narrowed one, then the lowest statement index
-    // (deterministic), so a live path is never reported as narrower than it is.
+    // fully-clear one over a merely narrowed one, then the BROADEST resource scope
+    // (order-invariant worst-case), then the lowest statement index as the final
+    // deterministic settle. Preferring the broadest exec by CONTENT (not by index)
+    // means reordering byte-content-identical statements cannot swap which exec the
+    // path consumes and so cannot flip the verdict (S2-passrole-allstmts iter5); a
+    // live path is also never reported as narrower than the broadest grant it holds.
     let execStmt = null;
     let effectiveExecActions = null;
     let execNarrowed = false;
+    let execBroad = -1;
+    let execTech = -1;
     let execAnyCandidate = false;
     for (const stmt of allows) {
       const m = grantedPatternsFor(stmt, svc.execActions);
@@ -1059,14 +1187,25 @@ function detectPassRolePaths(allows, out, denies, ctx) {
       execAnyCandidate = true;
       const d = applyDenyToActions(denies, m, stmt);
       if (d.blocked) continue; // this exec statement is fully, in-scope denied
+      // MOST-SEVERE first: a launch-capable exec (critical) outranks a staging-only
+      // exec (high) no matter its order, resource breadth, or index (axis 2). Only
+      // within an equal technique tier do the not-narrowed / broadest / lowest-index
+      // settles apply. This mirrors the pass-side viability-tier ranking so a launch
+      // grant in ANY statement is never masked by a co-located broader staging grant.
+      const techHere = execTechniqueSeverity(svc, d.actions);
+      const broadHere = execResourceBroadness(stmt);
       const better =
         execStmt === null ||
-        (execNarrowed && !d.narrowed) ||
-        (execNarrowed === d.narrowed && stmt.index < execStmt.index);
+        (techHere > execTech) ||
+        (techHere === execTech && execNarrowed && !d.narrowed) ||
+        (techHere === execTech && execNarrowed === d.narrowed && broadHere > execBroad) ||
+        (techHere === execTech && execNarrowed === d.narrowed && broadHere === execBroad && stmt.index < execStmt.index);
       if (better) {
         execStmt = stmt;
         effectiveExecActions = d.actions;
         execNarrowed = d.narrowed;
+        execBroad = broadHere;
+        execTech = techHere;
       }
     }
     if (!execAnyCandidate) continue; // no service-execution action -> not this path
@@ -1077,10 +1216,22 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     // then apply the SAME per-statement Deny precedence. As with the exec side, a
     // Deny that removes one PassRole grant must not suppress the path when another
     // permitting PassRole grant survives un-denied.
+    // PassRole VIABILITY is an ALL-STATEMENTS property (S2-passrole-allstmts),
+    // exactly like the DENY reasoning above. The T91 account/partition/deny-residual
+    // viability check downstream runs on the SINGLE selected passStmt; if selection
+    // ignored viability it could pick a cross-account decoy in a lower-indexed
+    // statement, demote the whole path critical->medium, and slip a VIABLE
+    // same-account PassRole in a DIFFERENT statement under the exit gate (a false
+    // negative, threat-model T8). Reordering byte-identical statements would then
+    // flip the verdict. To close the CLASS: rank a candidate that KEEPS the critical
+    // (viable same-account) outcome ABOVE one that would be demoted/capped, then keep
+    // the existing not-narrowed-then-lowest-index tiebreak within a viability tier.
+    // A path is only demoted when NO candidate statement yields a viable pass.
     let passStmt = null;
     let pinned = false;
     let passUncertain = false;
     let passNarrowed = false;
+    let passTier = -1;
     let passAnyPermits = false;
     for (const stmt of passStmts) {
       const p = passRolePermitsService(stmt.condition, svc.principal);
@@ -1089,15 +1240,26 @@ function detectPassRolePaths(allows, out, denies, ctx) {
       const eff = denyEffectOnAction(denies, PASS_ROLE_ACTION, stmt);
       if (eff === 'blocked') continue; // this PassRole grant is fully, in-scope denied
       const narrowed = eff === 'may-block';
+      // Rank by viability TIER: 2 = confidently viable same-account (stays critical),
+      // 1 = UNKNOWN viability (unmodelable ARN token or concrete-account-unknown-subject
+      // -> fails closed, NOT demoted below threshold), 0 = confidently demoted
+      // cross-account/partition. Prefer the most-severe still-correct outcome so a
+      // viable (or unknown-but-fail-closed) grant in ANY statement is never hidden by a
+      // lower-indexed confidently-cross-account decoy - independent of statement ORDER
+      // and of ARN spelling. Within a tier keep the not-narrowed-then-lowest-index
+      // tiebreak. MIRRORS the downstream metadata demotion/cap exactly.
+      const tierHere = passStmtViabilityTier(stmt, subjectAccount, subjectPartition, partitionKnown, subjectDenied);
       const better =
         passStmt === null ||
-        (passNarrowed && !narrowed) ||
-        (passNarrowed === narrowed && stmt.index < passStmt.index);
+        (tierHere > passTier) || // a more-severe still-correct outcome wins over a decoy
+        (tierHere === passTier && passNarrowed && !narrowed) ||
+        (tierHere === passTier && passNarrowed === narrowed && stmt.index < passStmt.index);
       if (better) {
         passStmt = stmt;
         pinned = p.pinned;
         passUncertain = p.uncertain;
         passNarrowed = narrowed;
+        passTier = tierHere;
       }
     }
     if (!passAnyPermits) continue; // every PassRole forbids this service -> blocked
@@ -1221,11 +1383,14 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     //     threat-model T8 forbids); we merely refuse to over-claim exploitability.
     //   otherwise (a "*" / account-wildcard reaches any account) -> viable, unchanged.
     const parsedPassResources = passStmt.resources.map(parsePassResource);
-    const concreteSpecific = parsedPassResources.filter(
-      (r) => !r.star && !r.other
-        && !String(r.account).includes('*')
-        && !String(r.partition).includes('*'),
-    );
+    // Only CONFIDENTLY-modelable pinned role ARNs (known partition + 12-digit account,
+    // no wildcard) may drive a confident cross-account/partition demotion. A role ARN
+    // whose partition/account token is non-canonical (uppercase partition, embedded
+    // whitespace, non-12-digit account) is UNMODELABLE: it could be a same-account role
+    // under a spelling we cannot compare, so demoting it critical->medium would be a
+    // fail-open (threat-model T8). Such targets fail CLOSED as unknown-viability instead.
+    const concreteSpecific = parsedPassResources.filter(isConfidentPinnedResource);
+    const unmodelableTargets = parsedPassResources.filter(isUnmodelablePassResource);
     let accountMismatch = false;
     let targetResources = [];
     let excludedTargets = [];
@@ -1240,12 +1405,33 @@ function detectPassRolePaths(allows, out, denies, ctx) {
       const anyReaches = parsedPassResources.some(
         (r) => resourceReachesSubject(r, subjectAccount, subjectPartition),
       );
-      const subjectDenied = denyRemovesAllSubjectRoles(denies, subjectAccount, subjectPartition);
+      // subjectDenied hoisted+charged once at the top of detectPassRolePaths (axis 3
+      // iter-5 DoS); reuse it here rather than re-scanning every Deny resource per svc.
       const viable = anyReaches && !subjectDenied;
-      if (!viable && (concreteSpecific.length > 0 || subjectDenied)) {
-        accountMismatch = true;
-        severity = severity === 'critical' ? 'medium' : 'low';
-        pathExploitability = 'low';
+      if (!viable && unmodelableTargets.length > 0) {
+        // UNKNOWN viability (not a confident cross-account/partition verdict): a passed
+        // role ARN's partition/account token is not modelable, so we cannot establish
+        // same-vs-cross account. Keep the severity (do NOT demote below threshold) and
+        // fail CLOSED via requiredUnknowns, exactly like the subject-unknown
+        // concrete-account cap - scan() then reports partial/exit 3, never CLEAN. This
+        // is order-independent and needs no decoy: normalize/validate the ARN tokens
+        // with the same rigor as the subjectAccount/partition inputs before trusting a
+        // demotion.
+        pathExploitability = 'low'; // cap; never asserts a confident viable/critical path
+        const hasBadPartition = unmodelableTargets.some((r) => !partitionModelable(r.partition));
+        const hasBadAccount = unmodelableTargets.some((r) => !accountModelable(r.account));
+        if (hasBadPartition) requiredUnknowns.push('passRoleTargetPartition');
+        if (hasBadAccount) requiredUnknowns.push('passRoleTargetAccount');
+        if (requiredUnknowns.length === 0) requiredUnknowns.push('passRoleTargetArn');
+        extraWhy +=
+          ` PassRole target viability is UNKNOWN: a passed-role ARN carries a ` +
+          'non-canonical partition/account spelling (unrecognized partition, ' +
+          'non-12-digit account, or embedded case/whitespace) that cannot be compared ' +
+          `to the analyzed principal's account/partition, so whether this is a ` +
+          'same-account (viable) or cross-account (not viable) pass cannot be ' +
+          'established. Reported as unknown viability (fail closed), not a confident ' +
+          'not-viable demotion; supply canonical role ARNs to resolve it.';
+      } else if (!viable && (concreteSpecific.length > 0 || subjectDenied)) {
         // A pure partition mismatch: every pinned resource matches the subject
         // ACCOUNT but sits in a different partition (and no deny-residual involved).
         const partitionOnly = !subjectDenied
@@ -1253,7 +1439,34 @@ function detectPassRolePaths(allows, out, denies, ctx) {
           && concreteSpecific.every(
             (r) => r.account === subjectAccount && !partitionReaches(r.partition, subjectPartition),
           );
-        if (partitionOnly) {
+        if (partitionOnly && !partitionKnown) {
+          // The mismatch is PURELY a partition difference, but the SUBJECT partition is
+          // NOT confidently known (a non-canonical token was supplied and defaulted to
+          // 'aws' for account reasoning). A non-canonical subject partition CANNOT drive
+          // a confident cross-partition demotion: the path may be a same-partition,
+          // fully-viable critical pass under a spelling we cannot compare, so demoting it
+          // critical->medium would be the exact fail-open T8 forbids and would make
+          // analyze() more permissive than the partition-sanitizing scan() adapter for
+          // byte-identical input. Fail CLOSED as UNKNOWN viability instead: keep the
+          // severity, cap exploitability, and record the required-unknown so scan()
+          // reports partial/exit 3 (never CLEAN). This MIRRORS the unmodelable-target-ARN
+          // handling above and folds the scan.mjs unconfirmed-partition guard into the
+          // shared engine (the single source of truth), so no direct/third-party
+          // analyze() consumer can reach the demotion the adapter used to compensate for.
+          pathExploitability = 'low';
+          if (!requiredUnknowns.includes('subjectPartition')) requiredUnknowns.push('subjectPartition');
+          extraWhy +=
+            ' PassRole target viability is UNKNOWN: the analyzed principal\'s partition ' +
+            'was supplied in a non-canonical spelling that is not a recognized AWS ' +
+            'partition, so it cannot be compared to the passed role\'s partition. Whether ' +
+            'this is a same-partition (viable) or cross-partition (not viable) pass cannot ' +
+            'be established. Reported as unknown viability (fail closed), not a confident ' +
+            'not-viable demotion; supply a canonical partition (aws, aws-us-gov, aws-cn, ' +
+            'aws-iso...) to resolve it.';
+        } else if (partitionOnly) {
+          accountMismatch = true;
+          severity = severity === 'critical' ? 'medium' : 'low';
+          pathExploitability = 'low';
           warningCodes.push('PARTITION_MISMATCH');
           extraWhy +=
             ` Partition mismatch: the passed role(s) are in partition ` +
@@ -1262,6 +1475,9 @@ function detectPassRolePaths(allows, out, denies, ctx) {
             'pass a role across partitions, so this is NOT a viable direct ' +
             `PassRole-to-${svc.service} path.`;
         } else {
+          accountMismatch = true;
+          severity = severity === 'critical' ? 'medium' : 'low';
+          pathExploitability = 'low';
           warningCodes.push('PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE');
           extraWhy += subjectDenied
             ? ` Deny residual: an explicit Deny removes every iam:PassRole target in the ` +
@@ -1777,6 +1993,12 @@ function isConcreteRoleArn(r) {
 // case-sensitive (IAM resource ARNs are), so globMatch is used directly.
 function resourceCoversRole(resource, role) {
   const s = String(resource == null ? '' : resource);
+  // S3-dos-budget-all: charge at entry. Three of the four branches below return
+  // WITHOUT reaching globMatch (the exact-equality, non-role-ARN, and no-wildcard
+  // early-returns), so a nested anchorRoles x legs x resources filter loop that hits
+  // those branches accrued ZERO budget. Charge proportional to the token length so
+  // the traversal is sampled even when the matcher is never called.
+  chargeWork(s.length + 1);
   if (s === role) return true;
   if (!s.includes(':role/')) return false;
   if (!s.includes('*') && !s.includes('?')) return false;
@@ -1815,11 +2037,29 @@ function isAllRolesAssumeScope(resource) {
 // identity policy does not establish. A wildcarded account segment yields no
 // specific account and no caveat.
 function specificAccountsInRoleArns(resources) {
+  // S3-dos-budget-all (iter-7): this dedup runs over a PassRole statement's Resource
+  // list (validate.js caps it at MAX_RESOURCES=10000, still attacker-sized) and is
+  // invoked once per service inside the PASS_ROLE_SERVICES loop (8x amplification via
+  // the call site at ~line 1244). The old `accts.includes(m[1])` push made it O(R^2)
+  // Array-scan-in-a-push-loop and reached NO matcher, so the deterministic work budget
+  // (sampled ONLY inside chargeWork) accrued ZERO on this path: a within-caps PassRole
+  // target list of many DISTINCT-account role ARNs ground for seconds yet returned a
+  // COMPLETE verdict, and the Node wall-clock deadline (also sampled only in chargeWork)
+  // was blind (the T5/T8 fail-open DoS class). A Set makes membership O(1) (traversal
+  // O(R)), and charging one unit per resource inspected makes both ceilings SAMPLE the
+  // traversal so a runaway fails CLOSED (aborted+incomplete) instead of grinding.
+  // Mirrors the resource.js sourceAccountSet / trust.js iter-5 Set+charge fixes.
+  const list = Array.isArray(resources) ? resources : [];
+  chargeWork(list.length);
   const accts = [];
-  for (const r of Array.isArray(resources) ? resources : []) {
+  const seen = new Set();
+  for (const r of list) {
     const s = String(r == null ? '' : r);
     const m = /^arn:aws:iam::([0-9]{1,20}):role\//.exec(s);
-    if (m && !accts.includes(m[1])) accts.push(m[1]);
+    if (m && !seen.has(m[1])) {
+      seen.add(m[1]);
+      accts.push(m[1]);
+    }
   }
   return accts.sort();
 }
@@ -1852,17 +2092,217 @@ function accountReaches(resAccount, subjectAccount) {
   return String(resAccount).includes('*') || resAccount === subjectAccount;
 }
 
+// The AWS partitions the engine can reason about. MIRRORS scan.mjs KNOWN_PARTITIONS
+// (kept in lock-step). Matched case-SENSITIVELY against the canonical lowercase ARN
+// tokens: a case/whitespace variant ("AWS", " aws", "aws\t") is deliberately NOT a
+// member, so it is treated as UNMODELABLE and fails closed rather than being trusted
+// for a confident cross-partition demotion.
+const KNOWN_PARTITIONS = Object.freeze(new Set([
+  'aws', 'aws-us-gov', 'aws-cn',
+  'aws-iso', 'aws-iso-b', 'aws-iso-e', 'aws-iso-f',
+]));
+
+// S2-passrole-allstmts (ARN-spelling axis): a PassRole target ARN's partition and
+// account tokens are extracted with a LENIENT, case-insensitive regex, so they can
+// carry a non-canonical spelling (uppercase/mixed-case partition, embedded
+// whitespace/tab, a non-12-digit account). The viability compare (resourceReachesSubject
+// -> partitionReaches/accountReaches) uses EXACT string equality, so any such
+// non-canonical SAME-account role reads as cross-account/cross-partition and would be
+// confidently demoted (critical->medium) and slip under the exit gate as CLEAN - the
+// exact fail-open the ordering fix closed, reached via spelling. A token is
+// "modelable" only when we can compare it with confidence: a partition must be a
+// recognized AWS partition (or a "*" wildcard that reaches any partition); an account
+// must be a bare 12-digit id (or a "*" wildcard that reaches any account). Anything
+// else is UNMODELABLE -> its viability is UNKNOWN and must fail closed, never demote.
+function partitionModelable(resPartition) {
+  const s = String(resPartition);
+  if (s.includes('*')) return true; // wildcard reaches any partition
+  return KNOWN_PARTITIONS.has(s); // canonical, case-sensitive only
+}
+
+// Is the SUBJECT's OWN partition a CONFIDENTLY-known canonical AWS partition?
+// (S2-passrole-allstmts, SUBJECT axis.) Deliberately STRICTER than the role-ARN
+// partitionModelable(): a principal lives in exactly ONE partition, so a bare "*" is
+// AMBIGUOUS for the subject (not "any") and is NOT accepted; a non-canonical spelling
+// ('AWS', 'Aws', 'aws-gov', 'AWS-US-GOV', embedded case/whitespace) is likewise unknown.
+// An unknown subject partition must NEVER drive a confident cross-partition PassRole
+// demotion (it fails closed as unknown-viability instead) - the demoting exact-equality
+// compare is only trustworthy when BOTH sides are canonical.
+function subjectPartitionKnown(token) {
+  return KNOWN_PARTITIONS.has(String(token));
+}
+function accountModelable(resAccount) {
+  const s = String(resAccount);
+  if (s.includes('*')) return true; // wildcard reaches any account
+  return CONCRETE_ACCOUNT_ID_RE.test(s); // bare 12-digit only
+}
+
+// A LENIENT, case-insensitive IAM-ARN matcher (no ':role/' requirement, unlike
+// ROLE_ARN_PARTS_RE) used ONLY to recover the partition/account of an {other}-shaped
+// token so its MODELABILITY can be judged. Captures partition, account, and the trailing
+// identifier of any arn:<p>:iam::<a>:<id>.
+const IAM_ARN_LENIENT_RE = /^arn:([^:]*):iam::([^:]*):(.*)$/i;
+
+// Is an {other}-shaped PassRole token an IAM-ish ARN whose partition/account we CANNOT
+// confidently compare (a non-canonical spelling: uppercase/mixed-case partition,
+// embedded whitespace/tab, a non-12-digit account)? Such a token is UNKNOWN-viability,
+// exactly like the parsed-role non-canonical case: we must NOT let it drive a confident
+// cross-account demotion just because a case/whitespace variant failed the canonical
+// same-account reach test (that is the fragile "coincidental-backstop" residual of the
+// ARN-spelling class). A token that is not an IAM ARN at all (a different service, or a
+// non-ARN) is NOT flagged here - it cannot name a role and is handled as a plain
+// non-reach. S2-passrole-allstmts iter-4, axis 1.
+function otherResourceIsUnmodelable(raw) {
+  const m = IAM_ARN_LENIENT_RE.exec(String(raw == null ? '' : raw));
+  if (!m) return false; // not an IAM-ish ARN -> not "unmodelable"; provably non-reaching
+  return !partitionModelable(m[1]) || !accountModelable(m[2]);
+}
+
+// Is this parsed PassRole role-ARN resource one whose partition/account we CANNOT
+// confidently model (non-canonical spelling)? A "*" token is never unmodelable. An
+// {other}-shaped token IS unmodelable when it is an IAM-ish ARN carrying a non-canonical
+// partition/account (so a case/whitespace ARN-spelling variant fails CLOSED as unknown
+// viability rather than being silently dropped into a confident cross-account demotion).
+function isUnmodelablePassResource(res) {
+  if (res.star) return false;
+  if (res.other) return otherResourceIsUnmodelable(res.raw);
+  return !partitionModelable(res.partition) || !accountModelable(res.account);
+}
+
+// A role-ARN resource pinned to a CONFIDENTLY-modelable concrete partition+account
+// (no wildcard, known partition, 12-digit account). Only such a resource may drive a
+// confident cross-account/partition demotion; a wildcard reaches the subject and an
+// unmodelable token fails closed instead.
+function isConfidentPinnedResource(res) {
+  return !res.star && !res.other
+    && !String(res.account).includes('*')
+    && !String(res.partition).includes('*')
+    && partitionModelable(res.partition)
+    && accountModelable(res.account);
+}
+
+// Can the IAM wildcard glob `pattern` produce SOME string whose fixed leading
+// characters are exactly `prefix` (the tail after `prefix` being an arbitrary,
+// possibly-empty run)? Decided with a bounded (patternIndex x prefixIndex) DP - '*'
+// absorbs zero-or-more prefix chars (and stays available), '?' consumes exactly one,
+// any other char must equal the prefix char. Success is reaching prefixIndex === N
+// (the whole prefix produced) with the pattern index ANYWHERE, because whatever glob
+// remains after the prefix is always satisfiable by SOME suffix string. Each grid cell
+// is visited at most once (a visited bitmap), so this is O(pattern x prefix) with the
+// per-token length cap (validate.js MAX_STRING_LENGTH) bounding both - no backtracking
+// blow-up (threat-model T5). Work is charged so an armed budget samples it.
+// S2-passrole-allstmts axis 1: this is the SOUND, non-fixed-probe test for "could an
+// {other}-shaped PassRole token name a role in the subject's OWN account+partition".
+function globCanProducePrefix(pattern, prefix) {
+  const p = String(pattern);
+  const pre = String(prefix);
+  const P = p.length;
+  const N = pre.length;
+  if (N === 0) return true; // empty prefix is a prefix of every producible string
+  const stride = N + 1;
+  const seen = new Uint8Array((P + 1) * stride);
+  const stack = [0]; // encode state (i,j) as i*stride + j
+  seen[0] = 1;
+  while (stack.length) {
+    const state = stack.pop();
+    const j = state % stride;
+    if (j === N) return true; // whole prefix produced; leftover pattern is satisfiable
+    chargeWork(1);
+    const i = (state - j) / stride;
+    if (i >= P) continue; // pattern exhausted before the prefix was fully produced
+    const c = p[i];
+    if (c === '*') {
+      const a = (i + 1) * stride + j; // star matches the empty run, advance pattern
+      if (!seen[a]) { seen[a] = 1; stack.push(a); }
+      const b = i * stride + (j + 1); // star absorbs prefix[j], stays available
+      if (!seen[b]) { seen[b] = 1; stack.push(b); }
+    } else if (c === '?' || c === pre[j]) {
+      const a = (i + 1) * stride + (j + 1); // one char consumed on both sides
+      if (!seen[a]) { seen[a] = 1; stack.push(a); }
+    }
+  }
+  return false;
+}
+
+// The fixed ARN prefix every role in the subject's OWN account+partition shares; a
+// concrete subject role ARN is this prefix + a non-empty role name. Built from the
+// (validated) subject partition + 12-digit account. `globCanProducePrefix` against it
+// answers "could this token glob-match a subject role ARN".
+function subjectRoleArnPrefix(subjectAccount, subjectPartition) {
+  return `arn:${subjectPartition}:iam::${subjectAccount}:role/`;
+}
+
 // Could this passable-role RESOURCE reach a role in the subject's OWN account +
 // partition (i.e. could iam:PassRole hand a same-account role to a same-account
 // service)? A bare "*" reaches anything; a role ARN reaches the subject only when
-// BOTH its partition and account admit the subject's. A non-role-ARN we cannot pin
-// is treated as NOT a same-account reach (conservative - it never manufactures
-// viability). Requires a known subjectAccount.
+// BOTH its partition and account admit the subject's. An {other} token that
+// ROLE_ARN_PARTS_RE could not pin as a concrete arn:...:role/<name> (it lacks the
+// literal ':role/': e.g. arn:<acct>:role* / :r* / :role?* / :* / a leading-wildcard
+// token) is NOT automatically foreign - a same-account wildcard/role-prefix glob
+// matches every subject role ARN and is a fully-viable same-account pass. Credit such
+// a token as REACHING the subject when, read as an IAM wildcard glob, it COULD name a
+// role ARN in the subject's own account+partition (globCanProducePrefix). Only a token
+// that provably CANNOT name a subject role (a different concrete account/partition, or
+// a concrete non-role identifier like policy/…) fails to reach and may drive a
+// demotion. Treating {other} as a flat non-reach (the old `return false`) let a
+// co-located concrete FOREIGN role confidently demote a viable same-account critical
+// path to medium -> scan exit 0 CLEAN (threat-model T8, fail-open). Requires a known
+// subjectAccount.
 function resourceReachesSubject(res, subjectAccount, subjectPartition) {
   if (res.star) return true;
-  if (res.other) return false;
+  if (res.other) {
+    return globCanProducePrefix(res.raw, subjectRoleArnPrefix(subjectAccount, subjectPartition));
+  }
   return partitionReaches(res.partition, subjectPartition)
     && accountReaches(res.account, subjectAccount);
+}
+
+// Is a Deny resource's role-NAME path component WILDCARD-EQUIVALENT to "*" - i.e.
+// composed SOLELY of "*" characters, so it imposes NO literal or positional
+// constraint and therefore matches every possible role name? Only such a component
+// removes ALL subject roles. A leading-literal or anchored glob (role/_*, role/__*,
+// role/*probe*, role/service-role/*, role/app-?) is STRICTLY NARROWER than "*" - it
+// excludes at least one role name - and must NOT be treated as removing all roles.
+// An empty path (role/ with nothing after) matches no role and is likewise not
+// all-roles. Fail closed: anything but pure "*"(s) returns false.
+// S2-passrole-allstmts axis 3: this replaces a two-fixed-probe heuristic that a
+// narrow decoy Deny colliding with both probe strings could satisfy, which falsely
+// concluded deny-all and confidently demoted a viable same-account path (T8).
+function rolePathIsWildcardEquivalent(path) {
+  return /^\*+$/.test(String(path));
+}
+
+// Does ONE Deny resource token PROVABLY remove EVERY role in the subject's
+// account+partition? Two forms qualify, both matching all subject-account role ARNs
+// with NO literal constraint on the role NAME:
+//   - a bare "*" (matches every ARN, including all subject role ARNs), or
+//   - a role ARN arn:<p>:iam::<a>:role/<path> whose partition reaches the subject,
+//     whose account reaches the subject, and whose <path> is wildcard-equivalent to
+//     "*" (rolePathIsWildcardEquivalent).
+// Anything not provably all-roles (a narrower role-path glob, a foreign/other token,
+// a different concrete account/partition) returns false so the viable same-account
+// path stays CRITICAL - never a confident demotion the Deny does not support.
+function denyResourceRemovesAllSubjectRoles(r, subjectAccount, subjectPartition) {
+  // S2-passrole-allstmts axis 3 (DoS, iter-5): CHARGE the deterministic work budget
+  // one unit per Deny-resource token inspected (proportional to its length, mirroring
+  // denyResourcesCover / denyResourceCoverage). Before this charge the per-Deny-resource
+  // scan below (parsePassResource regex + partition/account/rolePath compares) advanced
+  // the work counter ZERO times, so a within-caps policy whose cost is nDeny x
+  // resPerDeny (routed here, NOT through the charged denyResourceCoverage - e.g. a
+  // NotResource-shaped Allow that early-returns 'partial' before the charged scan) ran
+  // unbounded yet returned a COMPLETE verdict - a fail-OPEN DoS (threat-model T5/T8), and
+  // on the browser (no wall-clock watchdog) the sole participating ceiling is this work
+  // counter. With the charge the scan is sampled by analyze()'s work budget and fails
+  // CLOSED (RESOURCE_BUDGET_EXCEEDED -> coverage incomplete -> scan exit 3) if genuinely
+  // huge, instead of running unbounded. The multiplicative 8 x nPassStmts re-scan is
+  // separately removed by memoizing the result once per detectPassRolePaths call.
+  chargeWork(String(r).length + 1);
+  const res = parsePassResource(r);
+  if (res.star) return true; // bare "*" covers all subject role ARNs
+  if (res.other) return false; // not a role ARN we can pin - conservative (fail closed)
+  return partitionReaches(res.partition, subjectPartition)
+    && accountReaches(res.account, subjectAccount)
+    && rolePathIsWildcardEquivalent(res.path);
 }
 
 // T91-09 deny-residual: does an in-scope, UNCONDITIONAL Deny on iam:PassRole
@@ -1870,24 +2310,76 @@ function resourceReachesSubject(res, subjectAccount, subjectPartition) {
 // so, even an Allow "*" cannot pass a same-account role, so the direct same-account
 // path is not viable. A conditional deny is NOT treated as a guaranteed removal
 // (it may not always apply) - being conservative here avoids a false negative.
+// The removal must be PROVABLE: only a Deny whose role-path imposes no literal
+// constraint (wildcard-equivalent to "*") counts; a narrow anchored decoy Deny does
+// not (S2-passrole-allstmts axis 3).
 function denyRemovesAllSubjectRoles(denies, subjectAccount, subjectPartition) {
   if (!subjectAccount) return false;
-  const base = `arn:${subjectPartition}:iam::${subjectAccount}:role/`;
-  const probeA = `${base}__probe_alpha__`;
-  const probeB = `${base}__probe_beta_9x__`;
   for (const d of Array.isArray(denies) ? denies : []) {
     const deniesPassRole = (d.actions || []).some((a) => actionGrants(a, PASS_ROLE_ACTION));
     if (!deniesPassRole) continue;
     if (hasNonEmptyCondition(d)) continue; // conditional deny may not always apply
     for (const r of (d.resources || [])) {
-      const pat = String(r);
-      // A pattern covers ALL subject-account roles iff it matches two DISTINCT
-      // role paths in that account+partition (so a single specific role ARN, which
-      // matches only its own path, does not qualify).
-      if (globMatch(pat, probeA) && globMatch(pat, probeB)) return true;
+      if (denyResourceRemovesAllSubjectRoles(r, subjectAccount, subjectPartition)) return true;
     }
   }
   return false;
+}
+
+// S2-passrole-allstmts: which VIABILITY TIER would selecting THIS PassRole statement
+// yield downstream? Evaluated per candidate so the passStmt selection prefers the
+// most-severe still-correct outcome and never lets a lower-indexed confidently
+// cross-account decoy hide a viable (or unknown-but-fail-closed) grant in a different
+// statement - making the verdict independent of statement ORDER and of ARN spelling.
+//   2 = confidently VIABLE same-account -> stays critical.
+//   1 = UNKNOWN viability -> fails CLOSED (requiredUnknowns) but NOT demoted below the
+//       threshold. Two sub-cases: (a) subject known but a passable role ARN's
+//       partition/account token is UNMODELABLE (non-canonical spelling), or (b) subject
+//       unknown and every passable resource pins a concrete 12-digit account.
+//   0 = confidently DEMOTED cross-account/partition (below threshold).
+// This MIRRORS EXACTLY the demotion/cap conditions in detectPassRolePaths, so the
+// selection and the metadata block can never disagree about a statement.
+// `subjectDenied` is the deny-removes-all-subject-roles verdict, computed ONCE per
+// detectPassRolePaths call and threaded in (S2-passrole-allstmts axis 3, iter-5 DoS): it
+// is invariant across all (svc x passStmt) selection iterations, so recomputing it here
+// - 8 x nPassStmts times, each a full scan of every Deny resource - was redundant
+// multiplicative work with no budget participation (fail-open DoS, T5/T8). The single
+// shared computation is now charged (denyResourceRemovesAllSubjectRoles) and reused.
+function passStmtViabilityTier(passStmt, subjectAccount, subjectPartition, partitionKnown, subjectDenied) {
+  const parsed = passStmt.resources.map(parsePassResource);
+  if (subjectAccount) {
+    const anyReaches = parsed.some((r) => resourceReachesSubject(r, subjectAccount, subjectPartition));
+    const viable = anyReaches && !subjectDenied;
+    if (viable) return 2;
+    // Not confidently viable: an unmodelable target ARN token makes the verdict UNKNOWN
+    // (fail closed, tier 1) and takes precedence over a confident demotion - it could be
+    // a same-account role under a spelling we cannot compare.
+    if (parsed.some(isUnmodelablePassResource)) return 1;
+    const concreteSpecific = parsed.filter(isConfidentPinnedResource);
+    // A demotion that is PURELY a partition mismatch, when the SUBJECT partition is not
+    // confidently known (a non-canonical token defaulted to 'aws'), is UNKNOWN viability
+    // (fail closed, tier 1), NOT a confident cross-partition demotion (tier 0): the path
+    // may be a same-partition, fully-viable pass under a spelling we cannot compare.
+    // MIRRORS the partitionOnly && !partitionKnown branch in detectPassRolePaths exactly,
+    // so selection and the metadata block can never disagree about a statement.
+    if (!partitionKnown && !subjectDenied && concreteSpecific.length > 0
+        && concreteSpecific.every(
+          (r) => r.account === subjectAccount && !partitionReaches(r.partition, subjectPartition),
+        )) {
+      return 1;
+    }
+    const demoted = concreteSpecific.length > 0 || subjectDenied;
+    return demoted ? 0 : 2;
+  }
+  // Subject unknown: capped/fail-closed (tier 1) only when EVERY passable resource pins
+  // a concrete 12-digit account - so viability hinges entirely on an account we cannot
+  // confirm. A "*"/account-wildcard (or an unpinnable resource) reaches the subject
+  // whatever it is, so that statement keeps full viability (tier 2).
+  const allPinConcreteAccount = parsed.length > 0
+    && parsed.every(
+      (r) => !r.star && !r.other && CONCRETE_ACCOUNT_ID_RE.test(String(r.account)),
+    );
+  return allPinConcreteAccount ? 1 : 2;
 }
 
 // A single principal has ONE value for each principal-scoped request key for the
@@ -1966,8 +2458,23 @@ function principalPinsOf(stmt) {
       if (!PRINCIPAL_INVARIANT_KEYS.has(key.toLowerCase())) continue;
       const raw = block[key];
       const vals = Array.isArray(raw) ? raw.map((v) => String(v)) : [String(raw)];
+      // S3-dos-budget-all: condition-value arrays are NOT capped by count in
+      // validate.js (only MAX_BYTES / MAX_STRING_LENGTH bound them), so `vals` can be
+      // tens of thousands of entries within caps. Charge the deterministic work budget
+      // for building the pin's value set(s) so this policy-derived loop participates in
+      // both the browser work budget and the Node wall-clock deadline (both sampled
+      // ONLY inside chargeWork) rather than accruing zero work on the satisfiability
+      // path -> the fail-OPEN DoS class (T5/T8).
+      chargeWork(vals.length);
+      // For a case-INSENSITIVE operator, precompute a lowercased Set ONCE so
+      // constraintContains is O(1) (`.has`) instead of an O(V) linear rescan of the
+      // whole value Set per candidate. Without this the candidate x value scan in
+      // keyConstraintsSatisfiable was O(V^2) on a within-caps input (measured multiple
+      // seconds -> COMPLETE verdict). Building it once here keeps that check linear.
+      const values = new Set(vals);
+      const valuesLc = ci ? new Set(vals.map((v) => v.toLowerCase())) : null;
       const list = pins.get(key.toLowerCase()) || [];
-      list.push({ values: new Set(vals), ci, negated });
+      list.push({ values, valuesLc, ci, negated });
       pins.set(key.toLowerCase(), list);
     }
   }
@@ -1976,11 +2483,14 @@ function principalPinsOf(stmt) {
 
 // Does the constraint's value set contain `cand` (case-sensitively, or
 // case-insensitively for the IgnoreCase operators)?
+//
+// S3-dos-budget-all: BOTH branches are O(1). The case-insensitive branch uses the
+// lowercased Set principalPinsOf precomputes ONCE (`valuesLc`) rather than a linear
+// per-candidate rescan of the whole value Set - the fix that removes the O(V^2)
+// case-insensitive grind (constraintContains x |candidates|) that a within-caps
+// role-takeover policy rode to a multi-second COMPLETE verdict.
 function constraintContains(c, cand, candLc) {
-  if (c.ci) {
-    for (const v of c.values) if (v.toLowerCase() === candLc) return true;
-    return false;
-  }
+  if (c.ci) return c.valuesLc.has(candLc);
   return c.values.has(cand);
 }
 
@@ -2004,6 +2514,19 @@ function keyConstraintsSatisfiable(constraints) {
   if (positives.length === 0) return true;
   const candidates = new Set();
   for (const c of positives) for (const v of c.values) candidates.add(v);
+  // S3-dos-budget-all: charge the deterministic work budget for the candidate x
+  // constraint satisfiability scan BEFORE running it. Even with O(1) case-insensitive
+  // lookups (valuesLc) this is an O(|candidates| x |constraints|) grind over
+  // condition-value arrays that validate.js does NOT cap by count (only MAX_BYTES /
+  // MAX_STRING_LENGTH), so |candidates| can reach the tens of thousands within caps.
+  // The prior charge sites (pinsJointlySatisfiable per-statement, principalConditions-
+  // Satisfiable's leg product) are a handful of units for this V-sized grind, so the
+  // work budget and the CLI/Action wall-clock deadline (both sampled ONLY inside
+  // chargeWork) never tripped and a runaway returned a COMPLETE verdict (fail-OPEN
+  // DoS, T5/T8 - the same class one frame down from the leg loop). Charging the full
+  // product up front makes a runaway fail CLOSED (RESOURCE_BUDGET_EXCEEDED ->
+  // aborted+incomplete on the browser, exit 3 on the Node adapters) before it grinds.
+  chargeWork(candidates.size * constraints.length);
   for (const cand of candidates) {
     const candLc = cand.toLowerCase();
     let ok = true;
@@ -2023,10 +2546,44 @@ function keyConstraintsSatisfiable(constraints) {
 // more of the chosen statements, the principal's single value must satisfy every
 // one of those constraints simultaneously. An unsatisfiable key means no
 // principal can satisfy this exact combination.
-function pinsJointlySatisfiable(stmts) {
+// S3-dos-budget-all (DOS-1): MEMOIZED principalPinsOf. The satisfiability triple
+// loop (principalConditionsSatisfiable) evaluates the SAME statement's pins O(N^2)
+// times as it pairs it against every other leg; re-parsing its Condition (parseOperator
+// + Map/Set allocation) on each visit is the dominant CPU cost of the grind and it
+// TRACKS NOTHING in the budget beyond a per-value charge. Computing each statement's
+// pins ONCE (keyed by the statement's stable index) collapses that O(N^3) re-parse to
+// O(distinct-statements), so the inner loop only merges already-built, read-only pin
+// maps. Pins are never mutated by a caller (pinsJointlySatisfiable copies constraints
+// into a fresh perKey map; keyConstraintsSatisfiable only reads them), so sharing one
+// memoized object across triples is safe and does not change any verdict.
+function principalPinsOfMemo(stmt, memo) {
+  const key = stmt.index;
+  let pins = memo.get(key);
+  if (pins === undefined) {
+    pins = principalPinsOf(stmt);
+    memo.set(key, pins);
+  }
+  return pins;
+}
+
+function pinsJointlySatisfiable(stmts, memo) {
+  // S3-dos-budget-all: charge the deterministic work budget for every statement's
+  // pin extraction. principalPinsOf / keyConstraintsSatisfiable do only string/Set
+  // work and NEVER reach the shared matcher (the sole other chargeWork site), so
+  // before this charge the whole call was invisible to the budget. This function is
+  // the innermost body of principalConditionsSatisfiable's grant x trust x assume
+  // triple loop; with N legs per group that is N^3 calls, each doing real map work,
+  // and none of it was sampled -> a within-caps role-takeover-heavy policy ran for
+  // tens of seconds yet returned a COMPLETE verdict (fail-OPEN DoS, threat-model
+  // T5/T8). Charging one unit per statement inspected makes the traversal itself
+  // participate so a runaway fails CLOSED (RESOURCE_BUDGET_EXCEEDED -> aborted +
+  // incomplete), on the browser (no wall-clock watchdog) as well as the Node adapters.
+  chargeWork(Array.isArray(stmts) ? stmts.length : 0);
   const perKey = new Map(); // keyLower -> array of { values:Set, ci:boolean }
   for (const stmt of stmts) {
-    for (const [k, list] of principalPinsOf(stmt)) {
+    // DOS-1: pins are memoized per statement (see principalPinsOfMemo) so the
+    // Condition is parsed ONCE, not O(N^2) times across the enclosing triple loop.
+    for (const [k, list] of principalPinsOfMemo(stmt, memo)) {
       if (!perKey.has(k)) perKey.set(k, []);
       for (const c of list) perKey.get(k).push(c);
     }
@@ -2053,16 +2610,55 @@ function pinsJointlySatisfiable(stmts) {
 // the single assume leg pins 999900001111, so every triple contradicts.
 // Alternatives are never AND-ed together, which would fabricate a contradiction
 // out of statements the principal never needs to satisfy at the same time.
-function principalConditionsSatisfiable(grantLegs, trustLegs, assumeLegs) {
+function principalConditionsSatisfiable(grantLegs, trustLegs, assumeLegs, pinMemo) {
+  // S3-dos-budget-all (DOS-1): this is a genuine grant x trust x assume TRIPLE loop
+  // over policy-derived leg sets. With ~N legs per group it is O(N^3) calls to
+  // pinsJointlySatisfiable. Charge the FULL combinatorial product UP FRONT, WEIGHTED
+  // BY THE REAL PER-TRIPLE COST (SATISFIABILITY_TRIPLE_WORK), so a pathological
+  // product trips the deterministic budget BEFORE the exhaustive search grinds
+  // through it, rather than only being sampled call-by-call.
+  //
+  // The previous version charged ONE unit per triple, so a 160-legs-per-group input
+  // (160^3 = 4.1M << DEFAULT_WORK_LIMIT=60M) never tripped and analyze() ground ~3s
+  // yet returned a COMPLETE verdict (measured; the DOS-1 fail-OPEN, threat-model
+  // T5/T8). A single triple is NOT one unit of work: it allocates a perKey Map,
+  // merges up to three statements' pin maps, builds a candidate Set, and runs the
+  // keyConstraintsSatisfiable scan - dozens of primitive ops. Charging that true
+  // per-triple cost makes the product cap out at ~DEFAULT_WORK_LIMIT /
+  // SATISFIABILITY_TRIPLE_WORK ~= 9.4e5 triples (~97 legs per group), far above any
+  // legitimate role-takeover policy (a real chain has a handful of legs per group)
+  // yet well below the ~1e6 triples the measured grind needs to exceed the wall-clock
+  // budget. So a legit small product still runs the exhaustive search to completion
+  // and fires its finding, while a runaway fails CLOSED IMMEDIATELY
+  // (RESOURCE_BUDGET_EXCEEDED -> aborted+incomplete on the browser, exit 3 on the Node
+  // adapters) instead of hanging. pinsJointlySatisfiable ALSO charges per statement
+  // and, with principalPinsOf now MEMOIZED, each surviving (sub-cap) triple is cheap
+  // and finely sampled, so the Node wall-clock deadline can no longer overrun by more
+  // than one work-check interval (the prior 2.7x overrun is closed).
+  const gLen = Array.isArray(grantLegs) ? grantLegs.length : 0;
+  const tLen = Array.isArray(trustLegs) ? trustLegs.length : 0;
+  const aLen = Array.isArray(assumeLegs) ? assumeLegs.length : 0;
+  chargeWork(gLen * tLen * aLen * SATISFIABILITY_TRIPLE_WORK);
+  // One shared pin memo across the whole triple loop (and reused across anchor roles
+  // when the caller threads it): each statement's Condition is parsed ONCE.
+  const memo = pinMemo instanceof Map ? pinMemo : new Map();
   for (const g of grantLegs) {
     for (const t of trustLegs) {
       for (const a of assumeLegs) {
-        if (pinsJointlySatisfiable([g.stmt, t.stmt, a.stmt])) return true;
+        if (pinsJointlySatisfiable([g.stmt, t.stmt, a.stmt], memo)) return true;
       }
     }
   }
   return false;
 }
+
+// DOS-1 calibration: the estimated real work of ONE satisfiability triple (perKey
+// Map allocation + up-to-3 pin-map merges + candidate Set build + keyConstraints scan).
+// Sized so gLen*tLen*aLen * this exceeds DEFAULT_WORK_LIMIT (60M) once the product
+// reaches ~1e6 triples (100 legs per group) - the measured threshold where the grind
+// approaches the wall-clock budget - so the N=100..200-legs-per-group attack family
+// fails CLOSED up front while legitimate handful-of-legs chains stay well under the cap.
+const SATISFIABILITY_TRIPLE_WORK = 64;
 
 // IAM-902: correlate the modify-then-assume ROLE-TAKEOVER chain. A principal that,
 // on the SAME concrete role, is granted (a) a permission-grant primitive
@@ -2115,13 +2711,33 @@ function detectRoleTakeover(allows, out, denies) {
   // from the concrete modify/trust leg and is CONFIRMED below only if an assume leg
   // covers it. Deterministic order.
   const anchorRoles = [];
+  const anchorSeen = new Set();
   for (const leg of [...grantLegsAll, ...trustLegsAll, ...assumeLegsAll]) {
     for (const r of leg.resources) {
-      if (isConcreteRoleArn(r) && !anchorRoles.includes(r)) anchorRoles.push(r);
+      // S3-dos-budget-all: this nested legs x resources scan calls only isConcreteRoleArn
+      // (a regex/substring test) and (formerly) Array.includes - neither reaches the shared
+      // matcher, so before this charge the whole anchor-harvest was invisible to the budget.
+      // With many contributing legs each carrying a large resource list it is a real O(legs x
+      // resources) traversal; charge one unit per (leg, resource) pair so it participates and
+      // a runaway fails CLOSED. iter-7: the dedup membership is a Set (was `anchorRoles.includes`,
+      // an O(anchors) Array-scan that made the harvest O(R^2) over many DISTINCT concrete role
+      // ARNs while charging only O(R) - the same uncharged-quadratic dedup class as F1); a Set
+      // keeps membership O(1) so the charged cost matches the true cost.
+      chargeWork(1);
+      if (isConcreteRoleArn(r) && !anchorSeen.has(r)) {
+        anchorSeen.add(r);
+        anchorRoles.push(r);
+      }
     }
   }
   anchorRoles.sort();
 
+  // DOS-1: one pin memo shared across EVERY anchor role. A statement's
+  // principal-invariant pins do not depend on which role we are testing, so parsing
+  // each contributing statement's Condition once here (rather than re-parsing it for
+  // every (anchor role x triple)) keeps the satisfiability check from re-doing the
+  // same work across roles as well as within a single triple loop.
+  const pinMemo = new Map();
   for (const role of anchorRoles) {
     // A leg contributes to THIS role when one of its resources covers the
     // concrete role (exact, or a role-ARN wildcard that subsumes it).
@@ -2142,7 +2758,7 @@ function detectRoleTakeover(allows, out, denies) {
     // exclusive same-key conditions on a principal-invariant key - no single
     // principal could execute the whole chain. The standalone modify capability
     // findings (PUT-INLINE-POLICY / TRUST-POLICY-MODIFY) remain, un-subsumed.
-    if (!principalConditionsSatisfiable(grantLegs, trustLegs, assumeLegs)) continue;
+    if (!principalConditionsSatisfiable(grantLegs, trustLegs, assumeLegs, pinMemo)) continue;
 
     // Per-statement evidence: one record per contributing statement/leg, each
     // carrying ONLY the actions that statement grants toward this chain (IAM-701
@@ -2165,10 +2781,19 @@ function detectRoleTakeover(allows, out, denies) {
     }
 
     // Grounded action lists per leg (deduped, statement order preserved).
+    // S3-dos-budget-all (iter-7): `arr` is grantLegs/trustLegs/assumeLegs.flatMap(l =>
+    // l.actions), i.e. granted-pattern lists whose size grows with the policy's action
+    // counts (up to MAX_ACTIONS per statement), and this runs once per anchor role. The
+    // old `seen.includes(x)` Array-scan made each dedupe O(n^2) with ZERO chargeWork -
+    // the same uncharged-quadratic dedup class as F1. A Set makes membership O(1)
+    // (traversal O(n)); charge one unit per element so the traversal participates in the
+    // work + wall-clock budget and a pathological action list fails CLOSED, not grinds.
     const dedupe = (arr) => {
-      const seen = [];
-      for (const x of arr) if (!seen.includes(x)) seen.push(x);
-      return seen;
+      chargeWork(Array.isArray(arr) ? arr.length : 0);
+      const seenSet = new Set();
+      const out = [];
+      for (const x of arr) if (!seenSet.has(x)) { seenSet.add(x); out.push(x); }
+      return out;
     };
     const grantActions = dedupe(grantLegs.flatMap((l) => l.actions));
     const trustActions = dedupe(trustLegs.flatMap((l) => l.actions));

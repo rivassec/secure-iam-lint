@@ -1,0 +1,16 @@
+{
+  "name": "Benign explicit empty POSITIVE Resource set (must NOT be flagged)",
+  "note": "S1-shape-failclosed no-over-fire control. An explicit empty POSITIVE Resource set (Resource:[]) is PRESENT and matches NO resource, so the Allow grants nothing - the resource twin of the benign Action:[] set. It must never be flagged as UNSPECIFIED_RESOURCE_SCOPE (that shape is Resource key ABSENT). Pins the resourcePresent presence-flag distinction so the model does not conflate Resource:[] with an omitted Resource.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": ["s3:GetObject"], "Resource": [] }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": false
+  }
+}

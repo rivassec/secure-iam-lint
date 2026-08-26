@@ -1,0 +1,28 @@
+{
+  "name": "Allow + malformed condition operator block (non-object)",
+  "note": "S1-shape-failclosed regression. A Condition operator block (the value of StringEquals) must be an object mapping condition-key -> value(s). Here it is a bare string, which AWS rejects as MalformedPolicyDocument; the engine drops the unrecognized block and evaluates the Allow as UNCONDITIONAL, silently discarding the author's restriction. The prior detector skipped non-object blocks (a fail-OPEN). The shared engine must mark coverage INCOMPLETE (MALFORMED_CONDITION_BLOCK) so neither surface reports a clean/faithful pass.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["s3:GetObject"],
+        "Resource": "arn:aws:s3:::b/k",
+        "Condition": { "StringEquals": "not-an-object" }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": true,
+    "code": "MALFORMED_CONDITION_BLOCK",
+    "kind": "malformed",
+    "path": "Statement[0].Condition.StringEquals",
+    "coverageIncomplete": true,
+    "scanExit": 3,
+    "scanReason": "MALFORMED_CONDITION_BLOCK",
+    "scanStatus": "failed"
+  }
+}

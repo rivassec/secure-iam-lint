@@ -283,12 +283,19 @@ test('explicit --partition aws-us-gov resolves the path as viable -> exit 1', as
   assert.equal(r.code, EXIT.FINDINGS);
 });
 
-test('explicit --partition aws is a CONFIDENT mismatch -> complete, exit 0', async () => {
+test('explicit --partition aws confidently demotes the PassRole PATH, but the independent broad-resource grant still gates -> exit 1', async () => {
+  // Confident cross-partition mismatch demotes the PassRole->EC2 path (not viable
+  // across partitions). The fixture also grants `ec2:RunInstances` on Resource "*",
+  // a genuine independent HIGH WILDCARD-RESOURCE grant that must not be hidden by the
+  // demoted PassRole row - reporting CLEAN there is the S2-passrole-allstmts fail-open
+  // (threat-model T8). So the confident-mismatch run gates at exit 1 on the
+  // independent grant, not exit 0.
   const r = await runWith(
     ['--family', 'identity', '--subject-account', '111122223333', '--partition', 'aws'],
     { stdin: PASSROLE_GOVCLOUD },
   );
-  assert.equal(r.code, EXIT.CLEAN);
+  assert.equal(r.code, EXIT.FINDINGS);
+  assert.notEqual(r.code, EXIT.CLEAN);
 });
 
 // =============================================================================

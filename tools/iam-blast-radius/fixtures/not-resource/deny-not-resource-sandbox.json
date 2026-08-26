@@ -7,7 +7,9 @@
       {
         "Sid": "DenyOutsideSandbox",
         "Effect": "Deny",
-        "Action": ["s3:*"],
+        "Action": [
+          "s3:*"
+        ],
         "NotResource": [
           "arn:aws:s3:::sandbox-bucket",
           "arn:aws:s3:::sandbox-bucket/*"
@@ -25,7 +27,9 @@
           "index": 0,
           "sid": "DenyOutsideSandbox",
           "effect": "Deny",
-          "actions": ["s3:*"],
+          "actions": [
+            "s3:*"
+          ],
           "notActions": [],
           "resources": [],
           "notResources": [
@@ -36,15 +40,32 @@
           "principal": null,
           "notPrincipal": null,
           "notActionPresent": false,
-          "notResourcePresent": true
+          "notResourcePresent": true,
+          "resourcePresent": false
         }
       ]
     },
     "decide": [
-      { "action": "s3:DeleteObject", "resource": "arn:aws:s3:::prod-bucket/secret", "decision": "explicit-deny" },
-      { "action": "s3:PutObject", "resource": "arn:aws:s3:::another-bucket/x", "decision": "explicit-deny" },
-      { "action": "s3:DeleteObject", "resource": "arn:aws:s3:::sandbox-bucket/x", "decision": "not-granted-by-policy" },
-      { "action": "s3:GetObject", "resource": "arn:aws:s3:::sandbox-bucket", "decision": "not-granted-by-policy" }
+      {
+        "action": "s3:DeleteObject",
+        "resource": "arn:aws:s3:::prod-bucket/secret",
+        "decision": "explicit-deny"
+      },
+      {
+        "action": "s3:PutObject",
+        "resource": "arn:aws:s3:::another-bucket/x",
+        "decision": "explicit-deny"
+      },
+      {
+        "action": "s3:DeleteObject",
+        "resource": "arn:aws:s3:::sandbox-bucket/x",
+        "decision": "not-granted-by-policy"
+      },
+      {
+        "action": "s3:GetObject",
+        "resource": "arn:aws:s3:::sandbox-bucket",
+        "decision": "not-granted-by-policy"
+      }
     ]
   }
 }

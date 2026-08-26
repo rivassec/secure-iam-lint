@@ -305,6 +305,17 @@ function normalizeStatement(stmt, index, errors) {
     // closed on the empty-complement full-admin/broad-resource shapes.
     notActionPresent: hasNotAction,
     notResourcePresent: hasNotResource,
+    // S1-shape-failclosed: presence of the POSITIVE Resource key, symmetric to
+    // notResourcePresent. The model collapses "Resource key absent" and
+    // "Resource: []" to the identical `resources:[]` shape, but the two are NOT
+    // equivalent: `Resource: []` is an explicit empty POSITIVE set (matches no
+    // resource -> grants nothing, benign) whereas OMITTING Resource entirely on an
+    // identity statement leaves the resource scope UNSPECIFIED (AWS requires a
+    // Resource element; the rules engine reads the empty array as "narrow" and
+    // suppresses WILDCARD-RESOURCE / DATA-EXFIL - a fail-OPEN). The masked-grant
+    // detector uses this flag (with resourcePresent === false AND notResourcePresent
+    // === false, and no Principal) to fail closed on the unspecified-scope shape.
+    resourcePresent: hasResource,
   };
 }
 

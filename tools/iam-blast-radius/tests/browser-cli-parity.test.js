@@ -217,14 +217,23 @@ for (const { file, data } of loadMaskedGrantFixtures()) {
 }
 
 // ---------------------------------------------------------------------------
-// Part B - the guard set is exactly the four masked-grant codes, and the fixtures
+// Part B - the guard set is exactly the known masked-grant codes, and the fixtures
 // witness every one of them (no guard silently dropped from the engine).
 // ---------------------------------------------------------------------------
 
-test('Part B: the masked-grant guard set is exactly the four fail-closed codes', () => {
+test('Part B: the masked-grant guard set is exactly the known fail-closed codes', () => {
   assert.deepEqual(
     Object.values(MASKED_GRANT_CODES).slice().sort(),
-    ['EMPTY_NOTACTION_COMPLEMENT', 'EMPTY_NOTRESOURCE_COMPLEMENT', 'MALFORMED_CONDITION_VALUE', 'SUPPRESSED_NEVER_MATCH_ALLOW'],
+    [
+      // S2-guard-parity original four.
+      'EMPTY_NOTACTION_COMPLEMENT',
+      'EMPTY_NOTRESOURCE_COMPLEMENT',
+      'MALFORMED_CONDITION_VALUE',
+      'SUPPRESSED_NEVER_MATCH_ALLOW',
+      // S1-shape-failclosed additions.
+      'MALFORMED_CONDITION_BLOCK',
+      'UNSPECIFIED_RESOURCE_SCOPE',
+    ].slice().sort(),
   );
 });
 

@@ -293,17 +293,37 @@ test('supplying the TRUE partition resolves the cross-partition path as viable -
   assert.ok(r.blockingCount >= 1);
 });
 
-test('EXPLICITLY asserting a different partition is a confirmed mismatch -> complete, exit 0', () => {
+test('EXPLICITLY asserting a different partition confidently demotes the PassRole PATH, but the independent broad-resource grant still gates -> complete, exit 1', () => {
   // The caller asserts the subject is in commercial 'aws' while the role is in
-  // aws-us-gov: viability is now KNOWN (not viable), a legitimate complete verdict,
-  // not a fail-open. Supplying the partition is what resolves the unknown.
+  // aws-us-gov: the PassRole->EC2 PATH viability is now KNOWN (not viable across
+  // partitions), a legitimate complete verdict - the compound finding is correctly
+  // demoted to medium/PARTITION_MISMATCH and does NOT gate at 'high'.
+  //
+  // But this fixture ALSO grants `ec2:RunInstances` on Resource "*", which is an
+  // INDEPENDENT high WILDCARD-RESOURCE grant that fires (and gates at exit 1) on its
+  // own - see the standalone control elsewhere. It must NOT be hidden merely because
+  // it sits on the demoted PassRole path's exec statement: folding a HIGH broad-
+  // resource grant into a cross-partition-demoted PassRole row and reporting CLEAN is
+  // the S2-passrole-allstmts fail-open (threat-model T8). So the run is a confident
+  // COMPLETE verdict (no fail-closed partial), yet exit 1 because of the independent
+  // high grant the demotion may not swallow.
   const r = scan({
     text: PASSROLE_GOVCLOUD_ROLE, family: 'identity',
     subjectAccount: '111122223333', partition: 'aws',
   });
   assert.equal(r.analysisStatus, ANALYSIS_STATUS.COMPLETE);
-  assert.equal(r.exitCode, EXIT.CLEAN);
+  assert.equal(r.exitCode, EXIT.FINDINGS);
+  assert.equal(r.exitCode, 1);
   assert.deepEqual([...r.analysisStates], []);
+  // The PassRole path is still correctly demoted (not viable cross-partition)...
+  const pass = r.findings.find((f) => f.escalation && f.escalation.technique === 'passrole-service-execution');
+  assert.ok(pass, 'the PassRole path finding is present');
+  assert.equal(pass.severity, 'medium');
+  assert.ok((pass.escalation.warningCodes || []).includes('PARTITION_MISMATCH'));
+  // ...while the independent broad-resource grant surfaces as its own gating HIGH row.
+  const wr = r.findings.find((f) => f.id === 'WILDCARD-RESOURCE');
+  assert.ok(wr, 'the independent WILDCARD-RESOURCE grant is NOT hidden by the demoted path');
+  assert.equal(wr.severity, 'high');
 });
 
 test('threshold none does NOT turn the unconfirmed-partition partial into exit 0', () => {
@@ -629,10 +649,15 @@ test('a RECOGNIZED partition is still honored (aws-us-gov -> viable finding, exi
   assert.equal(r.exitCode, EXIT.FINDINGS);
 });
 
-test('a RECOGNIZED mismatching partition is a confident complete verdict (aws -> exit 0)', () => {
+test('a RECOGNIZED mismatching partition is a confident complete verdict; the PassRole path is demoted but the independent broad-resource grant still gates (aws -> exit 1)', () => {
   const r = scan({ text: PASSROLE_GOVCLOUD_ROLE, family: 'identity', subjectAccount: '111122223333', partition: 'aws' });
+  // Confident cross-partition mismatch is a COMPLETE verdict (not a fail-closed
+  // partial), but the fixture's independent `ec2:RunInstances` on "*" is a genuine
+  // HIGH WILDCARD-RESOURCE grant that must not be swallowed by the demoted PassRole
+  // row (S2-passrole-allstmts fail-open, T8), so the run gates at exit 1.
   assert.equal(r.analysisStatus, ANALYSIS_STATUS.COMPLETE);
-  assert.equal(r.exitCode, EXIT.CLEAN);
+  assert.equal(r.exitCode, EXIT.FINDINGS);
+  assert.equal(r.exitCode, 1);
 });
 
 test('exit-code constants are stable', () => {

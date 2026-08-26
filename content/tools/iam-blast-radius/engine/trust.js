@@ -31,6 +31,22 @@
 // (the same reason rules.js and graph.js import that resolver). It is cycle-safe:
 // escalation.js imports only model.js, never trust.js/family.js/conditions.js.
 import { denyActionApplies, hasNonEmptyCondition } from './escalation.js';
+// S3-dos-budget-all: trust.js had ZERO chargeWork() calls, so its policy-derived
+// combinatorial loops (findingsForStatement's per-principal passes and, above all,
+// trustFindingDenyState's principals x assume-actions x trust-Deny triple loop) NEVER
+// advanced the shared work counter and NEVER sampled the wall-clock deadline - both
+// ceilings are read only inside chargeWork(). A within-caps, validate-passing trust
+// policy (N distinct trusted principals x M trust-Deny statements) therefore drove BOTH
+// analyze() (browser default, auto-detected role-trust) and scan() (CLI, family:trust,
+// budgetMs) to multiple seconds and returned a COMPLETE verdict - the Phase-17 lesson
+// repeating on the sibling family after escalation.js was charged (threat-model T5/T8).
+// Charging these loops makes the trust family participate in the SAME budget as the
+// identity engine so a runaway fails CLOSED (aborted + incomplete on the browser;
+// RESOURCE_BUDGET_EXCEEDED -> exit 3 on the CLI) instead of a slow COMPLETE pass.
+// isGlobBudgetError lets analyzeTrust's catch re-throw a budget abort instead of
+// masking it as an INTERNAL trust-analysis failure (which would bypass analyze()'s
+// graceful fail-closed mapping and the CLI clock re-throw).
+import { chargeWork, isGlobBudgetError } from './glob.js';
 
 // The sts: action set that makes a statement a TRUST statement (compared
 // case-insensitively). Mirrors docs/trust-policy-semantics.md section 3 and the
@@ -387,6 +403,15 @@ export function classifyPrincipals(principal) {
   const byType = principal.byType || {};
   for (const key of Object.keys(byType)) {
     const values = Array.isArray(byType[key]) ? byType[key] : [];
+    // S3-dos-budget-all: charge one unit per principal member classified. This is the
+    // single chokepoint every principal-heavy trust path funnels through
+    // (findingsForStatement calls it once per Allow statement; trustFindingDenyState
+    // classifies every Deny statement's Principal here too). Its O(members) forEach
+    // does only string work and never reaches the shared matcher, so before this charge
+    // a statement carrying thousands of trusted principals advanced the budget zero.
+    // Charging here makes the per-principal iteration itself participate so an armed
+    // work/clock budget is sampled proportional to the real member count.
+    chargeWork(values.length);
     // IAM-1004: carry the principal-type key + the member's ARRAY INDEX on every
     // entry so an INVALID member of a Principal AWS array (e.g. array index 1) can
     // be located precisely (Principal.AWS[1]) rather than silently dropped or
@@ -1426,6 +1451,31 @@ function canonicalPrincipalKey(entry) {
   return `${entry.type}:${String(entry.value)}`;
 }
 
+// Build the O(1)-lookup coverage index for ONE Deny statement's classified
+// Principal set: an `anonymous` flag (a Deny Principal "*" covers EVERY principal)
+// plus a Set of the CANONICAL keys of every named entry (root-ARN <-> bare account
+// id folded, per canonicalPrincipalKey). Precomputing this ONCE per Deny statement
+// is the S3-dos-budget-all residual fix: principalEntryDeniedBy was an
+// O(#deny-principals) `.entries.some(...)` rescan re-run on every (finding-principal,
+// assume-action) pair, so a single Deny carrying thousands of principals multiplied
+// the real cost by that count while the charge stayed 1-per-Deny-STATEMENT - an
+// uncharged inner rescan that fooled BOTH the deterministic work ceiling and the
+// Node wall-clock deadline (both sampled only inside chargeWork). Charging the Set's
+// O(#deny-principals) construction here makes the charged work match the real work,
+// and the O(1) `.has()` lookup below removes the quadratic entirely so a within-caps
+// many-principals Deny no longer grinds for seconds. classifyPrincipals already
+// charged the entry walk; this charge covers the additional canonical-key build so
+// the cost the loop actually depends on is fully visible to the budget.
+function buildDenyCoverage(principals) {
+  const keySet = new Set();
+  chargeWork(principals.entries.length);
+  for (const e of principals.entries) {
+    const k = canonicalPrincipalKey(e);
+    if (k !== null) keySet.add(k);
+  }
+  return { anonymous: !!principals.anonymous, keySet };
+}
+
 // Does a Deny's classified Principal set cover this Allow-finding principal entry?
 // A Deny Principal "*" (anonymous) covers EVERY principal, so it neutralizes any
 // grant. Otherwise coverage is proven only by CANONICAL-form equivalence: the same
@@ -1435,12 +1485,18 @@ function canonicalPrincipalKey(entry) {
 // wildcard-ARN Deny globs over an Allow principal: an unproven wide match must not
 // manufacture a FALSE "fully denied" (that would under-report a real trust, the
 // inverse T8 harm), so it falls through to the "partial" caveat path instead.
-function principalEntryDeniedBy(entry, denyPrincipals) {
-  if (denyPrincipals.anonymous) return true;
+//
+// `coverage` is the precomputed { anonymous, keySet } from buildDenyCoverage(): the
+// lookup is O(1) (a Set membership test on the entry's canonical key), NOT the old
+// O(#deny-principals) linear rescan. Behaviour is byte-identical to the previous
+// `denyPrincipals.entries.some((d) => canonicalPrincipalKey(d) === key)` for every
+// input (the Set holds exactly those canonical keys); only the cost model changed.
+function principalEntryDeniedBy(entry, coverage) {
+  if (coverage.anonymous) return true;
   if (!entry || entry.type === 'anonymous') return false;
   const key = canonicalPrincipalKey(entry);
   if (key === null) return false;
-  return denyPrincipals.entries.some((d) => canonicalPrincipalKey(d) === key);
+  return coverage.keySet.has(key);
 }
 
 /**
@@ -1477,19 +1533,37 @@ export function trustFindingDenyState(finding, model) {
   const denies = trustDenyStatements(model);
   if (denies.length === 0) return 'none';
 
+  // Classify each Deny's principals ONCE and precompute its O(1) coverage index
+  // (buildDenyCoverage charges the O(#deny-principals) canonical-key build). This is
+  // the residual-DoS fix: the loop body below is now O(1) per (principal, action,
+  // deny) instead of rescanning every Deny's principal list, so the many-principals-
+  // in-one-Deny shape can no longer multiply the real cost past the charged cost.
   const denyInfos = denies.map((s) => ({
     stmt: s,
     conditioned: hasNonEmptyCondition(s),
-    principals: classifyPrincipals(s.principal),
+    coverage: buildDenyCoverage(classifyPrincipals(s.principal)),
   }));
 
+  // S3-dos-budget-all: this is the confirmed DoS driver - a genuine principals x
+  // assume-actions x trust-Deny TRIPLE loop over policy-derived collections. Charge the
+  // full combinatorial product UP FRONT (the "cap the product before the exhaustive
+  // search" control) so a pathological product trips the deterministic work ceiling
+  // immediately, and charge one unit per (principal, action, deny) inspected BELOW so
+  // the wall-clock deadline the Node adapters arm is sampled at fine granularity and
+  // cannot overrun by more than one work-check interval. The inner-principal factor is
+  // charged where it is really spent (buildDenyCoverage above), so the charged work now
+  // matches the real work for EVERY shape - including a single Deny carrying thousands
+  // of principals. A runaway fails CLOSED on both surfaces instead of returning a
+  // COMPLETE verdict after multiple seconds.
+  chargeWork(princs.length * actions.length * denyInfos.length);
   let full = true;
   let overlap = false;
   for (const p of princs) {
     for (const a of actions) {
       let coveredUnconditionally = false;
       for (const d of denyInfos) {
-        if (!principalEntryDeniedBy(p, d.principals)) continue;
+        chargeWork(1);
+        if (!principalEntryDeniedBy(p, d.coverage)) continue;
         const aa = denyActionApplies(d.stmt, a);
         if (!aa.applies) continue;
         overlap = true;
@@ -1583,6 +1657,10 @@ export function analyzeTrust(model) {
     }
 
     const findings = [];
+    // S3-dos-budget-all: charge the top-level statement walk so even the family's outer
+    // loop participates in the budget (findingsForStatement / classifyPrincipals charge
+    // the per-principal work beneath it).
+    chargeWork(model.statements.length);
     for (const stmt of model.statements) {
       // Only Allow trust statements grant a trust relationship; a Deny restricts
       // who may assume and is never itself a positive trust grant. A same-policy
@@ -1607,6 +1685,14 @@ export function analyzeTrust(model) {
     for (const f of findings) deepFreeze(f);
     return Object.freeze({ ok: true, errors: Object.freeze(errors), findings: Object.freeze(findings) });
   } catch (e) {
+    // S3-dos-budget-all: a tripped resource budget is NOT an internal trust fault. If
+    // this catch masked it as an ok:false INTERNAL error, trustResult() would return a
+    // plain fail() instead of analyze()'s graceful fail-closed abortedResult, and the
+    // CLI wall-clock ('clock') abort would never reach scan()'s RESOURCE_BUDGET_EXCEEDED
+    // mapping. Re-throw budget errors so the outer analyze() try/catch maps them (work
+    // -> aborted+incomplete; clock -> re-thrown to the Node adapter). Only genuine
+    // faults become an INTERNAL trust-analysis error.
+    if (isGlobBudgetError(e)) throw e;
     errors.push(err('INTERNAL', 'Trust analysis failed unexpectedly.'));
     return Object.freeze({ ok: false, errors: Object.freeze(errors), findings: Object.freeze([]) });
   }

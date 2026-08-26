@@ -32,7 +32,7 @@
 
 // ONE shared, ReDoS-safe, linear wildcard matcher (S3-dos-budget) - replaces the
 // byte-identical globMatch copy this module used to carry.
-import { globMatch } from './glob.js';
+import { globMatch, isGlobBudgetError } from './glob.js';
 
 // --- Public enums ------------------------------------------------------------
 
@@ -309,6 +309,14 @@ export function decide(model, request) {
       matches,
     };
   } catch (e) {
+    // S3-dos-budget-all (F3): a tripped cooperative budget is NOT an internal fault.
+    // decide() reaches the shared matcher (actionMatches/resourceMatches -> globMatch),
+    // so a runaway can throw GlobBudgetError here; swallowing it into a benign `empty`
+    // decision would MASK the abort and let analyze() report a COMPLETE verdict after an
+    // unbounded run (fail-OPEN, threat-model T5/T8). Re-throw so analyze()/scan() map it
+    // to the fail-closed aborted+incomplete verdict, mirroring the sibling re-throw in
+    // rules.js/escalation.js/trust.js.
+    if (isGlobBudgetError(e)) throw e;
     errors.push({ code: 'INTERNAL', message: 'Evaluation failed unexpectedly.', path: null });
     return empty;
   }
@@ -430,6 +438,12 @@ export function evaluate(model) {
       statements: Object.freeze(statements),
     });
   } catch (e) {
+    // S3-dos-budget-all (F3): re-throw a tripped cooperative budget instead of
+    // swallowing it into a benign ok:false result. evaluate() reaches the shared
+    // matcher via explainStatement -> scope summaries, so a runaway can throw
+    // GlobBudgetError here; masking it would let a COMPLETE verdict follow an unbounded
+    // run (fail-OPEN, T5/T8). Mirrors rules.js/escalation.js/trust.js.
+    if (isGlobBudgetError(e)) throw e;
     errors.push({ code: 'INTERNAL', message: 'Evaluation failed unexpectedly.', path: null });
     return Object.freeze({
       ok: false,

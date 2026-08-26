@@ -218,6 +218,18 @@ const MASKED_GRANT_MESSAGES = Object.freeze({
     'condition value ([]), which under AWS semantics can never match and so grants ' +
     'nothing. A full grant neutralized this way is reported as an analyzer-state ' +
     'rather than a silent clean pass (suppressed does NOT mean the grant was safe).',
+  MALFORMED_CONDITION_BLOCK:
+    'A Condition operator block (e.g. StringEquals) is not an object mapping a ' +
+    'condition key to value(s) - it is a string, number, null, or array. AWS rejects ' +
+    'this as MalformedPolicyDocument, and the analyzer drops the block and evaluates ' +
+    'the statement as UNCONDITIONAL, silently discarding the restriction. The policy ' +
+    'fails closed rather than reporting a clean pass.',
+  UNSPECIFIED_RESOURCE_SCOPE:
+    'An identity Allow statement names an Action but omits both Resource and ' +
+    'NotResource, so its resource scope is UNSPECIFIED. AWS requires a Resource ' +
+    'element here; with neither key the analyzer reads the scope as narrow and ' +
+    'suppresses its wildcard-resource / data-exfil findings. The policy fails closed ' +
+    'rather than reporting a clean pass.',
 });
 
 function maskedGrantMessage(code) {
@@ -427,9 +439,11 @@ export function scan(input) {
   // CLI's primary rejection. subjectAccount/partition feed the engine's existing
   // PassRole viability reasoning.
   // Arm the cooperative wall-clock budget (S3-dos-budget) when the caller supplied a
-  // finite budgetMs. budgetMs<=0 sets a deadline in the past so the first matcher
-  // call aborts (deterministic for tests); an undefined/NaN budgetMs leaves the
-  // budget disarmed so scan() stays clock-free (existing programmatic callers).
+  // finite budgetMs. budgetMs<=0 sets a deadline at or before "now"; chargeWork's `>=`
+  // deadline check makes the first checkpoint abort DETERMINISTICALLY (no race on
+  // whether a millisecond elapses first), so a zero/negative budget always fails
+  // closed. An undefined/NaN budgetMs leaves the budget disarmed so scan() stays
+  // clock-free (existing programmatic callers).
   const budgetMs = Number.isFinite(inp.budgetMs) ? inp.budgetMs : null;
   const budgetArmed = budgetMs !== null;
   let result;
@@ -591,6 +605,8 @@ export function scan(input) {
     const MALFORMED_REASON_RANK = [
       'EMPTY_NOTACTION_COMPLEMENT',
       'EMPTY_NOTRESOURCE_COMPLEMENT',
+      'UNSPECIFIED_RESOURCE_SCOPE',
+      'MALFORMED_CONDITION_BLOCK',
       'MALFORMED_CONDITION_VALUE',
     ];
     const rankOf = (code) => {

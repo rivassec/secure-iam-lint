@@ -256,12 +256,15 @@ test('(c) a cap-sized policy analyzes to completion well under a fixed ms budget
   // Sanity: it passes validation (within all caps) so we are timing real analysis.
   assert.equal(validate(text).ok, true, 'the cap-sized policy must be within all limits');
 
-  const t0 = performance.now();
   const r = scan({ text, family: 'identity', budgetMs: BUDGET_MS });
-  const elapsed = performance.now() - t0;
 
-  assert.ok(elapsed < BUDGET_MS, `cap-sized analysis took ${elapsed.toFixed(1)}ms; budget ${BUDGET_MS}ms`);
+  // "Completes without overrunning the budget" is asserted DETERMINISTICALLY by the
+  // verdict, not a flaky absolute elapsed<budget measurement: had the wall-clock budget
+  // fired, the scan would carry reason RESOURCE_BUDGET_EXCEEDED and a FAILED status. A
+  // COMPLETE, non-budget-exceeded verdict IS the "did not overrun" proof, independent of
+  // CPU load (an absolute ms upper-bound flakes under the runner's default parallelism).
   assert.notEqual(r.reason, 'RESOURCE_BUDGET_EXCEEDED', 'a normal cap-sized policy must NOT hit the budget');
+  assert.equal(r.analysisStatus, ANALYSIS_STATUS.COMPLETE, 'it analyzes to a COMPLETE verdict, bounded');
   assert.notEqual(r.exitCode, EXIT.INTERNAL, 'analysis must not error internally');
 });
 
@@ -458,15 +461,15 @@ test('(b) the interior-quadratic fixture is WITHIN caps yet analyzes bounded thr
   // under the cap and the document is small), so validate() ACCEPTS it.
   assert.equal(validate(text).ok, true, 'the interior fixture is within every limit (validate.ok)');
 
-  const t0 = performance.now();
   const a = analyze(text);
-  const elapsed = performance.now() - t0;
 
-  // Linear matcher: tens of ms. The old quadratic re-scan took seconds at this size
-  // and grew ~4x per 2x. A generous absolute ceiling makes the linear fix witnessed
-  // without CI flakiness.
-  assert.ok(elapsed < BUDGET_MS, `interior fixture analyze() took ${elapsed.toFixed(1)}ms; budget ${BUDGET_MS}ms`);
+  // Linear matcher: tens of ms. "Analyzes bounded (never hangs)" is asserted via the
+  // DETERMINISTIC op-count work budget, not a wall-clock ceiling: the old quadratic re-scan
+  // grew ~4x per 2x and would exceed the fixed DEFAULT_WORK_LIMIT and abort, so a COMPLETE
+  // (non-aborted) run proves the matcher stayed linear - load-independent, whereas an
+  // absolute ms ceiling flakes under the runner's default file-level parallelism.
   assert.equal(a.ok, true, 'the engine returns a well-formed result');
+  assert.equal(a.coverage.summary.analysisAborted, false, 'the linear interior matcher completes within the fixed op-count budget (a quadratic re-scan would exceed it and abort)');
 });
 
 // --- (d) BROWSER deterministic WORK budget: fail CLOSED, never COMPLETE -------
@@ -542,16 +545,15 @@ test('(d) an at-scale interior-quadratic policy fails CLOSED on the BROWSER path
   const text = buildInteriorPolicy(80);
   assert.equal(validate(text).ok, true, 'the at-scale interior policy is still within all caps');
 
-  const t0 = performance.now();
   const a = analyze(text); // browser style: no clock armed anywhere
-  const elapsed = performance.now() - t0;
 
   assert.equal(a.ok, true, 'well-formed result (never an uncaught throw)');
+  // "Bounded, not a hang" is the DETERMINISTIC op-count budget outcome: the runaway trips
+  // the fixed DEFAULT_WORK_LIMIT after a fixed number of work units, independent of
+  // wall-clock or CPU load. The abort assertions below ARE the boundedness proof.
   assert.equal(a.coverage.summary.analysisAborted, true, 'the runaway is aborted by the deterministic budget');
   assert.equal(a.coverage.summary.incomplete, true, 'an aborted analysis is INCOMPLETE, never a clean COMPLETE');
   assert.equal(a.findings.length, 0, 'no findings asserted from an aborted analysis');
-  // Bounded: the whole point is it does NOT run unbounded before failing closed.
-  assert.ok(elapsed < 5000, `browser-path analyze() aborted in ${elapsed.toFixed(1)}ms (bounded, not a hang)`);
 });
 
 test('(d) scan() bounds the SAME runaway via the deterministic budget -> exit 3, never clean', () => {
@@ -639,11 +641,12 @@ test('(e) the policy-variable-Deny fixture is WITHIN caps yet fails CLOSED throu
   const text = JSON.stringify(fx.policy);
   assert.equal(validate(text).ok, true, 'the policy-variable-Deny fixture is within every limit (a per-string cap is no defense)');
 
-  const t0 = performance.now();
   const a = analyze(text); // browser style: no wall-clock armed anywhere
-  const elapsed = performance.now() - t0;
 
   assert.equal(a.ok, true, 'well-formed in-band result, never an uncaught throw');
+  // "Bounded, not a hang" is the DETERMINISTIC op-count budget outcome: the ${...}-Deny
+  // runaway trips the fixed DEFAULT_WORK_LIMIT after a fixed number of work units,
+  // independent of wall-clock or CPU load. The abort assertions below ARE the bound.
   assert.equal(a.coverage.summary.analysisAborted, true, 'the ${...}-Deny runaway is aborted by the deterministic budget');
   assert.equal(a.coverage.summary.incomplete, true, 'an aborted analysis is INCOMPLETE, never a clean COMPLETE');
   assert.ok(
@@ -651,7 +654,6 @@ test('(e) the policy-variable-Deny fixture is WITHIN caps yet fails CLOSED throu
     'the aborted coverage carries the RESOURCE_BUDGET_EXCEEDED code',
   );
   assert.equal(a.findings.length, 0, 'no findings asserted from an aborted analysis');
-  assert.ok(elapsed < 5000, `policy-variable-Deny analyze() aborted in ${elapsed.toFixed(1)}ms (bounded, not a hang)`);
 });
 
 test('(e) scan() bounds the policy-variable-Deny runaway via the deterministic budget -> exit 3, never clean', () => {

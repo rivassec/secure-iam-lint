@@ -1,0 +1,6 @@
+# Ephemeral test/debug output (never commit)
+scratchpad/
+**/out_*.txt
+**/err_*.txt
+**/timing_*.txt
+node_modules/

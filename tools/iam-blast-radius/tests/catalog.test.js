@@ -207,7 +207,7 @@ test('exports carry the unknown action + the dated catalog version', () => {
 
   const md = toMarkdown(res);
   assert.match(md, /Unrecognized actions: madeupsvc:Frobnicate/);
-  assert.match(md, new RegExp(`Action-catalog version: ${ACTION_CATALOG_VERSION.replace(/\./g, '\\.')}`));
+  assert.match(md, new RegExp(`Action-catalog version: ${ACTION_CATALOG_VERSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
 });
 
 test('unknown actions never suppress a finding (unsupported != safe)', () => {

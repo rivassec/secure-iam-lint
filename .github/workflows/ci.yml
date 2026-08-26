@@ -28,6 +28,15 @@ jobs:
         run: npm run gate:no-network
       - name: Gate - no unsafe DOM / eval in shipped JS
         run: npm run gate:no-unsafe-dom
+      # The shipped CLI + Action run inside consumers' CI. They were UNGATED
+      # (the greps above scope only content/tools/). These extend the
+      # no-network + no-code-exec classes to cli/ + action/, allowing the
+      # legitimate node: fs/path/crypto/url the CLI needs but forbidding any
+      # network core module, remote import(), eval/Function, and child_process/vm.
+      - name: Gate - no network APIs in shipped CLI + Action
+        run: npm run gate:no-network:node
+      - name: Gate - no eval / child_process / unsafe API in shipped CLI + Action
+        run: npm run gate:no-unsafe:node
 
   csp:
     runs-on: ubuntu-latest

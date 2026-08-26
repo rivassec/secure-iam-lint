@@ -29,6 +29,15 @@
 
 import { classifyPrincipals } from './trust.js';
 import { parseOperator, NEGATED_OPERATORS } from './conditions.js';
+// S3-dos-budget-all: the resource family analyzer is the sibling of trust.js/
+// escalation.js and must participate in the SAME deterministic work / wall-clock budget
+// so no family surface is a budget-blind fail-open (threat-model T5/T8, the "fix the
+// CLASS" mandate). Its per-principal work is already charged transitively through the
+// now-charged classifyPrincipals (trust.js); these charges make its outer statement
+// walks participate too, so a runaway on the resource path fails CLOSED
+// (RESOURCE_BUDGET_EXCEEDED) exactly like the identity/trust paths rather than grinding
+// unbudgeted. chargeWork is a no-op when no budget is armed, so verdicts never change.
+import { chargeWork } from './glob.js';
 
 // Stable, machine-readable coverage codes owned by the resource family. Kept here
 // (not in family.js) so the resource module owns its own vocabulary; family.js
@@ -571,7 +580,12 @@ function principalScopingAnalysis(condition, service) {
   for (const op of Object.keys(condition)) {
     const inner = condition[op];
     if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
-    for (const key of Object.keys(inner)) {
+    const keys = Object.keys(inner);
+    // S3-dos-budget-all (defense in depth): charge per condition key inspected so this
+    // linear-today scan participates in the cooperative work budget and a future
+    // superlinear regression fails CLOSED rather than grinding uncharged (T5/T8).
+    chargeWork(keys.length);
+    for (const key of keys) {
       if (!isPrincipalScopingKey(String(key).toLowerCase(), service)) continue;
       if (operatorNegatesScope(op, inner[key])) expanding.add(key);
       else scoping.add(key);
@@ -624,7 +638,11 @@ function conditionKeyInventory(condition) {
   for (const op of Object.keys(condition)) {
     const inner = condition[op];
     if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
-    for (const rawKey of Object.keys(inner)) {
+    const rawKeys = Object.keys(inner);
+    // S3-dos-budget-all (defense in depth): charge per condition key inventoried so
+    // this linear-today scan participates in the cooperative work budget.
+    chargeWork(rawKeys.length);
+    for (const rawKey of rawKeys) {
       const keyLower = String(rawKey).toLowerCase();
       const val = inner[rawKey];
       const orValues = Array.isArray(val) && val.length > 1;
@@ -749,6 +767,9 @@ function toSourceValueList(value) {
 // no mismatch determination on that axis; never guess).
 function commonSourceAccount(values) {
   if (values.length === 0) return null;
+  // S3-dos-budget-all (defense in depth): charge per source value inspected so this
+  // linear-today scan participates in the cooperative work budget (T5/T8).
+  chargeWork(values.length);
   const accts = values.map(accountFromSourceValue);
   if (accts.some((a) => a === null)) return null;
   const set = new Set(accts);
@@ -763,10 +784,21 @@ function commonSourceAccount(values) {
 // accounts, not only a single common one (a multi-account SourceArn whose accounts
 // ALL disagree with SourceAccount is still an internally inconsistent binding).
 function sourceAccountSet(values) {
+  // S3-dos-budget-all (iter-5): this dedup runs over aws:SourceArn / aws:SourceAccount
+  // condition-value arrays, which validate.js caps but which are still attacker-sized.
+  // The old `out.includes(a)` push made it O(V^2); a Set makes it O(V), and charging
+  // one work unit per value makes the deterministic budget SAMPLE the traversal (the
+  // matcher is never reached from here, so without this the budget accrued zero and a
+  // runaway would have returned a COMPLETE verdict - the T5 fail-open class).
+  chargeWork(Array.isArray(values) ? values.length : 0);
   const out = [];
+  const seen = new Set();
   for (const v of values) {
     const a = accountFromSourceValue(v);
-    if (a !== null && !out.includes(a)) out.push(a);
+    if (a !== null && !seen.has(a)) {
+      seen.add(a);
+      out.push(a);
+    }
   }
   return out;
 }
@@ -795,6 +827,12 @@ function sourceBindingAnalysis(condition) {
     bypassedKeys: [],
   };
   if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return out;
+  // S3-dos-budget-all (iter-5): dedup the accumulated account SETs through Sets, not
+  // Array.includes(), so merging across many condition operators/keys stays O(V) not
+  // O(V^2). The parallel arrays remain the public shape (ordered, first-seen); the
+  // Sets are the membership index only.
+  const arnAcctSeen = new Set();
+  const srcAcctSeen = new Set();
   for (const op of Object.keys(condition)) {
     const inner = condition[op];
     if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
@@ -824,7 +862,10 @@ function sourceBindingAnalysis(condition) {
         out.sourceArn.bound = true;
         out.sourceArn.account = commonSourceAccount(values);
         for (const a of sourceAccountSet(values)) {
-          if (!out.sourceArn.accounts.includes(a)) out.sourceArn.accounts.push(a);
+          if (!arnAcctSeen.has(a)) {
+            arnAcctSeen.add(a);
+            out.sourceArn.accounts.push(a);
+          }
         }
       } else if (key === 'aws:sourceaccount') {
         out.sourceAccount.bound = true;
@@ -836,7 +877,10 @@ function sourceBindingAnalysis(condition) {
         // disagrees with the SourceArn account is still internally inconsistent and
         // must not be mis-credited as a clean source-bound control.
         for (const a of sourceAccountSet(values)) {
-          if (!out.sourceAccount.accounts.includes(a)) out.sourceAccount.accounts.push(a);
+          if (!srcAcctSeen.has(a)) {
+            srcAcctSeen.add(a);
+            out.sourceAccount.accounts.push(a);
+          }
         }
       } else if (key === 'aws:sourceowner') {
         out.sourceOwner = true;
@@ -1186,6 +1230,10 @@ function resourceFindings(model, ctx) {
   const serviceLabel = RESOURCE_SERVICE_LABELS[service] || 'attached resource';
   const transportOnlyDeny = hasTransportOnlyDeny(model);
 
+  // S3-dos-budget-all: charge the statement walk so the resource family's outer loop
+  // participates in the budget (per-principal work beneath it is charged in
+  // classifyPrincipals, called once per statement below).
+  chargeWork(statements.length);
   for (const stmt of statements) {
     // A resource finding describes who a GRANT reaches. Deny statements are not
     // positive grants (a transport-only Deny is handled as an annotation, not a
@@ -1530,7 +1578,13 @@ function resourceFindings(model, ctx) {
           attachedArn,
           transportOnlyDeny,
         }));
-        namedEntries = namedEntries.filter((e) => !acctEntries.includes(e));
+        // S3-dos-budget-all (iter-5): remove the peeled account entries via Set
+        // membership, not Array.includes() (which made this O(V^2) over an
+        // attacker-sized Principal.AWS list), and charge the traversal so the
+        // deterministic budget participates in this principal-dedup scan.
+        chargeWork(namedEntries.length + acctEntries.length);
+        const acctEntrySet = new Set(acctEntries);
+        namedEntries = namedEntries.filter((e) => !acctEntrySet.has(e));
       }
     }
 
@@ -1542,7 +1596,12 @@ function resourceFindings(model, ctx) {
       const acct = accountOfEntry(e);
       return acct !== null && acct === resourceAccount;
     });
-    const grantEntries = namedEntries.filter((e) => !sameAccountEntries.includes(e));
+    // S3-dos-budget-all (iter-5): same-account partition via Set membership (was an
+    // O(V^2) Array.includes() over the Principal-derived entries) + budget charge so
+    // this policy-derived traversal is bounded by the deterministic work ceiling.
+    chargeWork(namedEntries.length + sameAccountEntries.length);
+    const sameAccountEntrySet = new Set(sameAccountEntries);
+    const grantEntries = namedEntries.filter((e) => !sameAccountEntrySet.has(e));
 
     // 2a) Same-account direct grant (IAM-1204): the resource policy names a principal
     // in the SAME account as the resource. Within one account AWS evaluates the UNION
@@ -1687,9 +1746,15 @@ function resourceFindings(model, ctx) {
       // either set is empty (no resolvable account on that axis), it is NOT a mismatch.
       const arnAccounts = binding.sourceArn.accounts;
       const acctAccounts = binding.sourceAccount.accounts;
+      // S3-dos-budget-all (iter-5): the disjoint-set test was O(V^2) via
+      // Array.includes() over two attacker-sized account sets. A Set makes it O(V), and
+      // charging the traversal length makes the deterministic budget sample this
+      // policy-derived scan (it never reaches the shared matcher).
+      chargeWork(arnAccounts.length + acctAccounts.length);
+      const acctAccountSet = new Set(acctAccounts);
       const mismatch = binding.sourceArn.bound && binding.sourceAccount.bound &&
         arnAccounts.length > 0 && acctAccounts.length > 0 &&
-        arnAccounts.every((a) => !acctAccounts.includes(a));
+        arnAccounts.every((a) => !acctAccountSet.has(a));
       const anyBinding = binding.sourceArn.bound || binding.sourceAccount.bound ||
         binding.sourceOrg || binding.sourceOwner;
       const bypassedNote = binding.bypassedKeys.length > 0
@@ -1820,6 +1885,10 @@ function resourceFindings(model, ctx) {
     for (const stmt of statements) {
       if (!stmt || stmt.effect !== 'Allow') continue;
       const actions = Array.isArray(stmt.actions) ? stmt.actions : [];
+      // S3-dos-budget-all: charge the per-statement action/resource scan so this second
+      // pass over the policy participates in the budget too (proportional to the real
+      // token count it inspects).
+      chargeWork(actions.length + (Array.isArray(stmt.resources) ? stmt.resources.length : 0) + 1);
       const objectActions = actions.filter(isS3ObjectAction);
       if (objectActions.length === 0) continue;
       const resources = Array.isArray(stmt.resources) ? stmt.resources : [];

@@ -173,6 +173,125 @@ test('S4: a benign Action rides through message.text as a quoted token (no false
   assert.ok(res.message.text.includes('`s3:GetObject`'), 'benign action is a quoted inline-code token');
 });
 
+// --- message.text: hostile ANALYZER-STATE message is neutralized too (the CLASS) ---
+//
+// A security finding's message is assembled from tool prose + code-span-wrapped tokens,
+// so it is safe by construction. But an analyzer-state (fail-closed) message is authored
+// by the ENGINE as free prose that can interpolate attacker-controlled policy text
+// verbatim - a duplicate condition-key spelling (validate.js), a rejected key name
+// (model.js), a JSON path, or any message a FUTURE engine change adds. That message flows
+// scan() -> analysisStates -> SARIF message.text, which GitHub renders as MARKDOWN. The
+// fix neutralizes at the SINGLE sink chokepoint (sarif.mjs sanitizeStateMessage), so ANY
+// analyzer-state message renders inert - the class, not the two named instances.
+
+// Collect the analyzer-state (fail-closed) SARIF results for a scanned policy.
+function stateResults(text) {
+  const result = scan({ text, family: 'identity' });
+  const log = buildSarifLog(result, { file: 'p.json' }, MANIFEST);
+  return log.runs[0].results.filter((r) => r.properties.category === 'analysis-state');
+}
+
+// Build an analyzer-state SARIF result directly from a synthetic state, to prove the sink
+// neutralizes ANY message regardless of which engine module authored it.
+function syntheticStateMessage(message) {
+  const log = buildSarifLog(
+    { analysisStates: [{ analysisState: 'malformed', code: 'X', message, path: 'Statement[0]' }], findings: [], family: 'identity' },
+    { file: 'p.json' },
+    MANIFEST,
+  );
+  const st = log.runs[0].results.find((r) => r.properties.category === 'analysis-state');
+  assert.ok(st, 'an analyzer-state result is present');
+  return st.message.text;
+}
+
+test('S4: a duplicate condition-key spelling carrying a markdown link is neutralized in the analyzer-state message', () => {
+  // Two condition keys that differ ONLY by case -> DUPLICATE_JSON_KEY, whose message
+  // interpolates BOTH raw spellings. The spellings ARE a clickable markdown link.
+  const text = `{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "[click-me](https://evil.example/x)": "a",
+          "[CLICK-ME](https://evil.example/x)": "b"
+        }
+      }
+    }]
+  }`;
+  const states = stateResults(text);
+  assert.ok(states.length >= 1, 'a fail-closed analyzer-state is present (fails closed on the dup key)');
+  const joined = states.map((s) => s.message.text).join('\n');
+  // No clickable markdown link and no autolink-able bare URL scheme survives.
+  assert.ok(!/\[[^\]]*\]\(https?:\/\//.test(joined), 'no raw [label](url) link survives');
+  assert.ok(!/\]\(/.test(joined), 'no inline-link `](` sequence survives');
+  assert.ok(!/https?:\/\//.test(joined), 'no bare-URL autolink scheme survives');
+  // The human-readable reason is still intact (alphabetic prose is untouched).
+  assert.ok(/Duplicate condition key/.test(joined), 'the human reason still reads');
+});
+
+test('S4: the analyzer-state sink neutralizes ANY message shape (link, image, autolink, www, HTML) - the class', () => {
+  const hostile = 'Rejected <img src=x onerror=alert(1)> [pwn](javascript:alert(document.domain)) '
+    + 'see http://evil.example/p and https://evil.example/q and www.evil.example and <https://evil.example/r>';
+  const t = syntheticStateMessage(hostile);
+  assert.ok(!/\[[^\]]*\]\(/.test(t), 'no inline/image markdown link survives');
+  assert.ok(!/https?:\/\//.test(t), 'no bare-URL autolink scheme survives');
+  assert.ok(!/<https?:/.test(t), 'no `<url>` autolink survives');
+  // Every `<` is backslash-escaped, so it renders as a literal `<` and can never open an
+  // HTML tag or an autolink (a bare `<img ...>` in the source would otherwise render).
+  assert.ok(!/(^|[^\\])</.test(t), 'every `<` is escaped (no raw HTML tag / autolink can form)');
+  assert.ok(!/\bwww\.evil/.test(t), 'no www autolink survives');
+  assert.ok(!/`/.test(t), 'no code-span backtick survives (nothing to wrap)');
+  // tool prose survives readably
+  assert.ok(t.includes('Rejected'), 'tool prose is still readable');
+});
+
+test('S4: newlines/control chars in an analyzer-state message cannot break the rendered line', () => {
+  const hostile = 'Line1\nLine2 [x](javascript:1)\r\n[31mLine3end';
+  const t = syntheticStateMessage(hostile);
+  assert.ok(!/[\r\n]/.test(t), 'no newline survives into message.text');
+  assert.ok(!CONTROL_AND_BACKTICK.test(t.replace(/`/g, '')), 'no control chars survive');
+  assert.ok(!/\[x\]\(javascript:/.test(t), 'the link is neutralized even across the collapsed line');
+});
+
+test('S4: an oversize analyzer-state message is length-capped (bounds a hostile blow-up)', () => {
+  const hostile = `${'x'.repeat(5000)} [pwn](https://evil.example/p) ${'y'.repeat(5000)}`;
+  const t = syntheticStateMessage(hostile);
+  // Cap is MAX_STATE_MSG_LEN (480) raw; escaping can at most ~double it. Generous bound.
+  assert.ok(t.length <= 1200, `message stays bounded (${t.length})`);
+  assert.ok(!/https?:\/\//.test(t), 'no autolink survives even in the oversize case');
+});
+
+test('S4: a benign analyzer-state message rides through readably (no over-correction)', () => {
+  // A plain duplicate key (no markdown) -> a readable DUPLICATE_JSON_KEY message.
+  const text = '{ "Version": "2012-10-17", "Statement": [ { "Effect": "Allow", "Action": "s3:Get", "Action": "s3:Put", "Resource": "*" } ] }';
+  const states = stateResults(text);
+  assert.ok(states.length >= 1, 'a fail-closed analyzer-state is present');
+  const t = states[0].message.text;
+  assert.ok(/Duplicate key/.test(t), 'the human-readable reason survives intact');
+});
+
+test('S4: an empty/absent analyzer-state message falls back to the fixed tool text', () => {
+  assert.equal(syntheticStateMessage(''), 'Analysis could not be completed for this policy (fail-closed).');
+  assert.equal(syntheticStateMessage(null), 'Analysis could not be completed for this policy (fail-closed).');
+});
+
+test('S4: analyzer-state SARIF is byte-identical across builds even with a hostile message', () => {
+  const text = `{
+    "Version": "2012-10-17",
+    "Statement": [{ "Effect": "Allow", "Action": "s3:Get", "Resource": "*",
+      "Condition": { "StringEquals": {
+        "[a](https://evil.example/x)": "1", "[A](https://evil.example/x)": "2" } } }]
+  }`;
+  const result = scan({ text, family: 'identity' });
+  assert.equal(
+    formatSarif(result, { file: 'p.json' }, MANIFEST),
+    formatSarif(result, { file: 'p.json' }, MANIFEST),
+  );
+});
+
 // --- partialFingerprints: hostile Sid cannot force a collision / churn -------------
 
 test('S4: a hostile Sid does NOT change the fingerprint of an otherwise-identical finding', () => {

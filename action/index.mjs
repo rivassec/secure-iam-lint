@@ -30,6 +30,7 @@
 //   4 internal invariant error
 // A CI gate treats 1,2,3,4 as FAILED. Code 3 is DISTINCT from 0 and from 1.
 
+import { randomUUID } from 'node:crypto';
 import { scan, EXIT, DEFAULT_BUDGET_MS } from '../cli/scan.mjs';
 import { buildSarifLog } from '../cli/sarif.mjs';
 // READ-ONLY canonical version manifest (browser-safe, no Node deps) so the SARIF
@@ -42,6 +43,80 @@ export { EXIT };
 
 function isNonEmptyString(v) {
   return typeof v === 'string' && v.trim().length > 0;
+}
+
+// The default SARIF output path (mirrors action.yml). Used as the fallback whenever a
+// caller-supplied sarif-output is rejected as unsafe, so a hostile path never
+// propagates to an output value or a file write.
+const DEFAULT_SARIF_OUTPUT = 'iam-blast-radius.sarif';
+
+// S4-action-hardening: is `rel` a SAFE sarif-output target - a RELATIVE path that
+// stays INSIDE the workspace? The Action's documented contract (ACTION.md) is that it
+// "writes a SARIF file in the workspace; nothing more". An ABSOLUTE path
+// (/etc/x, C:\x, \\host\share, a leading backslash) or a RELATIVE path that escapes the
+// workspace via ".." (../evil.sarif, a/../../b) is an arbitrary-file-write outside
+// GITHUB_WORKSPACE and is rejected (fail closed, exit 2). A control character (NUL, CR,
+// LF, ...) is also rejected: it can never occur in a legitimate path and would let the
+// value forge/suppress GITHUB_OUTPUT lines downstream. Pure string logic (POSIX + the
+// Windows absolute forms), so runAction stays process-free and unit-testable.
+function sarifOutputIsContained(rel) {
+  const s = String(rel == null ? '' : rel);
+  if (s === '') return false;
+  if (/[\u0000-\u001f]/.test(s)) return false; // any C0 control char (incl. CR/LF/NUL)
+  if (s.startsWith('/') || s.startsWith('\\')) return false; // POSIX-absolute / UNC / leading '\'
+  if (/^[A-Za-z]:/.test(s)) return false; // Windows drive-absolute (C:...)
+  let depth = 0;
+  for (const seg of s.split(/[/\\]/)) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      depth -= 1;
+      if (depth < 0) return false; // escapes above the workspace root
+    } else {
+      depth += 1;
+    }
+  }
+  return true;
+}
+
+// S4-action-hardening (ROUND 2): the LEXICAL guard above is necessary but NOT
+// sufficient. A sarif-output can be a perfectly RELATIVE, "..".-free, control-char-free
+// path whose leading directory component - or the target file itself - is a SYMLINK
+// checked into the repo tree (an untrusted PR can add `reports` as a symlink to an
+// external dir, then a maintainer-set `sarif-output: reports/x.sarif` writes THROUGH it).
+// `path.resolve(base, rel).startsWith(base + sep)` is TRUE for such a path (it is
+// lexically inside), yet the real write lands OUTSIDE the workspace - the exact
+// arbitrary-file-write the story set out to close. The lexical check cannot see
+// symlinks; only the real filesystem can. This resolves each existing path component
+// through `lstat` and REJECTS if any component (a directory on the way, or the final
+// file being overwritten) is a symbolic link. It fails CLOSED (returns false) if the
+// workspace base itself cannot be realpath-resolved. Pure over the injected node fs/path,
+// so runAction stays testable via an injected io.sarifTargetContained and the real
+// writeSarif sink calls it directly. `rel` is assumed to have ALREADY passed
+// sarifOutputIsContained (relative, no "..", no control chars).
+export function sarifTargetContainedFs(nodeFs, nodePath, baseDir, rel) {
+  let baseReal;
+  try {
+    baseReal = nodeFs.realpathSync(baseDir); // resolve the workspace root's own symlinks
+  } catch {
+    return false; // cannot vouch for containment -> fail closed
+  }
+  const parts = String(rel).split(/[/\\]/).filter((p) => p !== '' && p !== '.');
+  let cur = baseReal;
+  for (const part of parts) {
+    const next = nodePath.join(cur, part);
+    let st;
+    try {
+      st = nodeFs.lstatSync(next); // lstat: inspect the link itself, never follow it
+    } catch {
+      // This component does not exist yet -> a real file/dir will be created here and
+      // (since "cur" is a real, symlink-free directory) it cannot escape the workspace.
+      // Deeper components cannot exist either, so the remaining path is symlink-free.
+      return true;
+    }
+    if (st.isSymbolicLink()) return false; // ANY symlink component can escape -> reject
+    cur = next; // real dir/file confirmed; descend into it
+  }
+  return true;
 }
 
 function toCount(n) {
@@ -86,7 +161,7 @@ export function readInputs(env) {
     subjectAccount: getInput(env, 'subject-account'),
     partition: getInput(env, 'partition'),
     failOn: getInput(env, 'fail-on') || 'high',
-    sarifOutput: getInput(env, 'sarif-output') || 'iam-blast-radius.sarif',
+    sarifOutput: getInput(env, 'sarif-output') || DEFAULT_SARIF_OUTPUT,
     // Wall-clock budget per policy, in ms (S3-dos-budget). A non-numeric or omitted
     // value falls back to the default; a policy whose analysis overruns fails CLOSED
     // (exit 3, RESOURCE_BUDGET_EXCEEDED), never a clean pass.
@@ -129,6 +204,169 @@ function escapeRegexChar(c) {
   return /[.+^${}()|\\]/.test(c) ? `\\${c}` : c;
 }
 
+// --- ReDoS-safe LINEAR path-glob matcher (S3-dos-budget-all) ------------------
+// The action `paths` input is ATTACKER-CONTROLLED and is resolved BEFORE any scan
+// wall-clock budget is armed, so a glob compiled to a backtracking RegExp is a
+// pre-budget ReDoS: a crafted pattern such as `*a*a*a*...*b` (many '*' separated by
+// a repeated literal) matched against a moderately long file path drives the anchored
+// RegExp into exponential backtracking and hangs the whole Action - a denial of
+// service that no downstream budget can stop because it fires during glob resolution.
+// This matcher decides the SAME path-glob language with a DYNAMIC-PROGRAMMING
+// automaton that is O(patternTokens x pathLength) with NO backtracking, so its cost
+// is a bounded polynomial of the (capped) pattern and path lengths - the ReDoS class
+// is removed, not merely the one crafted spelling. globToRegExp() is retained for its
+// exported contract but is length/wildcard-capped below and is no longer on the
+// resolveFiles hot path.
+
+// Hard caps applied BEFORE any glob work. A pattern beyond these bounds is not a
+// legitimate path filter; it fails CLOSED to a usage error rather than being matched.
+const MAX_GLOB_PATTERN_LENGTH = 4096;
+const MAX_GLOB_WILDCARDS = 256;
+
+// Count the glob "magic" characters ('*', '?', '[') in a pattern - the axis a ReDoS
+// pattern maximizes. Used purely to reject an over-complex pattern up front.
+function countGlobWildcards(pattern) {
+  let n = 0;
+  const s = String(pattern);
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '*' || c === '?' || c === '[') n += 1;
+  }
+  return n;
+}
+
+// A pattern is REJECTABLE (too long, or too many wildcards) and must fail closed.
+function globPatternTooComplex(pattern) {
+  const s = String(pattern);
+  return s.length > MAX_GLOB_PATTERN_LENGTH || countGlobWildcards(s) > MAX_GLOB_WILDCARDS;
+}
+
+// Parse a bracket char-class starting at `chars[start]` === '['. Returns
+// { pred, next } where pred(ch) tests one character and `next` is the index of the
+// char AFTER the closing ']'. If the class is unterminated, returns null so the caller
+// treats '[' as a literal (mirrors globToRegExp's unterminated-class fallback).
+function parseCharClass(chars, start) {
+  let j = start + 1;
+  let negate = false;
+  if (chars[j] === '!') { negate = true; j += 1; }
+  const singles = new Set();
+  const ranges = []; // [lo, hi] inclusive code points
+  // A ']' immediately after '[' (or '[!') is a literal member, not the terminator.
+  if (chars[j] === ']') { singles.add(']'); j += 1; }
+  let closed = false;
+  while (j < chars.length) {
+    const c = chars[j];
+    if (c === ']') { closed = true; j += 1; break; }
+    // Range a-z: a member, then '-', then a member that is not the closing ']'.
+    if (chars[j + 1] === '-' && chars[j + 2] !== undefined && chars[j + 2] !== ']') {
+      ranges.push([c.codePointAt(0), chars[j + 2].codePointAt(0)]);
+      j += 3;
+      continue;
+    }
+    singles.add(c);
+    j += 1;
+  }
+  if (!closed) return null; // unterminated -> caller treats '[' as a literal
+  const pred = (ch) => {
+    let inSet = singles.has(ch);
+    if (!inSet) {
+      const cp = ch.codePointAt(0);
+      for (const [lo, hi] of ranges) {
+        if (cp >= lo && cp <= hi) { inSet = true; break; }
+      }
+    }
+    return negate ? !inSet : inSet;
+  };
+  return { pred, next: j };
+}
+
+// Token kinds for the linear matcher.
+const TOK_STAR2SLASH = 0; // '**/'  -> zero or more full path segments  ((?:.*/)?)
+const TOK_STAR2 = 1;      // '**'   -> any run incl. '/'                (.*)
+const TOK_STAR1 = 2;      // '*'    -> any run excl. '/'                ([^/]*)
+const TOK_ONE = 3;        // '?' / class / literal -> exactly one char via pred
+
+// Compile a glob pattern into a token list with the SAME semantics globToRegExp
+// encodes. Deterministic; no RegExp is ever constructed. Returns an array of tokens.
+function compileGlobTokens(pattern) {
+  const chars = [...String(pattern)];
+  const tokens = [];
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i];
+    if (c === '*') {
+      if (chars[i + 1] === '*') {
+        const after = chars[i + 2];
+        if (after === '/') {
+          tokens.push({ k: TOK_STAR2SLASH });
+          i += 2; // consume the second '*' and the '/'
+        } else {
+          tokens.push({ k: TOK_STAR2 }); // trailing '**' or '**' not path-bounded
+          i += 1; // consume the second '*'
+        }
+      } else {
+        tokens.push({ k: TOK_STAR1 });
+      }
+    } else if (c === '?') {
+      tokens.push({ k: TOK_ONE, pred: (ch) => ch !== '/' });
+    } else if (c === '[') {
+      const parsed = parseCharClass(chars, i);
+      if (parsed === null) {
+        tokens.push({ k: TOK_ONE, pred: (ch) => ch === '[' }); // literal '['
+      } else {
+        tokens.push({ k: TOK_ONE, pred: parsed.pred });
+        i = parsed.next - 1; // -1 because the for-loop will i++
+      }
+    } else {
+      tokens.push({ k: TOK_ONE, pred: (ch) => ch === c });
+    }
+  }
+  return tokens;
+}
+
+// Decide whether `pattern` matches the whole path `text`, LINEARLY (dynamic
+// programming, no backtracking). O(tokens x textLength). ReDoS-immune.
+export function globMatchPath(pattern, text) {
+  const tokens = compileGlobTokens(pattern);
+  const t = String(text);
+  const T = t.length;
+  // dp[j] = can tokens[i..end] match text[j..end]. Seed for i === tokens.length:
+  // only a fully-consumed text matches the empty token suffix.
+  let dp = new Array(T + 1).fill(false);
+  dp[T] = true;
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    const tok = tokens[i];
+    const ndp = new Array(T + 1).fill(false);
+    if (tok.k === TOK_ONE) {
+      for (let j = 0; j < T; j++) {
+        if (dp[j + 1] && tok.pred(t[j])) ndp[j] = true;
+      }
+    } else if (tok.k === TOK_STAR1) {
+      // '[^/]*': match zero (dp[j]) or one more non-'/' char and stay (ndp[j+1]).
+      for (let j = T; j >= 0; j--) {
+        let v = dp[j];
+        if (!v && j < T && t[j] !== '/' && ndp[j + 1]) v = true;
+        ndp[j] = v;
+      }
+    } else if (tok.k === TOK_STAR2) {
+      // '.*': match zero (dp[j]) or one more char of any kind and stay (ndp[j+1]).
+      for (let j = T; j >= 0; j--) {
+        let v = dp[j];
+        if (!v && j < T && ndp[j + 1]) v = true;
+        ndp[j] = v;
+      }
+    } else { // TOK_STAR2SLASH: '(?:.*/)?'
+      for (let j = T; j >= 0; j--) {
+        let v = dp[j]; // zero path segments
+        if (!v && j < T && ndp[j + 1]) v = true; // stay inside the '.*' run
+        if (!v && j < T && t[j] === '/' && dp[j + 1]) v = true; // closing '/', advance token
+        ndp[j] = v;
+      }
+    }
+    dp = ndp;
+  }
+  return dp[0];
+}
+
 // Translate a POSIX-style glob into an ANCHORED RegExp. Path-aware:
 //   **/ or trailing ** matches any number of path segments (incl. zero)
 //   *   matches any run of non-'/' characters
@@ -136,6 +374,17 @@ function escapeRegexChar(c) {
 //   [..] is a character class (a leading ! is negation)
 // Deterministic; no external glob dependency.
 export function globToRegExp(pattern) {
+  // S3-dos-budget-all: retained for its exported contract, but HARD-CAPPED so it can
+  // never be used to build a catastrophically-backtracking RegExp from an over-long or
+  // wildcard-dense attacker pattern. Beyond the caps it throws a tagged error; callers
+  // that resolve untrusted `paths` use the linear globMatchPath() instead and never
+  // reach this. (An anchored RegExp of many adjacent '.*'/'[^/]*' quantifiers is the
+  // ReDoS vector; the cap bounds the quantifier count so the fallback stays safe too.)
+  if (globPatternTooComplex(pattern)) {
+    const err = new Error('glob pattern exceeds complexity limits');
+    err.code = 'INVALID_GLOB';
+    throw err;
+  }
   const chars = [...String(pattern)];
   let re = '';
   for (let i = 0; i < chars.length; i++) {
@@ -199,10 +448,23 @@ export function resolveFiles(patterns, fileList) {
   const matched = new Set();
   for (const rawPattern of patterns) {
     const pattern = normalizePattern(rawPattern);
+    // S3-dos-budget-all: reject an over-complex (over-long / wildcard-dense) pattern
+    // up front. `paths` is attacker-controlled and resolved BEFORE any scan budget, so
+    // an unbounded pattern is a pre-budget DoS vector; fail CLOSED to a usage error
+    // (exit 2), never silently match or skip it.
+    if (globPatternTooComplex(pattern)) {
+      return {
+        files: [],
+        error: {
+          reason: 'INVALID_GLOB',
+          message: `A path pattern is too long or has too many wildcards: ${pattern.slice(0, 80)}`,
+        },
+      };
+    }
     if (hasMagic(pattern)) {
-      const re = globToRegExp(pattern);
+      // LINEAR, ReDoS-safe matcher (globMatchPath) - NOT a compiled backtracking RegExp.
       for (const f of list) {
-        if (re.test(f)) matched.add(f);
+        if (globMatchPath(pattern, f)) matched.add(f);
       }
     } else if (listSet.has(pattern)) {
       matched.add(pattern);
@@ -343,15 +605,42 @@ export function buildAggregateSarif(units, manifest = VERSION_MANIFEST) {
 // Render the GITHUB_OUTPUT file body for a { name: value } map. Single-line values
 // use `name=value`; a value containing a newline uses the heredoc delimiter form
 // (GitHub's multi-line output syntax). Our values are all single-line scalars.
+//
+// S4-action-hardening: two hardenings against GITHUB_OUTPUT injection.
+//   1. A value containing any C0 control char OTHER than the newline that legitimately
+//      triggers the heredoc form (NUL, CR, vertical tab, ...) is REJECTED (throw ->
+//      caught by emitArtifacts as a writeError -> fail closed): such a char never
+//      belongs in these scalar outputs and could split/forge `key=value` lines. The
+//      key is likewise validated.
+//   2. The heredoc delimiter is UNPREDICTABLE (a per-value random token), not the old
+//      guessable `ghadelim_<key>_EOF`. With a random delimiter a crafted multi-line
+//      value cannot close the heredoc early to inject forged/suppressed output lines;
+//      as a further guard a value that still contains the chosen delimiter line is
+//      rejected outright.
+// Every C0 control char EXCEPT the newline (0x0a) that legitimately triggers the
+// heredoc form: 0x00-0x09 and 0x0b-0x1f. A value carrying any of these is rejected.
+const VALUE_CONTROL_CHAR_RE = /[\u0000-\u0009\u000b-\u001f]/;
+// An output KEY is a bare identifier: any C0 control char (incl. newline) is unsafe.
+const KEY_CONTROL_CHAR_RE = /[\u0000-\u001f]/;
 export function formatOutputs(outputs) {
   let body = '';
   for (const [k, v] of Object.entries(outputs || {})) {
+    const key = String(k);
     const val = String(v);
+    if (KEY_CONTROL_CHAR_RE.test(key)) {
+      throw new Error(`unsafe control character in output key ${JSON.stringify(key)}`);
+    }
+    if (VALUE_CONTROL_CHAR_RE.test(val)) {
+      throw new Error(`unsafe control character in output value for ${key}`);
+    }
     if (val.includes('\n')) {
-      const delim = `ghadelim_${k}_EOF`;
-      body += `${k}<<${delim}\n${val}\n${delim}\n`;
+      const delim = `ghadelim_${randomUUID()}_EOF`;
+      if (val.split('\n').includes(delim)) {
+        throw new Error(`output ${key} collides with its heredoc delimiter`);
+      }
+      body += `${key}<<${delim}\n${val}\n${delim}\n`;
     } else {
-      body += `${k}=${val}\n`;
+      body += `${key}=${val}\n`;
     }
   }
   return body;
@@ -395,7 +684,39 @@ export function formatSummary(outputs, exitCode) {
  */
 export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST } = {}) {
   try {
-    const inputs = readInputs(env);
+    const rawInputs = readInputs(env);
+
+    // --- sarif-output sanitization AT THE SOURCE (class-level, S4-action-hardening) --
+    // A hostile sarif-output (absolute, workspace-escaping via "..", or carrying a
+    // control char / newline) must NEVER survive into an output value or the file sink
+    // on ANY return path. Confining it only at its own usage-error branch left the
+    // class OPEN: an EARLIER early return (e.g. MISSING_FAMILY) carried the RAW hostile
+    // value straight into outputs['sarif-path'] and the SARIF write target. Neutralize
+    // it ONCE, before any early return, so every downstream path - usage error, scan,
+    // or the catch-all - reports and writes only the safe default. `inputs` below is
+    // the SANITIZED view used everywhere; `sarifSafe` records whether the caller's
+    // value was itself rejectable (its own exit-2 usage error, emitted below).
+    // Two-layer containment, folded into ONE gate so EVERY early return neutralizes a
+    // hostile value uniformly:
+    //   (a) LEXICAL - absolute / ".."-escape / control char (string-only, always run).
+    //   (b) FILESYSTEM - a relative, ".."-free path whose leading dir component or the
+    //       target file itself is a SYMLINK escaping the workspace. Only the real fs can
+    //       see this, so it runs through the injected io.sarifTargetContained() when the
+    //       caller provides one (main() does; unit tests with a pure in-memory io do not,
+    //       and correctly skip it - there is no filesystem to traverse). A resolver that
+    //       throws fails CLOSED (treated as an escape). This closes the CLASS: the lexical
+    //       spellings AND the symlink shape of "arbitrary write outside the workspace".
+    const lexicallySafe = sarifOutputIsContained(rawInputs.sarifOutput);
+    let realPathSafe = true;
+    if (lexicallySafe && io && typeof io.sarifTargetContained === 'function') {
+      try {
+        realPathSafe = io.sarifTargetContained(rawInputs.sarifOutput) === true;
+      } catch {
+        realPathSafe = false; // any resolver error -> cannot vouch -> fail closed
+      }
+    }
+    const sarifSafe = lexicallySafe && realPathSafe;
+    const inputs = sarifSafe ? rawInputs : { ...rawInputs, sarifOutput: DEFAULT_SARIF_OUTPUT };
 
     // --- Adapter-owned usage validation (exit 2), before any scanning. --------
     if (!isNonEmptyString(inputs.family)) {
@@ -406,6 +727,26 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
           'The "family" input is required and is never auto-detected '
             + '(identity | role-trust | resource | permissions-boundary | session | scp | rcp).',
           null,
+        ),
+      }], inputs, manifest);
+    }
+
+    // --- sarif-output confinement (exit 2), before any scanning or writing. ----
+    // The Action's contract is to write a SARIF FILE IN THE WORKSPACE. A caller-
+    // supplied absolute path or one escaping the workspace via ".." (or one carrying a
+    // control char) would be an arbitrary-file-write / output-forgery vector, so it
+    // fails CLOSED as a usage error. The hostile value was ALREADY swapped for the safe
+    // default in `inputs` above, so it never reaches an output line or the file sink.
+    if (!sarifSafe) {
+      return finalize([{
+        file: null,
+        result: usageResult(
+          'UNSAFE_SARIF_OUTPUT',
+          'The "sarif-output" input must be a RELATIVE path inside the workspace. '
+            + 'An absolute path, one escaping the workspace via "..", one containing '
+            + 'a control character, or one whose directory component or target file is a '
+            + 'symlink escaping the workspace is rejected.',
+          inputs.family,
         ),
       }], inputs, manifest);
     }
@@ -462,7 +803,12 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
 }
 
 function safeInputs(env) {
-  try { return readInputs(env); } catch { return { sarifOutput: 'iam-blast-radius.sarif', family: null }; }
+  try {
+    const inputs = readInputs(env);
+    // Never let a hostile sarif-output survive the catch-all fail-closed path either.
+    if (!sarifOutputIsContained(inputs.sarifOutput)) inputs.sarifOutput = DEFAULT_SARIF_OUTPUT;
+    return inputs;
+  } catch { return { sarifOutput: DEFAULT_SARIF_OUTPUT, family: null }; }
 }
 
 // Aggregate a list of scanned units into the final structured result + outputs.
@@ -582,6 +928,11 @@ export async function main() {
   const io = {
     listFiles: () => walkFiles(nodeFs, nodePath, baseDir),
     readFile: (rel) => nodeFs.readFileSync(nodePath.join(baseDir, rel), 'utf8'),
+    // S4-action-hardening (ROUND 2): the fs-aware half of sarif-output containment.
+    // runAction folds this into its sarifSafe gate so a sarif-output that traverses (or
+    // is) a symlink escaping the workspace fails CLOSED (exit 2, UNSAFE_SARIF_OUTPUT) and
+    // is swapped for the safe default BEFORE any write - not just rejected at the sink.
+    sarifTargetContained: (rel) => sarifTargetContainedFs(nodeFs, nodePath, baseDir, rel),
   };
 
   let final;
@@ -597,7 +948,28 @@ export async function main() {
   // Write SARIF, then ALL outputs, then the summary - BEFORE failing the action.
   const sinks = {
     writeSarif: (rel, text) => {
-      const sarifAbs = nodePath.isAbsolute(rel) ? rel : nodePath.join(baseDir, rel);
+      // Defense in depth (S4-action-hardening): runAction already rejects an unsafe
+      // sarif-output as a usage error, so `rel` here is a confined relative path. The
+      // sink independently REFUSES to write outside the workspace - an absolute path or
+      // one that resolves above baseDir throws (captured as a writeError, never a clean
+      // pass) rather than performing an arbitrary-file-write. This is the last guard on
+      // the ACTION.md contract "writes a SARIF file in the workspace; nothing more".
+      const baseResolved = nodePath.resolve(baseDir);
+      const sarifAbs = nodePath.resolve(baseResolved, rel);
+      const within = sarifAbs === baseResolved
+        || sarifAbs.startsWith(baseResolved + nodePath.sep);
+      if (nodePath.isAbsolute(rel) || !within) {
+        throw new Error(`refusing to write SARIF outside the workspace: ${rel}`);
+      }
+      // Symlink-aware last guard (S4-action-hardening ROUND 2): the LEXICAL `within`
+      // check is TRUE for a path like `reports/x.sarif` even when `reports` is a symlink
+      // to an external dir - the write would then land outside the workspace. runAction
+      // already rejects such a value via io.sarifTargetContained, but the sink verifies
+      // independently (defense in depth) that no existing path component is a symlink
+      // escaping the workspace before writing anything.
+      if (!sarifTargetContainedFs(nodeFs, nodePath, baseResolved, rel)) {
+        throw new Error(`refusing to write SARIF through a symlink outside the workspace: ${rel}`);
+      }
       nodeFs.mkdirSync(nodePath.dirname(sarifAbs), { recursive: true });
       nodeFs.writeFileSync(sarifAbs, text);
     },

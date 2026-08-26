@@ -25,6 +25,17 @@
 // DOM. Same Condition object -> same classification, every run. Hostile keys and
 // values are only ever read as strings and compared; never interpreted as code.
 
+// S3-dos-budget-all (defense in depth): the classification loops are LINEAR today
+// (O(operators x keys) per statement, O(statements x keys) for unsupportedCondition-
+// Keys, both reached from analyze()'s coverage enrichment), and they never touch the
+// shared matcher, so they charged the cooperative work budget ZERO. That is the exact
+// shape of every DoS residual in this story: an uncharged policy-derived loop that a
+// FUTURE superlinear regression could ride to a multi-second COMPLETE verdict (T5/T8).
+// chargeWork is a no-op while no budget is armed, so charging per operator/key/value
+// inspected changes no verdict but makes these loops fail CLOSED if they ever blow up.
+// glob.js is a leaf module (no imports), so this introduces no import cycle.
+import { chargeWork } from './glob.js';
+
 // The four classes a condition entry can carry.
 export const CONDITION_CLASS = Object.freeze({
   CONSTRAINT: 'constraint', // narrows when / where / who
@@ -620,6 +631,9 @@ export function classifyConditions(condition) {
       const block = condition[op];
       if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
       const keys = Object.keys(block).sort();
+      // Defense in depth: charge one unit per condition key classified so this loop
+      // participates in the cooperative budget (see the module header note).
+      chargeWork(keys.length);
       for (const key of keys) {
         entries.push(classifyConditionEntry(op, key, block[key], presenceCheckedKeys));
       }

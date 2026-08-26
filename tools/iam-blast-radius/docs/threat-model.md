@@ -43,9 +43,22 @@ overrun and report gracefully. Reject circular structures.
 T6. **Unsafe export** -> Prefer JSON/Markdown export. If HTML export is
 offered, escape all interpolated policy values. Downloads via Blob only.
 
-T7. **Supply chain** -> Minimal, pinned, self-hosted deps; SBOM; `npm audit`
-+ OSV in CI; license allowlist; GH Actions pinned to commit SHAs; no runtime
-dependency download; reproducible build.
+T7. **Supply chain** -> Minimal, self-hosted, pinned deps. The SHIPPED tool
+(engine + app + worker + CLI + Action) has ZERO runtime dependencies and NO
+build step (architecture invariants 2 + 7): what is committed is what runs, so
+there is no build-time transform and no transitive-runtime compromise surface.
+Dev-only tooling (test/e2e/mutation) is pinned in `package.json` and locked in
+`package-lock.json`; it never ships to consumers.
+Controls ENFORCED in CI today (`.github/workflows/security.yml` + `ci.yml`):
+- GH Actions pinned to full commit SHAs; the `zizmor` unpinned-uses audit gates
+  it (any un-pinned `uses:` fails the Security workflow).
+- `gitleaks` scans the full git history for secrets.
+- `actionlint` lints every workflow.
+NOT yet implemented (tracked; this file must NOT claim them as present until the
+workflow actually runs them): SBOM generation, `npm audit` / OSV dependency-
+advisory scanning, and an automated license allowlist. These would cover only
+the dev-only deps (the shipped artifact has none), so they rank below the
+zero-runtime-dep + no-build guarantees above.
 
 T8. **Misleading conclusions as a security harm** -> The tool must not claim
 effective permissions from insufficient context. Overstated certainty is a

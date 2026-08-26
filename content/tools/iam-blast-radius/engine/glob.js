@@ -107,10 +107,12 @@ export function isGlobBudgetError(e) {
 
 /**
  * Arm the cooperative WALL-CLOCK budget. `deadlineEpochMs` is an absolute
- * Date.now()-style timestamp; once accumulated work crosses a checkpoint past it,
- * the matcher throws a GlobBudgetError({kind:'clock'}). A deadline already in the
- * past aborts on the very first checkpoint (used by tests to force the path
- * deterministically). Resets the work counter but does NOT touch a work limit an
+ * Date.now()-style timestamp; once accumulated work crosses a checkpoint at or past
+ * it, the matcher throws a GlobBudgetError({kind:'clock'}). A deadline already at or
+ * before "now" aborts on the very first checkpoint DETERMINISTICALLY (chargeWork
+ * compares with `>=`), so arming Date.now()+budgetMs for budgetMs<=0 always fails
+ * closed rather than racing on whether a millisecond elapses first (used by tests to
+ * force the path). Resets the work counter but does NOT touch a work limit an
  * enclosing analyze() may have armed. Caller MUST pair with disarmGlobBudget() in a
  * finally block.
  */
@@ -164,7 +166,17 @@ export function chargeWork(n) {
     // Deterministic work ceiling first (browser + Node backstop).
     if (workDone > workLimit) throw new GlobBudgetError('work');
     // Wall-clock deadline second (Node adapters only; never armed on the browser).
-    if (budgetDeadline !== Infinity && Date.now() > budgetDeadline) {
+    // Uses `>=` (deadline REACHED, not strictly exceeded) so a deadline set at or
+    // before the sampled instant aborts DETERMINISTICALLY on the first checkpoint,
+    // instead of hinging on whether >=1ms happens to elapse between arming and the
+    // first charge. That race made a zero-budget arm (armGlobBudget(Date.now()+0),
+    // as scan()/the Action pass for budgetMs<=0) a coin flip under load: a small
+    // policy would intermittently fail CLOSED (exit 3) when the checkpoint sampled a
+    // millisecond later, and complete otherwise. A budget's deadline is a wall it may
+    // not cross, so reaching it is exhaustion -> abort. Positive budgets are unaffected
+    // except at the exact-equal instant (a measure-zero boundary that is already
+    // "budget exhausted"), keeping fast policies well within a generous budget.
+    if (budgetDeadline !== Infinity && Date.now() >= budgetDeadline) {
       throw new GlobBudgetError('clock');
     }
   }

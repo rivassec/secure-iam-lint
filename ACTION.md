@@ -128,7 +128,7 @@ run the Action **multiple times** with different `paths` globs and a different
 | `subject-account` | no | - | AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). |
 | `partition` | no | - | AWS partition (`aws`, `aws-us-gov`, `aws-cn`, `aws-iso*`). No default on purpose: an omitted partition is "not asserted", not `aws`. A cross-partition role-viability verdict is trusted only when you supply a real partition; otherwise it is treated as unknown and fails closed (exit `3`). |
 | `fail-on` | no | `high` | Minimum severity that fails the check: `critical`, `high`, `medium`, `low`, `info`, `none`. `none` does not turn a fail-closed `3` into `0`. |
-| `sarif-output` | no | `iam-blast-radius.sarif` | Path to write the SARIF 2.1.0 output file. |
+| `sarif-output` | no | `iam-blast-radius.sarif` | Relative path (inside the workspace) to write the SARIF 2.1.0 output file. An absolute path, one escaping the workspace via `..`, one containing a control character, or one whose directory component or target file is a symlink escaping the workspace is rejected as a usage error (exit `2`) and nothing is written outside the workspace. |
 | `budget-ms` | no | `10000` | Per-policy wall-clock analysis budget, in milliseconds. If a policy's analysis overruns this budget it fails closed (exit `3`, `RESOURCE_BUDGET_EXCEEDED`) - it never reports a clean pass. A non-numeric value falls back to the default. |
 
 ## Outputs

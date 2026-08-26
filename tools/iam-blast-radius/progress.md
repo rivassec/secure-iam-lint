@@ -311,3 +311,28 @@ Last-round reason per story:
 - S4-sarif-sid: accepted (all-pass)
 - S5-md-autolink: human-review (1 blocking) - chain halted here
 - (subsequent stories): pending - un-reached due to early halt
+
+## Phase 18 - app-sec-round2 story outcomes (2026-08-25)
+Chain halted early at S2. Stories after the halt point un-reached (pending).
+Last-round reason per story:
+- S1-shape-failclosed: accepted (all-pass)
+- S2-passrole-allstmts: human-review (1 blocking) - chain halted here
+- (subsequent stories): pending - un-reached due to early halt
+
+## Phase 18 - app-sec-round2 story outcomes (re-run 2026-08-25)
+Chain halted early at S3. Stories after the halt point un-reached (pending).
+Last-round reason per story:
+- S1-shape-failclosed: accepted (all-pass)
+- S2-passrole-allstmts: accepted (all-pass)
+- S3-dos-budget-all: human-review (1 blocking) - chain halted here
+- (subsequent stories): pending - un-reached due to early halt
+
+## Phase 18 - app-sec-round2 story outcomes (final 2026-08-26)
+All Phase-18 stories accepted.
+Last-round reason per story:
+- S1-shape-failclosed: accepted (all-pass)
+- S2-passrole-allstmts: accepted (all-pass)
+- S3-dos-budget-all: accepted (all-pass)
+- S4-action-hardening: accepted (all-pass)
+- S5-sarif-symmetric: accepted (all-pass)
+- S6-cigate-doc: accepted (all-pass)
