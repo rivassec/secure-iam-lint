@@ -429,6 +429,73 @@ export function globMatchPath(pattern, text) {
   return dp[0];
 }
 
+// S1-DIRSYMLINK: decide whether `pattern` could match SOME path strictly UNDER directory
+// `dir` - i.e. some string of the form `dir + '/' + <nonempty suffix>`. A DIRECTORY symlink
+// is never followed, so its whole hidden subtree is invisible to enumeration; if that subtree
+// could contain a policy file the scan pattern selects, the run must FAIL CLOSED even though
+// the symlink's OWN path does not itself match the file glob (e.g. pattern `**/*.json` or
+// `configs/*.json` vs a directory symlink named `configs`). Without this, a directory symlink
+// smuggles an entire subtree of policies past the aggregate and the run reports exit 0 clean.
+//
+// Implemented as a LINEAR forward NFA simulation over the fixed prefix `dir + '/'` (no
+// backtracking, no RegExp - same ReDoS-immunity rationale as globMatchPath), using the SAME
+// token semantics compileGlobTokens encodes. After consuming `dir/`, if ANY pattern token
+// remains reachable the pattern can still match a nonempty filename/suffix under the directory,
+// so a hidden file could match -> return true. If the prefix cannot be consumed at all the
+// pattern cannot descend into this directory -> false (an UNRELATED directory symlink does not
+// false-fail). Deterministic.
+export function globCanMatchUnderDir(pattern, dir) {
+  const d = String(dir);
+  if (d.length === 0) return false;
+  const tokens = compileGlobTokens(pattern);
+  const N = tokens.length;
+  // Epsilon-closure: a star token can be SKIPPED (match zero), advancing to i+1.
+  const closure = (set) => {
+    const stack = [...set];
+    while (stack.length > 0) {
+      const i = stack.pop();
+      if (i >= N) continue;
+      const k = tokens[i].k;
+      if ((k === TOK_STAR1 || k === TOK_STAR2 || k === TOK_STAR2SLASH) && !set.has(i + 1)) {
+        set.add(i + 1);
+        stack.push(i + 1);
+      }
+    }
+    return set;
+  };
+  // Advance the NFA state set by consuming exactly one character `c`.
+  const step = (set, c) => {
+    const next = new Set();
+    for (const i of set) {
+      if (i >= N) continue;
+      const tok = tokens[i];
+      if (tok.k === TOK_ONE) {
+        if (tok.pred(c)) next.add(i + 1);
+      } else if (tok.k === TOK_STAR1) {
+        if (c !== '/') next.add(i); // '[^/]*': consume a non-'/' char, stay
+      } else if (tok.k === TOK_STAR2) {
+        next.add(i); // '.*': consume any char, stay
+      } else { // TOK_STAR2SLASH: '(?:.*/)?' - any run of chars closing on a '/'
+        next.add(i); // still inside the '.*' run (any char, incl '/')
+        if (c === '/') next.add(i + 1); // this '/' closes the run -> advance the token
+      }
+    }
+    return next;
+  };
+  const prefix = `${d}/`;
+  let states = closure(new Set([0]));
+  for (let p = 0; p < prefix.length; p++) {
+    states = closure(step(states, prefix[p]));
+    if (states.size === 0) return false; // pattern cannot descend into this directory
+  }
+  // A remaining token (state i < N) means the pattern can still match a nonempty suffix
+  // (a hidden filename) under `dir/` -> the directory symlink could smuggle a matching file.
+  for (const i of states) {
+    if (i < N) return true;
+  }
+  return false;
+}
+
 // Translate a POSIX-style glob into an ANCHORED RegExp. Path-aware:
 //   **/ or trailing ** matches any number of path segments (incl. zero)
 //   *   matches any run of non-'/' characters
@@ -691,6 +758,94 @@ function aggregateCapResult(reason, message, family) {
   });
 }
 
+// A synthetic fail-closed (exit 3) result appended when a SYMLINK whose path matches a
+// scan pattern was excluded from enumeration (S1-symlink-failclosed). walkFiles never
+// follows symlinks (traversal safety), so such a would-be policy file is invisible to the
+// scan; if the OTHER real files analyze clean, the aggregate would otherwise report
+// complete / exit 0 while a matching policy file quietly fell out - the exact drop the
+// threat model forbids. This carries an explicit 'incomplete' analyzer-state so the run is
+// surfaced as fail-closed (NEVER clean) and projects into SARIF as a kind:'fail' /
+// category:'analysis-state' notification with NO security-severity, exactly like every
+// other could-not-analyze state. analysisStatus is 'partial' (the OTHER files were
+// analyzed; this one was not) and the exit code is FAIL_CLOSED so the aggregate worst-code
+// is at least 3 and the check fails.
+export const SYMLINK_EXCLUDED_REASON = 'SYMLINK_EXCLUDED';
+function symlinkExcludedResult(message, family) {
+  return Object.freeze({
+    analysisStatus: 'partial',
+    analysisStates: Object.freeze([Object.freeze({
+      analysisState: 'incomplete', code: SYMLINK_EXCLUDED_REASON, message, path: null,
+    })]),
+    findings: Object.freeze([]),
+    findingsCount: 0,
+    blockingCount: 0,
+    exitCode: EXIT.FAIL_CLOSED,
+    reason: SYMLINK_EXCLUDED_REASON,
+    family: family != null ? family : null,
+  });
+}
+
+// The excluded-symlink paths that MATCH at least one scan pattern, using the SAME match
+// semantics resolveFiles uses (linear ReDoS-safe globMatchPath for magic patterns, literal
+// equality otherwise). An over-complex pattern is skipped here (resolveFiles already fails
+// it closed to a usage error). Returns a stable, de-duplicated, sorted list so the
+// resulting fail-closed units are deterministic. An unrelated symlink (matching no pattern)
+// is never returned -> no false-fail on a monorepo full of unrelated symlinks.
+export function matchedExcludedSymlinks(patterns, excludedSymlinks) {
+  const pats = Array.isArray(patterns) ? patterns : [];
+  const rawLinks = Array.isArray(excludedSymlinks) ? excludedSymlinks : [];
+  if (rawLinks.length === 0) return [];
+  // Normalize each entry to { path, isDir }. A bare-string entry (the exported-unit contract,
+  // used by tests) has UNKNOWN type (isDir === null) and is treated CONSERVATIVELY as a
+  // possible directory. walkFiles supplies typed { path, isDir } objects so a KNOWN
+  // non-directory symlink is not over-flagged as a subtree container.
+  const links = rawLinks.map((l) => {
+    if (typeof l === 'string') return { path: l, isDir: null };
+    const path = l && l.path;
+    let isDir = null;
+    if (l && l.isDir === true) isDir = true;
+    else if (l && l.isDir === false) isDir = false;
+    return { path: isNonEmptyString(path) ? path : '', isDir };
+  }).filter((l) => isNonEmptyString(l.path));
+  const matched = new Set();
+  for (const rawPattern of pats) {
+    const pattern = normalizePattern(rawPattern);
+    if (globPatternTooComplex(pattern)) continue; // resolveFiles fails this closed already
+    const magic = hasMagic(pattern);
+    for (const { path: link, isDir } of links) {
+      // (1) The symlink's OWN path matches the scan pattern - a FILE symlink standing in for a
+      //     policy file. (S1-symlink-failclosed: the original guard.)
+      if (magic ? globMatchPath(pattern, link) : link === pattern) {
+        matched.add(link);
+        continue;
+      }
+      // (2) S1-DIRSYMLINK: a DIRECTORY symlink (or an unknown-typed entry) whose hidden subtree
+      //     could CONTAIN a file the pattern selects. Its own path need not match the file glob
+      //     (e.g. `configs` vs `configs/*.json` or `**/*.json`). A KNOWN non-directory symlink
+      //     (isDir === false) cannot contain a subtree, so it is not treated as an ancestor.
+      if (isDir !== false && globCanMatchUnderDir(pattern, link)) matched.add(link);
+    }
+  }
+  return [...matched].sort();
+}
+
+// Build the fail-closed units for every excluded symlink that matches a scan pattern. Each
+// matched symlink becomes its OWN unit (its path is recorded as the unit file so the SARIF
+// run points at the excluded would-be policy file). Empty when nothing matched.
+function symlinkExcludedUnits(patterns, excludedSymlinks, family) {
+  return matchedExcludedSymlinks(patterns, excludedSymlinks).map((rel) => ({
+    file: rel,
+    result: symlinkExcludedResult(
+      'A policy file matching a scan pattern is a SYMLINK and was excluded from analysis '
+        + '(symlinks are never followed, for traversal safety). Because its path matched the '
+        + 'scan paths, this run is INCOMPLETE and FAILS CLOSED (exit 3) - it is never reported '
+        + 'as a clean pass. Zero findings does NOT mean the policy is safe; it means the policy '
+        + `could not be analyzed. Replace the symlink with a real file to analyze it. Path: ${rel}`,
+      family,
+    ),
+  }));
+}
+
 // --- SARIF assembly -----------------------------------------------------------
 
 // Build one multi-run SARIF 2.1.0 log: one run per scanned unit (each carrying its
@@ -863,12 +1018,27 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
     }
 
     const patterns = splitPaths(inputs.paths);
+
+    // S1-symlink-failclosed: recover the symlink entries walkFiles excluded (it never
+    // follows a symlink, for traversal safety) and, for EACH one whose path matches a scan
+    // pattern, build an explicit fail-closed (exit 3) 'incomplete' unit. Without this, a
+    // symlinked policy file that matches the glob is silently dropped from enumeration and,
+    // if the other real files analyze clean, the aggregate would report complete / exit 0 -
+    // the exact "one file quietly falls out of the aggregate" the threat model forbids. An
+    // unrelated symlink (matching no pattern) contributes nothing, so a monorepo full of
+    // unrelated symlinks does not false-fail. These units are folded into EVERY downstream
+    // return path (usage-error resolveFiles branch AND the scan branch) so the exit-3 verdict
+    // can never be lost.
+    const excludedSymlinks = io && typeof io.listExcludedSymlinks === 'function'
+      ? io.listExcludedSymlinks() : [];
+    const symlinkUnits = symlinkExcludedUnits(patterns, excludedSymlinks, inputs.family);
+
     const { files, error } = resolveFiles(patterns, io && typeof io.listFiles === 'function' ? io.listFiles() : []);
     if (error) {
       return finalize([{
         file: null,
         result: usageResult(error.reason, error.message, inputs.family),
-      }], inputs, manifest);
+      }, ...symlinkUnits], inputs, manifest);
     }
 
     // --- Scan each resolved file READ-ONLY, under the AGGREGATE ceiling. -------
@@ -967,6 +1137,11 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
       units.push({ file: null, result: aggregateCapResult(AGGREGATE_CAP_REASON, capBreach.message, inputs.family) });
     }
 
+    // Fold in the fail-closed units for any scan-pattern-matching excluded symlink so a
+    // clean set of real files can NEVER report exit 0 while a matching policy symlink was
+    // dropped (S1-symlink-failclosed).
+    for (const u of symlinkUnits) units.push(u);
+
     return finalize(units, inputs, manifest);
   } catch (e) {
     // Catch-all: an unexpected error NEVER becomes exit 0. Fail closed to INTERNAL.
@@ -1063,8 +1238,15 @@ export function emitArtifacts(final, env, sinks) {
 // A recursive file walk producing cwd-relative POSIX paths. Skips .git and
 // node_modules (never useful policy sources, and skipping them bounds the walk),
 // and never follows symlinks (avoids cycles + traversal out of the workspace).
+//
+// Returns { files, excludedSymlinks }. S1-symlink-failclosed: a symlink is NEVER
+// followed (traversal safety), but the excluded entry is RECORDED rather than silently
+// dropped, so a symlinked policy file whose path MATCHES a scan pattern cannot quietly
+// fall out of the aggregate. runAction fails the run CLOSED (exit 3) if any recorded
+// symlink matches a scan pattern; an unrelated symlink (no pattern match) is ignored.
 function walkFiles(nodeFs, nodePath, baseDir) {
   const out = [];
+  const excludedSymlinks = [];
   const MAX_FILES = 200000; // defensive bound against a pathological tree
   const SKIP_DIRS = new Set(['.git', 'node_modules']);
   const stack = [''];
@@ -1078,18 +1260,35 @@ function walkFiles(nodeFs, nodePath, baseDir) {
       continue;
     }
     for (const ent of entries) {
-      if (ent.isSymbolicLink()) continue; // never follow symlinks
       const rel = relDir ? `${relDir}/${ent.name}` : ent.name;
+      if (ent.isSymbolicLink()) {
+        // Never DESCEND into the symlink (traversal safety - avoids cycles + escaping the
+        // workspace), but RECORD it so a would-be policy file cannot be silently excluded
+        // from the aggregate (S1-symlink-failclosed). Classify the target type with a SINGLE
+        // stat (resolves the link but does NOT descend or read); a DIRECTORY symlink hides a
+        // whole subtree and must fail closed if that subtree could contain a matching policy
+        // file (S1-DIRSYMLINK). A dangling/unreadable link cannot expose a subtree -> isDir
+        // false (only its own path can match a pattern).
+        let isDir = false;
+        try {
+          isDir = nodeFs.statSync(nodePath.join(baseDir, rel)).isDirectory();
+        } catch {
+          isDir = false;
+        }
+        excludedSymlinks.push({ path: rel, isDir });
+        if (excludedSymlinks.length >= MAX_FILES) return { files: out, excludedSymlinks };
+        continue;
+      }
       if (ent.isDirectory()) {
         if (SKIP_DIRS.has(ent.name)) continue;
         stack.push(rel);
       } else if (ent.isFile()) {
         out.push(rel);
-        if (out.length >= MAX_FILES) return out;
+        if (out.length >= MAX_FILES) return { files: out, excludedSymlinks };
       }
     }
   }
-  return out;
+  return { files: out, excludedSymlinks };
 }
 
 export async function main() {
@@ -1099,8 +1298,14 @@ export async function main() {
   // The workspace base: the runner-provided workspace, else the process cwd.
   const baseDir = process.env.GITHUB_WORKSPACE || process.cwd();
 
+  // Walk the tree ONCE (memoized) and expose both the real files and the excluded
+  // symlink entries; walkFiles never follows a symlink but records it so a symlinked
+  // policy file matching a scan pattern cannot silently drop from the aggregate.
+  let walkResult;
+  const walk = () => (walkResult || (walkResult = walkFiles(nodeFs, nodePath, baseDir)));
   const io = {
-    listFiles: () => walkFiles(nodeFs, nodePath, baseDir),
+    listFiles: () => walk().files,
+    listExcludedSymlinks: () => walk().excludedSymlinks,
     // Enforce the MAX_BYTES cap via statSync BEFORE readFileSync (threat-model T5): an
     // over-cap policy file is rejected with a tagged INPUT_TOO_LARGE error and is never
     // read into memory. runAction routes that to a fail-closed exit-3 unit for the file.

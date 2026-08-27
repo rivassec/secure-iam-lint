@@ -1,0 +1,26 @@
+{
+  "name": "Cross-account scoped sts:AssumeRole fully removed by an explicit Deny (negative; deny)",
+  "note": "S2-crossaccount-scoped-surface (A) Deny interaction: the Allow would be a cross-account scoped assume (role in 999999999999, subject 123456789012), but a same-policy unconditional Deny on sts:AssumeRole removes the path (AWS explicit-Deny precedence). CROSS-ACCOUNT-ASSUME-ROLE must NOT fire - a denied capability is not a grant. Witnesses the negative and Deny cells.",
+  "context": { "subjectAccount": "123456789012", "partition": "aws" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowAssumePartner",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::999999999999:role/PartnerRole"
+      },
+      {
+        "Sid": "DenyAllAssume",
+        "Effect": "Deny",
+        "Action": "sts:AssumeRole",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["CROSS-ACCOUNT-ASSUME-ROLE", "ASSUME-ROLE-EXPANSION"]
+  }
+}

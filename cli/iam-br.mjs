@@ -27,7 +27,7 @@
 // The output FORMAT never changes the exit code: a fail-closed run is exit 3 whether
 // it is printed as JSON or SARIF.
 
-import { readFileSync, writeFileSync, realpathSync, lstatSync, mkdirSync, statSync } from 'node:fs';
+import { writeFileSync, realpathSync, lstatSync, mkdirSync, openSync, readSync, closeSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -75,6 +75,19 @@ const FORMATS = Object.freeze(new Set(['json', 'sarif']));
 // TOO_LARGE/exit-3 fail-closed path (via scan -> validate), so an over-cap input can never
 // report clean/exit-0 - and it is enforced BEFORE the whole input is materialized (T5).
 const INPUT_TOO_LARGE = 'INPUT_TOO_LARGE';
+
+// Tagged-error code raised by readFileCapped when the positional path is NOT a regular
+// file (a symlink, char/block device like /dev/zero, FIFO, socket, directory, ...). It is
+// deliberately DISTINCT from INPUT_TOO_LARGE: run() does NOT special-case it, so it flows
+// down the SAME could-not-read fail-closed path as any other unreadable file (exit 2, no
+// stdout, generic message unless --verbose) - a non-regular file must NEVER read clean.
+const NON_REGULAR_FILE = 'NON_REGULAR_FILE';
+
+function nonRegularFileError(path) {
+  const e = new Error(`refusing to read '${path}': not a regular file`);
+  e.code = NON_REGULAR_FILE;
+  return e;
+}
 
 function inputTooLargeError(bytes) {
   const e = new Error(
@@ -509,8 +522,10 @@ export async function run(argv, io) {
         text = io.readFile(opts.file);
       } catch (e) {
         if (e && e.code === INPUT_TOO_LARGE) {
-          // The statSync pre-guard rejected an over-cap file before readFileSync. Fail
-          // CLOSED down the shared TOO_LARGE/exit-3 path, not the usage-error path.
+          // readFileCapped's byte pre-guard / bounded read rejected an over-cap file. Fail
+          // CLOSED down the shared TOO_LARGE/exit-3 path, not the usage-error path. (A
+          // NON_REGULAR_FILE rejection is NOT tagged INPUT_TOO_LARGE, so it falls to the
+          // could-not-read usage-error branch below - a special file never reads clean.)
           oversize = true;
         } else {
           // A missing or unreadable input path is a usage/config error (exit 2),
@@ -692,18 +707,61 @@ export function readStdin(stream = process.stdin) {
   });
 }
 
-// Read a policy FILE, enforcing the MAX_BYTES cap BEFORE the file is read into memory
-// (threat-model T5). statSync reports the on-disk size cheaply; an over-cap file is
-// rejected with the tagged INPUT_TOO_LARGE error and is NEVER readFileSync'd, so a
-// multi-GB file cannot be materialized. A file at or under the cap is read as UTF-8.
-// A statSync failure (missing / unreadable path) propagates as the original error so
+// Read a policy FILE, enforcing the MAX_BYTES cap BEFORE and DURING the read
+// (threat-model T5, availability). Two layers, both fail CLOSED:
+//
+//   1. TYPE guard (S3-readfilecap-special). lstatSync the path - do NOT follow the link -
+//      and REJECT anything that is not a regular file. This is the load-bearing fix:
+//      statSync FOLLOWS symlinks and reports size 0 for char/block devices, FIFOs, and
+//      /proc entries, so a size-only pre-guard would pass a zero-size special file
+//      (e.g. /dev/zero, or a symlink to it) and then readFileSync it UNBOUNDED - a
+//      never-EOF source hangs the process, and --budget-ms only wraps analyze(), not this
+//      read. lstat inspects the LINK itself (isFile() is false for a symlink, a device, a
+//      FIFO, a socket, a directory), so all of these are rejected as could-not-read
+//      (NON_REGULAR_FILE -> run() exit 2), never read.
+//
+//   2. BOUNDED read. Even a regular file can grow between the stat and the read (TOCTOU),
+//      or be a "regular" pseudo-file (some /proc entries stat as regular, size 0) that
+//      yields more than its stat size. So we open a fd and read at most MAX_BYTES + 1
+//      bytes via readSync; if the source still produces more than MAX_BYTES we reject it
+//      as INPUT_TOO_LARGE. This guarantees the read can never materialize beyond the cap
+//      mid-read, independent of what statSync claimed. The oversized-regular-file
+//      rejection (tagged INPUT_TOO_LARGE, routed to fail-closed exit 3) is preserved.
+//
+// A lstatSync failure (missing / unreadable path) propagates as the original error so
 // run()'s usage-error path (exit 2) still handles it exactly as before.
 export function readFileCapped(path) {
-  const size = statSync(path).size;
+  const lst = lstatSync(path); // do NOT follow the link: inspect the path's own type
+  if (!lst.isFile()) {
+    // Symlink, char/block device, FIFO, socket, directory, ... - never read it.
+    throw nonRegularFileError(path);
+  }
+  // Cheap pre-reject of an oversized regular file (avoids opening it at all).
+  const size = lst.size;
   if (Number.isFinite(size) && size > LIMITS.MAX_BYTES) {
     throw inputTooLargeError(size);
   }
-  return readFileSync(path, 'utf8');
+  // Bounded read: cap the bytes we will materialize regardless of the stat size.
+  const cap = LIMITS.MAX_BYTES;
+  const fd = openSync(path, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(cap + 1); // one extra byte detects an over-cap source
+    let total = 0;
+    // Read until EOF or until we have pulled cap+1 bytes (whichever comes first).
+    while (total <= cap) {
+      const n = readSync(fd, buf, total, (cap + 1) - total, null);
+      if (n === 0) break; // EOF
+      total += n;
+    }
+    if (total > cap) {
+      // The source produced more than MAX_BYTES despite the stat - reject, do not return
+      // a truncated policy (that would silently drop content). Fail closed as TOO_LARGE.
+      throw inputTooLargeError(total);
+    }
+    return buf.subarray(0, total).toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -712,7 +770,8 @@ export async function main(argv = process.argv.slice(2)) {
   // containment guard and the write sink so they cannot disagree.
   const outputBase = process.cwd();
   const io = {
-    // readFileCapped enforces the MAX_BYTES cap via statSync BEFORE readFileSync (T5).
+    // readFileCapped rejects non-regular files (lstat) and enforces the MAX_BYTES cap via
+    // an lstat pre-guard + a bounded fd read (T5); a never-EOF special file cannot hang it.
     readFile: (p) => readFileCapped(p),
     readStdin,
     // The fs-aware half of --output containment (symlink-escape + no-overwrite).

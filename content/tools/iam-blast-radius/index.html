@@ -138,6 +138,20 @@
         </div>
       </div>
 
+      <div id="identity-context" class="identity-context" hidden>
+        <div class="controls">
+          <label for="subject-account" class="rc-label">Analyzed principal's account ID (optional)</label>
+          <input id="subject-account" type="text" class="rc-account" spellcheck="false" autocomplete="off"
+            inputmode="numeric" placeholder="123456789012" aria-describedby="subject-account-hint">
+          <p id="subject-account-hint" class="hint">The 12-digit AWS account that owns the principal this
+          identity policy is attached to. Supplying it lets the analyzer tell a same-account capability from
+          a cross-account one: a scoped <code>sts:AssumeRole</code> into a different account, or a
+          whole-container data read of another account's resource, is surfaced at low/info. Optional; left
+          blank, those cross-account cases stay unreported - without the subject account the analyzer cannot
+          tell same- from cross-account, and it does not guess.</p>
+        </div>
+      </div>
+
       <p id="status" class="status" role="status" aria-live="polite"></p>
 
       <div class="samples" aria-labelledby="samples-h">

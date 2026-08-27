@@ -1,0 +1,23 @@
+{
+  "name": "Cross-account scoped sts:AssumeRole (positive; conditioned; hostile ARN rides through inert)",
+  "note": "S2-crossaccount-scoped-surface (A): a scoped sts:AssumeRole to a specific role in ANOTHER account (999999999999) than the analyzed principal (context.subjectAccount 123456789012). detectAssumeRoleExpansion treats a single named role as routine and stays quiet WITHIN an account, so this cross-account transition otherwise read CLEAN. CROSS-ACCOUNT-ASSUME-ROLE fires at LOW, only because the subject account is known via context. A narrowing sts:ExternalId Condition is present (the finding still fires, conditioned), and the target role ARN embeds an HTML/JS payload that must survive verbatim in the finding's resources as inert DATA. Same-account scoped assume stays QUIET; exploitability depends on the target role's trust policy + permissions, which are out of scope.",
+  "context": { "subjectAccount": "123456789012", "partition": "aws" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AssumeIntoPartnerAccount",
+        "Effect": "Allow",
+        "Action": "sts:AssumeRole",
+        "Resource": "arn:aws:iam::999999999999:role/<script>alert(1)</script>",
+        "Condition": { "StringEquals": { "sts:ExternalId": "partner-shared-secret" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "hostile": true,
+    "hostileFor": ["CROSS-ACCOUNT-ASSUME-ROLE"],
+    "notFindingIds": ["ASSUME-ROLE-EXPANSION"]
+  }
+}

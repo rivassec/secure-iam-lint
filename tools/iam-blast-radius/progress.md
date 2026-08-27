@@ -367,3 +367,10 @@ Last-round reason per story:
 - B-aria-label[mechanical]: accepted (all-pass (2400 tests))
 - D-byte-cap[mechanical]: accepted (all-pass (2412 tests))
 - C-doc-note[mechanical]: accepted (all-pass (2418 tests))
+
+## Phase 21 story outcomes (2026-08-26)
+All Phase-21 stories accepted.
+Last-round reason per story:
+- S1-symlink-failclosed[semantic]: accepted (all-pass (2423 tests))
+- S2-crossaccount-scoped-surface[semantic]: accepted (all-pass (2479 tests))
+- S3-readfilecap-special[mechanical]: accepted (all-pass (2488 tests))

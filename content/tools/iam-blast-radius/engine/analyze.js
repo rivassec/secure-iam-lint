@@ -864,7 +864,7 @@ export function analyze(text, options) {
       return resourceResult(m.model, coverage, effectiveFamily, options || {});
     }
 
-    const rules = analyzeRules(m.model);
+    const rules = analyzeRules(m.model, options || {});
     const esc = analyzeEscalations(m.model, options || {});
     const errors = [
       ...(rules.ok ? [] : rules.errors),

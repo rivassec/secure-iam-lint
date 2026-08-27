@@ -426,6 +426,21 @@ export const ESCALATIONS = Object.freeze({
     docRef:
       'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_manage_modify.html',
   }),
+  // S2-crossaccount-scoped-surface (A): a sts:AssumeRole SCOPED to a specific role
+  // that lives in a DIFFERENT account than the analyzed principal. This is NOT the
+  // broad ASSUME-ROLE-EXPANSION wildcard shape (a single named role is the routine,
+  // intended use of AssumeRole WITHIN an account), but crossing the account boundary
+  // is a real, surfaceable capability - so it is emitted at LOW severity, only when
+  // the subject account is KNOWN. Whether it yields elevated privilege depends on the
+  // target role's trust policy + permissions, which are out of scope here.
+  'CROSS-ACCOUNT-ASSUME-ROLE': Object.freeze({
+    id: 'CROSS-ACCOUNT-ASSUME-ROLE',
+    order: 10,
+    title: 'Cross-account role assumption (scoped sts:AssumeRole into another account)',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html',
+  }),
 });
 
 export const ESCALATION_IDS = Object.freeze(Object.keys(ESCALATIONS));
@@ -1970,6 +1985,110 @@ function detectAssumeRoleExpansion(allows, out, denies) {
   }
 }
 
+// S2-crossaccount-scoped-surface (A): the concrete 12-digit account a SCOPED role
+// ARN targets, or null. Returns non-null ONLY for a concrete single-role ARN
+// (isConcreteRoleArn) whose account field is a bare 12-digit id - a wildcard/other
+// account axis is the broad ASSUME-ROLE-EXPANSION shape (handled there), and a
+// non-12-digit account cannot be soundly compared across the account boundary.
+// Pure string parse of inert policy data; never interpreted as code.
+function concreteRoleTargetAccount(resource) {
+  if (!isConcreteRoleArn(resource)) return null;
+  const parts = String(resource).split(':');
+  if (parts.length < 6) return null;
+  const account = parts[4];
+  return CONCRETE_ACCOUNT_ID_RE.test(account) ? account : null;
+}
+
+// S2-crossaccount-scoped-surface (A): surface a SCOPED sts:AssumeRole* whose target
+// role lives in a DIFFERENT account than the analyzed principal. detectAssumeRole
+// Expansion deliberately skips scoped (non-wildcard) assume grants as routine; that
+// is correct WITHIN an account, but a scoped assume of a role in ANOTHER account is
+// a cross-account privilege transition that otherwise read as CLEAN. Emitted at LOW
+// severity + a can-assume graph edge, and ONLY when the subject account is KNOWN
+// (via context/trust); an unknown subject stays conservative = the existing quiet
+// behavior. Same-account scoped assume stays QUIET (the routine-use design). The
+// finding states exploitability depends on the target role's trust policy +
+// permissions, which are not in scope here.
+function detectCrossAccountScopedAssume(allows, out, denies, ctx) {
+  const rawSubject = ctx && ctx.subjectAccount != null ? String(ctx.subjectAccount) : null;
+  const subjectAccount = rawSubject && CONCRETE_ACCOUNT_ID_RE.test(rawSubject)
+    ? rawSubject : null;
+  if (!subjectAccount) return; // unknown subject -> conservative: stay QUIET
+  for (const stmt of allows) {
+    const matched = grantedPatternsFor(stmt, ASSUME_ROLE_ACTIONS);
+    if (matched.length === 0) continue;
+    // A broad / wildcard role scope is the ASSUME-ROLE-EXPANSION shape (already
+    // emitted, with its own cross-account reasoning). Here we handle ONLY the
+    // scoped-but-cross-account case that detector skips.
+    if (resourceListIsBroadForAssume(stmt)) continue;
+    const deny = applyDenyToActions(denies, matched, stmt);
+    if (deny.blocked) continue; // same-policy explicit Deny removes the path
+    const crossAccounts = [];
+    // Collect the concrete cross-account role ARN(s) actually matched, in policy
+    // order. The finding's `resources` MUST be this cross-account subset, NOT the
+    // full statement scope: the graph builder keys the can-assume edge off
+    // firstResource(f), so scoping to the cross subset makes the edge target the
+    // cross-account role (not a same-account role that happens to be listed first),
+    // drops the spurious same-account can-assume edge the HYBRID design keeps QUIET,
+    // and makes the edge target order-independent. Mirrors the CROSS-ACCOUNT-DATA-READ
+    // path (rules.js crossResources.slice()).
+    const crossResources = [];
+    for (const r of stmt.resources) {
+      const acct = concreteRoleTargetAccount(r);
+      if (!acct || acct === subjectAccount) continue; // same-account scoped -> QUIET
+      if (!crossAccounts.includes(acct)) crossAccounts.push(acct);
+      if (!crossResources.includes(r)) crossResources.push(r);
+    }
+    if (crossResources.length === 0) continue; // same-account scoped -> QUIET (routine)
+    const actions = deny.actions;
+    const scope = crossAccounts.length === 1
+      ? 'account ' + crossAccounts[0]
+      : 'accounts ' + crossAccounts.join(', ');
+    out.push(
+      makeEscalation('CROSS-ACCOUNT-ASSUME-ROLE', stmt, {
+        // LOW: a scoped assume of ONE named role is not the broad expansion path; it
+        // is surfaced only because it crosses the account boundary. Severity (scope)
+        // is orthogonal to the two certainty signals below.
+        severity: 'low',
+        // The grant and the concrete cross-account role ARN are plainly in the policy
+        // text -> policy evidence HIGH. But whether the assume succeeds and yields
+        // elevated privilege depends on the target role's trust policy (it must trust
+        // this principal) and the target role's permissions - neither is in scope here
+        // -> path exploitability LOW.
+        policyEvidence: 'high',
+        pathExploitability: 'low',
+        conditioned: hasNonEmptyCondition(stmt),
+        denyNarrowed: deny.narrowed,
+        technique: 'cross-account-assume-role',
+        requiredActions: actions.slice(),
+        prerequisites: prerequisitesOf([
+          prereqTechnique('cross-account-assume-role', [prereqGroup(actions, 'primitive')], {}),
+        ]),
+        actions,
+        // Cross-account subset only (see crossResources above): keeps the can-assume
+        // graph edge on the cross-account role and off any same-account role.
+        resources: crossResources.slice(),
+        evidence: [evidenceOf(stmt, 'primitive', actions, 'cross-account role target')],
+        why:
+          'Grants sts:AssumeRole scoped to a specific role in ' + scope + ', which ' +
+          'is a DIFFERENT AWS account than the analyzed principal (account ' +
+          subjectAccount + '). Assuming a role in another account is a cross-account ' +
+          'privilege transition: the principal would operate with the target role\'s ' +
+          'permissions. Whether this is EXPLOITABLE depends on the target role\'s ' +
+          'trust policy (it must permit this principal) and on the target role\'s ' +
+          'permissions, neither of which is in scope here - so this is surfaced as a ' +
+          'low-severity cross-account capability, not a confirmed escalation.',
+        remediation:
+          'Confirm the principal is intended to assume a role in ' + scope + '. If so, ' +
+          'ensure the target role\'s trust policy trusts only the intended principals ' +
+          'and gate the assumption with conditions (e.g. sts:ExternalId, ' +
+          'aws:SourceAccount). If not, remove the cross-account role from the Resource ' +
+          'scope.',
+      }),
+    );
+  }
+}
+
 // IAM-902: is `r` a CONCRETE role ARN (names one specific role, no wildcard)?
 // A takeover chain is only asserted when the three primitives target the exact
 // same named role. A wildcard role scope (arn:aws:iam::*:role/*, role/*, a bare
@@ -2885,6 +3004,7 @@ const DETECTORS = [
   detectTrustModify,
   detectCredentialCreation,
   detectAssumeRoleExpansion,
+  detectCrossAccountScopedAssume,
   detectRoleTakeover,
 ];
 
@@ -2972,12 +3092,12 @@ export function analyzeEscalations(model, options) {
  * @param {string} text raw pasted/imported policy text
  * @returns {{ok:boolean, errors:Array, findings:Array<object>}}
  */
-export function analyzeEscalationsFromText(text) {
+export function analyzeEscalationsFromText(text, options) {
   const m = modelFromText(text);
   if (!m.ok) {
     return Object.freeze({ ok: false, errors: m.errors, findings: Object.freeze([]) });
   }
-  return analyzeEscalations(m.model);
+  return analyzeEscalations(m.model, options);
 }
 
 function deepFreeze(value) {

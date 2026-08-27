@@ -83,9 +83,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px
    attribute removed by app.js) only when the Resource-based family is selected.
    The resource-policy context (attached resource type + ARN) is explicit and
    required for a resource-based policy. No inline styles (CSP). */
-.resource-context { margin: .5rem 0; padding: .6rem .75rem; border: 1px solid var(--border);
+.resource-context,
+.identity-context { margin: .5rem 0; padding: .6rem .75rem; border: 1px solid var(--border);
   border-left: 4px solid var(--accent); border-radius: 4px; background: var(--panel); }
-.resource-context .hint { margin: 0 0 .35rem; }
+.resource-context .hint,
+.identity-context .hint { margin: 0 0 .35rem; }
 .rc-label { color: var(--muted); }
 #resource-type { font: inherit; padding: .4rem .5rem; border: 1px solid var(--border);
   border-radius: 4px; background: #14161a; color: var(--fg); }

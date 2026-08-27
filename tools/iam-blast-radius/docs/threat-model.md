@@ -92,6 +92,57 @@ effective permissions from insufficient context. Overstated certainty is a
 blocking finding (a user could wrongly clear a real risk). Distinguish
 confirmed / conditional / potential / blocked / unknown.
 
+**"complete" / "CLEAN" is NOT an affirmative safety claim.** A `complete`
+coverage verdict, or a zero-finding pass, means the analyzable surface was
+analyzed and nothing at-or-above the reporting bar fired - it never means
+"analyzed and proven safe". Two classes of SCOPED-but-real capability are, by the
+HYBRID design decision, DELIBERATELY not surfaced, and their silence must not be
+read as safety:
+- **Same-account scoped role assumption** (`sts:AssumeRole` to a specific role in
+  the analyzed principal's OWN account) - the routine, intended use of AssumeRole.
+- **Same-account scoped container/object reads** (a bucket / table / stream /
+  database read scoped to a named resource in the analyzed principal's own
+  account), and any single concrete object read - routine least privilege.
+These are intentionally QUIET to avoid false-positive noise. The CROSS-ACCOUNT
+counterparts (a scoped `sts:AssumeRole` into another account; a whole-container
+read of another account's resource - INCLUDING a broad/wildcard-resource-id read
+such as `...:999999999999:stream/*`, which is a strictly-broader capability than a
+concrete one and must never read CLEAN while the narrower read fires) ARE surfaced
+at LOW/INFO, but ONLY when the subject account is KNOWN. The subject account is an
+OPTIONAL input the operator supplies on EITHER surface - the browser's
+"Analyzed principal's account ID" field (identity / auto families) or the CLI /
+Action `--subject-account` / `subject-account:` input - so cross-account surfacing
+is NOT a CLI-only capability: given the same subject account, the browser worker and
+the CLI produce the same CROSS-ACCOUNT findings (the browser forwards it through
+`worker.js` -> `analyze({ subjectAccount })`, the same option the CLI injects).
+When the subject account is UNKNOWN (left blank on both surfaces) the tool cannot
+distinguish same- from cross-account and stays conservative (quiet) - again, silence
+there is "not determinable from this policy", never "safe". Cross-account
+exploitability additionally depends on the target's trust policy / resource policy
+and the target role's permissions, none of which a single identity policy contains,
+so these are LOW/INFO capabilities, never confirmed escalations.
+
+**S3 canonical bucket ARNs are account-blind - surfaced, never silently cleared.** A
+canonical S3 bucket ARN (`arn:aws:s3:::bucket/*`, or a bucket-list target) carries NO
+account field, so - unlike a DynamoDB / Kinesis / RDS-Data ARN, or an S3
+access-point / outpost ARN, all of which DO carry an account - the owning account of a
+whole-bucket read cannot be resolved from the ARN alone. The tool therefore CANNOT
+clear such a read as same-account, and (with a KNOWN subject account) it must not read
+CLEAN: a neutrally-named whole-bucket read whose owner is unresolvable is surfaced at
+INFO as an account-UNDETERMINED read (`CROSS-ACCOUNT-DATA-READ-UNDETERMINED`) - the
+archetypal exfil primitive is never allowed to silently clear. This is deliberately
+DISTINCT from the confirmed `CROSS-ACCOUNT-DATA-READ`: the crossing is UNPROVEN (the
+owner is unknown, not known-to-differ), so it is stated as undetermined, never as a
+confirmed cross-account grant (T8: no overstated certainty). The owner is RECOVERED -
+and the read then classified same-account (quiet) or cross-account (confirmed) - when
+the policy makes it derivable: an account-bearing S3 access-point ARN, or an explicit
+`aws:ResourceAccount` / `s3:ResourceAccount` equality condition pinning a single
+account. Two S3 whole-bucket cases stay QUIET by the same rules as the other stores: a
+single concrete OBJECT read (`bucket/key`) is not a whole-container read, and any
+whole-bucket read with the subject account UNKNOWN cannot be compared. A
+sensitivity-token or policy-variable bare-bucket read is already surfaced (non-clean)
+by the same-account `DATA-READ` path, so it is not additionally reported here.
+
 ## CSP (route header, Cloudflare - see DEPLOY.md)
 ```
 default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;

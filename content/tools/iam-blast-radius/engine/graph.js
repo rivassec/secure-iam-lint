@@ -658,6 +658,43 @@ const RULE_MAP = {
       lane: LANES.DATA_ACCESS,
     });
   },
+  // S2-crossaccount-scoped-surface (B): a whole-container read on a resource in
+  // another account. Mirrors DATA-READ's data-access lane can-read edge, but the
+  // target node names the cross-account resource scope so the account crossing is
+  // visible; certainty stays the deny-aware base passed in.
+  'CROSS-ACCOUNT-DATA-READ': (f, b, certainty) => {
+    const key = firstResource(f);
+    b.addEdge({
+      toId: `datastore:cross-account-read:${key}`,
+      toType: NODE_TYPES.DATA_STORE,
+      toLabel: `Data (cross-account read): ${key}`,
+      type: EDGE_TYPES.CAN_READ,
+      certainty,
+      finding: f,
+      statementIndex: f.statementIndex,
+      label: 'can read cross-account data',
+      lane: LANES.DATA_ACCESS,
+    });
+  },
+  // S2-crossaccount-scoped-surface (iteration-5): a whole-container S3 read whose
+  // owning account is UNDETERMINABLE (a bare bucket ARN). Draws the same can-read
+  // data-access edge so the read is never silently edgeless, but the node names it as
+  // account-UNDETERMINED so the graph never implies a confirmed crossing (T8). The
+  // rule's `pathExploitability: 'low'` maps the certainty down to CONTEXT_REQUIRED.
+  'CROSS-ACCOUNT-DATA-READ-UNDETERMINED': (f, b, certainty) => {
+    const key = firstResource(f);
+    b.addEdge({
+      toId: `datastore:cross-account-undetermined-read:${key}`,
+      toType: NODE_TYPES.DATA_STORE,
+      toLabel: `Data (read, owning account undetermined): ${key}`,
+      type: EDGE_TYPES.CAN_READ,
+      certainty,
+      finding: f,
+      statementIndex: f.statementIndex,
+      label: 'can read data whose owning account is undetermined',
+      lane: LANES.DATA_ACCESS,
+    });
+  },
   'KMS-DECRYPT': (f, b, certainty) => {
     b.addEdge({
       toId: 'datastore:kms-decrypt',
@@ -779,6 +816,25 @@ const ESCALATION_MAP = {
       finding: f,
       statementIndex: f.statementIndex,
       label: 'can assume (broad role scope)',
+      lane: LANES.IDENTITY_EXPANSION,
+    });
+  },
+  // S2-crossaccount-scoped-surface (A): a scoped sts:AssumeRole whose target role is
+  // in a DIFFERENT account. Draws a can-assume edge to the concrete cross-account
+  // role node, at potentially-reachable certainty - the assume depends on the target
+  // role's (out-of-scope) trust policy, so it is a POTENTIAL cross-account transition,
+  // never a confirmed one.
+  'CROSS-ACCOUNT-ASSUME-ROLE': (f, b) => {
+    const key = firstResource(f);
+    b.addEdge({
+      toId: `role:${key}`,
+      toType: NODE_TYPES.ROLE,
+      toLabel: `Role: ${key}`,
+      type: EDGE_TYPES.CAN_ASSUME,
+      certainty: CERTAINTY.POTENTIALLY_REACHABLE,
+      finding: f,
+      statementIndex: f.statementIndex,
+      label: 'can assume (cross-account role)',
       lane: LANES.IDENTITY_EXPANSION,
     });
   },

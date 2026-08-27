@@ -73,7 +73,7 @@ import { globMatch, isGlobBudgetError } from './glob.js';
 // undecidability gate both read breadth from classifyResource(), so the two surfaces
 // cannot "agree wrongly" on a shallow signal (the accreted enumerative predicate +
 // probe battery, and masked-grant's startsWith('arn:') gate, are both retired).
-import { classifyResource, RESOURCE_CLASS } from './resource-arn.js';
+import { classifyResource, RESOURCE_CLASS, parseArn } from './resource-arn.js';
 
 // --- Shared capability caveat (mirrors evaluator.js wording) -----------------
 // Kept as one constant so every finding's `limit` field carries identical,
@@ -260,7 +260,108 @@ const DATA_READ_ACTIONS = Object.freeze([
   's3:GetObject',
   's3:GetObjectVersion',
   's3:ListBucket',
+  // S2-crossaccount-scoped-surface (B2): the equivalent WHOLE-CONTAINER read /
+  // list / scan / query primitives for the other datastores in the catalog, so a
+  // scoped bulk read of a table / stream / database is evaluated the same way a
+  // bucket read is (single-item reads such as dynamodb:GetItem are deliberately
+  // EXCLUDED - they are the table analog of an s3 bucket/key single-object read).
+  'dynamodb:Scan',
+  'dynamodb:Query',
+  'kinesis:GetRecords',
+  'rds-data:ExecuteStatement',
+  'rds-data:BatchExecuteStatement',
 ]);
+
+// S2-crossaccount-scoped-surface (B): bare 12-digit AWS account id.
+const CONCRETE_ACCOUNT_ID_RE = /^[0-9]{12}$/;
+
+// S2-crossaccount-scoped-surface (B3): the concrete 12-digit account a resource ARN
+// belongs to, or null when it is not a well-formed ARN or its account field is not a
+// bare 12-digit id (a wildcard/empty account cannot be soundly compared across the
+// account boundary). S3 canonical BUCKET ARNs (arn:aws:s3:::bucket/*) carry NO
+// account, so they return null here - their owning account is genuinely not
+// recoverable from the policy text, and a cross-account claim is never fabricated.
+// Pure parse of inert policy data; never interpreted as code.
+function concreteResourceAccount(resource) {
+  const arn = parseArn(resource);
+  if (!arn) return null;
+  return CONCRETE_ACCOUNT_ID_RE.test(arn.account) ? arn.account : null;
+}
+
+// S2-crossaccount-scoped-surface (iteration-5, S3 fail-open close): the condition
+// keys that pin the OWNING account of a resource whose ARN lacks one (canonical S3
+// bucket ARNs carry no account field). IAM condition key NAMES are case-insensitive,
+// so these are compared lowercased.
+const RESOURCE_ACCOUNT_COND_KEYS = Object.freeze([
+  'aws:resourceaccount',
+  's3:resourceaccount',
+]);
+// Only EQUALITY string operators pin a single concrete owner. A StringNotEquals /
+// StringLike / wildcard value does not establish "the resource is owned by exactly
+// this account", so it must not be used to resolve (or to clear) the account.
+const RESOURCE_ACCOUNT_EQ_OPS = Object.freeze([
+  'stringequals',
+  'stringequalsignorecase',
+  'stringequalsifexists',
+  'stringequalsignorecaseifexists',
+]);
+
+// Recover the concrete 12-digit owning account of a resource from an explicit
+// aws:ResourceAccount / s3:ResourceAccount equality condition on the statement, but
+// ONLY when the condition derivably pins a SINGLE concrete account. Returns that
+// account id, or null when the statement does not pin exactly one (absent, a
+// multi-value/wildcard set, a non-account value, or two different pinned accounts).
+// This lets a bare S3 bucket read whose owner the operator asserted via condition be
+// classified same- vs cross-account soundly, instead of failing open to CLEAN. Pure
+// read of inert normalized policy data (`stmt.condition`); never interpreted as code.
+function resourceAccountFromCondition(stmt) {
+  const cond = stmt && stmt.condition;
+  if (!cond || typeof cond !== 'object' || Array.isArray(cond)) return null;
+  const pinned = new Set();
+  for (const op of Object.keys(cond)) {
+    if (!RESOURCE_ACCOUNT_EQ_OPS.includes(String(op).toLowerCase())) continue;
+    const block = cond[op];
+    if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
+    for (const key of Object.keys(block)) {
+      if (!RESOURCE_ACCOUNT_COND_KEYS.includes(String(key).toLowerCase())) continue;
+      const raw = block[key];
+      const values = Array.isArray(raw) ? raw : [raw];
+      for (const v of values) {
+        // Any non-account / wildcard value means the owner is NOT pinned to a single
+        // concrete account -> unresolvable (fail closed, do not fabricate an owner).
+        if (typeof v !== 'string' || !CONCRETE_ACCOUNT_ID_RE.test(v)) return null;
+        pinned.add(v);
+      }
+    }
+  }
+  return pinned.size === 1 ? [...pinned][0] : null;
+}
+
+// S2-crossaccount-scoped-surface (B3): is this granted (action, resource) pair a
+// WHOLE-CONTAINER read - a bucket / table / stream / database bulk read - rather than
+// a single concrete object read (e.g. s3:GetObject on bucket/key)? Only whole-
+// container reads are surfaced cross-account; a single concrete object read stays
+// QUIET. For S3 object actions the distinction is the object KEY: a wildcarded key
+// (bucket/*) reads the whole container, a concrete key (bucket/report.csv) is one
+// object. s3:ListBucket targets the bucket itself (a container list). The extended
+// datastore primitives (dynamodb:Scan/Query, kinesis:GetRecords, rds-data:*) are
+// themselves bulk reads, so any concrete container ARN they scope IS a whole-
+// container read. Deterministic pure string logic.
+function isWholeContainerRead(actionPattern, resource) {
+  const svc = actionService(actionPattern);
+  if (svc === 's3') {
+    const verb = actionVerb(actionPattern).toLowerCase();
+    if (verb === 'listbucket') return true; // lists the container
+    const arn = parseArn(resource);
+    if (!arn) return false;
+    const slash = arn.resourceId.indexOf('/');
+    if (slash === -1) return false; // bucket-only ARN for an object action: matches no object
+    const key = arn.resourceId.slice(slash + 1);
+    return key.includes('*') || key.includes('?');
+  }
+  // dynamodb:Scan/Query, kinesis:GetRecords, rds-data:* - bulk/container reads.
+  return true;
+}
 
 // Lowercased substrings whose presence in a resource ARN INFERS - never proves -
 // that the data behind it is sensitive (IAM-706, acceptance test 7). Curated and
@@ -409,6 +510,39 @@ export const RULES = Object.freeze({
     ruleVersion: '1',
     docRef:
       'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_groups_manage_add-remove-users.html',
+  }),
+  // S2-crossaccount-scoped-surface (B): a whole-container read (bucket / table /
+  // stream / database bulk read) whose concrete resource account differs from the
+  // analyzed/subject account. Surfaced REGARDLESS of resource name (the sensitivity
+  // wordlist only RAISES severity, it never gates reporting). LOW/INFO band: it
+  // crosses the account boundary, but whether the objects are actually reachable
+  // depends on the target account's resource policy (bucket/table policy), which is
+  // not in scope here. Ordered last so it never displaces the established rules.
+  'CROSS-ACCOUNT-DATA-READ': Object.freeze({
+    id: 'CROSS-ACCOUNT-DATA-READ',
+    order: 10,
+    title: 'Cross-account whole-container data read',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_resource.html',
+  }),
+  // S2-crossaccount-scoped-surface (iteration-5, S3 fail-open close): a whole-
+  // container read (bucket/* or bucket list) on a CANONICAL S3 bucket ARN
+  // (arn:aws:s3:::bucket/*), which carries NO account field and no aws:ResourceAccount
+  // / s3:ResourceAccount condition pinning its owner. Its owning account is genuinely
+  // not recoverable from the policy text, so the tool CANNOT clear it as same-account
+  // - it must not read CLEAN (fail closed). Surfaced at INFO as an UNDETERMINED
+  // (account-blind) cross-account read: the sibling CROSS-ACCOUNT-DATA-READ makes a
+  // CONFIRMED cross-account claim (a resolvable, differing account), whereas this one
+  // is explicit that the account is unknown and MUST NOT be read as a proven crossing
+  // (threat-model T8). Ordered last so it never displaces the established rules.
+  'CROSS-ACCOUNT-DATA-READ-UNDETERMINED': Object.freeze({
+    id: 'CROSS-ACCOUNT-DATA-READ-UNDETERMINED',
+    order: 11,
+    title: 'Whole-container S3 read with an undeterminable owning account',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-keys.html',
   }),
 });
 
@@ -907,12 +1041,165 @@ function ruleKmsDecrypt(stmt, out) {
 // confidence medium-or-lower - a scoped read is strictly less than a wildcard /
 // broad-exfil grant and must never escalate to critical or claim every object is
 // readable (S3 encryption config + KMS key policy are absent from the context).
-function ruleDataReadScoped(stmt, out) {
-  // Broad scope is DATA-EXFIL's job; a NotResource complement is not a named read.
-  if (resourceIsBroad(stmt)) return;
+function ruleDataReadScoped(stmt, out, ctx) {
+  // A NotResource complement (resources empty) is not a named read.
   if (stmt.resources.length === 0) return;
   const matched = matchPatterns(stmt, DATA_READ_ACTIONS, false);
   if (matched.length === 0) return;
+
+  // S2-crossaccount-scoped-surface iteration-2 (finding #2, fail-open close): the
+  // SAME-account name/variable path below is DATA-EXFIL's job when the scope is broad
+  // and returns early, BUT the cross-account whole-container detection MUST run FIRST,
+  // regardless of broadness. A wildcard resource-id in a KNOWN foreign account
+  // (e.g. arn:aws:kinesis:...:999999999999:stream/*) is a strictly-BROADER cross-
+  // account read than a concrete one (stream/events), yet before this fix it routed
+  // through the resourceIsBroad early-return and read CLEAN while the narrower read
+  // fired - evadable by simply widening the ARN. The strictly-broader read must never
+  // be CLEAN while the narrower one fires, so cross-account is evaluated before the
+  // broad early-return.
+  const broad = resourceIsBroad(stmt);
+
+  // --- S2-crossaccount-scoped-surface (B): cross-account whole-container read. -----
+  // Only meaningful when the analyzed/subject account is KNOWN (via context/trust).
+  // A WHOLE-CONTAINER read (bucket/*, table/<id>, stream/<id>, ...) whose concrete
+  // resource account differs from the subject account is surfaced REGARDLESS of the
+  // resource name - the sensitivity wordlist below only RAISES severity, it never
+  // gates whether this cross-account finding is reported (fail closed: a scoped read
+  // that leaves the account must not read CLEAN). A single concrete OBJECT read
+  // (bucket/key) stays QUIET (isWholeContainerRead excludes it), and same-account
+  // scoped container reads fall through to the QUIET name/variable-gated path below.
+  // Without a known subject we cannot tell same- from cross-account, so we stay
+  // conservative and skip straight to that same-account path.
+  const rawSubject = ctx && ctx.subjectAccount != null ? String(ctx.subjectAccount) : null;
+  const subjectAccount = rawSubject && CONCRETE_ACCOUNT_ID_RE.test(rawSubject)
+    ? rawSubject : null;
+  if (subjectAccount) {
+    // The owner an explicit aws:ResourceAccount / s3:ResourceAccount condition pins
+    // (or null). This RECOVERS the account for a canonical S3 bucket ARN, whose ARN
+    // carries none, so an operator-asserted owner classifies it same- vs cross-account
+    // soundly instead of failing open to CLEAN.
+    const condAccount = resourceAccountFromCondition(stmt);
+    const crossResources = [];
+    const crossAccounts = [];
+    let crossSensitive = false;
+    // S3 whole-container reads whose owning account is UNRESOLVABLE (a bare bucket ARN
+    // with no account field and no pinning condition) that would otherwise be silent
+    // (neutral name, no policy variable): they cannot be cleared as same-account, so
+    // they must not read CLEAN. Collected here and surfaced at INFO as an UNDETERMINED
+    // read. Sensitivity-token / variable-scoped bare-bucket reads already surface via
+    // the DATA-READ path below, so they are NOT re-collected here (no double report).
+    const undetResources = [];
+    for (const r of stmt.resources) {
+      const wholeContainerActions = matched.filter((p) => isWholeContainerRead(p, r));
+      if (wholeContainerActions.length === 0) continue; // single object -> QUIET
+      // A BROAD S3 object bulk read (s3:GetObject/GetObjectVersion on a broad ARN) is
+      // already reported LOUDLY by DATA-EXFIL for this same statement; don't double-
+      // report it here. The non-S3 datastore primitives (dynamodb/kinesis/rds-data)
+      // and s3:ListBucket are NOT in DATA-EXFIL's broad bulk catalog, so a broad
+      // cross-account read of THOSE would otherwise stay silently CLEAN - the exact
+      // fail-open this closes. Match by grant semantics (a broad "s3:Get*" also grants
+      // s3:GetObject), not literal action equality.
+      if (broad
+        && wholeContainerActions.every((p) => BULK_READ_ACTIONS.some((a) => actionGrants(p, a)))) {
+        continue;
+      }
+      // Resolve the owning account: the ARN's account, else an explicit
+      // ResourceAccount condition. Only a canonical S3 bucket ARN leaves this null.
+      const acct = concreteResourceAccount(r) || condAccount;
+      if (acct) {
+        if (acct === subjectAccount) continue; // resolved SAME-account -> QUIET
+        if (!crossResources.includes(r)) crossResources.push(r);
+        if (!crossAccounts.includes(acct)) crossAccounts.push(acct);
+        if (resourceInfersSensitive(r)) crossSensitive = true;
+        continue;
+      }
+      // Account UNRESOLVABLE. The only account-less whole-container shape is a
+      // canonical S3 bucket ARN (arn:aws:s3:::bucket/*, or a bucket-list target). It
+      // cannot be cleared as same-account, so it must not read CLEAN. Surface it as an
+      // UNDETERMINED read ONLY when it would otherwise be silent - a neutrally-named,
+      // non-variable read; a sensitivity-token or variable-scoped bare-bucket read
+      // already surfaces (non-clean) via the DATA-READ path below, so routing it here
+      // too would double-report. A broad bare-bucket BULK OBJECT read is DATA-EXFIL's
+      // (excluded by the broad-dedup guard above); a broad bare-bucket LIST read is not
+      // owned by any louder rule, so failing it closed here is the intended behavior.
+      const arn = parseArn(r);
+      if (arn && arn.service === 's3'
+        && !resourceInfersSensitive(r) && !resourceHasVariable(r)
+        && !undetResources.includes(r)) {
+        undetResources.push(r);
+      }
+    }
+    if (undetResources.length > 0) {
+      out.push(
+        makeFinding('CROSS-ACCOUNT-DATA-READ-UNDETERMINED', stmt, {
+          // INFO: the account crossing is UNPROVEN (the bucket's owner is unknown), so
+          // this must never be presented as loudly as a confirmed cross-account read.
+          severity: 'info',
+          // The whole-container grant is plainly present -> evidence HIGH. Whether it
+          // actually crosses an account boundary, and whether the objects are reachable,
+          // both depend on facts absent from a bare bucket ARN -> exploitability LOW.
+          policyEvidence: 'high',
+          pathExploitability: 'low',
+          actions: matched,
+          resources: undetResources.slice(),
+          why:
+            'Grants a whole-container read (bucket/* or a bucket list) on a canonical ' +
+            'S3 bucket ARN that carries NO account field, and no aws:ResourceAccount / ' +
+            's3:ResourceAccount condition pins the owner. The bucket\'s owning account ' +
+            'therefore cannot be determined from this policy, so the tool CANNOT clear ' +
+            'it as a same-account read - it may be a cross-account read of another ' +
+            'account\'s bucket. This does NOT prove the bucket is in another account ' +
+            '(the crossing is undetermined, not confirmed); it means a "no findings" / ' +
+            '"complete" verdict here is not a safety claim for this read.',
+          remediation:
+            'Make the owning account explicit so the read can be cleared or flagged: ' +
+            'pin it with an aws:ResourceAccount (or s3:ResourceAccount) condition, or ' +
+            'use an account-bearing S3 access-point ARN. If the bucket is in another ' +
+            'account, scope the read to the specific keys required and gate it with ' +
+            'conditions; if it is your own, the condition removes this ambiguity.',
+        }),
+      );
+    }
+    if (crossResources.length > 0) {
+      const scope = crossAccounts.length === 1
+        ? 'account ' + crossAccounts[0]
+        : 'accounts ' + crossAccounts.join(', ');
+      out.push(
+        makeFinding('CROSS-ACCOUNT-DATA-READ', stmt, {
+          // LOW/INFO band. The sensitivity wordlist RAISES info -> low; it never
+          // gates whether this cross-account finding is reported.
+          severity: crossSensitive ? 'low' : 'info',
+          // The grant + concrete cross-account ARN are plainly present -> evidence
+          // HIGH. Whether the objects are actually reachable depends on the target
+          // account's resource policy (bucket/table policy), out of scope -> low.
+          policyEvidence: 'high',
+          pathExploitability: 'low',
+          actions: matched,
+          resources: crossResources.slice(),
+          why:
+            'Grants a whole-container read (bucket / table / stream / database bulk ' +
+            'read) on a resource in ' + scope + ', a DIFFERENT AWS account than the ' +
+            'analyzed principal (account ' + subjectAccount + '). This is a cross-' +
+            'account data-read capability regardless of the resource name. Whether ' +
+            'the data is actually reachable depends on the target account\'s resource ' +
+            'policy (e.g. the bucket policy / table resource policy) and any KMS key ' +
+            'policy, none of which are in the supplied context, so it does not prove ' +
+            'the data is readable - only that this identity policy grants the read.',
+          remediation:
+            'Confirm the principal is intended to read data in ' + scope + '. If so, ' +
+            'scope the read to the specific objects/keys required and gate it with ' +
+            'conditions (e.g. aws:ResourceAccount, aws:SourceVpc). If not, remove the ' +
+            'cross-account resource from the scope.',
+        }),
+      );
+      return; // the cross-account fact subsumes the same-account name/variable path
+    }
+  }
+
+  // The SAME-account name/variable-gated path is DATA-EXFIL's job when the scope is
+  // broad; only NON-broad named/variable reads reach it. (Broad cross-account reads
+  // were already handled above, before this early return.)
+  if (broad) return;
 
   const sensitiveTokens = [];
   let hasVariable = false;
@@ -1114,13 +1401,20 @@ const RULE_FUNCTIONS = [
  *            findings:Array<object>}} frozen result; findings in deterministic
  *            order (statement index, then rule order).
  */
-export function analyzeRules(model) {
+export function analyzeRules(model, options) {
   const errors = [];
   try {
     if (!model || typeof model !== 'object' || !Array.isArray(model.statements)) {
       errors.push({ code: 'NO_MODEL', message: 'analyzeRules() requires a normalized model.', path: null });
       return Object.freeze({ ok: false, errors: Object.freeze(errors), findings: Object.freeze([]) });
     }
+
+    // S2-crossaccount-scoped-surface (B): an optional analysis context (subjectAccount)
+    // flows to the rules; only ruleDataReadScoped reads it (cross-account whole-
+    // container read surfacing). Absent/invalid subject -> conservative quiet.
+    const ctx = {
+      subjectAccount: (options && options.subjectAccount) || null,
+    };
 
     const findings = [];
     for (const stmt of model.statements) {
@@ -1130,7 +1424,7 @@ export function analyzeRules(model) {
       // ForAnyValue set) grants nothing, so it produces no capability or
       // wildcard-resource finding.
       if (statementNeverMatches(stmt)) continue;
-      for (const fn of RULE_FUNCTIONS) fn(stmt, findings);
+      for (const fn of RULE_FUNCTIONS) fn(stmt, findings, ctx);
     }
 
     // Deterministic order: by statement index, then by fixed rule order.
@@ -1245,12 +1539,12 @@ export function actionResourceTypeMismatches(model) {
  * @param {string} text raw pasted/imported policy text
  * @returns {{ok:boolean, errors:Array, findings:Array<object>}}
  */
-export function analyzeRulesFromText(text) {
+export function analyzeRulesFromText(text, options) {
   const m = modelFromText(text);
   if (!m.ok) {
     return Object.freeze({ ok: false, errors: m.errors, findings: Object.freeze([]) });
   }
-  return analyzeRules(m.model);
+  return analyzeRules(m.model, options);
 }
 
 function deepFreeze(value) {
