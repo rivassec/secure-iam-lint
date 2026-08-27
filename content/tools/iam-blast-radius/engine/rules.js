@@ -818,6 +818,20 @@ export function ruleFindingDenySuppressed(finding, model) {
 
   // A broad bulk-read whose scope a NotResource Deny fences to a narrow set no
   // longer holds as a broad-exfil capability (secret reads are unaffected).
+  //
+  // S3-class-sweep (part B justification): the `finding.id === 'DATA-EXFIL' &&
+  // isBulkReadAction(a)` gate is SERVICE-SCOPED (isBulkReadAction / BULK_READ_ACTIONS is
+  // s3:GetObject[Version] only), but it is NOT a sibling of the S1 undetermined-read fail-open,
+  // because it is a SUPPRESSION gate that fails CLOSED for every non-s3 sibling: this is the ONLY
+  // path that DROPS an action from a finding, and its scope is exactly DATA-EXFIL's own bulk
+  // catalog. DATA-EXFIL fires its bulk arm ONLY on those same s3 actions (ruleDataExfil), so the
+  // gate can only ever remove an action DATA-EXFIL actually reported. A non-s3 bulk read
+  // (dynamodb:Scan / kinesis:GetRecords / rds-data:*) is never a DATA-EXFIL and never matches
+  // isBulkReadAction, so it falls to `return true` and is KEPT (fenced or not) - it is surfaced
+  // by WILDCARD-RESOURCE (bare "*") or the SERVICE-AGNOSTIC CROSS-ACCOUNT-DATA-READ-UNDETERMINED /
+  // survivingSparedContainerReads paths (S1/NEW-01), never silently cleared here. Widening this
+  // gate to non-s3 would over-SUPPRESS, i.e. it is the fail-CLOSED direction; leaving it s3-scoped
+  // is correct.
   const stillReal = survivors.filter((a) => {
     if (finding.id === 'DATA-EXFIL' && isBulkReadAction(a)) {
       return !denyFencesToNarrow(denies, a, allowStmt);

@@ -127,10 +127,27 @@ function findingPrincipals(f) {
     : (f.principals != null ? f.principals : null);
   if (raw == null) return [];
   if (Array.isArray(raw) || typeof raw !== 'object') return normList(raw);
-  // A Principal object ({ AWS: [...], Service: [...] }) -> flatten to "type=value".
+  // A Principal object ({ AWS: [...], Service: [...] }) -> flatten to "type=value". The
+  // "type=value" join is over '=', and BOTH the key (a Principal-object key) and the value
+  // (an ARN token) are ATTACKER-CONTROLLED (a fork PR owns the whole policy JSON; the engine
+  // applies no charset restriction). A PLAIN `${k}=${v}` was therefore NON-injective
+  // (S3-class-sweep, the unswept sibling of NEW-02 / R2): {'AWS=arn:...:root': ['x']} and
+  // {'AWS': ['arn:...:root=x']} BOTH flatten to the single token 'AWS=arn:...:root=x', so two
+  // SEMANTICALLY DISTINCT principal sets hash to ONE partialFingerprint - dismissing one
+  // code-scanning alert AUTO-SUPPRESSES the other (a fail-OPEN on re-detection). NEW-02 closed
+  // the OUTER '|' join for the array form and its suite explicitly waved this branch off ("the
+  // Principal-OBJECT form prefixes each element and would not collide") - true for the '|'
+  // delimiter, FALSE for the inner '='. So the KEY is escaped INJECTIVELY here ('\' FIRST so the
+  // escapes are unambiguous, then '='), making the first UNESCAPED '=' the sole type/value
+  // boundary and the value the verbatim tail. The whole token still flows through joinInjective
+  // (the outer '|'/'\'/newline boundary) exactly as the array form does, so the composition is
+  // injective (newline injection is closed by that outer joinInjective, not here). A benign
+  // single-key principal ('AWS'/'Service'/'Federated'/'CanonicalUser' - no '\' or '=' in the
+  // key) emits byte-for-byte as the plain flatten did, so no existing fingerprint churns.
   const out = [];
   for (const k of Object.keys(raw).sort()) {
-    for (const v of normList(raw[k])) out.push(`${k}=${v}`);
+    const safeKey = String(k).replace(/\\/g, '\\\\').replace(/=/g, '\\=');
+    for (const v of normList(raw[k])) out.push(`${safeKey}=${v}`);
   }
   return out;
 }
@@ -225,7 +242,14 @@ export function findingIdentity(finding, family) {
     `resources=${joinInjective(normList(f.resources))}`,
     `principals=${joinInjective(findingPrincipals(f))}`,
     `condition=${f.conditions == null ? '' : stableStringify(f.conditions)}`,
-    `viability=${requiredUnknowns.join('|')}`,
+    // S3-class-sweep: the viability list is joined through the SAME injective joinInjective()
+    // as every other attacker-controlled identity list, not a plain `.join('|')`. Its values
+    // (requiredUnknowns) are tool-enum LITERALS today ('subjectAccount', 'passRoleTargetArn',
+    // ...) with no '\', '|', or newline, so joinInjective is BYTE-IDENTICAL to the old plain
+    // join and no fingerprint churns - but routing it through the single injective joiner
+    // structurally closes the class so a future attacker-derived viability token cannot re-open
+    // the collision (or inject a fresh '\n'-delimited identity line ahead of escService).
+    `viability=${joinInjective(requiredUnknowns)}`,
     // S5-sarif-symmetric: an escalation path's TARGET SERVICE and TECHNIQUE are part of
     // its semantic identity, not decoration. Several distinct PassRole routes share one
     // finding TYPE (id=PASSROLE-SERVICE covers ecs/glue/cloudformation/sagemaker/

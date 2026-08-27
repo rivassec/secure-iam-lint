@@ -32,14 +32,14 @@
     },
     {
       "file": "cli/sarif.mjs",
-      "line": 449,
+      "line": 473,
       "cls": "candidate-drop",
       "snippet": "if (s.length > MAX_SID_LEN) s = `${s.slice(0, MAX_SID_LEN)}...`;",
       "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
     },
     {
       "file": "cli/sarif.mjs",
-      "line": 744,
+      "line": 768,
       "cls": "candidate-drop",
       "snippet": "const shown = norm.slice(0, MAX_MSG_ACTIONS);",
       "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
@@ -158,35 +158,35 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 964,
+      "line": 978,
       "cls": "budget-bypass",
       "snippet": "for (const p of stmt.actions) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 1592,
+      "line": 1606,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 1929,
+      "line": 1943,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 2009,
+      "line": 2023,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 2059,
+      "line": 2073,
       "cls": "unbounded-walk",
       "snippet": "function deepFreeze(value) {",
       "note": "recursion (deepFreeze) with no visible depth/node/size cap"
