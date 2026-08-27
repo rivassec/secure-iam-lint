@@ -777,6 +777,36 @@ function statementScopableReadActions(stmt) {
   });
 }
 
+// S3-SWEEP-01 (class-sweep sibling of cli/sarif.mjs S1-NEW02): the INJECTIVE suppression
+// identity for a surviving-spared derived finding. The dedup that drops an already-reported
+// derived read (the survivingSparedContainerReads post-pass) keys on (id, statementIndex,
+// sorted actions, sorted resources). actions + resources are ATTACKER-CONTROLLED policy text
+// with no charset restriction, so a plain `.join(',')`/`.join('|')` was NON-injective: a
+// single token literally containing the inner ',' (or the outer '|', or a newline) forged the
+// sorted-join of a DISTINCT multi-element list, so a semantically different SURVIVING cross-
+// account / whole-container read collided with an existing key and was silently dropped from
+// the authoritative table - a live exfil primitive reading CLEAN (threat-model R1 / T8).
+//
+// JSON.stringify of the [id, statementIndex, sortedActions, sortedResources] tuple is
+// INJECTIVE: JSON string quoting/escaping makes every ',' / '|' / newline inside a token
+// INERT (it can never span an element or a field boundary), so two distinct lists always
+// map to distinct keys. It is also DETERMINISTIC (array order is fixed; elements are a
+// string, a number-or-null, and two arrays of strings) and pure - no delimiter can be forged.
+// Benign findings (real ARNs / action names carry no delimiter) keep their exact pre-fix
+// equivalence classes, so the dedup behavior is unchanged (no over-suppression, no churn):
+// the fix only SEPARATES the delimiter-forged collisions the plain join used to conflate.
+// id is a fixed rule enum and statementIndex a structural number (neither attacker-forgeable),
+// but they ride the same injective encoding so the whole key is closed as a class.
+export function findingIdentityKey(f) {
+  const id = f && f.id != null ? String(f.id) : '';
+  const statementIndex = f && typeof f.statementIndex === 'number' ? f.statementIndex : null;
+  const actions = (Array.isArray(f && f.actions) ? f.actions : [])
+    .map((a) => String(a).toLowerCase()).slice().sort();
+  const resources = (Array.isArray(f && f.resources) ? f.resources : [])
+    .map(String).slice().sort();
+  return JSON.stringify([id, statementIndex, actions, resources]);
+}
+
 /**
  * Run the full analysis pipeline on raw policy text.
  *
@@ -1032,13 +1062,10 @@ export function analyze(text, options) {
     // Dedup defensively against the table: a derived finding whose (id, statement,
     // actions, resources) identity already appears is not re-reported (no duplicate row,
     // no fingerprint collision). The exact-identity key handles the belt-and-braces cases
-    // (derived-vs-derived, exact table match).
-    const findingIdentityKey = (f) => [
-      f && f.id,
-      f && typeof f.statementIndex === 'number' ? f.statementIndex : '',
-      (Array.isArray(f && f.actions) ? f.actions : []).map((a) => String(a).toLowerCase()).slice().sort().join(','),
-      (Array.isArray(f && f.resources) ? f.resources : []).map(String).slice().sort().join(','),
-    ].join('|');
+    // (derived-vs-derived, exact table match). The key is built by the INJECTIVE
+    // module-level findingIdentityKey() (see its definition) so an attacker-controlled
+    // action/resource token that contains the join delimiter cannot forge a collision
+    // that drops a distinct surviving-spared read (S3-SWEEP-01).
     // SUBSET-aware table coverage (iteration-5 over-correction close). Exact-key equality
     // alone MISSES the mixed case where the spared bucket is ALSO an explicit Allow
     // resource AND the fence covers only a strict ACTION-SUBSET of the Allow's reads:
