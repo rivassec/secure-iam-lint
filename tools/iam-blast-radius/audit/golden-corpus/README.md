@@ -28,7 +28,7 @@ a candidate silently dropped, a fail-closed verdict collapsed to exit 0).
 
 ```
 manifest.mjs          the corpus metadata + fail-closed class per case (source of truth)
-corpus/               17 killer policy files (raw IAM JSON, byte-faithful)
+corpus/               29 killer policy files (raw IAM JSON, byte-faithful)
 golden-oracle.test.js PRIMARY: the five fail-closed property assertions
 packaging.test.js     PRIMARY: npm pack -> install -> 4-way bin + Action-style spawns
 capture.mjs           SECONDARY: writes normalized snapshots to baselines/
@@ -65,6 +65,7 @@ the suite stays green today while documenting the fail-open; each has a non-`tod
 | 1 | raw-realpath-mismatch | `cli/iam-br.mjs:804`, `action/index.mjs:1397` | `packaging.test.js` (b) npx, (c) bin symlink, (d) bin shim all exit 0 (zero analysis) - only direct `node <realpath>` works | `todo` x3 + PIN x3 |
 | 2 | syntax-keyed-severity | `engine/rules.js:900` | case `notresource-write-severity` (16): a broad NotResource **write** scored `medium` -> slipped under the `high` threshold -> exit 0 | FIXED (story S3-rules-breadth B): severity keys on effective breadth (NotResource-only broad non-read = HIGH); case 16 is now a regular `risky` P2 case + release-gate re-check |
 | 3 | budget-bypass | `engine/rules.js:1107` (ruleDataReadScoped loop) | case `huge-near-caps` (14) exercises the O(actions x resources) loop; documented (the DoS budget still trips here via other loops, so the case fails closed today - the untaxed loop is a latent DoS, not yet an observable wrong verdict) | documented |
+| 3b | budget-bypass (NEW-BUDGET-DENYFENCE) | `engine/rules.js` `denyFencesToNarrow` | case `notresource-deny-fence-dos-budget` (29): a within-caps ~9998 x ~3000 deny-fence policy whose `.some(classifyResource !== NARROW)` narrowness walk charged ZERO work (classifyResource is pure on the NARROW-ARN path) - an uncharged O(N*M) walk called once per matched action that bypassed BOTH engine budgets (~40s, a direct analyze() consumer had no COMPLETE-verdict protection) | FIXED (story S1-NEW-BUDGET-chargeWork): `denyFencesToNarrow` charges work per spared element inspected so both budgets bound it; case 29 fails closed + release-gate re-check (and an ordinary deny-fence stays uncorrected) |
 | 4 | candidate-drop (MAX_FILES) | `action/index.mjs` walkFiles enumeration caps | FIXED (story S2-action-enumeration): an unreadable subtree (readdir failure) is recorded and a MAX_FILES-truncated walk sets `truncated`, so runAction synthesizes fail-closed exit-3 units (ENUMERATION_UNREADABLE / ENUMERATION_TRUNCATED); `action-enumeration-failclosed.test.js` pins the real-fs behavior and `failopen-lint.test.js` asserts the lint no longer flags it | guarded |
 | 5 | coverage-incomplete-lost | (taxonomy) | oracle P3 asserts malformed cases propagate `coverage.summary.incomplete` on the browser path | guarded |
 | 6 | browser-cli-parity-break | (taxonomy) | oracle P4 asserts `analyze()` is never more permissive than `scan()` over every case | guarded |

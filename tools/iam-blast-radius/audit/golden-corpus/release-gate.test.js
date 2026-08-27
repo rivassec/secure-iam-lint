@@ -363,6 +363,59 @@ test('RELEASE-GATE: S2-NEW01 service-agnostic undetermined-account read stays FI
   assert.match(s3f.title, /\bS3\b/, 'the S3-only finding keeps its S3-specific title (byte-unchanged)');
 });
 
+// The S1-NEW-BUDGET-chargeWork axis NEW-BUDGET-DENYFENCE fix (bug: deny-fence-narrowness-
+// walk-uncharged, HIGH DoS). denyFencesToNarrow's `.some(classifyResource !== NARROW)`
+// narrowness walk charged ZERO work (classifyResource is pure on the NARROW-ARN path) and is
+// called once per matched action from three call sites, so a within-caps N x M deny-fence
+// policy ran an uncharged O(N*M) walk that bypassed BOTH engine budgets (the deterministic 60M
+// work ceiling and the wall-clock deadline) - a fail-OPEN DoS (~40s, no COMPLETE-verdict
+// protection for a direct analyze() consumer). Fixed by charging work per spared element
+// inspected. The release gate re-verifies at ship time that (a) the within-caps DoS corpus
+// case still FAILS CLOSED under the default work budget AND under an armed --budget-ms, on both
+// surfaces, and (b) an ordinary deny-fence is NOT over-corrected into a false fail-closed.
+test('RELEASE-GATE: NEW-BUDGET-DENYFENCE within-caps deny-fence DoS stays budget-bounded (fails closed, both budgets)', { skip }, () => {
+  const c = CASES.find((x) => x.id === 'notresource-deny-fence-dos-budget');
+  assert.ok(c, "manifest case 'notresource-deny-fence-dos-budget' must exist");
+  const text = corpusText(c.file);
+
+  // (a) Default 60M work budget: the CLI fails closed (never a clean exit-0 on a runaway).
+  const sr = scan(scanInputFor(c));
+  assert.notEqual(sr.exitCode, EXIT.CLEAN,
+    'a runaway O(N*M) deny-fence walk must never be a clean exit-0 at release (CLI)');
+  assert.equal(sr.exitCode, EXIT.FAIL_CLOSED, 'the CLI fails closed at exit 3');
+  assert.equal(sr.reason, 'RESOURCE_BUDGET_EXCEEDED', 'the fail-closed reason is the budget abort');
+
+  // The browser engine is never more permissive: analyze() aborts to an incomplete result.
+  const ar = analyze(text, analyzeOptionsFor(c));
+  const browserClean = !!(ar && ar.ok === true
+    && Array.isArray(ar.findings) && ar.findings.length === 0
+    && !(ar.coverage && ar.coverage.summary && ar.coverage.summary.incomplete));
+  assert.equal(browserClean, false, 'browser must not read clean while the CLI fails closed (parity)');
+  assert.equal(ar.coverage.summary.analysisAborted, true, 'analyze() aborts on the now-charged deny-fence walk');
+  assert.ok(ar.coverage.summary.codes.includes('RESOURCE_BUDGET_EXCEEDED'),
+    'the aborted coverage carries RESOURCE_BUDGET_EXCEEDED');
+
+  // (b) An armed --budget-ms wall-clock deadline also fails it closed, orders of magnitude
+  // below the ~40s pre-fix runtime.
+  const srClock = scan({ ...scanInputFor(c), budgetMs: 2000 });
+  assert.equal(srClock.exitCode, EXIT.FAIL_CLOSED, 'an armed --budget-ms deadline fails the DoS closed at exit 3');
+
+  // (c) NO over-correction: an ordinary whole-bucket deny-fence still COMPLETES with its
+  // surviving-read verdict (the proportional charge is negligible on a few short elements).
+  const ordinary = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [
+      { Effect: 'Allow', Action: 's3:GetObject', Resource: '*' },
+      { Effect: 'Deny', Action: 's3:GetObject', NotResource: 'arn:aws:s3:::acme-competitor-bucket/*' },
+    ],
+  });
+  const oa = analyze(ordinary, { family: 'identity', requireExplicitFamily: true });
+  assert.equal(oa.coverage.summary.analysisAborted, false, 'an ordinary deny-fence must NOT be over-corrected into a false abort');
+  assert.equal(oa.coverage.summary.incomplete, false, 'it reaches a COMPLETE verdict');
+  assert.deepEqual((oa.findings || []).map((f) => f.id), ['CROSS-ACCOUNT-DATA-READ-UNDETERMINED'],
+    'the ordinary surviving whole-bucket read verdict is unchanged by the DoS fix');
+});
+
 // The ENTRYPOINT fail-open (raw-realpath-mismatch): a SYMLINKED launch of the CLI routes
 // argv[1] through a symlink and today fails OPEN (exit 0, zero analysis). This reproduces
 // it cheaply (no npm pack): the release gate requires the symlinked launch to analyze and

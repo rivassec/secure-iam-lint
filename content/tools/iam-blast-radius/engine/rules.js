@@ -763,7 +763,30 @@ function denyFencesToNarrow(denies, action, allowStmt) {
     // denies NOTHING) and a MALFORMED spared set ({Deny NotResource:'not-an-arn'} whose
     // scope is undecidable) both used to suppress DATA-EXFIL. Breadth read from the ONE
     // shared classifier, never re-implemented here; fail closed on anything but NARROW.
-    if (deny.notResources.some((r) => classifyResource(r) !== RESOURCE_CLASS.NARROW)) continue;
+    //
+    // NEW-BUDGET-DENYFENCE (HIGH DoS): charge work per spared element INSPECTED so this walk
+    // SAMPLES both cooperative budgets (the deterministic 60M work ceiling and the Node
+    // wall-clock deadline). denyFencesToNarrow is called ONCE PER MATCHED ACTION from three
+    // call sites on the normal analyze() path (ruleFindingDenySuppressed, run per finding;
+    // survivingBroadReadActions; survivingSparedContainerReads), so N matched actions x M
+    // spared elements is an O(N*M) walk. classifyResource charges ZERO on the well-formed
+    // NARROW-ARN path (parseArn is pure; the withoutBudget-wrapped globReachesMultipleAccounts
+    // only runs on parse failure), so before this the whole walk advanced the budget zero and a
+    // within-caps N x M deny fence ran ~unbudgeted (it aborted only when other charged work
+    // slowly crossed the ceiling, tens of seconds later). The charge is PROPORTIONAL to the
+    // string classifyResource actually scans (its length + 1, mirroring how glob.js charges a
+    // compare by its char count), so the budget it consumes tracks real per-element cost and the
+    // 60M ceiling trips at the engine's calibrated ~1-2s rather than tens of seconds. A small
+    // deny fence inspects a handful of short elements and never newly trips the budget (verdicts
+    // unchanged); a pathological one aborts mid-scan. chargeWork throws the tagged
+    // GlobBudgetError, which propagates through this function's callers to analyzeRules (which
+    // re-throws isGlobBudgetError) and analyze() (which maps the 'work' kind to the fail-closed
+    // "aborted (resource budget)" verdict). The `+ 1` guarantees a nonzero charge even for an
+    // empty element so the counter always advances.
+    if (deny.notResources.some((r) => {
+      chargeWork(String(r == null ? '' : r).length + 1);
+      return classifyResource(r) !== RESOURCE_CLASS.NARROW;
+    })) continue;
     const a = denyActionApplies(deny, action);
     if (a.applies && a.certain) return true;
   }

@@ -496,6 +496,38 @@ export const CASES = Object.freeze([
       + 'surface CROSS-ACCOUNT-DATA-READ-UNDETERMINED at info, never silently cleared (NEW-01, '
       + 'the non-S3 sibling of the account-blind S3 bucket read).',
   },
+  {
+    id: 'notresource-deny-fence-dos-budget',
+    file: '29-notresource-deny-fence-dos-budget.json',
+    family: 'identity',
+    klass: CLASS.RISKY,
+    // Like huge-near-caps (case 14): the deterministic work budget aborts this before
+    // completion (exit 3), OR (on a very fast box, unlikely at this size) it could complete;
+    // EITHER is fail-closed. The oracle asserts the invariant that holds across both: exit != 0
+    // and NEVER a clean pass. It aborts, so it carries no completed finding set - do NOT mark
+    // surfacesFinding.
+    expectedExit: 3,
+    exitAny: true,
+    // FIXED (story S1-NEW-BUDGET-chargeWork, axis NEW-BUDGET-DENYFENCE, bug: deny-fence-
+    // narrowness-walk-uncharged). ~9998 distinct read-action patterns (each a '?'-mask of a
+    // data-read action, so all match) on a broad Allow (Resource:*), fenced by ONE
+    // unconditional NotResource Deny whose ~3000 spared elements are ALL narrow S3 bucket
+    // ARNs. denyFencesToNarrow's `.some(classifyResource !== NARROW)` walk is called ONCE PER
+    // MATCHED ACTION (3 call sites), so N x M was an uncharged O(N*M) narrowness walk:
+    // classifyResource charges ZERO on the well-formed NARROW-ARN path, so BOTH engine budgets
+    // (the deterministic 60M work ceiling and the Node wall-clock deadline) were bypassed - a
+    // within-caps policy ran ~40s and a direct analyze() API consumer (no browser Worker
+    // watchdog) had no protection (threat-model T5 DoS; falsifies glob.js's "work limit bounds
+    // every run" invariant). Fix: denyFencesToNarrow charges work per spared element inspected,
+    // so the walk samples both budgets and aborts mid-scan (the GlobBudget sentinel propagates
+    // through analyzeRules). Within every validate cap (a per-string/count cap is no defense
+    // against the O(N*M) walk). The release gate re-verifies it stays fixed AND that an ordinary
+    // deny-fence is not over-corrected into a false fail-closed.
+    note: 'A within-caps deny-fence policy - ~9998 matched read actions x ~3000 narrow '
+      + 'NotResource elements = an O(N*M) narrowness walk that was uncharged and bypassed both '
+      + 'engine budgets (~40s). Must fail closed (aborts under the work/wall-clock budget), never '
+      + 'a clean exit-0 having "analyzed" a runaway.',
+  },
 ]);
 
 // The four selectable severities the CLI threshold gate ranks (most severe first),
