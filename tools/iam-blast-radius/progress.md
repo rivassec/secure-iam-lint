@@ -395,3 +395,10 @@ Last-round reason per story:
 - S4-R6-dirbomb[mechanical]: accepted (all-pass (2683 tests))
 - S5-R3-gitleaks[mechanical]: accepted (all-pass (2688 tests))
 - S6-R4-runner-selftests[mechanical]: accepted (all-pass (2697 tests))
+
+## Phase 4 story outcomes (2026-08-27)
+All Phase-4 stories accepted.
+Last-round reason per story:
+- S1-NEW02-sarif-identity-injective: accepted (all-pass (2707 tests))
+- S2-NEW01-undetermined-service-agnostic: accepted (all-pass (2733 tests))
+- S3-class-sweep: accepted (all-pass (2753 tests))
