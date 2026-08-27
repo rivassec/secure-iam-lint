@@ -118,3 +118,16 @@ Openclaw and Gentoo AGREE on: leaf-first ordering, the deny/partition cycle risk
 
 - Work: `wip/appsec-phase2-4-20260827` (Phases 2-5 complete + verified). Private backup: `rivassec/secure-iam-lint-wip` (remote `backup`). Public `phase-17-appsec-remediation` pristine at `f4149e5` for the curated release commit.
 - After the refactor: run a final RC validation (every-file scan + teams) on the refactored tree, confirm the full suite + golden-corpus + release-gate green, then Oliver curates a commit onto phase-17 -> PR base main -> tag v1.0.0 -> Marketplace (all Oliver's manual steps).
+
+## 10. STEP 0 VERIFIED for escalation.js (2026-08-27, grep-confirmed)
+
+- madge available (8.0.0); BASELINE `madge --circular` on the engine = clean (24 files, 0 cycles). So the per-PR cycle gate works and any cycle introduced will be caught.
+- Exact EXTERNAL re-export set the orchestrator MUST provide (grep-confirmed, complete):
+  - `analyzeEscalations` (public; imported by analyze.js:16, graph.js)
+  - `applyDenyToActions`, `denyResourceCoverage`, `denyActionApplies` -> land in escalation-deny.js
+  - `hasNonEmptyCondition` -> escalation-conditions.js
+  - `actionGrants`, `hasPolicyVariable` -> escalation-action-grants.js
+  - importers: graph.js (analyzeEscalations, applyDenyToActions, denyResourceCoverage, actionGrants, hasPolicyVariable, hasNonEmptyCondition); rules.js (applyDenyToActions, denyActionApplies, hasNonEmptyCondition); trust.js (denyActionApplies, hasNonEmptyCondition); analyze.js (analyzeEscalations).
+  - => the orchestrator imports these from the 3 leaf modules above and re-exports them, so rules/trust/graph/analyze import paths do NOT change (true 1-file PR). Confirms Gentoo's finding exactly.
+- NOTE: `statementSid` is a FILE-LOCAL helper name duplicated across many engine modules (50 non-escalation matches) - it is NOT imported from escalation.js; do not treat those as external users. Not a good "first leaf".
+- First-extraction readiness: escalation-action-grants.js (actionGrants, grantedPatternsFor, hasPolicyVariable) or escalation-catalogs.js is the cleanest PR 1a; the re-export list above is ready.
