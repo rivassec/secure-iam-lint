@@ -1,5 +1,5 @@
 {
-  "scanned": 30,
+  "scanned": 0,
   "missing": [],
   "active": [
     {
@@ -32,14 +32,14 @@
     },
     {
       "file": "cli/sarif.mjs",
-      "line": 435,
+      "line": 449,
       "cls": "candidate-drop",
       "snippet": "if (s.length > MAX_SID_LEN) s = `${s.slice(0, MAX_SID_LEN)}...`;",
       "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
     },
     {
       "file": "cli/sarif.mjs",
-      "line": 730,
+      "line": 744,
       "cls": "candidate-drop",
       "snippet": "const shown = norm.slice(0, MAX_MSG_ACTIONS);",
       "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
