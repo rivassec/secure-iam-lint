@@ -158,35 +158,35 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 957,
+      "line": 964,
       "cls": "budget-bypass",
       "snippet": "for (const p of stmt.actions) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 1471,
+      "line": 1592,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 1818,
+      "line": 1929,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 1898,
+      "line": 2009,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 1948,
+      "line": 2059,
       "cls": "unbounded-walk",
       "snippet": "function deepFreeze(value) {",
       "note": "recursion (deepFreeze) with no visible depth/node/size cap"

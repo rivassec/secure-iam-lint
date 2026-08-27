@@ -613,7 +613,14 @@ function makeFinding(ruleId, stmt, fields) {
   const finding = {
     id: meta.id,
     severity: fields.severity,
-    title: meta.title,
+    // The title is tool-authored rule metadata (never attacker text) and is NOT part of
+    // the SARIF semantic identity / partialFingerprint (sarif.mjs hashes findingIdentity,
+    // not the title), so a per-finding title override cannot forge or churn a fingerprint.
+    // It lets ONE rule id carry a SERVICE-ACCURATE title when a single id spans several
+    // datastores (NEW-01: CROSS-ACCOUNT-DATA-READ-UNDETERMINED describes an S3 bucket OR a
+    // dynamodb/kinesis/rds-data container). Absent an override it falls back to meta.title,
+    // so every existing caller is byte-unchanged.
+    title: typeof fields.title === 'string' && fields.title.length > 0 ? fields.title : meta.title,
     statementSid: statementSid(stmt),
     statementIndex: stmt.index,
     actions,
@@ -1140,10 +1147,17 @@ function classifyContainerReads(resources, actions, opts) {
       if (resourceInfersSensitive(r)) crossSensitive = true;
       continue;
     }
-    // Account UNRESOLVABLE. The only account-less whole-container shape is a canonical
-    // S3 bucket ARN (arn:aws:s3:::bucket/*, or a bucket-list target). It cannot be
-    // cleared as same-account, so it must not read CLEAN. Whether a sensitivity-token /
-    // ${...}-variable bare bucket is COLLECTED here is caller-dependent:
+    // Account UNRESOLVABLE. Two account-less whole-container shapes reach here, and the
+    // surfacing is SERVICE-AGNOSTIC (NEW-01, sibling of R1): (1) a canonical S3 bucket ARN
+    // (arn:aws:s3:::bucket/*, or a bucket-list target), which carries NO account field by
+    // construction; and (2) ANY other datastore ARN (dynamodb table / kinesis stream /
+    // rds-data cluster) whose account segment is EMPTY or a WILDCARD - concreteResourceAccount
+    // returns null for it just as it does for the S3 bucket, so it lands on this exact branch.
+    // Neither can be cleared as same-account, so neither may read CLEAN. Gating this collection
+    // on arn.service==='s3' was a fail-OPEN: an account-less dynamodb:Scan / kinesis:GetRecords
+    // / rds-data:ExecuteStatement whole-container read (the same archetypal exfil primitive)
+    // was dropped and read CLEAN. Whether a sensitivity-token / ${...}-variable resource is
+    // COLLECTED here is caller-dependent (unchanged from the S3 case):
     //   - ruleDataReadScoped (collectSensitiveVariable=false): a sensitively-named or
     //     variable-scoped NARROW read ALREADY surfaces via that rule's DATA-READ
     //     fall-through (rules.js DATA-READ finding), so re-collecting it here would
@@ -1159,7 +1173,10 @@ function classifyContainerReads(resources, actions, opts) {
     const arn = parseArn(r);
     const alreadySurfacedViaDataRead = !collectSensitiveVariable
       && (resourceInfersSensitive(r) || resourceHasVariable(r));
-    if (arn && arn.service === 's3'
+    // Require a well-formed ARN (as the S3 path always did): a non-ARN / bare "*" resource
+    // is handled by the broad-wildcard rules, not surfaced as an account-undetermined read.
+    // No service gate: any parseable ARN whose owner is unresolvable is collected.
+    if (arn
       && !alreadySurfacedViaDataRead
       && !undetResourceSet.has(r)) {
       undetResourceSet.add(r);
@@ -1167,6 +1184,119 @@ function classifyContainerReads(resources, actions, opts) {
     }
   }
   return { crossResources, crossAccounts, crossSensitive, undetResources };
+}
+
+// NEW-01: does an undetermined-account resource set consist ENTIRELY of canonical S3
+// bucket ARNs (service s3)? When it does, the finding keeps its exact S3-specific
+// title/why/remediation (byte-unchanged from the S3-only fix, so the S3 golden baselines
+// and the S3 regression suite do not drift). When ANY non-S3 datastore ARN
+// (dynamodb/kinesis/rds-data with an empty/wildcard account) is present, the wording
+// generalizes so a non-S3 resource is never mislabeled as an "S3 read" (threat-model T8:
+// truthful output). Pure inspection of inert ARN strings; deterministic.
+function undetAllCanonicalS3(resources) {
+  return resources.every((r) => {
+    const a = parseArn(r);
+    return !!(a && a.service === 's3');
+  });
+}
+
+// The title/why/remediation for a CROSS-ACCOUNT-DATA-READ-UNDETERMINED finding, chosen by
+// whether the surfaced resources are S3-only (exact legacy wording) or include a non-S3
+// datastore (service-agnostic wording). `fenced` picks the surviving-spared (R1 post-pass)
+// framing over the directly-granted (ruleDataReadScoped) framing. Returning `title:null`
+// for the S3-only case leaves makeFinding on its meta.title fallback, so that path is
+// byte-identical to before this change.
+function undetFindingText(resources, fenced) {
+  if (undetAllCanonicalS3(resources)) {
+    if (fenced) {
+      return {
+        title: null,
+        why:
+          'A broad Allow of this read (Resource "*" / wildcard) is fenced by a same-' +
+          'policy NotResource Deny down to a canonical S3 bucket ARN that carries NO ' +
+          'account field, and no aws:ResourceAccount / s3:ResourceAccount condition pins ' +
+          'the owner. The Deny removes the broad exfil reach (so DATA-EXFIL does not ' +
+          'fire), but the SURVIVING spared scope is still a WHOLE-container read (bucket/* ' +
+          'or a bucket list) whose owning account cannot be determined from this policy - ' +
+          'so the tool CANNOT clear it as a same-account read. This does NOT prove the ' +
+          'bucket is in another account (the crossing is undetermined, not confirmed); it ' +
+          'means a "no findings" / "complete" verdict here is not a safety claim for the ' +
+          'read the fence leaves standing.',
+        remediation:
+          'Make the surviving read explicit and bounded: pin the owning account with an ' +
+          'aws:ResourceAccount (or s3:ResourceAccount) condition, or use an account-' +
+          'bearing S3 access-point ARN, and scope the read to the specific keys required. ' +
+          'If the spared bucket is not intended to be readable, remove it from the Deny\'s ' +
+          'NotResource carve-out (which is what keeps it reachable).',
+      };
+    }
+    return {
+      title: null,
+      why:
+        'Grants a whole-container read (bucket/* or a bucket list) on a canonical ' +
+        'S3 bucket ARN that carries NO account field, and no aws:ResourceAccount / ' +
+        's3:ResourceAccount condition pins the owner. The bucket\'s owning account ' +
+        'therefore cannot be determined from this policy, so the tool CANNOT clear ' +
+        'it as a same-account read - it may be a cross-account read of another ' +
+        'account\'s bucket. This does NOT prove the bucket is in another account ' +
+        '(the crossing is undetermined, not confirmed); it means a "no findings" / ' +
+        '"complete" verdict here is not a safety claim for this read.',
+      remediation:
+        'Make the owning account explicit so the read can be cleared or flagged: ' +
+        'pin it with an aws:ResourceAccount (or s3:ResourceAccount) condition, or ' +
+        'use an account-bearing S3 access-point ARN. If the bucket is in another ' +
+        'account, scope the read to the specific keys required and gate it with ' +
+        'conditions; if it is your own, the condition removes this ambiguity.',
+    };
+  }
+  // Service-agnostic wording (a non-S3 datastore ARN is present). Covers a canonical S3
+  // bucket AND an empty/wildcard-account dynamodb/kinesis/rds-data ARN in one statement.
+  const title = 'Whole-container read with an undeterminable owning account';
+  if (fenced) {
+    return {
+      title,
+      why:
+        'A broad Allow of this read (Resource "*" / wildcard) is fenced by a same-policy ' +
+        'NotResource Deny down to a resource whose owning account cannot be determined ' +
+        'from this policy: the resource ARN carries no concrete account field (a canonical ' +
+        'S3 bucket ARN, or an empty/wildcard account segment on a table / stream / database ' +
+        'ARN) and no aws:ResourceAccount / s3:ResourceAccount condition pins the owner. The ' +
+        'Deny removes the broad exfil reach (so DATA-EXFIL does not fire), but the SURVIVING ' +
+        'spared scope is still a WHOLE-container read (bucket/*, a bucket list, or a table / ' +
+        'stream / database bulk read) whose owning account cannot be determined - so the ' +
+        'tool CANNOT clear it as a same-account read. This does NOT prove the resource is in ' +
+        'another account (the crossing is undetermined, not confirmed); it means a "no ' +
+        'findings" / "complete" verdict here is not a safety claim for the read the fence ' +
+        'leaves standing.',
+      remediation:
+        'Make the surviving read explicit and bounded: pin the owning account with an ' +
+        'aws:ResourceAccount (or s3:ResourceAccount) condition, or use an account-bearing ' +
+        'resource ARN (an S3 access-point ARN, or a table / stream / database ARN carrying ' +
+        'the owning account), and scope the read to the specific keys/items required. If a ' +
+        'spared resource is not intended to be readable, remove it from the Deny\'s ' +
+        'NotResource carve-out (which is what keeps it reachable).',
+    };
+  }
+  return {
+    title,
+    why:
+      'Grants a whole-container read (bucket/*, a bucket list, or a table / stream / ' +
+      'database bulk read) on a resource whose owning account cannot be determined from ' +
+      'this policy: the resource ARN carries no concrete account field (a canonical S3 ' +
+      'bucket ARN, or an empty/wildcard account segment on a table / stream / database ' +
+      'ARN) and no aws:ResourceAccount / s3:ResourceAccount condition pins the owner. The ' +
+      'tool therefore CANNOT clear it as a same-account read - it may be a cross-account ' +
+      'read of another account\'s resource. This does NOT prove the resource is in another ' +
+      'account (the crossing is undetermined, not confirmed); it means a "no findings" / ' +
+      '"complete" verdict here is not a safety claim for this read.',
+    remediation:
+      'Make the owning account explicit so the read can be cleared or flagged: pin it ' +
+      'with an aws:ResourceAccount (or s3:ResourceAccount) condition, or use an account-' +
+      'bearing resource ARN (an S3 access-point ARN, or a table / stream / database ARN ' +
+      'carrying the owning account). If the resource is in another account, scope the read ' +
+      'to the specific keys/items required and gate it with conditions; if it is your own, ' +
+      'the account-bearing ARN or condition removes this ambiguity.',
+  };
 }
 
 // 4a-ter. Resource-scoped / variable-scoped data read (IAM-706, acceptance
@@ -1231,33 +1361,24 @@ function ruleDataReadScoped(stmt, out, ctx) {
         condAccount, subjectAccount, broad, chargeUnit: matched.length,
       });
     if (undetResources.length > 0) {
+      // S3-only keeps the exact legacy wording (title:null -> meta.title); a present non-S3
+      // datastore ARN generalizes it so nothing is mislabeled as an "S3 read" (NEW-01).
+      const text = undetFindingText(undetResources, false);
       out.push(
         makeFinding('CROSS-ACCOUNT-DATA-READ-UNDETERMINED', stmt, {
-          // INFO: the account crossing is UNPROVEN (the bucket's owner is unknown), so
-          // this must never be presented as loudly as a confirmed cross-account read.
+          // INFO: the account crossing is UNPROVEN (the owner is unknown), so this must
+          // never be presented as loudly as a confirmed cross-account read.
           severity: 'info',
           // The whole-container grant is plainly present -> evidence HIGH. Whether it
-          // actually crosses an account boundary, and whether the objects are reachable,
-          // both depend on facts absent from a bare bucket ARN -> exploitability LOW.
+          // actually crosses an account boundary, and whether the data is reachable, both
+          // depend on facts absent from an account-less resource ARN -> exploitability LOW.
           policyEvidence: 'high',
           pathExploitability: 'low',
           actions: matched,
           resources: undetResources.slice(),
-          why:
-            'Grants a whole-container read (bucket/* or a bucket list) on a canonical ' +
-            'S3 bucket ARN that carries NO account field, and no aws:ResourceAccount / ' +
-            's3:ResourceAccount condition pins the owner. The bucket\'s owning account ' +
-            'therefore cannot be determined from this policy, so the tool CANNOT clear ' +
-            'it as a same-account read - it may be a cross-account read of another ' +
-            'account\'s bucket. This does NOT prove the bucket is in another account ' +
-            '(the crossing is undetermined, not confirmed); it means a "no findings" / ' +
-            '"complete" verdict here is not a safety claim for this read.',
-          remediation:
-            'Make the owning account explicit so the read can be cleared or flagged: ' +
-            'pin it with an aws:ResourceAccount (or s3:ResourceAccount) condition, or ' +
-            'use an account-bearing S3 access-point ARN. If the bucket is in another ' +
-            'account, scope the read to the specific keys required and gate it with ' +
-            'conditions; if it is your own, the condition removes this ambiguity.',
+          title: text.title,
+          why: text.why,
+          remediation: text.remediation,
         }),
       );
     }
@@ -1590,6 +1711,10 @@ export function survivingSparedContainerReads(model, ctx) {
       : stmt;
 
     if (undetResources.length > 0) {
+      // S3-only spared set keeps the exact legacy wording; a present non-S3 datastore ARN
+      // generalizes it (NEW-01, fenced framing). The undetermined path is subject-account-
+      // INDEPENDENT (see above), so this surfaces whether or not a subject was supplied.
+      const text = undetFindingText(undetResources, true);
       out.push(
         makeFinding('CROSS-ACCOUNT-DATA-READ-UNDETERMINED', findingStmt, {
           severity: 'info',
@@ -1597,23 +1722,9 @@ export function survivingSparedContainerReads(model, ctx) {
           pathExploitability: 'low',
           actions: fencedActions,
           resources: undetResources.slice(),
-          why:
-            'A broad Allow of this read (Resource "*" / wildcard) is fenced by a same-' +
-            'policy NotResource Deny down to a canonical S3 bucket ARN that carries NO ' +
-            'account field, and no aws:ResourceAccount / s3:ResourceAccount condition pins ' +
-            'the owner. The Deny removes the broad exfil reach (so DATA-EXFIL does not ' +
-            'fire), but the SURVIVING spared scope is still a WHOLE-container read (bucket/* ' +
-            'or a bucket list) whose owning account cannot be determined from this policy - ' +
-            'so the tool CANNOT clear it as a same-account read. This does NOT prove the ' +
-            'bucket is in another account (the crossing is undetermined, not confirmed); it ' +
-            'means a "no findings" / "complete" verdict here is not a safety claim for the ' +
-            'read the fence leaves standing.',
-          remediation:
-            'Make the surviving read explicit and bounded: pin the owning account with an ' +
-            'aws:ResourceAccount (or s3:ResourceAccount) condition, or use an account-' +
-            'bearing S3 access-point ARN, and scope the read to the specific keys required. ' +
-            'If the spared bucket is not intended to be readable, remove it from the Deny\'s ' +
-            'NotResource carve-out (which is what keeps it reachable).',
+          title: text.title,
+          why: text.why,
+          remediation: text.remediation,
         }),
       );
     }

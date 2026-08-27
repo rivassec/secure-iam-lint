@@ -322,6 +322,47 @@ test('RELEASE-GATE: S1-NEW02 SARIF positive-list identity forgery stays FIXED (d
   );
 });
 
+// The S2-NEW01 service-agnostic undetermined-account fix (bug: undetermined-account-surface-
+// s3-only-gate, sibling of R1). classifyContainerReads' account-UNRESOLVABLE branch surfaced
+// the surviving whole-container read only for arn.service==='s3', so a NON-S3 datastore ARN
+// with an empty/wildcard account (concreteResourceAccount === null, exactly like a canonical
+// S3 bucket) was DROPPED and read CLEAN. dynamodb:Scan is the sharp case (catalogued read -> no
+// incomplete-coverage backstop). The release gate re-verifies at ship time that the account-
+// less non-S3 whole-container read still SURFACES (never a clean exit-0), on BOTH surfaces, and
+// that its wording is service-accurate (never mislabeled an "S3 read"). It also re-checks the S3
+// sibling stays byte-accurate (title still reads "S3") - the fix generalized non-S3 without
+// disturbing the S3 path.
+test('RELEASE-GATE: S2-NEW01 service-agnostic undetermined-account read stays FIXED', { skip }, () => {
+  const c = CASES.find((x) => x.id === 'crossaccount-dynamodb-accountless-read');
+  assert.ok(c, "manifest case 'crossaccount-dynamodb-accountless-read' must exist");
+
+  const sr = scan(scanInputFor(c));
+  assert.notEqual(sr.exitCode, EXIT.CLEAN,
+    'an account-less non-S3 whole-container read must never be a clean exit-0 at release (CLI)');
+  assert.equal(sr.exitCode, 1, 'the undetermined read gates at info -> exit 1');
+  const cliUndet = sr.findings.filter((f) => f.id === 'CROSS-ACCOUNT-DATA-READ-UNDETERMINED');
+  assert.equal(cliUndet.length, 1, 'exactly one undetermined row for one account-less resource (CLI)');
+
+  const ar = analyze(corpusText(c.file), analyzeOptionsFor(c));
+  const browserClean = !!(ar && ar.ok === true
+    && Array.isArray(ar.findings) && ar.findings.length === 0
+    && !(ar.coverage && ar.coverage.summary && ar.coverage.summary.incomplete));
+  assert.equal(browserClean, false, 'browser must not read clean on the account-less non-S3 read either (parity)');
+  const bf = (ar.findings || []).find((f) => f.id === 'CROSS-ACCOUNT-DATA-READ-UNDETERMINED');
+  assert.ok(bf, 'browser must surface the undetermined read, never silently drop it');
+  assert.doesNotMatch(bf.title, /\bS3\b/, 'a non-S3 finding must not mislabel itself as an S3 read at release');
+
+  // The S3 sibling is undisturbed: the canonical bucket path still fires and still reads "S3".
+  const s3 = analyze(
+    JSON.stringify({ Version: '2012-10-17',
+      Statement: [{ Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::other-corp-bucket/*' }] }),
+    { family: 'identity', requireExplicitFamily: true, subjectAccount: '123456789012' },
+  );
+  const s3f = (s3.findings || []).find((f) => f.id === 'CROSS-ACCOUNT-DATA-READ-UNDETERMINED');
+  assert.ok(s3f, 'the S3 sibling still surfaces');
+  assert.match(s3f.title, /\bS3\b/, 'the S3-only finding keeps its S3-specific title (byte-unchanged)');
+});
+
 // The ENTRYPOINT fail-open (raw-realpath-mismatch): a SYMLINKED launch of the CLI routes
 // argv[1] through a symlink and today fails OPEN (exit 0, zero analysis). This reproduces
 // it cheaply (no npm pack): the release gate requires the symlinked launch to analyze and

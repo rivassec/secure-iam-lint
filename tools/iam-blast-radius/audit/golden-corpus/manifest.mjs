@@ -466,6 +466,36 @@ export const CASES = Object.freeze([
       + '= ZERO net readable; must stay CLEAN, never a fabricated surviving-spared finding on a '
       + 'bucket the complement Allow excludes.',
   },
+  {
+    id: 'crossaccount-dynamodb-accountless-read',
+    file: '28-crossaccount-dynamodb-accountless-read.json',
+    family: 'identity',
+    klass: CLASS.RISKY,
+    threshold: 'info',
+    subjectAccount: '123456789012',
+    surfacesFinding: true,
+    expectedExit: 1,
+    // FIXED (story S2-NEW01-undetermined-service-agnostic, bug: undetermined-account-surface-
+    // s3-only-gate). Sibling of R1. classifyContainerReads' account-UNRESOLVABLE branch
+    // collected the surviving whole-container read ONLY when arn.service==='s3', so a NON-S3
+    // datastore ARN with an EMPTY (or wildcard) account segment - which makes
+    // concreteResourceAccount() return null exactly like a canonical S3 bucket ARN - was
+    // DROPPED. dynamodb:Scan is the sharp case: it is a CATALOGUED read, so an account-less
+    // table read did NOT even trip coverage.incomplete (unlike uncatalogued kinesis/rds-data,
+    // which fail closed incidentally). With a KNOWN subject account, an unscoped
+    // dynamodb:Scan on arn:aws:dynamodb:us-east-1::table/orders therefore read exit-0 /
+    // complete / findings:[] - a fail-OPEN on the archetypal cross-account exfil primitive.
+    // Fix: the undetermined-account surfacing is SERVICE-AGNOSTIC - any whole-container read
+    // with no concrete account and no aws:ResourceAccount pin surfaces
+    // CROSS-ACCOUNT-DATA-READ-UNDETERMINED at info (its wording generalizes so a non-S3
+    // resource is never mislabeled an "S3 read"). Pinned to threshold info (where the INFO
+    // finding gates) with subject KNOWN (the condition the surfacing requires). The release
+    // gate re-verifies it stays fixed.
+    note: 'dynamodb:Scan on an account-less table ARN (arn:aws:dynamodb:us-east-1::table/orders) '
+      + 'with a KNOWN subject account = a whole-container read whose owner is unresolvable; must '
+      + 'surface CROSS-ACCOUNT-DATA-READ-UNDETERMINED at info, never silently cleared (NEW-01, '
+      + 'the non-S3 sibling of the account-blind S3 bucket read).',
+  },
 ]);
 
 // The four selectable severities the CLI threshold gate ranks (most severe first),
