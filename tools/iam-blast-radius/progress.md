@@ -402,3 +402,9 @@ Last-round reason per story:
 - S1-NEW02-sarif-identity-injective: accepted (all-pass (2707 tests))
 - S2-NEW01-undetermined-service-agnostic: accepted (all-pass (2733 tests))
 - S3-class-sweep: accepted (all-pass (2753 tests))
+
+## Phase 5 story outcomes (2026-08-27)
+All Phase-5 stories accepted.
+Last-round reason per story:
+- S1-NEW-BUDGET-chargeWork: accepted (all-pass (2767 tests))
+- S2-NEW-SARIF-AGGREGATE-budget: accepted (all-pass (2778 tests))

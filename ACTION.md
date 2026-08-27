@@ -132,6 +132,8 @@ run the Action **multiple times** with different `paths` globs and a different
 | `budget-ms` | no | `10000` | Per-policy wall-clock analysis budget, in milliseconds. If a policy's analysis overruns this budget it fails closed (exit `3`, `RESOURCE_BUDGET_EXCEEDED`) - it never reports a clean pass. A non-numeric value falls back to the default. |
 | `max-files` | no | `1000` | Aggregate ceiling on the **number** of matched files analyzed in one run. Files are analyzed in a stable sorted order; once this many have been analyzed, the run stops, emits the findings gathered so far, and fails closed (exit `3`, `AGGREGATE_CAP_EXCEEDED`) with a SARIF analyzer-state notification - the partial scan is never reported clean. Bounds the linear CI-runtime cost of a fork PR matching thousands of near-cap policy files. Raise it for a legitimately large policy set; a non-positive/non-integer value falls back to the default. |
 | `max-total-bytes` | no | `67108864` | Aggregate ceiling on the **total UTF-8 bytes** analyzed across all matched files in one run (default 64 MiB). When analyzing the next file would exceed this budget the run stops, emits the findings gathered so far, and fails closed (exit `3`, `AGGREGATE_CAP_EXCEEDED`) with a SARIF analyzer-state notification - never a clean pass. Bounds cumulative parser work that the file-count cap alone would miss (a few giant files). Raise it for a legitimately large policy set; a non-positive/non-integer value falls back to the default. |
+| `max-sarif-results` | no | `4500` | Document-level ceiling on the **number of results** in the aggregate SARIF (kept below GitHub's ~5000-results-per-upload cap, over which GitHub **silently** drops the excess so Security-tab findings vanish). One run per scanned file is concatenated; if the total exceeds this cap the results are **truncated deterministically** - highest-severity/blocking findings and every fail-closed analyzer-state are kept first - and a visible `SARIF_OUTPUT_TRUNCATED` analyzer-state is appended so nothing is dropped silently. Truncation **does not** change the exit code (it is driven only by finding severity). Raise it for a legitimately large aggregate; a non-positive/non-integer value falls back to the default. |
+| `max-sarif-bytes` | no | `9437184` | Document-level ceiling on the aggregate SARIF **size in UTF-8 bytes** (default 9 MiB, a safe uncompressed proxy below GitHub's ~10 MB gzip upload cap). When the concatenated document would exceed this budget the results are truncated deterministically (highest-severity/blocking findings and fail-closed analyzer-states first) with a visible `SARIF_OUTPUT_TRUNCATED` analyzer-state; the exit code is unaffected. Raise it for a legitimately large aggregate; a non-positive/non-integer value falls back to the default. |
 
 ## Outputs
 
@@ -163,6 +165,17 @@ Fingerprints (`partialFingerprints`) are computed on normalized semantic identit
 (finding type + family + statement identity + normalized
 action/resource/principal/condition), never on message text, line number, or key
 order, so results dedupe cleanly across whitespace and path-mode changes.
+
+The aggregate SARIF (one run per scanned file) is bounded by a **document-level
+output budget** (`max-sarif-results` / `max-sarif-bytes`) kept below GitHub's
+code-scanning upload caps (~5000 results, ~10 MB gzip). GitHub **silently** drops
+results past its 5000-per-upload cap, so an unbounded fan-out could lose Security-tab
+findings with no error. When the aggregate exceeds either budget the results are
+**truncated deterministically** - highest-severity/blocking findings and every
+fail-closed analyzer-state are kept first - and a visible `SARIF_OUTPUT_TRUNCATED`
+analyzer-state result is appended, so a truncated document is never mistaken for a
+complete one. Truncation shapes only the SARIF document; it **never** changes the
+exit code (that is driven only by finding severity: a fail-closed `3` stays `3`).
 
 ## Permissions
 

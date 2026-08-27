@@ -86,6 +86,28 @@ inputs:
       non-positive/non-integer value falls back to the default.
     required: false
     default: "67108864"
+  max-sarif-results:
+    description: >-
+      DOCUMENT-level ceiling on the NUMBER of results in the aggregate SARIF (default 4500,
+      below GitHub's ~5000-results-per-upload cap, over which GitHub SILENTLY drops the
+      excess and Security-tab findings vanish). One run per scanned file is concatenated; if
+      the total exceeds this cap the results are TRUNCATED deterministically - highest-
+      severity/blocking findings and every fail-closed analyzer-state kept first - and a
+      visible SARIF_OUTPUT_TRUNCATED analyzer-state is appended so the truncation is never
+      silent. The exit code is UNAFFECTED (driven only by finding severity). Raise it for a
+      legitimately large aggregate. A non-positive/non-integer value falls back to the default.
+    required: false
+    default: "4500"
+  max-sarif-bytes:
+    description: >-
+      DOCUMENT-level ceiling on the aggregate SARIF size in UTF-8 bytes (default 9437184, i.e.
+      9 MiB - a safe uncompressed proxy below GitHub's ~10 MB gzip upload cap). When the
+      concatenated document would exceed this budget the results are TRUNCATED deterministically
+      (highest-severity/blocking + fail-closed analyzer-states first) with a visible
+      SARIF_OUTPUT_TRUNCATED analyzer-state; the exit code is UNAFFECTED. Raise it for a
+      legitimately large aggregate. A non-positive/non-integer value falls back to the default.
+    required: false
+    default: "9437184"
 
 outputs:
   sarif-path:

@@ -24,6 +24,7 @@ import { dirname, join } from 'node:path';
 import { scan, EXIT, ANALYSIS_STATUS } from '../../../../cli/scan.mjs';
 import { buildSarifLog, findingIdentity, FINGERPRINT_KEY } from '../../../../cli/sarif.mjs';
 import { analyze } from '../../../../content/tools/iam-blast-radius/engine/analyze.js';
+import { runAction, SARIF_OUTPUT_TRUNCATED_REASON } from '../../../../action/index.mjs';
 import { CASES, scanInputFor, analyzeOptionsFor, corpusText } from './manifest.mjs';
 
 const GATE = process.env.GOLDEN_RELEASE_GATE === '1';
@@ -414,6 +415,51 @@ test('RELEASE-GATE: NEW-BUDGET-DENYFENCE within-caps deny-fence DoS stays budget
   assert.equal(oa.coverage.summary.incomplete, false, 'it reaches a COMPLETE verdict');
   assert.deepEqual((oa.findings || []).map((f) => f.id), ['CROSS-ACCOUNT-DATA-READ-UNDETERMINED'],
     'the ordinary surviving whole-bucket read verdict is unchanged by the DoS fix');
+});
+
+// The S2-NEW-SARIF-AGGREGATE fail-open (aggregate-sarif-no-document-budget): action/index.mjs
+// buildAggregateSarif concatenated one SARIF run per scanned file with NO document budget, unlike
+// the per-run MAX_SARIF_BYTES + SARIF_OUTPUT_TRUNCATED guard in cli/sarif.mjs. GitHub code-scanning
+// SILENTLY drops results past ~5000 per upload (no error), so a within-caps fan-out (many files x
+// many findings) overflowed that cap and lost Security-tab findings with ZERO truncation marker -
+// the exact harm the per-run budget exists to prevent. Fixed with a DOCUMENT-level budget mirroring
+// the per-run one (cap aggregate result-count + byte size; truncate highest-severity/blocking first;
+// append a visible SARIF_OUTPUT_TRUNCATED analyzer-state). The release gate re-verifies at ship time,
+// on the REAL emitted aggregate SARIF the code-scanning gate consumes, that an over-cap aggregate is
+// TRUNCATED and ANNOUNCED (never silently dropped), that a blocking finding survives, that the result
+// count is bounded below GitHub's cap, and that the exit code is NOT downgraded by truncation.
+test('RELEASE-GATE: S2-NEW-SARIF-AGGREGATE over-cap aggregate is truncated + announced (never silently dropped)', { skip }, () => {
+  const STAR_ADMIN = JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: '*', Resource: '*' }] });
+  const files = {};
+  for (let i = 0; i < 10; i++) files[`policies/p${String(i).padStart(3, '0')}.json`] = STAR_ADMIN;
+  const io = {
+    listFiles: () => Object.keys(files),
+    readFile: (rel) => files[rel],
+  };
+  const env = { INPUT_PATHS: 'policies/**/*.json', INPUT_FAMILY: 'identity', 'INPUT_MAX-SARIF-RESULTS': '20' };
+  const r = runAction({ env, io });
+  const gen = runAction({ env: { ...env, 'INPUT_MAX-SARIF-RESULTS': '100000' }, io });
+
+  const results = r.sarifLog.runs.flatMap((run) => run.results || []);
+  const genResults = gen.sarifLog.runs.flatMap((run) => run.results || []);
+  const markers = results.filter(
+    (x) => x.kind === 'fail' && x.properties && x.properties.category === 'analysis-state'
+      && x.ruleId === `analysis.${SARIF_OUTPUT_TRUNCATED_REASON}`,
+  );
+
+  assert.ok(genResults.length > 20,
+    'the aggregate genuinely exceeds the cap (otherwise the gate proves nothing)');
+  assert.equal(markers.length, 1,
+    'an over-cap aggregate must carry a VISIBLE SARIF_OUTPUT_TRUNCATED marker - never a silent drop');
+  assert.equal(markers[0].properties['security-severity'], undefined,
+    'the truncation marker is an analyzer-state, never a vulnerability score');
+  assert.ok(results.length <= 20, 'the aggregate result count must be bounded below the configured cap');
+  const kept = results.filter((x) => x.properties && x.properties.category === 'security');
+  assert.ok(kept.some((x) => x.properties.severity === 'critical'),
+    'a blocking (highest-severity) finding must survive truncation, never be shed for a lower one');
+  assert.equal(r.exitCode, gen.exitCode,
+    'truncation must NOT change the exit code (driven only by finding severity)');
+  assert.notEqual(r.exitCode, EXIT.CLEAN, 'a risky aggregate is never a clean pass at release');
 });
 
 // The ENTRYPOINT fail-open (raw-realpath-mismatch): a SYMLINKED launch of the CLI routes

@@ -1,10 +1,10 @@
 {
-  "scanned": 0,
+  "scanned": 30,
   "missing": [],
   "active": [
     {
       "file": "action/index.mjs",
-      "line": 303,
+      "line": 332,
       "cls": "candidate-drop",
       "snippet": "return s.length > MAX_GLOB_PATTERN_LENGTH || countGlobWildcards(s) > MAX_GLOB_WILDCARDS;",
       "note": "cap/truncation-guarded drop with no fail-closed truncation signal"
