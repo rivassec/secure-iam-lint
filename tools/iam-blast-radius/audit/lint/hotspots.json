@@ -1,0 +1,238 @@
+{
+  "scanned": 30,
+  "missing": [],
+  "active": [
+    {
+      "file": "action/index.mjs",
+      "line": 303,
+      "cls": "candidate-drop",
+      "snippet": "return s.length > MAX_GLOB_PATTERN_LENGTH || countGlobWildcards(s) > MAX_GLOB_WILDCARDS;",
+      "note": "cap/truncation-guarded drop with no fail-closed truncation signal"
+    },
+    {
+      "file": "cli/iam-br.mjs",
+      "line": 668,
+      "cls": "silent-catch-clean",
+      "snippet": "} catch { /* best effort */ }",
+      "note": "catch swallows the error with no fail-closed marker"
+    },
+    {
+      "file": "cli/iam-br.mjs",
+      "line": 682,
+      "cls": "silent-catch-clean",
+      "snippet": "try { stream.pause(); } catch { /* best effort */ }",
+      "note": "catch swallows the error with no fail-closed marker"
+    },
+    {
+      "file": "cli/iam-br.mjs",
+      "line": 683,
+      "cls": "silent-catch-clean",
+      "snippet": "try { if (typeof stream.destroy === 'function') stream.destroy(); } catch { /* best effort */ }",
+      "note": "catch swallows the error with no fail-closed marker"
+    },
+    {
+      "file": "cli/sarif.mjs",
+      "line": 435,
+      "cls": "candidate-drop",
+      "snippet": "if (s.length > MAX_SID_LEN) s = `${s.slice(0, MAX_SID_LEN)}...`;",
+      "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
+    },
+    {
+      "file": "cli/sarif.mjs",
+      "line": 730,
+      "cls": "candidate-drop",
+      "snippet": "const shown = norm.slice(0, MAX_MSG_ACTIONS);",
+      "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/app.js",
+      "line": 980,
+      "cls": "silent-catch-clean",
+      "snippet": "try { currentJob.worker.terminate(); } catch (e) { /* ignore */ }",
+      "note": "catch swallows the error with no fail-closed marker"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/app.js",
+      "line": 1042,
+      "cls": "silent-catch-clean",
+      "snippet": "try { worker.terminate(); } catch (e) { /* ignore */ }",
+      "note": "catch swallows the error with no fail-closed marker"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/analyze.js",
+      "line": 949,
+      "cls": "budget-bypass",
+      "snippet": "for (const s of m.model.statements) {",
+      "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/correlate.js",
+      "line": 880,
+      "cls": "unbounded-walk",
+      "snippet": "function deepFreeze(value) {",
+      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/envelope.js",
+      "line": 204,
+      "cls": "unbounded-walk",
+      "snippet": "function deepFreeze(value) {",
+      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation.js",
+      "line": 168,
+      "cls": "budget-bypass",
+      "snippet": "for (const p of stmt.actions) {",
+      "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation.js",
+      "line": 3142,
+      "cls": "unbounded-walk",
+      "snippet": "function deepFreeze(value) {",
+      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/format-control.js",
+      "line": 181,
+      "cls": "unbounded-walk",
+      "snippet": "export function sanitizeTree(value) {",
+      "note": "recursion (sanitizeTree) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/graph.js",
+      "line": 412,
+      "cls": "budget-bypass",
+      "snippet": "for (const dp of deny.actions) {",
+      "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/graph.js",
+      "line": 1586,
+      "cls": "budget-bypass",
+      "snippet": "for (const stmt of model.statements) {",
+      "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/graph.js",
+      "line": 1881,
+      "cls": "unbounded-walk",
+      "snippet": "function deepFreeze(value) {",
+      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/model.js",
+      "line": 48,
+      "cls": "unbounded-walk",
+      "snippet": "function deepFreeze(value) {",
+      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/model.js",
+      "line": 125,
+      "cls": "unbounded-walk",
+      "snippet": "function copyGuarded(value, errors, path) {",
+      "note": "recursion (copyGuarded) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/rcp.js",
+      "line": 397,
+      "cls": "unbounded-walk",
+      "snippet": "function deepFreeze(value) {",
+      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/render-graph.js",
+      "line": 173,
+      "cls": "unbounded-walk",
+      "snippet": "function round(n) {",
+      "note": "recursion (round) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/render-graph.js",
+      "line": 463,
+      "cls": "candidate-drop",
+      "snippet": "return s.slice(0, max - 3) + '...';",
+      "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/rules.js",
+      "line": 957,
+      "cls": "budget-bypass",
+      "snippet": "for (const p of stmt.actions) {",
+      "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/rules.js",
+      "line": 1471,
+      "cls": "budget-bypass",
+      "snippet": "for (const stmt of model.statements) {",
+      "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/rules.js",
+      "line": 1818,
+      "cls": "budget-bypass",
+      "snippet": "for (const stmt of model.statements) {",
+      "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/rules.js",
+      "line": 1898,
+      "cls": "budget-bypass",
+      "snippet": "for (const stmt of model.statements) {",
+      "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/rules.js",
+      "line": 1948,
+      "cls": "unbounded-walk",
+      "snippet": "function deepFreeze(value) {",
+      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/scp.js",
+      "line": 418,
+      "cls": "unbounded-walk",
+      "snippet": "function deepFreeze(value) {",
+      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/trust.js",
+      "line": 402,
+      "cls": "candidate-drop",
+      "snippet": "const beforeAccount = segs.slice(0, 4); // arn, partition, service, region",
+      "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/trust.js",
+      "line": 443,
+      "cls": "unbounded-walk",
+      "snippet": "function deepFreeze(value) {",
+      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/trust.js",
+      "line": 521,
+      "cls": "unbounded-walk",
+      "snippet": "function add(out, type, value, key, index) {",
+      "note": "recursion (add) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/validate.js",
+      "line": 258,
+      "cls": "silent-catch-clean",
+      "snippet": "} catch (e) {",
+      "note": "catch swallows the error with no fail-closed marker"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/validate.js",
+      "line": 270,
+      "cls": "unbounded-walk",
+      "snippet": "function sanitize(value, path, errors, visited) {",
+      "note": "recursion (sanitize) with no visible depth/node/size cap"
+    }
+  ],
+  "suppressed": []
+}

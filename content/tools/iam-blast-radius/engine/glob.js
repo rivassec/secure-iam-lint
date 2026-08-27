@@ -2,8 +2,8 @@
 //
 // ONE canonical IAM-wildcard matcher, imported by every engine module that
 // compares a policy pattern against a concrete action/resource/service string
-// (escalation.js, evaluator.js, rules.js). Previously each of those files kept
-// its OWN byte-identical copy of a greedy two-pointer matcher; three copies is a
+// (escalation.js, rules.js, and the family-aware analyzers). Previously several of
+// those files kept their OWN byte-identical copy of a greedy two-pointer matcher; copies are a
 // maintenance and (worse) a SECURITY hazard - a DoS fix or semantic correction
 // has to land in all three or the surfaces drift. This module is the single
 // source of truth so a fix lands once.

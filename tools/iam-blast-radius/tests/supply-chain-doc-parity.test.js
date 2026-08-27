@@ -146,22 +146,27 @@ test('security.yml checksum-verifies every downloaded tool (no unverified instal
   assert.match(securityYml, /zizmor\.tgz/, 'zizmor must be fetched as a checksum-verified binary');
 });
 
-// S7-B (CLASS): T7 must not assert a supply-chain control artifact that does not
-// exist. It previously claimed dev deps were "locked in package-lock.json" while
-// no such file is committed and ci.yml runs `npm install` (not `npm ci`) - a
-// false control (T8-style misleading assurance). This ties every lockfile /
-// npm-ci claim in T7 to the actual repo + ci.yml state, in both directions.
+// S7-B / S7-lows-and-orphan (CLASS): T7's lockfile/npm-ci claims must match repo +
+// ci.yml reality, in both directions, so the doc can never assert a phantom control
+// (a T8-style misleading assurance). The posture was HARDENED in S7: the dev-dep
+// tree is now locked in a COMMITTED `package-lock.json` (un-gitignored) and ci.yml
+// runs `npm ci` (fails closed on lockfile drift), replacing the former
+// no-lockfile + `npm install` posture. This gate ties the three facts together -
+// (a) the lockfile is git-tracked, (b) ci.yml runs `npm ci`, (c) T7 claims both -
+// so none of them can silently regress apart from the others.
 const LOCK_REL = 'tools/iam-blast-radius/package-lock.json';
 // The load-bearing signal: is the lockfile a COMMITTED control? Git-tracked state,
-// not existsSync - a gitignored, npm-generated on-disk lockfile is NOT a control.
+// not existsSync - a gitignored, npm-generated on-disk lockfile is NOT a control,
+// and `npm ci` in a fresh CI checkout only works when the lockfile is committed.
 const lockCommitted = gitTracked(LOCK_REL);
 
 test('T7 package-lock / npm-ci claims match repo + ci.yml reality (no phantom controls)', () => {
   // Positive claim that deps are LOCKED by a committed lockfile.
   const claimsLock = /locked in\s*`?package-lock\.json`?/i.test(T7);
-  // Positive claim that CI installs with `npm ci` (exclude the "not npm ci" disclosure).
+  // Positive claim that CI installs with `npm ci` (exclude any "not npm ci" disclosure).
   const claimsNpmCi = /\bnpm ci\b/.test(T7) && !/not[^.]*`?npm ci`?/i.test(T7);
 
+  // Direction 1: a T7 claim must be backed by the real artifact / workflow.
   if (claimsLock) {
     assert.ok(
       lockCommitted,
@@ -171,10 +176,19 @@ test('T7 package-lock / npm-ci claims match repo + ci.yml reality (no phantom co
   if (claimsNpmCi) {
     assert.match(ciYml, /npm ci\b/, 'T7 claims CI uses `npm ci` but ci.yml does not run it');
   }
-  if (!lockCommitted) {
-    // Reality: CI must be using npm install, and T7 must DISCLOSE the no-lockfile posture
-    // rather than asserting a lock that does not exist. This branch runs regardless of
-    // whether `npm install` has left an untracked lockfile on disk.
+
+  // Direction 2: the real posture must be disclosed by T7 (no silent drift).
+  if (lockCommitted) {
+    // A committed lockfile is a durable control ONLY if `npm ci` consumes it and T7
+    // says so. `npm ci` without a committed lockfile fails closed in a fresh checkout,
+    // so these three must always move together.
+    assert.match(ciYml, /npm ci\b/, 'lockfile is committed but ci.yml does not run `npm ci` - doc/CI drift');
+    assert.ok(claimsNpmCi, 'lockfile is committed + ci.yml runs `npm ci`, but T7 does not claim `npm ci`');
+    assert.ok(claimsLock, 'lockfile is committed but T7 does not claim deps are "locked in package-lock.json"');
+    assert.doesNotMatch(ciYml, /npm install\b/, 'lockfile committed + npm ci in use: ci.yml must not also `npm install`');
+  } else {
+    // Fallback posture (no committed lockfile): CI must use npm install and T7 must
+    // DISCLOSE the no-lockfile reality rather than asserting a lock that does not exist.
     assert.match(ciYml, /npm install/, 'no committed lockfile, but ci.yml is not using npm install - doc/CI drift');
     assert.match(
       T7,
@@ -188,14 +202,29 @@ test('T7 package-lock / npm-ci claims match repo + ci.yml reality (no phantom co
   }
 });
 
-// REGRESSION (fail-open-hunter/medium): the S7-B oracle must key on git-tracked
+// The committed lockfile must NOT be re-gitignored: a durable supply-chain control
+// only holds if git tracks it, so a stray ignore rule that silently drops it from a
+// fresh checkout (breaking `npm ci`) must fail the gate.
+test('package-lock.json is committed and not re-gitignored', () => {
+  assert.ok(lockCommitted, 'package-lock.json must be committed to git (npm ci depends on it)');
+  const check = (() => {
+    try {
+      execFileSync('git', ['check-ignore', '-q', '--', LOCK_REL], { cwd: repoRoot, stdio: 'ignore' });
+      return true; // exit 0 => the path IS ignored
+    } catch {
+      return false; // non-zero => not ignored
+    }
+  })();
+  assert.equal(check, false, 'package-lock.json must not be gitignored (it is a committed control)');
+});
+
+// REGRESSION (fail-open-hunter/medium): the lockfile oracle must key on git-tracked
 // state, not working-tree presence. Previously `existsSync(lockPath)` let a
-// gitignored, npm-generated package-lock.json present on disk flip lockExists=true,
-// satisfying `claimsLock` and SKIPPING the entire no-lockfile disclosure guard - so
-// a re-introduced false "locked in package-lock.json" claim would be greenlit on any
-// machine that had run `npm install`. This locks the class shut: an on-disk file
-// that git does not track must NOT count as a committed control.
-test('S7-B lockfile oracle keys on git-tracked state, not mere on-disk presence', () => {
+// gitignored, npm-generated package-lock.json present on disk flip the signal true,
+// satisfying `claimsLock` and skipping the disclosure guard. This still holds under
+// the committed-lockfile posture: the signal must be derived from git, and existsSync
+// must never be the deciding oracle for whether a file is a committed control.
+test('lockfile oracle keys on git-tracked state, not mere on-disk presence', () => {
   // 1. The signal the parity gate consumes is the git-tracked one.
   assert.equal(
     lockCommitted,
@@ -204,8 +233,7 @@ test('S7-B lockfile oracle keys on git-tracked state, not mere on-disk presence'
   );
 
   // 2. existsSync and git-tracked genuinely diverge for a gitignored on-disk file.
-  //    Prove it with a known-gitignored probe so the assertion holds in CI too
-  //    (fresh checkout, where the real lockfile may be absent from disk entirely).
+  //    Prove it with a known-gitignored probe so the assertion holds in CI too.
   const scratchDir = join(repoRoot, 'tools', 'iam-blast-radius', 'scratchpad');
   const probe = join(scratchDir, 'phantom-lock-probe.json');
   const probeRel = 'tools/iam-blast-radius/scratchpad/phantom-lock-probe.json';
@@ -220,15 +248,5 @@ test('S7-B lockfile oracle keys on git-tracked state, not mere on-disk presence'
     );
   } finally {
     rmSync(probe, { force: true });
-  }
-
-  // 3. The real lockfile, if npm install left it on disk, must still be untracked -
-  //    i.e. present-on-disk does not imply committed. (No-op when absent.)
-  if (existsSync(join(repoRoot, LOCK_REL))) {
-    assert.equal(
-      lockCommitted,
-      false,
-      'package-lock.json is gitignored; its on-disk presence must not count as a committed control',
-    );
   }
 });

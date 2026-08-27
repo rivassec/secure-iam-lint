@@ -1,8 +1,8 @@
 {
-  "name": "Allow s3:GetObject on * fenced by a Deny with NotResource to one approved bucket (not broad exfil)",
-  "note": "A data-perimeter guardrail: read is allowed broadly, but an explicit Deny with NotResource excludes everything except the approved bucket, confining the effective read to that one bucket.",
+  "name": "Allow s3:GetObject on * fenced by a Deny with NotResource to one approved WHOLE BUCKET (no broad exfil, but the surviving whole-bucket read is account-undetermined)",
+  "note": "A data-perimeter guardrail: read is allowed broadly, but an explicit Deny with NotResource excludes everything except the approved bucket, confining the effective read to that one bucket. The broad-exfil (DATA-EXFIL) capability is correctly removed - but the SURVIVING spared scope is still a WHOLE-bucket read on a canonical S3 bucket ARN whose owning account cannot be resolved, so it must NOT read CLEAN (S1-R1-deny-fence-surviving).",
   "phase": 3,
-  "story": "IAM-301",
+  "story": "S1-R1-deny-fence-surviving",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -21,11 +21,11 @@
     ]
   },
   "negativeExpect": {
-    "mustFind": [],
+    "mustFind": ["CROSS-ACCOUNT-DATA-READ-UNDETERMINED"],
     "mustNotFind": ["DATA-EXFIL"],
-    "maxSeverity": {},
-    "maxPathExploitability": {},
-    "expectClean": true
+    "maxSeverity": { "CROSS-ACCOUNT-DATA-READ-UNDETERMINED": "info" },
+    "maxPathExploitability": { "CROSS-ACCOUNT-DATA-READ-UNDETERMINED": "low" },
+    "expectClean": false
   },
-  "rationale": "NotResource in a Deny statement applies the Deny to every resource EXCEPT those listed. Here s3:GetObject is denied on all resources except arn:aws:s3:::approved-data/*, so the broad Allow is fenced down to a single bucket. Because explicit Deny wins and the Deny covers everything outside approved-data/*, there is no broad object-read (DATA-EXFIL) capability - the effective reach is one approved bucket. Flagging broad exfil here would overstate the risk. Ref: AWS docs, 'IAM JSON policy elements: NotResource' + explicit-Deny precedence."
+  "rationale": "NotResource in a Deny statement applies the Deny to every resource EXCEPT those listed. Here s3:GetObject is denied on all resources except arn:aws:s3:::approved-data/*, so the broad Allow is fenced down to a single bucket. Because explicit Deny wins and the Deny covers everything outside approved-data/*, there is no BROAD object-read (DATA-EXFIL) capability - so DATA-EXFIL must NOT fire, and flagging broad exfil here would overstate the risk. But the read the fence leaves standing is still a WHOLE-bucket read (approved-data/*) on a canonical S3 bucket ARN that carries no account field and is not pinned by an aws:ResourceAccount / s3:ResourceAccount condition; its owning account cannot be resolved from the policy text, so the tool CANNOT clear it as a same-account read. The archetypal exfil primitive must never silently clear (threat-model: S3 bucket ARNs are account-blind; a fenced-down remnant of a broad exfil grant does not become safe). It surfaces at INFO as CROSS-ACCOUNT-DATA-READ-UNDETERMINED, an UNPROVEN (not confirmed) crossing (threat-model T8: no overstated certainty). Ref: AWS docs, 'IAM JSON policy elements: NotResource' + explicit-Deny precedence."
 }

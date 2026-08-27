@@ -1560,3 +1560,59 @@ test('IAM-806: an unconditional Deny that overlaps NO grant does not claim neutr
   ]);
   assert.ok(findingIds(r).includes('TRUST-CROSS-ACCOUNT'), 'the granted account 111 is still reported');
 });
+
+// ---------------------------------------------------------------------------
+// S7-lows-and-orphan item 4 (fail-open-hunter): a MALFORMED / TRUNCATED
+// aws:PrincipalArn scoping value must NOT be silently truncated into a spurious
+// narrow scope that downgrades a public "*" trust. principalArnValueIsBroad()
+// split the value on ':' and read the account (field 4) / resource (field 5+)
+// with `segs.length > N ? ... : ''` guards, so a truncated value like
+// "arn:aws:iam" (3 fields, no glob) pinned NOTHING yet returned "not broad"
+// (tight) - and arnValueNarrows() credits it as narrowing because it is glob-free.
+// The public trust was DOWNGRADED critical->medium and mislabeled "a specific
+// principal" (T8 overstated certainty / fail-open). An undecidable principal must
+// fail CLOSED (mark broad); the finding stays surfaced at high, never reads clean.
+// Driven through the shipped analyze() (the real engine boundary), not a helper.
+test('S7-4: a truncated aws:PrincipalArn scoping value fails closed (broad), never a spurious narrow downgrade', () => {
+  const malformed = trust([{
+    Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole',
+    Condition: { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam' } },
+  }]);
+  const mf = malformed.findings.find((x) => x.id === 'TRUST-PUBLIC');
+  assert.ok(mf, 'a public "*" trust is still surfaced');
+  // Must NOT be silently narrowed to a specific-principal medium by the junk value.
+  assert.equal(mf.severity, 'high', 'undecidable principalArn -> broad -> high, never a medium downgrade');
+  assert.doesNotMatch(mf.why, /a specific principal/i, 'a value pinning nothing must not be described as "a specific principal"');
+  assert.notEqual(malformed.ok, false); // engine still completes; the point is severity, not a crash
+  assert.notEqual(malformed.findings.length, 0, 'never reads clean on a public trust');
+
+  // An empty-segment junk value ("arn:aws:iam:::" - 6 fields but account AND
+  // resource both empty) is equally undecidable and must also fail closed to broad.
+  const empties = trust([{
+    Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole',
+    Condition: { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam:::' } },
+  }]);
+  const ef = empties.findings.find((x) => x.id === 'TRUST-PUBLIC');
+  assert.ok(ef);
+  assert.equal(ef.severity, 'high', 'a value pinning neither account nor resource -> broad -> high');
+
+  // CONTROL 1: a well-formed specific ARN still legitimately narrows (medium) -
+  // the fix must not over-fire into false positives on real scoping values.
+  const legit = trust([{
+    Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole',
+    Condition: { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::111122223333:role/App' } },
+  }]);
+  const lf = legit.findings.find((x) => x.id === 'TRUST-PUBLIC');
+  assert.ok(lf);
+  assert.equal(lf.severity, 'medium', 'a genuine specific-ARN scope still narrows to medium (no over-correction)');
+
+  // CONTROL 2: an already-broad wildcard ARN stays critical (arnValueNarrows
+  // rejects it before this path; unchanged behavior).
+  const broad = trust([{
+    Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole',
+    Condition: { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::*:role/*' } },
+  }]);
+  const bf = broad.findings.find((x) => x.id === 'TRUST-PUBLIC');
+  assert.ok(bf);
+  assert.equal(bf.severity, 'critical', 'a wildcard-role ARN pins nothing and stays critical');
+});

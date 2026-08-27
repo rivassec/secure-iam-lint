@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "IAM Blast Radius",
+          "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+          "semanticVersion": "1",
+          "rules": [
+            {
+              "id": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+              "name": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+              "shortDescription": {
+                "text": "Whole-container S3 read with an undeterminable owning account"
+              },
+              "fullDescription": {
+                "text": "IAM blast-radius finding type CROSS-ACCOUNT-DATA-READ-UNDETERMINED. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "properties": {
+                "category": "security"
+              },
+              "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-keys.html"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "analysisStatus": "complete",
+        "exitCode": 0,
+        "blockingCount": 0,
+        "findingsCount": 1
+      },
+      "results": [
+        {
+          "ruleId": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+          "level": "note",
+          "message": {
+            "text": "Whole-container S3 read with an undeterminable owning account [identity policy] at statement `(index 0)`; actions: `s3:GetObject`. Potential blast radius from the supplied policy context only; not effective permissions."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "policy-pipe-b.json"
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "iamBlastRadius/semanticIdentity/v1": "06835f9f1cef951e6fdef30f2314"
+          },
+          "properties": {
+            "category": "security",
+            "severity": "info",
+            "policyFamily": "identity",
+            "certainty": {
+              "policyEvidence": "high",
+              "pathExploitability": "low"
+            },
+            "jsonPointer": "/Statement/0",
+            "statementSid": "\\(index 0\\)"
+          },
+          "ruleIndex": 0
+        }
+      ]
+    }
+  ]
+}

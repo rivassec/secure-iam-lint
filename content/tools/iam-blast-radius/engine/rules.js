@@ -1,8 +1,8 @@
 // IAM Blast Radius - risk-rule catalog (IAM-004).
 //
 // Fifth stage of the pipeline (see docs/architecture.md data-flow):
-//   text -> validate() -> parse() -> buildModel() -> [ evaluator, rules,
-//   escalation ] -> { findings[], graph }
+//   text -> validate() -> parse() -> buildModel() -> [ rules, escalation,
+//   family-aware analyzers ] -> { findings[], graph }
 //
 // analyzeRules() scans a normalized, frozen model (from buildModel()) and emits
 // a deterministic list of risk findings using the canonical finding shape from
@@ -67,7 +67,13 @@ import { statementNeverMatches } from './conditions.js';
 // ONE shared, ReDoS-safe, linear wildcard matcher (S3-dos-budget). isGlobBudgetError
 // lets analyzeRules re-throw the cooperative wall-clock budget sentinel instead of
 // masking it as a generic internal error (see the analyzeRules catch below).
-import { globMatch, isGlobBudgetError } from './glob.js';
+// chargeWork (S4-rules-dos): the cross-account whole-container scan in
+// ruleDataReadScoped iterates stmt.resources x matched WITHOUT reaching globMatch, so
+// before this it charged the deterministic work budget ZERO units and neither the 60M
+// browser ceiling nor the CLI/Action --budget-ms deadline (both sampled only inside
+// chargeWork) could abort a runaway. The rule now charges its real inner-loop work so
+// BOTH budgets participate and a pathological input fails CLOSED mid-loop.
+import { globMatch, isGlobBudgetError, chargeWork } from './glob.js';
 // S1-breadth-classify: ONE shared semantic Resource-ARN classifier for the whole
 // engine. The rules breadth predicate (isBroadArnResource) and the masked-grant
 // undecidability gate both read breadth from classifyResource(), so the two surfaces
@@ -75,7 +81,7 @@ import { globMatch, isGlobBudgetError } from './glob.js';
 // probe battery, and masked-grant's startsWith('arn:') gate, are both retired).
 import { classifyResource, RESOURCE_CLASS, parseArn } from './resource-arn.js';
 
-// --- Shared capability caveat (mirrors evaluator.js wording) -----------------
+// --- Shared capability caveat (one canonical non-overstated wording) ---------
 // Kept as one constant so every finding's `limit` field carries identical,
 // non-overstated language about what a single policy can and cannot prove.
 const CAPABILITY_LIMIT =
@@ -736,7 +742,21 @@ function denyFencesToNarrow(denies, action, allowStmt) {
   for (const deny of denies) {
     if (hasNonEmptyCondition(deny)) continue;
     if (deny.notResources.length === 0) continue; // only a NotResource Deny fences
-    if (deny.notResources.includes('*')) continue; // spared set is everything -> no narrowing
+    // A NotResource Deny denies the action on EVERY resource EXCEPT its SPARED set
+    // (deny.notResources). It only narrows the broad Allow if that spared set is
+    // PROVEN NARROW. Crediting the Deny as a fence SUPPRESSES a finding, so the burden
+    // is to PROVE narrowness: any spared element that is not a NARROW verdict from the
+    // shared classifier - BROAD (the bare "*", or an ARN-wildcard like arn:aws:s3:::*/*
+    // that spares all S3 objects) OR MALFORMED (an undecidable value like a bare token,
+    // where narrowness rests on the UNVERIFIED grammar the HYBRID default refuses to
+    // trust) - leaves the spared set NOT provably narrow, so the Deny's EFFECTIVE
+    // denied set covers ~nothing / is undecidable and must NOT be credited as a
+    // narrowing fence. Two bug-for-bug fail-opens this closes: a BROAD spared set
+    // ({Deny NotResource:'arn:aws:s3:::*/*'} denies everything EXCEPT all S3 objects =
+    // denies NOTHING) and a MALFORMED spared set ({Deny NotResource:'not-an-arn'} whose
+    // scope is undecidable) both used to suppress DATA-EXFIL. Breadth read from the ONE
+    // shared classifier, never re-implemented here; fail closed on anything but NARROW.
+    if (deny.notResources.some((r) => classifyResource(r) !== RESOURCE_CLASS.NARROW)) continue;
     const a = denyActionApplies(deny, action);
     if (a.applies && a.certain) return true;
   }
@@ -891,13 +911,18 @@ function ruleWildcardResource(stmt, out) {
   if (!grantsNonReadAction(stmt)) return; // read-only wildcard is routine
   // Three broadness shapes with distinct wording: the bare "*" (all resources),
   // an ARN-wildcard that matches all/nearly-all ARNs (e.g. arn:aws:s3:::*/*), and
-  // a NotResource carve-out. The first two are account-wide resource scopes (high);
-  // a NotResource-only grant is broad-except-a-few (medium).
+  // a NotResource carve-out. All three are inherently broad on a non-read grant.
   const broadStar = stmt.resources.includes('*');
   const broadArn = stmt.resources.some(isBroadArnResource); // true for bare "*" too
   out.push(
     makeFinding('WILDCARD-RESOURCE', stmt, {
-      severity: broadArn ? 'high' : 'medium',
+      // Severity keys on the NORMALIZED effective breadth (resourceIsBroad), NOT on the
+      // raw stmt.resources syntax. A NotResource-only grant has an EMPTY stmt.resources
+      // yet reaches every resource EXCEPT a listed few - as account-wide as "*" - so
+      // keying on stmt.resources alone under-rated it to 'medium' and it slipped the
+      // default 'high' gate (a syntax-keyed-severity fail-open). Every shape that
+      // reaches here already passed the resourceIsBroad guard, so this is HIGH.
+      severity: resourceIsBroad(stmt) ? 'high' : 'medium',
       policyEvidence: 'high',
       // Per-action (suite-3 test 95): for the explicit-actions path list ONLY the
       // remediable non-read actions, so a required-wildcard enumeration action
@@ -1025,6 +1050,125 @@ function ruleKmsDecrypt(stmt, out) {
   );
 }
 
+// S1-R1-deny-fence-surviving: the WHOLE-CONTAINER read classifier, extracted from
+// ruleDataReadScoped's body into a STATEMENT-INDEPENDENT helper so the identical
+// breadth/account logic serves TWO callers with NO drift:
+//   1. ruleDataReadScoped - classifies the Allow's OWN resource list (subject-gated,
+//      unchanged), and
+//   2. survivingSparedContainerReads (analyze.js post-pass) - classifies the PROVEN
+//      SURVIVING spared set of a NotResource Deny fence, which no per-statement rule
+//      could ever see (the rule loop is Deny-unaware when it emits findings).
+//
+// Given a set of concrete resource ARNs + the matched read actions, it partitions the
+// WHOLE-CONTAINER reads (bucket/*, table/<id>, stream/<id>, ... - a single concrete
+// OBJECT read like bucket/key is excluded by isWholeContainerRead and stays QUIET) into:
+//   - undetResources: canonical S3 bucket ARNs whose owning account is UNRESOLVABLE
+//     (no account field, no pinning condition). Collected REGARDLESS of subjectAccount -
+//     an account-blind bucket read cannot be cleared same-account whether or not a subject
+//     was supplied (threat-model: S3 bucket ARNs are account-blind), so silence here is a
+//     fail-OPEN. Whether a sensitivity-token / ${...}-variable bare bucket is ALSO
+//     collected is caller-dependent via opts.collectSensitiveVariable: the ruleDataReadScoped
+//     caller (flag false) leaves it to that rule's own DATA-READ fall-through (avoids a
+//     double report), but the survivingSparedContainerReads caller (flag true) MUST collect
+//     it because its BROAD Allow has no DATA-READ fall-through, so excluding it would let the
+//     highest-value exfil targets read silently CLEAN behind a fence (R1 iteration-2).
+//   - crossResources / crossAccounts: account-BEARING (or condition-pinned) whole-
+//     container reads whose owner DIFFERS from a KNOWN subject account. Only surfaced
+//     when the subject is KNOWN; a resolvable owner with an UNKNOWN subject cannot be
+//     compared and stays conservatively QUIET (same as the threat-model's scoped-read
+//     rule). A resolved SAME-account owner is QUIET.
+// crossSensitive RAISES the cross finding's severity; it never gates reporting.
+//
+// `broad` mirrors DATA-EXFIL's precondition: when true, a broad S3 object BULK read
+// (s3:GetObject/GetObjectVersion) is DATA-EXFIL's to report LOUDLY, so it is skipped
+// here to avoid a double report. Callers classifying an already-fenced NARROW spared
+// set pass broad=false (DATA-EXFIL was suppressed by the fence, so the fenced remnant
+// MUST surface here). Deterministic; never throws. `chargeUnit` (>0) charges the work
+// budget per resource so both the deterministic ceiling and the wall-clock deadline can
+// abort a runaway mid-loop.
+function classifyContainerReads(resources, actions, opts) {
+  const condAccount = opts && opts.condAccount != null ? opts.condAccount : null;
+  const subjectAccount = opts && opts.subjectAccount != null ? opts.subjectAccount : null;
+  const broad = !!(opts && opts.broad);
+  const chargeUnit = opts && Number.isFinite(opts.chargeUnit) ? opts.chargeUnit : 0;
+  // collectSensitiveVariable=true tells the classifier to ALSO collect account-less S3
+  // spared buckets whose name infers sensitivity or that carry a ${...} policy variable
+  // into the UNDETERMINED set. See the undet-collection guard below for why this flag is
+  // caller-dependent (the fence caller needs it, ruleDataReadScoped must NOT set it).
+  const collectSensitiveVariable = !!(opts && opts.collectSensitiveVariable);
+  // Arrays preserve deterministic insertion order; the parallel Sets give O(1)
+  // membership so the dedup is LINEAR, not an O(resources^2) includes() scan.
+  const crossResources = [];
+  const crossResourceSet = new Set();
+  const crossAccounts = [];
+  const crossAccountSet = new Set();
+  let crossSensitive = false;
+  const undetResources = [];
+  const undetResourceSet = new Set();
+  if (!Array.isArray(resources) || !Array.isArray(actions) || actions.length === 0) {
+    return { crossResources, crossAccounts, crossSensitive, undetResources };
+  }
+  for (const r of resources) {
+    // Charge the real inner-loop work so BOTH the deterministic work budget and the
+    // CLI/Action wall-clock deadline (each sampled only inside chargeWork) can abort
+    // this scan mid-loop. The filter below performs one isWholeContainerRead parse per
+    // matched action, so `chargeUnit` (actions.length at the call site) is the exact
+    // per-resource cost. Proportional, so a normal-size policy charges negligibly.
+    if (chargeUnit > 0) chargeWork(chargeUnit);
+    const wholeContainerActions = actions.filter((p) => isWholeContainerRead(p, r));
+    if (wholeContainerActions.length === 0) continue; // single object -> QUIET
+    // A BROAD S3 object bulk read (s3:GetObject/GetObjectVersion on a broad ARN) is
+    // already reported LOUDLY by DATA-EXFIL for this same statement; don't double-
+    // report it here. The non-S3 datastore primitives (dynamodb/kinesis/rds-data) and
+    // s3:ListBucket are NOT in DATA-EXFIL's broad bulk catalog, so a broad cross-account
+    // read of THOSE would otherwise stay silently CLEAN. Match by grant semantics (a
+    // broad "s3:Get*" also grants s3:GetObject), not literal action equality.
+    if (broad
+      && wholeContainerActions.every((p) => BULK_READ_ACTIONS.some((a) => actionGrants(p, a)))) {
+      continue;
+    }
+    // Resolve the owning account: the ARN's account, else an explicit ResourceAccount
+    // condition. Only a canonical S3 bucket ARN leaves this null.
+    const acct = concreteResourceAccount(r) || condAccount;
+    if (acct) {
+      // A resolvable owner can only be compared to a KNOWN subject; without one we
+      // cannot tell same- from cross-account, so stay conservatively QUIET.
+      if (!subjectAccount) continue;
+      if (acct === subjectAccount) continue; // resolved SAME-account -> QUIET
+      if (!crossResourceSet.has(r)) { crossResourceSet.add(r); crossResources.push(r); }
+      if (!crossAccountSet.has(acct)) { crossAccountSet.add(acct); crossAccounts.push(acct); }
+      if (resourceInfersSensitive(r)) crossSensitive = true;
+      continue;
+    }
+    // Account UNRESOLVABLE. The only account-less whole-container shape is a canonical
+    // S3 bucket ARN (arn:aws:s3:::bucket/*, or a bucket-list target). It cannot be
+    // cleared as same-account, so it must not read CLEAN. Whether a sensitivity-token /
+    // ${...}-variable bare bucket is COLLECTED here is caller-dependent:
+    //   - ruleDataReadScoped (collectSensitiveVariable=false): a sensitively-named or
+    //     variable-scoped NARROW read ALREADY surfaces via that rule's DATA-READ
+    //     fall-through (rules.js DATA-READ finding), so re-collecting it here would
+    //     double-report. Only a neutrally-named, non-variable bucket is collected.
+    //   - survivingSparedContainerReads (collectSensitiveVariable=true): its Allow is
+    //     BROAD, so ruleDataReadScoped short-circuits at `if (broad) return;` and the
+    //     DATA-READ fall-through NEVER runs for the spared set - there is no other path.
+    //     Excluding sensitive/variable buckets here would therefore let the HIGHEST-value
+    //     exfil targets (production-secrets, customer-exports, payroll-backup, and
+    //     ${...}-scoped buckets) read silently CLEAN behind a fence - a strict inversion
+    //     of the direct-grant behaviour (R1 iteration-2 fail-open). So the fence caller
+    //     collects them too; no double report occurs because no DATA-READ fires for it.
+    const arn = parseArn(r);
+    const alreadySurfacedViaDataRead = !collectSensitiveVariable
+      && (resourceInfersSensitive(r) || resourceHasVariable(r));
+    if (arn && arn.service === 's3'
+      && !alreadySurfacedViaDataRead
+      && !undetResourceSet.has(r)) {
+      undetResourceSet.add(r);
+      undetResources.push(r);
+    }
+  }
+  return { crossResources, crossAccounts, crossSensitive, undetResources };
+}
+
 // 4a-ter. Resource-scoped / variable-scoped data read (IAM-706, acceptance
 // tests 7 + 21). DATA-EXFIL only flags a bulk object read when the resource
 // scope is BROAD (Resource "*"); a read scoped to a NAMED bucket or a policy-
@@ -1079,56 +1223,13 @@ function ruleDataReadScoped(stmt, out, ctx) {
     // carries none, so an operator-asserted owner classifies it same- vs cross-account
     // soundly instead of failing open to CLEAN.
     const condAccount = resourceAccountFromCondition(stmt);
-    const crossResources = [];
-    const crossAccounts = [];
-    let crossSensitive = false;
-    // S3 whole-container reads whose owning account is UNRESOLVABLE (a bare bucket ARN
-    // with no account field and no pinning condition) that would otherwise be silent
-    // (neutral name, no policy variable): they cannot be cleared as same-account, so
-    // they must not read CLEAN. Collected here and surfaced at INFO as an UNDETERMINED
-    // read. Sensitivity-token / variable-scoped bare-bucket reads already surface via
-    // the DATA-READ path below, so they are NOT re-collected here (no double report).
-    const undetResources = [];
-    for (const r of stmt.resources) {
-      const wholeContainerActions = matched.filter((p) => isWholeContainerRead(p, r));
-      if (wholeContainerActions.length === 0) continue; // single object -> QUIET
-      // A BROAD S3 object bulk read (s3:GetObject/GetObjectVersion on a broad ARN) is
-      // already reported LOUDLY by DATA-EXFIL for this same statement; don't double-
-      // report it here. The non-S3 datastore primitives (dynamodb/kinesis/rds-data)
-      // and s3:ListBucket are NOT in DATA-EXFIL's broad bulk catalog, so a broad
-      // cross-account read of THOSE would otherwise stay silently CLEAN - the exact
-      // fail-open this closes. Match by grant semantics (a broad "s3:Get*" also grants
-      // s3:GetObject), not literal action equality.
-      if (broad
-        && wholeContainerActions.every((p) => BULK_READ_ACTIONS.some((a) => actionGrants(p, a)))) {
-        continue;
-      }
-      // Resolve the owning account: the ARN's account, else an explicit
-      // ResourceAccount condition. Only a canonical S3 bucket ARN leaves this null.
-      const acct = concreteResourceAccount(r) || condAccount;
-      if (acct) {
-        if (acct === subjectAccount) continue; // resolved SAME-account -> QUIET
-        if (!crossResources.includes(r)) crossResources.push(r);
-        if (!crossAccounts.includes(acct)) crossAccounts.push(acct);
-        if (resourceInfersSensitive(r)) crossSensitive = true;
-        continue;
-      }
-      // Account UNRESOLVABLE. The only account-less whole-container shape is a
-      // canonical S3 bucket ARN (arn:aws:s3:::bucket/*, or a bucket-list target). It
-      // cannot be cleared as same-account, so it must not read CLEAN. Surface it as an
-      // UNDETERMINED read ONLY when it would otherwise be silent - a neutrally-named,
-      // non-variable read; a sensitivity-token or variable-scoped bare-bucket read
-      // already surfaces (non-clean) via the DATA-READ path below, so routing it here
-      // too would double-report. A broad bare-bucket BULK OBJECT read is DATA-EXFIL's
-      // (excluded by the broad-dedup guard above); a broad bare-bucket LIST read is not
-      // owned by any louder rule, so failing it closed here is the intended behavior.
-      const arn = parseArn(r);
-      if (arn && arn.service === 's3'
-        && !resourceInfersSensitive(r) && !resourceHasVariable(r)
-        && !undetResources.includes(r)) {
-        undetResources.push(r);
-      }
-    }
+    // Classify the Allow's OWN resource list for whole-container cross-account /
+    // account-undetermined reads (S1-R1: the shared, stmt-independent classifier - the
+    // survivingSparedContainerReads post-pass runs the SAME body on a Deny's spared set).
+    const { crossResources, crossAccounts, crossSensitive, undetResources } =
+      classifyContainerReads(stmt.resources, matched, {
+        condAccount, subjectAccount, broad, chargeUnit: matched.length,
+      });
     if (undetResources.length > 0) {
       out.push(
         makeFinding('CROSS-ACCOUNT-DATA-READ-UNDETERMINED', stmt, {
@@ -1251,6 +1352,303 @@ function ruleDataReadScoped(stmt, out, ctx) {
         'arbitrary networks.',
     }),
   );
+}
+
+// S1-R1-deny-fence-surviving (iteration 4): does SOME same-policy Deny - OTHER than the
+// NotResource fence that spared `r` - ENTIRELY remove the read of `r`, so it is not a
+// surviving capability? Used to subtract the rest of the Deny set from the fence's spared
+// set (AWS explicit-Deny precedence): a bucket a fence spares can still be net-UNREADABLE
+// because another Deny covers it. Returns true only when `r` is entirely denied for EVERY
+// fenced action (if any fenced action can still read `r`, the capability survives - we fail
+// closed toward REPORTING, never over-suppressing a genuine spare). A single Deny D
+// entirely denies `r` when it is unconditional (a conditional Deny may not apply at runtime,
+// so it is never definitive) AND certainly applies to the action AND its resource scope
+// covers all of `r`:
+//   - Resource-form Deny (positive Resource list): some Resource pattern glob-covers `r`
+//     (a bare "*" blanket, an ARN-wildcard superset, or the exact ARN all qualify);
+//   - NotResource-form Deny: it denies everything EXCEPT its spared set, so it entirely
+//     denies `r` iff its spared set is DISJOINT from `r` - no NotResource pattern is related
+//     to `r` in either direction (neither globMatch(p, r) nor globMatch(r, p)). The fence
+//     that spared `r` naturally excludes itself here (it is related to `r`), as does any
+//     other fence whose carve-out overlaps `r` (part of `r` stays readable -> not entire).
+// Deterministic; never throws. globMatch treats the pattern's wildcards specially and the
+// value literally, and IAM ARNs are case-sensitive, so the comparisons are exact.
+function denyEntirelyDeniesResource(deny, r, action) {
+  if (hasNonEmptyCondition(deny)) return false;
+  const app = denyActionApplies(deny, action);
+  if (!app.applies || !app.certain) return false;
+  if (deny.notResources.length > 0) {
+    // Denies all-except-spared: entire only if the spared set is disjoint from r.
+    const relatedToSpare = deny.notResources.some(
+      (p) => globMatch(p, r) || globMatch(r, p),
+    );
+    return !relatedToSpare;
+  }
+  if (deny.resources.length > 0) {
+    // Positive Resource Deny: entire only if some pattern covers all of r.
+    return deny.resources.some((p) => globMatch(p, r));
+  }
+  // A Deny with neither Resource nor NotResource does not bound a resource -> not definitive.
+  return false;
+}
+
+// r survives only if, for EVERY fenced action, NO other same-policy Deny entirely denies it.
+function sparedResourceFullyDeniedElsewhere(r, fencedActions, denies) {
+  return fencedActions.every(
+    (action) => denies.some((deny) => denyEntirelyDeniesResource(deny, r, action)),
+  );
+}
+
+// S1-R1-deny-fence-surviving (iteration 6): does the BROAD Allow actually grant read
+// access to a spared resource `r`? A broad Allow comes in two shapes and the grant test
+// differs per shape (the surviving read is the spared set INTERSECT the Allow's OWN grant -
+// a bucket the Allow never grants is not a surviving capability, threat-model T8):
+//   - POSITIVE Resource list (Resource:"*" / arn:aws:s3:::prod-*/*): the Allow grants `r`
+//     iff some Resource pattern glob-covers it (case-sensitive; IAM ARNs are case-sensitive).
+//     The bare "*" covers every spared ARN (a no-op filter); an ARN-wildcard can leave a
+//     spared bucket ENTIRELY OUTSIDE the grant.
+//   - NotResource COMPLEMENT (empty stmt.resources): the Allow grants every resource EXCEPT
+//     its carve-out, so it grants `r` UNLESS its OWN NotResource entirely excludes it. Mirror
+//     of denyEntirelyDeniesResource's NotResource arm: the Allow entirely fails to grant `r`
+//     iff some Allow-NotResource pattern glob-covers all of `r` (globMatch(pat, r)); a
+//     disjoint or merely-partial exclusion leaves part of `r` granted -> still a surviving
+//     read -> fail CLOSED toward reporting. `r` is itself a proven-NARROW spared pattern, so
+//     it is compared literally by globMatch exactly as the positive-list path compares it.
+// Deterministic; never throws.
+function allowGrantsSparedResource(allowStmt, isComplementAllow, r) {
+  if (isComplementAllow) {
+    return !allowStmt.notResources.some((pat) => globMatch(pat, r));
+  }
+  return allowStmt.resources.some((pat) => globMatch(pat, r));
+}
+
+/**
+ * S1-R1-deny-fence-surviving: surface the WHOLE-CONTAINER read that SURVIVES a
+ * NotResource-Deny fence on a broad Allow - the residual capability no per-statement
+ * rule can see.
+ *
+ * The rule catalog is deliberately Deny-UNAWARE when it EMITS findings (RULE_FUNCTIONS
+ * take (stmt,out,ctx), no denies), so a broad exfil Allow (s3:GetObject Resource:*) that
+ * a Deny NotResource fences down to one spared bucket is handled ONLY by SUPPRESSION:
+ * denyFencesToNarrow proves the spared set NARROW, ruleFindingDenySuppressed drops
+ * DATA-EXFIL, and survivingBroadReadActions keeps the coverage net quiet. Nothing then
+ * examines the PROVEN SURVIVING spared resource for ITS OWN risk - a live whole-bucket
+ * read (the archetypal exfil primitive) read CLEAN/exit-0 (R1 fail-open, threat-model T8).
+ *
+ * This helper is invoked from the analyze.js post-pass (which HAS the denies in scope,
+ * exactly where survivingBroadReadActions already runs) and reuses the SAME breadth /
+ * account classifier as ruleDataReadScoped (classifyContainerReads - no drift). For each
+ * broad Allow whose matched read actions a NotResource Deny fences to a proven-narrow
+ * spared set, it classifies the PROVEN SURVIVING set - the spared NotResource resources
+ * INTERSECTED with the broad Allow's own resource scope (not the raw NotResource array, and
+ * not the Allow's "*"), so a spared bucket the Allow never grants (an ARN-wildcard Allow that
+ * does not cover the spare) yields no fabricated finding - and derives a finding when the
+ * surviving read is a whole container:
+ *   - CROSS-ACCOUNT-DATA-READ-UNDETERMINED (account-blind S3 bucket) - surfaced whether
+ *     or not a subject account is supplied (like DATA-EXFIL, it never needed one), OR
+ *   - CROSS-ACCOUNT-DATA-READ (resolvable owner != KNOWN subject).
+ * Never DATA-EXFIL (ruleFindingDenySuppressed's bulk-fence exemption is hardcoded
+ * id===DATA-EXFIL, which would instantly re-suppress it). A genuinely single-object
+ * spared read, a same-account-resolvable whole-bucket spared read, and an
+ * unrelated-service / condition-mismatched Deny all stay QUIET (the classifier + the
+ * fence proof handle each). Deterministic; never throws.
+ *
+ * @param {object} model normalized, frozen model from buildModel()
+ * @param {{subjectAccount?:string}} [ctx] optional analysis context
+ * @returns {Array<object>} derived findings (canonical shape); [] when none
+ */
+export function survivingSparedContainerReads(model, ctx) {
+  const out = [];
+  if (!model || !Array.isArray(model.statements)) return out;
+  // The same identity-statement Deny set ruleFindingDenySuppressed / the escalation
+  // engine use (a Deny that names a Principal is a resource/trust-policy statement, not
+  // an identity constraint on the analyzed subject).
+  const denies = model.statements.filter((s) => s && s.effect === 'Deny' && s.principal == null);
+  if (denies.length === 0) return out;
+  const rawSubject = ctx && ctx.subjectAccount != null ? String(ctx.subjectAccount) : null;
+  const subjectAccount = rawSubject && CONCRETE_ACCOUNT_ID_RE.test(rawSubject) ? rawSubject : null;
+
+  for (const stmt of model.statements) {
+    if (!stmt || stmt.effect !== 'Allow') continue;
+    if (statementNeverMatches(stmt)) continue;
+    // Only a BROAD Allow is fenced down to a spared set (a narrow Allow's effective scope
+    // is its own resources - already ruleDataReadScoped's job). Mirrors DATA-EXFIL's broad
+    // precondition, so this fires exactly where the fence suppressed the broad read. A broad
+    // Allow has TWO shapes and BOTH must be handled (iteration-6 fail-open): a POSITIVE
+    // Resource list carrying a broad ARN (Resource:"*" / arn:aws:s3:::*/*), and a NotResource
+    // COMPLEMENT (empty stmt.resources, non-empty stmt.notResources - grants every resource
+    // EXCEPT the carve-out). The complement shape formerly bailed here on empty stmt.resources
+    // and read CLEAN, because the broad-uncovered NotResource net that comment claimed covered
+    // it SKIPS a fence-narrowed action (survivingBroadReadActions returns [] for it). Both
+    // shapes are resourceIsBroad() and both can be fenced down to a live spared read; the only
+    // per-shape difference is how the Allow's OWN grant is tested against a spared ARN
+    // (allowGrantsSparedResource) and how the finding renders its resources (findingStmt below).
+    if (!resourceIsBroad(stmt)) continue;
+    const isComplementAllow = stmt.resources.length === 0 && stmt.notResources.length > 0;
+    const matched = matchPatterns(stmt, DATA_READ_ACTIONS, false);
+    if (matched.length === 0) continue;
+
+    // The matched read actions whose broad Allow a NotResource Deny fences to a PROVEN
+    // narrow spared set (denyFencesToNarrow proves narrowness + certain application). An
+    // unrelated-service Deny (Deny ec2:* NotResource:s3bucket) does not fence an s3 read,
+    // so it contributes nothing - no bogus S3 finding.
+    const fencedActions = matched.filter((a) => denyFencesToNarrow(denies, a, stmt));
+    if (fencedActions.length === 0) continue;
+
+    // The PROVEN SURVIVING resource set = the union of the spared NotResource sets of the
+    // denies that ACTUALLY fence one of the fenced actions (same proof denyFencesToNarrow
+    // used: unconditional, spared set every-element NARROW, certain application). Restated
+    // locally so only a fence that truly narrows a matched action contributes its spare.
+    const spared = [];
+    const sparedSet = new Set();
+    for (const deny of denies) {
+      if (hasNonEmptyCondition(deny)) continue;
+      if (deny.notResources.length === 0) continue;
+      if (deny.notResources.some((r) => classifyResource(r) !== RESOURCE_CLASS.NARROW)) continue;
+      const fencesAMatchedAction = fencedActions.some((a) => {
+        const app = denyActionApplies(deny, a);
+        return app.applies && app.certain;
+      });
+      if (!fencesAMatchedAction) continue;
+      for (const r of deny.notResources) {
+        if (!sparedSet.has(r)) { sparedSet.add(r); spared.push(r); }
+      }
+    }
+    if (spared.length === 0) continue;
+
+    // R1 iteration-3 (over-correction close): classify the PROVEN SURVIVING
+    // Allow-INTERSECT-Deny set, NEVER the raw NotResource union. denyFencesToNarrow proves
+    // the spared set NARROW and that the Deny certainly applies, but a spared ARN is only
+    // actually READABLE if the broad Allow's OWN resource scope grants it. When the Allow is
+    // the bare "*", every spared ARN is a subset and this filter is a no-op (the only fenced
+    // shape the core R1 repro exercises). But an ARN-WILDCARD broad Allow (e.g.
+    // arn:aws:s3:::prod-*/*) can leave a spared bucket ENTIRELY OUTSIDE its grant: the
+    // prod-* objects are DENIED (not in the spared set) and the spared acme-competitor bucket
+    // is NOT granted by the Allow -> net ZERO readable. Classifying the raw spared set there
+    // fabricates a finding on a bucket the policy grants no access to (threat-model T8:
+    // truthfulness). Keep only spared resources the Allow actually matches (case-sensitive
+    // ARN globMatch against each Allow Resource pattern, as IAM ARNs are case-sensitive);
+    // a spared resource outside the Allow's grant is not a surviving capability and is dropped.
+    // Shape-aware (iteration-6): a POSITIVE-Resource Allow grants a spared ARN when a Resource
+    // pattern glob-covers it; a NotResource-COMPLEMENT Allow grants it UNLESS its own carve-out
+    // entirely excludes it (allowGrantsSparedResource). For the complement repro the carve-out
+    // (excluded/*) is disjoint from the spared acme-competitor bucket, so the spared read
+    // survives; a complement Allow whose carve-out IS the spared bucket yields net-ZERO -> drop.
+    const survivingAllow = spared.filter((r) => allowGrantsSparedResource(stmt, isComplementAllow, r));
+    if (survivingAllow.length === 0) continue;
+
+    // R1 iteration-4 (over-correction close): a spared resource is a surviving capability
+    // only if the READ genuinely survives the WHOLE Deny set, not the single fence that
+    // spared it. AWS explicit-Deny precedence can remove the spare AGAIN through another
+    // same-policy Deny, leaving it net-UNREADABLE - reporting it then is a fabricated
+    // finding (threat-model T8 noise). The previous step unioned each fence's spared set;
+    // here we SUBTRACT everything the rest of the Deny set removes, so the result is the
+    // true surviving set (spared-by-fence MINUS denied-elsewhere) rather than the raw union.
+    // Three concrete over-reports this closes, all net-ZERO readable and each proven per the
+    // SAME deny primitives (unconditional + denyActionApplies certain, no drift):
+    //   - two NotResource fences on the same action sparing DIFFERENT buckets (reading
+    //     bucket-a is denied by the bucket-b fence and vice-versa: the surviving set is the
+    //     INTERSECTION of the fences' spared sets, not their union);
+    //   - a fence plus an explicit Resource-Deny on the SAME spared bucket;
+    //   - a fence plus a BLANKET Deny (Resource "*", or a whole-service s3:* Resource "*").
+    // A resource is dropped ONLY when it is ENTIRELY denied for EVERY fenced action (if any
+    // fenced action can still read it, the capability survives - fail closed toward
+    // REPORTING, never over-suppress a real spare: the iter-4 true-positive twins - an
+    // unrelated extra Deny, and two fences sparing the SAME bucket - must still fire).
+    const surviving = survivingAllow.filter(
+      (r) => !sparedResourceFullyDeniedElsewhere(r, fencedActions, denies),
+    );
+    if (surviving.length === 0) continue;
+
+    // Classify the SURVIVING spared resources. broad=false: the spared set is proven
+    // NARROW and DATA-EXFIL was already suppressed by the fence, so the broad-bulk dedup
+    // guard must NOT skip it (the fenced remnant MUST surface). The undetermined path is
+    // subjectAccount-INDEPENDENT (unlike ruleDataReadScoped's subject-gated own-resource
+    // path): a fenced whole-container read must not become CLEAN merely because the fence
+    // narrowed it to one bucket and no subject was supplied.
+    // collectSensitiveVariable: true - unlike ruleDataReadScoped, the fenced BROAD Allow
+    // has NO DATA-READ fall-through (it early-returns on broadness), so a sensitively-named
+    // or ${...}-variable spared bucket has no other surfacing path; collect it here or it
+    // reads silently CLEAN (R1 iteration-2 fail-open: the highest-value exfil targets were
+    // the ONLY fenced shape staying clean).
+    const condAccount = resourceAccountFromCondition(stmt);
+    const { crossResources, crossAccounts, crossSensitive, undetResources } =
+      classifyContainerReads(surviving, fencedActions, {
+        condAccount, subjectAccount, broad: false,
+        chargeUnit: fencedActions.length, collectSensitiveVariable: true,
+      });
+
+    // The finding must render the SURVIVING SPARED resources positively. makeFinding treats a
+    // statement that carries NotResource as a complement grant and forces resources:[] (the
+    // carve-out rides in excludedResources), so passing the raw complement Allow would NOT
+    // render the spared bucket. A rendering shim carries the statement's identity (sid / index
+    // / condition) with NO complement axis, so the surviving set passed in `resources` renders
+    // exactly as it does for the Resource:"*" form (browser==CLI + star==complement parity). A
+    // positive-Resource Allow renders directly (usesNotResource already false).
+    const findingStmt = isComplementAllow
+      ? { sid: stmt.sid, index: stmt.index, condition: stmt.condition, notActions: [], notResources: [] }
+      : stmt;
+
+    if (undetResources.length > 0) {
+      out.push(
+        makeFinding('CROSS-ACCOUNT-DATA-READ-UNDETERMINED', findingStmt, {
+          severity: 'info',
+          policyEvidence: 'high',
+          pathExploitability: 'low',
+          actions: fencedActions,
+          resources: undetResources.slice(),
+          why:
+            'A broad Allow of this read (Resource "*" / wildcard) is fenced by a same-' +
+            'policy NotResource Deny down to a canonical S3 bucket ARN that carries NO ' +
+            'account field, and no aws:ResourceAccount / s3:ResourceAccount condition pins ' +
+            'the owner. The Deny removes the broad exfil reach (so DATA-EXFIL does not ' +
+            'fire), but the SURVIVING spared scope is still a WHOLE-container read (bucket/* ' +
+            'or a bucket list) whose owning account cannot be determined from this policy - ' +
+            'so the tool CANNOT clear it as a same-account read. This does NOT prove the ' +
+            'bucket is in another account (the crossing is undetermined, not confirmed); it ' +
+            'means a "no findings" / "complete" verdict here is not a safety claim for the ' +
+            'read the fence leaves standing.',
+          remediation:
+            'Make the surviving read explicit and bounded: pin the owning account with an ' +
+            'aws:ResourceAccount (or s3:ResourceAccount) condition, or use an account-' +
+            'bearing S3 access-point ARN, and scope the read to the specific keys required. ' +
+            'If the spared bucket is not intended to be readable, remove it from the Deny\'s ' +
+            'NotResource carve-out (which is what keeps it reachable).',
+        }),
+      );
+    }
+    if (crossResources.length > 0) {
+      const scope = crossAccounts.length === 1
+        ? 'account ' + crossAccounts[0]
+        : 'accounts ' + crossAccounts.join(', ');
+      out.push(
+        makeFinding('CROSS-ACCOUNT-DATA-READ', findingStmt, {
+          severity: crossSensitive ? 'low' : 'info',
+          policyEvidence: 'high',
+          pathExploitability: 'low',
+          actions: fencedActions,
+          resources: crossResources.slice(),
+          why:
+            'A broad Allow of this read is fenced by a same-policy NotResource Deny down to ' +
+            'a whole-container read (bucket / table / stream / database bulk read) on a ' +
+            'resource in ' + scope + ', a DIFFERENT AWS account than the analyzed principal ' +
+            '(account ' + subjectAccount + '). The Deny removes the broad exfil reach (so ' +
+            'DATA-EXFIL does not fire), but the SURVIVING spared scope is a cross-account ' +
+            'data-read capability regardless of the resource name. Whether the data is ' +
+            'actually reachable depends on the target account\'s resource policy (e.g. the ' +
+            'bucket / table policy) and any KMS key policy, none of which are in the supplied ' +
+            'context, so it does not prove the data is readable - only that this identity ' +
+            'policy leaves the read standing.',
+          remediation:
+            'Confirm the principal is intended to read data in ' + scope + '. If so, scope ' +
+            'the surviving read to the specific objects/keys required and gate it with ' +
+            'conditions (e.g. aws:ResourceAccount, aws:SourceVpc). If not, remove the cross-' +
+            'account resource from the Deny\'s NotResource carve-out that keeps it reachable.',
+        }),
+      );
+    }
+  }
+  return out;
 }
 
 // 4b. Destructive actions (generic delete/terminate families), excluding the

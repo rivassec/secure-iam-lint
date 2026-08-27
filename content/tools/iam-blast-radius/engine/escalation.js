@@ -1,8 +1,8 @@
 // IAM Blast Radius - privilege-escalation path engine (IAM-005).
 //
 // Fifth stage of the pipeline (see docs/architecture.md data-flow):
-//   text -> validate() -> parse() -> buildModel() -> [ evaluator, rules,
-//   escalation ] -> { findings[], graph }
+//   text -> validate() -> parse() -> buildModel() -> [ rules, escalation,
+//   family-aware analyzers ] -> { findings[], graph }
 //
 // analyzeEscalations() scans a normalized, frozen model (from buildModel()) and
 // emits deterministic escalation findings using the canonical finding shape
@@ -671,7 +671,7 @@ function assumeAccountReach(stmt) {
 // AWS resolves access with explicit-Deny precedence: an in-scope, applicable
 // Deny overrides every Allow. The escalation engine builds paths from Allow
 // statements, but a same-policy Deny of a required action can remove or narrow
-// the path. Mirrors evaluator.js resolveDecision(): an unconditional, concrete,
+// the path. Applies AWS explicit-Deny precedence: an unconditional, concrete,
 // in-scope Deny is definitive; a conditional / variable / partial-scope Deny is
 // treated as "may block" (reduces confidence) rather than a false certainty.
 
@@ -1146,12 +1146,30 @@ function detectPassRolePaths(allows, out, denies, ctx) {
   // violation). So an unrecognized SUBJECT partition token must fail CLOSED as
   // unknown-viability, never drive a confident demotion. `partitionKnown` gates every
   // pure-partition demotion below; a non-canonical token defaults to 'aws' ONLY for
-  // account-level reasoning (which never depends on the partition spelling). Absent ->
-  // default 'aws' and partitionKnown=true (long-standing behavior; the scan() adapter's
-  // partitionProvided guard already covers the "an account id does not encode a
-  // partition" nuance for the not-supplied case).
+  // account-level reasoning (which never depends on the partition spelling).
+  //
+  // S5-partition-parity: an ABSENT partition is a DEFAULTED partition, NOT a
+  // confidently-supplied one, and must be treated EXACTLY like a non-canonical token -
+  // unknown-viability, never a confident cross-partition demotion. The browser (the
+  // primary UI) forwards subjectAccount but NO partition (app.js/worker.js ->
+  // analyze({ subjectAccount })), so if the absent case defaulted to partitionKnown=true
+  // the engine would CONFIDENTLY demote a same-account cross-partition PassRole to medium
+  // with a false "principal is in partition aws ... NOT a viable path" why and coverage
+  // complete - while the CLI scan() adapter's partitionProvided guard correctly reported
+  // partial/exit 3/requiredUnknowns:['subjectPartition']. That made analyze() (browser)
+  // MORE permissive than scan() (CLI) for byte-identical no-partition input (threat-model
+  // T8, browser==CLI parity). An account id does not encode a partition, so a DEFAULTED
+  // partition can never confidently establish same-vs-cross partition: it fails CLOSED.
+  // `partitionKnown` is therefore true ONLY for an EXPLICITLY-supplied CANONICAL token
+  // (an explicit 'aws' still legitimately demotes a cross-partition role); an absent OR
+  // non-canonical token is unknown. This folds the scan() adapter's partitionProvided
+  // guard into the shared engine (the single source of truth), so no direct/third-party
+  // analyze() consumer can reach the confident demotion the adapter used to compensate
+  // for. `subjectPartition` still defaults to 'aws' for the account-level reasoning that
+  // never depends on the partition spelling.
   const rawSubjectPartition = ctx && typeof ctx.partition === 'string' ? ctx.partition.trim() : '';
-  const partitionKnown = rawSubjectPartition === '' || subjectPartitionKnown(rawSubjectPartition);
+  const partitionExplicit = rawSubjectPartition !== '';
+  const partitionKnown = partitionExplicit && subjectPartitionKnown(rawSubjectPartition);
   const subjectPartition = subjectPartitionKnown(rawSubjectPartition) ? rawSubjectPartition : 'aws';
   // Gather the Allow statements that grant iam:PassRole (concrete or via iam:*).
   const passStmts = [];
@@ -1456,28 +1474,38 @@ function detectPassRolePaths(allows, out, denies, ctx) {
           );
         if (partitionOnly && !partitionKnown) {
           // The mismatch is PURELY a partition difference, but the SUBJECT partition is
-          // NOT confidently known (a non-canonical token was supplied and defaulted to
-          // 'aws' for account reasoning). A non-canonical subject partition CANNOT drive
-          // a confident cross-partition demotion: the path may be a same-partition,
-          // fully-viable critical pass under a spelling we cannot compare, so demoting it
-          // critical->medium would be the exact fail-open T8 forbids and would make
-          // analyze() more permissive than the partition-sanitizing scan() adapter for
-          // byte-identical input. Fail CLOSED as UNKNOWN viability instead: keep the
-          // severity, cap exploitability, and record the required-unknown so scan()
-          // reports partial/exit 3 (never CLEAN). This MIRRORS the unmodelable-target-ARN
-          // handling above and folds the scan.mjs unconfirmed-partition guard into the
-          // shared engine (the single source of truth), so no direct/third-party
-          // analyze() consumer can reach the demotion the adapter used to compensate for.
+          // NOT confidently known - either a non-canonical token was supplied (defaulted
+          // to 'aws' for account reasoning) OR no partition was supplied at all (the
+          // DEFAULTED case, S5-partition-parity: the browser forwards subjectAccount but
+          // never a partition). Neither a non-canonical NOR a defaulted subject partition
+          // can drive a confident cross-partition demotion: an account id does not encode
+          // a partition, so the path may be a same-partition, fully-viable critical pass
+          // we cannot compare, and demoting it critical->medium would be the exact
+          // fail-open T8 forbids and would make analyze() (the browser) more permissive
+          // than the partition-sanitizing scan() adapter for byte-identical input. Fail
+          // CLOSED as UNKNOWN viability instead: keep the severity, cap exploitability,
+          // and record the required-unknown so scan() reports partial/exit 3 (never
+          // CLEAN). This MIRRORS the unmodelable-target-ARN handling above and folds the
+          // scan.mjs unconfirmed-partition guard into the shared engine (the single source
+          // of truth), so no direct/third-party analyze() consumer can reach the demotion
+          // the adapter used to compensate for.
           pathExploitability = 'low';
           if (!requiredUnknowns.includes('subjectPartition')) requiredUnknowns.push('subjectPartition');
-          extraWhy +=
-            ' PassRole target viability is UNKNOWN: the analyzed principal\'s partition ' +
-            'was supplied in a non-canonical spelling that is not a recognized AWS ' +
-            'partition, so it cannot be compared to the passed role\'s partition. Whether ' +
-            'this is a same-partition (viable) or cross-partition (not viable) pass cannot ' +
-            'be established. Reported as unknown viability (fail closed), not a confident ' +
-            'not-viable demotion; supply a canonical partition (aws, aws-us-gov, aws-cn, ' +
-            'aws-iso...) to resolve it.';
+          extraWhy += partitionExplicit
+            ? ' PassRole target viability is UNKNOWN: the analyzed principal\'s partition ' +
+              'was supplied in a non-canonical spelling that is not a recognized AWS ' +
+              'partition, so it cannot be compared to the passed role\'s partition. Whether ' +
+              'this is a same-partition (viable) or cross-partition (not viable) pass cannot ' +
+              'be established. Reported as unknown viability (fail closed), not a confident ' +
+              'not-viable demotion; supply a canonical partition (aws, aws-us-gov, aws-cn, ' +
+              'aws-iso...) to resolve it.'
+            : ' PassRole target viability is UNKNOWN: the analyzed principal\'s partition ' +
+              'was not supplied, so it cannot be compared to the passed role\'s partition ' +
+              '(an account id does not encode a partition). Whether this is a same-partition ' +
+              '(viable) or cross-partition (not viable) pass cannot be established. Reported ' +
+              'as unknown viability (fail closed), not a confident not-viable demotion; ' +
+              'supply the analyzed principal\'s partition (aws, aws-us-gov, aws-cn, ' +
+              'aws-iso...) to resolve it.';
         } else if (partitionOnly) {
           accountMismatch = true;
           severity = severity === 'critical' ? 'medium' : 'low';
@@ -2476,7 +2504,8 @@ function passStmtViabilityTier(passStmt, subjectAccount, subjectPartition, parti
     if (parsed.some(isUnmodelablePassResource)) return 1;
     const concreteSpecific = parsed.filter(isConfidentPinnedResource);
     // A demotion that is PURELY a partition mismatch, when the SUBJECT partition is not
-    // confidently known (a non-canonical token defaulted to 'aws'), is UNKNOWN viability
+    // confidently known (a non-canonical token, OR an absent/defaulted partition -
+    // S5-partition-parity - both defaulted to 'aws'), is UNKNOWN viability
     // (fail closed, tier 1), NOT a confident cross-partition demotion (tier 0): the path
     // may be a same-partition, fully-viable pass under a spelling we cannot compare.
     // MIRRORS the partitionOnly && !partitionKnown branch in detectPassRolePaths exactly,
@@ -3049,12 +3078,22 @@ export function analyzeEscalations(model, options) {
     const findings = [];
     // IAM-1005 / IAM-1102 (11B): an optional analysis context (subjectAccount +
     // partition) flows to the detectors; only detectPassRolePaths reads it
-    // (cross-account / cross-partition PassRole viability). partition defaults to
-    // 'aws' when unspecified.
+    // (cross-account / cross-partition PassRole viability).
+    //
+    // S5-partition-parity: the partition is forwarded RAW - an ABSENT partition stays
+    // absent (empty string), it is NOT defaulted to 'aws' here. Defaulting it to 'aws'
+    // upstream erased the "not supplied" state, so detectPassRolePaths could not tell a
+    // DEFAULTED partition from an EXPLICIT 'aws' and CONFIDENTLY demoted a same-account
+    // cross-partition PassRole to medium - making analyze() (the browser) MORE permissive
+    // than the scan() adapter, which never lost that distinction (threat-model T8,
+    // browser==CLI parity). detectPassRolePaths owns the distinction now: it treats an
+    // absent/non-canonical partition as unknown-viability (fail closed) and defaults to
+    // 'aws' ONLY for account-level reasoning (which never depends on the partition
+    // spelling). An explicit canonical partition still drives a confident demotion.
     const ctx = {
       subjectAccount: (options && options.subjectAccount) || null,
-      partition: (options && typeof options.partition === 'string' && options.partition.trim())
-        ? options.partition.trim() : 'aws',
+      partition: (options && typeof options.partition === 'string')
+        ? options.partition.trim() : '',
     };
     for (const detect of DETECTORS) detect(allows, findings, denies, ctx);
 

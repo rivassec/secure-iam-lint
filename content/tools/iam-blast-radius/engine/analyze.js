@@ -12,7 +12,7 @@
 // structured { ok:false, errors[] } result.
 
 import { modelFromText } from './model.js';
-import { analyzeRules, ruleFindingDenySuppressed, actionResourceTypeMismatches, survivingBroadReadActions } from './rules.js';
+import { analyzeRules, ruleFindingDenySuppressed, actionResourceTypeMismatches, survivingBroadReadActions, survivingSparedContainerReads } from './rules.js';
 import { analyzeEscalations } from './escalation.js';
 import { analyzeTrust, trustFindingDenyState, summarizeTrustDeny } from './trust.js';
 import { analyzeEnvelope } from './envelope.js';
@@ -1013,11 +1013,81 @@ export function analyze(text, options) {
       }
     }
 
+    // S1-R1-deny-fence-surviving: DERIVE the whole-container read that SURVIVES a
+    // NotResource-Deny fence on a broad Allow. rules.js is Deny-UNAWARE when it emits
+    // findings, so a broad exfil Allow fenced down to one spared bucket is handled only
+    // by SUPPRESSION (DATA-EXFIL dropped, coverage net quiet) and the PROVEN SURVIVING
+    // spared resource is never examined for its own risk - a live whole-bucket read read
+    // CLEAN (R1 fail-open, T8). This post-pass HAS the denies in scope (like
+    // survivingBroadReadActions above), reuses rules.js's shared classifier (no drift),
+    // and surfaces the surviving read as CROSS-ACCOUNT-DATA-READ[-UNDETERMINED] - NEVER
+    // DATA-EXFIL (whose bulk-fence exemption would instantly re-suppress it). It is
+    // subject-account-INDEPENDENT for the account-blind S3 bucket case (like DATA-EXFIL,
+    // it never needed a subject); a resolvable cross-account read still needs a KNOWN
+    // subject. These findings enter the AUTHORITATIVE TABLE only (the graph, built from
+    // `combined`, still shows the underlying grant + blocked-by-deny edge unchanged).
+    const derivedSpared = survivingSparedContainerReads(m.model, {
+      subjectAccount: (options && options.subjectAccount) || null,
+    });
+    // Dedup defensively against the table: a derived finding whose (id, statement,
+    // actions, resources) identity already appears is not re-reported (no duplicate row,
+    // no fingerprint collision). The exact-identity key handles the belt-and-braces cases
+    // (derived-vs-derived, exact table match).
+    const findingIdentityKey = (f) => [
+      f && f.id,
+      f && typeof f.statementIndex === 'number' ? f.statementIndex : '',
+      (Array.isArray(f && f.actions) ? f.actions : []).map((a) => String(a).toLowerCase()).slice().sort().join(','),
+      (Array.isArray(f && f.resources) ? f.resources : []).map(String).slice().sort().join(','),
+    ].join('|');
+    // SUBSET-aware table coverage (iteration-5 over-correction close). Exact-key equality
+    // alone MISSES the mixed case where the spared bucket is ALSO an explicit Allow
+    // resource AND the fence covers only a strict ACTION-SUBSET of the Allow's reads:
+    // ruleDataReadScoped reports the Allow's own leg with the FULL read action set on the
+    // spared bucket (e.g. [s3:GetObject, s3:ListBucket]), while the derived helper reports
+    // the SAME bucket with only the FENCED subset (e.g. [s3:GetObject]). Same id, same
+    // statement, same resource, subset actions - ONE surviving capability, but the exact
+    // key treated the subset as a distinct row -> two SARIF alerts / two table rows for one
+    // bucket (dismissing one leaves the other). A derived finding is DROPPED as
+    // already-covered when a table finding shares its (id, statementIndex), covers ALL its
+    // resources, and covers ALL its actions (i.e. the derived row is a resource+action
+    // SUBSET of a broader table row). The broader table row is kept, so the fuller surviving
+    // capability is still reported. A derived finding on a DIFFERENT resource (the mixed
+    // Resource:["*","other/*"] coexistence case) or a DIFFERENT id is NOT a subset and is
+    // preserved - so genuinely-distinct surviving reads still each surface.
+    const actionSetOf = (f) => new Set(
+      (Array.isArray(f && f.actions) ? f.actions : []).map((a) => String(a).toLowerCase()),
+    );
+    const resourceSetOf = (f) => new Set(
+      (Array.isArray(f && f.resources) ? f.resources : []).map(String),
+    );
+    const isSubsetOf = (small, big) => {
+      for (const x of small) if (!big.has(x)) return false;
+      return true;
+    };
+    const coveredByTable = (f) => tableFindings.some((t) => (
+      t && t.id === f.id
+      && typeof t.statementIndex === 'number' && t.statementIndex === f.statementIndex
+      && isSubsetOf(resourceSetOf(f), resourceSetOf(t))
+      && isSubsetOf(actionSetOf(f), actionSetOf(t))
+    ));
+    const tableIdentities = new Set(tableFindings.map(findingIdentityKey));
+    const derivedUnique = [];
+    const derivedSeen = new Set(tableIdentities);
+    for (const f of derivedSpared) {
+      if (coveredByTable(f)) continue;
+      const key = findingIdentityKey(f);
+      if (derivedSeen.has(key)) continue;
+      derivedSeen.add(key);
+      derivedUnique.push(f);
+    }
+
     // IAM-105: fold subordinate wildcard/broad-resource rows into the compound
     // escalation path that already accounts for them, so the table shows one
     // primary path finding with a risk-factor checklist instead of duplicate
     // subordinate rows. Independent wildcard findings are untouched.
-    const correlated = correlateFindings(tableFindings);
+    // The derived surviving-spared findings are NEW capabilities (not subordinate to any
+    // compound path), so they are appended AFTER correlation, never folded away.
+    const correlated = [...correlateFindings(tableFindings), ...derivedUnique];
     // IAM-504: stamp the effective policy family onto every finding so each row
     // carries the full explainable-evidence set (family + statement + action +
     // resource + condition + rule id + certainty + limitation). effectiveFamily

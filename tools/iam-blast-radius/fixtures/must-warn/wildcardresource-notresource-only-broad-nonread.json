@@ -1,0 +1,16 @@
+{
+  "name": "kms:PutKeyPolicy with a NotResource-only carve-out (broad non-read) must warn WILDCARD-RESOURCE at HIGH",
+  "note": "S3-rules-breadth (B) regression, syntax-keyed-severity fail-open. A NotResource-only grant reaches every resource EXCEPT the listed few - here every KMS key except one nonexistent ARN - which is as account-wide as Resource:*. The old severity keyed on stmt.resources.some(isBroadArnResource); stmt.resources is EMPTY for a NotResource grant, so broadArn was false and WILDCARD-RESOURCE scored 'medium', slipping under the default 'high' gate: CLI exit 0 CLEAN on 'put a key policy on every key except one'. Effective breadth, not syntax: a NotResource-only broad non-read Allow is inherently broad -> HIGH. Contrast Resource:'*' on the same action, already HIGH.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PutKeyPolicyEverywhereButOne", "Effect": "Allow", "Action": "kms:PutKeyPolicy", "NotResource": "arn:aws:kms:us-east-1:123456789012:key/nonexistent" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["WILDCARD-RESOURCE"],
+    "mustNotFind": ["WILDCARD-ACTION"],
+    "minSeverity": { "WILDCARD-RESOURCE": "high" },
+    "nonZeroExit": true
+  }
+}

@@ -159,6 +159,36 @@ function hashIdentity(canonical) {
   return `${cyrb53(canonical, 0)}${cyrb53(canonical, 0x9e3779b9)}`;
 }
 
+// Join a normalized attacker-controlled token list into ONE identity-string field with an
+// UNFORGEABLE element boundary (S2-R2-sarif-identity iteration 2; generalized to EVERY
+// identity list by S1-NEW02-sarif-identity-injective).
+//
+// The token lists folded into findingIdentity are ATTACKER-CONTROLLED policy text (a fork PR
+// owns the whole policy JSON) with NO charset restriction (an S3 key permits ~any byte). A
+// plain `list.join('|')` let a SINGLE token that literally contains the '|' delimiter forge
+// the same joined string as a MULTI-element list split on that '|' - so two semantically
+// DISTINCT lists (e.g. resources:[a,b] vs resources:['a|b'], or NotResource:[a,b] vs
+// NotResource:['a|b']) hashed to ONE partialFingerprint, and dismissing one code-scanning
+// alert AUTO-SUPPRESSED the other (a fail-OPEN on re-detection). A raw newline in a token was
+// worse still: it could inject a fresh `key=value` line into the multi-line identity string
+// and forge a DIFFERENT part (e.g. escService / escTechnique). So each token is
+// backslash-escaped - '\\' FIRST (so the escapes we add are unambiguous), then the '|'
+// delimiter and any newline - making the encoding INJECTIVE: the only UNESCAPED '|' are the
+// real element separators and no token can span an identity line. A benign token (no '\\',
+// '|', or newline - every real ARN / action / principal) is emitted byte-for-byte as a plain
+// "|"-join would, so this NEVER churns an existing non-injection fingerprint.
+//
+// R2 first applied this to the EXCLUDED (NotAction / NotResource) lists. NEW-02 (its HIGH
+// sibling) closes the SAME class on the POSITIVE lists - actions, resources, principals -
+// which findingIdentity still joined with a plain '|'. This helper is now the SINGLE injective
+// joiner every attacker-controlled identity list flows through, so the two paths cannot drift.
+// Pure + deterministic; reused for the positive lists AND both complement sides.
+function joinInjective(list) {
+  return list
+    .map((s) => String(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, '\\n'))
+    .join('|');
+}
+
 // The canonical SEMANTIC identity string for a security finding. Load-bearing: this
 // is what partialFingerprints hashes, so it MUST be stable across whitespace,
 // object key order, and absolute-vs-repo-relative artifact paths, and MUST NOT
@@ -185,9 +215,15 @@ export function findingIdentity(finding, family) {
     `type=${f.id != null ? String(f.id) : ''}`,
     `family=${family != null ? String(family) : ''}`,
     `stmtIndex=${typeof f.statementIndex === 'number' ? f.statementIndex : ''}`,
-    `actions=${normList(f.actions, { lowercase: true }).join('|')}`,
-    `resources=${normList(f.resources).join('|')}`,
-    `principals=${findingPrincipals(f).join('|')}`,
+    // S1-NEW02: the POSITIVE identity lists are attacker-controlled policy text with no
+    // charset restriction, so each is joined through the INJECTIVE joinInjective() (escape
+    // '\', '|', newline) - a plain `.join('|')` let a single '|'- or newline-bearing token
+    // forge the sorted-join identity of a DISTINCT multi-element list (a fingerprint-collision
+    // fail-open, sibling of R2). Benign tokens (every real ARN / action / principal) emit
+    // byte-for-byte as the plain join did, so ordinary fingerprints never churn.
+    `actions=${joinInjective(normList(f.actions, { lowercase: true }))}`,
+    `resources=${joinInjective(normList(f.resources))}`,
+    `principals=${joinInjective(findingPrincipals(f))}`,
     `condition=${f.conditions == null ? '' : stableStringify(f.conditions)}`,
     `viability=${requiredUnknowns.join('|')}`,
     // S5-sarif-symmetric: an escalation path's TARGET SERVICE and TECHNIQUE are part of
@@ -202,6 +238,28 @@ export function findingIdentity(finding, family) {
     `escService=${esc && esc.service != null ? String(esc.service) : ''}`,
     `escTechnique=${esc && esc.technique != null ? String(esc.technique) : ''}`,
   ];
+  // S2-R2-sarif-identity: the EXCLUDED (NotAction / NotResource) scope is part of the
+  // finding's SEMANTIC identity, not decoration. makeFinding (engine/rules.js) EMPTIES the
+  // positive scope for a complement grant - a NotResource DATA-EXFIL reports actions:[...],
+  // resources:[], and a NotAction NOTACTION-ALLOW / WILDCARD-RESOURCE reports actions:["*"],
+  // resources:["*"] - and stows the REAL discriminating scope in excludedActions /
+  // excludedResources. Without folding those in, two carve-outs differing ONLY in their
+  // NotResource/NotAction target (e.g. `NotResource: bucket-a/*` vs `bucket-b/*`) share the
+  // anchor position, the (identical) positive action/resource lists, and every other part -
+  // so they hash to ONE partialFingerprint. A maintainer dismissing carve-out A's
+  // code-scanning alert then AUTO-SUPPRESSES the still-live, semantically distinct carve-out
+  // B (a fail-OPEN on re-detection). The excluded set is canonicalized through the SAME
+  // normList used for actions/resources (sort + de-dup; actions case-folded, ARNs case-exact;
+  // scalar-vs-list collapsed), so order / case / equivalent-spelling do NOT churn the
+  // fingerprint - only a genuinely different carve-out target splits them apart. Appended
+  // CONDITIONALLY (only when the finding actually carries an excluded set): a non-complement
+  // finding's identity string is byte-identical to before, so its fingerprint never churns.
+  // BOTH complement sides are covered. These lists ride the hash ONLY (never rendered here);
+  // the human-facing projection is neutralized separately in buildResults.
+  const excludedActions = normList(f.excludedActions, { lowercase: true });
+  if (excludedActions.length > 0) parts.push(`excludedActions=${joinInjective(excludedActions)}`);
+  const excludedResources = normList(f.excludedResources);
+  if (excludedResources.length > 0) parts.push(`excludedResources=${joinInjective(excludedResources)}`);
   return parts.join('\n');
 }
 
@@ -647,13 +705,22 @@ function neutralizeCondition(root) {
 // legitimate repo-relative path is not mangled; markdown escaping is unnecessary here
 // because the uri is not rendered as markdown.
 const MAX_URI_LEN = 2048;
+// Returns { uri, truncated }. When the sanitized URI exceeds MAX_URI_LEN it is sliced, but
+// the location string is NEVER marked in place: appending an ellipsis/marker would corrupt
+// the artifact-location path (breaking GitHub's file deep-link and possibly pointing at a
+// nonexistent path). The `truncated` flag is surfaced SEPARATELY as properties.uriTruncated
+// by the caller (locationFor), so the slice is visibly recorded without mutating the URI.
+// The URI is deliberately excluded from findingIdentity, so this cannot churn a fingerprint.
 function sanitizeUri(uri) {
   let s = String(uri);
   // S4 iteration 3: strip control/format, then clamp non-ASCII to U+FFFD so a strong-RTL /
   // homograph path segment cannot reorder or homograph-spoof the alert location.
   s = s.replace(CONTROL_AND_FORMAT, '').replace(NON_ASCII_SPOOF, REPLACEMENT);
-  if (s.length > MAX_URI_LEN) s = s.slice(0, MAX_URI_LEN);
-  return s;
+  let truncated = false;
+  // Measured AFTER neutralization: a URI long only because of now-stripped control chars is
+  // not flagged; the flag tracks whether the actually-emitted path was cut.
+  if (s.length > MAX_URI_LEN) { s = s.slice(0, MAX_URI_LEN); truncated = true; }
+  return { uri: s, truncated };
 }
 
 // Max distinct action tokens rendered inline before the list is elided. Bounds the
@@ -822,6 +889,10 @@ function stateResultRow(s, uri) {
     const safePath = inertLeaf(s.path, MAX_STATE_MSG_LEN);
     if (safePath) properties.path = safePath;
   }
+  // R5-uri-trunc: a sliced (over-length) artifact URI is recorded via a SEPARATE flag, never
+  // by mutating the location string. Same treatment as the finding rows below.
+  const { location, uriTruncated } = locationFor(uri);
+  if (uriTruncated) properties.uriTruncated = true;
   return {
     ruleId: `analysis.${code}`,
     kind: 'fail',
@@ -831,7 +902,7 @@ function stateResultRow(s, uri) {
     // so it MUST be neutralized here - the single chokepoint every analyzer-state message
     // flows through - not at each engine call site. See sanitizeStateMessage.
     message: { text: sanitizeStateMessage(s && s.message) },
-    locations: [locationFor(uri)],
+    locations: [location],
     partialFingerprints: { [FINGERPRINT_KEY]: hashIdentity(stateIdentity(s)) },
     properties,
   };
@@ -921,12 +992,19 @@ function truncationState(budget) {
 
 // --- Result rows --------------------------------------------------------------
 
+// Returns { location, uriTruncated }. The location's artifact-location URI is the sanitized-
+// but-UNMODIFIED (never marker-appended) path; uriTruncated tells the caller to record a
+// SEPARATE properties.uriTruncated flag so a slice is visible without corrupting the URI.
 function locationFor(uri) {
   // SECURITY (S2-sarif-sanitize-all): the artifact URI can be attacker-influenced - in
   // the Action a fork PR names the scanned file, and a hostile name could carry control
   // chars / newlines into a SARIF location. Strip them (path punctuation is preserved so
   // a legitimate repo-relative path is not mangled). See sanitizeUri.
-  return { physicalLocation: { artifactLocation: { uri: sanitizeUri(uri) } } };
+  const { uri: safeUri, truncated } = sanitizeUri(uri);
+  return {
+    location: { physicalLocation: { artifactLocation: { uri: safeUri } } },
+    uriTruncated: truncated,
+  };
 }
 
 // Build the two DISJOINT result groups. Security findings first (in engine order),
@@ -995,12 +1073,37 @@ function buildResults(result, uri, ruleIndex) {
       const safeSid = inertLeaf(f.statementSid, MAX_SID_LEN);
       if (safeSid) properties.statementSid = safeSid;
     }
+    // SECURITY + SURFACING (S2-R2-sarif-identity): a complement grant EMPTIES its positive
+    // scope (see makeFinding) and stows the discriminating NotAction / NotResource carve-out
+    // in excludedActions / excludedResources. That scope is now folded into the
+    // partialFingerprint (findingIdentity) so distinct carve-outs no longer collide - but the
+    // DISTINGUISHING evidence must also reach the human-facing SARIF, or a reviewer sees two
+    // identical-looking DATA-EXFIL rows that differ only by an invisible hash. So the excluded
+    // set is SURFACED in the properties bag. It is ATTACKER-CONTROLLED policy text (a fork PR
+    // owns the whole policy JSON), same class as the Sid / action tokens the file was hardened
+    // against, and it is emitted BARE (not code-span-wrapped), so it is routed through the SAME
+    // inertTokenList as evidence actions/resources: EACH entry rendered markdown-inert
+    // (control/bidi/zero-width stripped, non-ASCII clamped, ASCII-punctuation backslash-escaped
+    // so no live `[x](url)` / `<url>` / image can form), the entry COUNT and AGGREGATE char
+    // budget capped (a huge NotAction/NotResource array cannot amplify the SARIF), with a
+    // truthful marker on truncation - NEVER a raw append. The FULL canonical set still rides
+    // the fingerprint unaffected. Omitted when empty so non-complement rows are unchanged.
+    if (f && Array.isArray(f.excludedActions) && f.excludedActions.length > 0) {
+      properties.excludedActions = inertTokenList(f.excludedActions);
+    }
+    if (f && Array.isArray(f.excludedResources) && f.excludedResources.length > 0) {
+      properties.excludedResources = inertTokenList(f.excludedResources);
+    }
 
+    // R5-uri-trunc: an over-length artifact URI is sliced but NOT marker-mutated (that would
+    // corrupt GitHub's file deep-link); the slice is recorded via a SEPARATE properties flag.
+    const { location, uriTruncated } = locationFor(uri);
+    if (uriTruncated) properties.uriTruncated = true;
     const row = {
       ruleId: id,
       level: map.level,
       message: { text: findingMessage(f, result.family) },
-      locations: [locationFor(uri)],
+      locations: [location],
       partialFingerprints: { [FINGERPRINT_KEY]: hashIdentity(findingIdentity(f, result.family)) },
       properties,
     };

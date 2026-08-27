@@ -94,7 +94,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install @playwright/test (pinned in package.json)
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       # Cache the browser BINARIES (~300-400 MB). Keyed on the dev package.json
       # (which pins the Playwright version), so a version bump re-downloads.
       # OS-level deps are apt packages on a fresh runner, so they are installed

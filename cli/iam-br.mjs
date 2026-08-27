@@ -797,11 +797,29 @@ export async function main(argv = process.argv.slice(2)) {
 
 // Run only when invoked directly (`iam-br ...` / `node cli/iam-br.mjs ...`), not
 // when imported by a test or the Action wrapper.
+//
+// import.meta.url is REALPATH-resolved by Node's ESM loader, while process.argv[1]
+// is the RAW path Node was handed. Any symlink in the invocation path (an npm `.bin`
+// shim, `npx`, a self-hosted-runner checkout, a macOS `/tmp` -> `/private/tmp` link)
+// therefore makes a RAW-only compare MISS - main() would never run and the process
+// would exit 0 having performed ZERO analysis, a false CLEAN on a real-risk policy.
+// FAIL CLOSED: run when EITHER the raw entry OR its realpath-resolved form matches,
+// and compute realpathSync in its OWN try so a resolve failure (ENOENT/ELOOP/EACCES)
+// can never turn a genuine direct invocation into a silent no-op. An in-process
+// import (test/Action wrapper) matches NEITHER, so it still does not auto-run main().
 const invokedDirectly = (() => {
   try {
     const entry = process.argv && process.argv[1];
     if (!entry) return false;
-    return import.meta.url === pathToFileURL(entry).href;
+    const rawHref = pathToFileURL(entry).href;
+    if (import.meta.url === rawHref) return true;
+    let realHref = null;
+    try {
+      realHref = pathToFileURL(realpathSync(entry)).href;
+    } catch {
+      realHref = null;
+    }
+    return realHref !== null && import.meta.url === realHref;
   } catch {
     return false;
   }

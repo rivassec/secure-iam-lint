@@ -71,11 +71,13 @@ T7. **Supply chain** -> Minimal, self-hosted, pinned deps. The SHIPPED tool
 build step (architecture invariants 2 + 7): what is committed is what runs, so
 there is no build-time transform and no transitive-runtime compromise surface.
 Dev-only tooling (test/e2e/mutation) has its top-level versions exact-pinned in
-`package.json` (no `^`/`~`), but there is NO committed `package-lock.json`, so
-transitive dev-dependency versions are not lockfile-pinned and CI installs them
-with `npm install` (not `npm ci`). This is accepted because that tooling never
-ships to consumers: the shipped artifact has zero runtime dependencies, so an
-unpinned transitive dev dep cannot reach a consumer's build or runtime.
+`package.json` (no `^`/`~`), and its transitive tree is locked in
+`package-lock.json` (committed to git, no longer gitignored). CI therefore
+installs them with `npm ci`, which fails CLOSED on any lockfile/`package.json`
+drift instead of silently resolving new transitive versions the way `npm install`
+would. This tooling never ships to consumers: the shipped artifact has zero
+runtime dependencies, so even an un-pinned dev dep could not reach a consumer's
+build or runtime.
 Controls ENFORCED in CI today (`.github/workflows/security.yml` + `ci.yml`):
 - GH Actions pinned to full commit SHAs; the `zizmor` unpinned-uses audit gates
   it (any un-pinned `uses:` fails the Security workflow).
@@ -139,9 +141,36 @@ the policy makes it derivable: an account-bearing S3 access-point ARN, or an exp
 `aws:ResourceAccount` / `s3:ResourceAccount` equality condition pinning a single
 account. Two S3 whole-bucket cases stay QUIET by the same rules as the other stores: a
 single concrete OBJECT read (`bucket/key`) is not a whole-container read, and any
-whole-bucket read with the subject account UNKNOWN cannot be compared. A
-sensitivity-token or policy-variable bare-bucket read is already surfaced (non-clean)
-by the same-account `DATA-READ` path, so it is not additionally reported here.
+DIRECTLY-GRANTED whole-bucket read (the Allow's own scope) with the subject account
+UNKNOWN cannot be compared - a scoped-to-one-bucket read is routine least privilege, so
+absent a subject it stays quiet. A sensitivity-token or policy-variable bare-bucket read
+is already surfaced (non-clean) by the same-account `DATA-READ` path, so it is not
+additionally reported here.
+
+**A whole-container read SURVIVING a NotResource-Deny fence is surfaced from
+`isWholeContainerRead` alone - subject-account-INDEPENDENT (R1).** The
+DIRECTLY-GRANTED-and-subject-unknown QUIET rule above does NOT extend to the residual of
+a broad read a Deny narrowed. A broad exfil Allow (`s3:GetObject` on `*`) is a LOUD
+`DATA-EXFIL` that never needed a subject account; when a same-policy NotResource Deny
+fences it down to a proven-NARROW spared set (`denyFencesToNarrow`), `DATA-EXFIL` is
+correctly SUPPRESSED - but the PROVEN SURVIVING spared resource is a capability in its
+own right, and letting it read CLEAN would let an author widen `DATA-EXFIL` away simply
+by adding a Deny (the R1 fail-open: `{Allow s3:GetObject *}` + `{Deny s3:GetObject
+NotResource:[bucket/*]}` read exit-0/complete/findings[] while the same spared scope
+granted directly surfaced). So a WHOLE-CONTAINER read the fence leaves standing is
+surfaced whether or not a subject account is supplied - as
+`CROSS-ACCOUNT-DATA-READ-UNDETERMINED` (account-blind S3 bucket, owner unknown) or, when
+a subject IS supplied and the spared owner is resolvable-and-differing, as the confirmed
+`CROSS-ACCOUNT-DATA-READ`. It is NEVER re-emitted as `DATA-EXFIL` (that id is
+Deny-exempt and would be instantly re-suppressed). The QUIET boundary holds within the
+fenced case exactly as elsewhere: a spared SINGLE OBJECT (`bucket/key`), a
+same-account-resolvable spared whole bucket (account-bearing ARN, or an
+`aws:ResourceAccount`/`s3:ResourceAccount`-pinned owner equal to a known subject), and an
+unrelated-service / conditional (non-definitive) Deny that never fences the read at all
+each stay quiet. The surviving-spared classification reuses the SAME
+whole-container/account oracle as the directly-granted path, invoked from a
+pipeline-level post-pass that has the Deny set in scope (the rule catalog is
+Deny-unaware when it emits findings), so the two paths cannot drift.
 
 ## CSP (route header, Cloudflare - see DEPLOY.md)
 ```

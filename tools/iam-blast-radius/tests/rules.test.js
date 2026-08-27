@@ -236,13 +236,24 @@ test('WILDCARD-RESOURCE does not fire on a read-only wildcard-resource grant', (
   assert.deepEqual(idsOf(r.findings), []);
 });
 
-test('WILDCARD-RESOURCE fires (medium) on Allow+NotResource with a write', () => {
+// S3-rules-breadth (B): a NotResource-only broad non-read grant is inherently
+// broad - it reaches every resource EXCEPT a listed few, as account-wide as "*" -
+// so it is HIGH, not medium. Keying severity on stmt.resources (empty for a
+// NotResource grant) scored it 'medium' and it slipped under the default 'high'
+// gate (a syntax-keyed-severity fail-open). The effective carve-out must still be
+// visible: resourceScope falls back to NotResource and excludedResources records it.
+test('WILDCARD-RESOURCE fires HIGH on Allow+NotResource with a write (effective breadth, not syntax)', () => {
   const r = analyzeRulesFromText(
     '{"Statement":[{"Effect":"Allow","Action":"s3:PutObject","NotResource":"arn:aws:s3:::keep/*"}]}',
   );
   const wr = r.findings.find((f) => f.id === 'WILDCARD-RESOURCE');
   assert.ok(wr, 'NotResource on an Allow with a write should flag WILDCARD-RESOURCE');
-  assert.equal(wr.severity, 'medium');
+  assert.equal(wr.severity, 'high');
+  // A NotResource grant has no literal granted ARN (resources stays empty); the
+  // effective carve-out rides in excludedResources so SARIF/reviewers see it and it
+  // is never presented as the granted resource.
+  assert.deepEqual(wr.resources, []);
+  assert.deepEqual(wr.excludedResources, ['arn:aws:s3:::keep/*']);
 });
 
 // ---------------------------------------------------------------------------

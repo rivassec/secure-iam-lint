@@ -10,18 +10,24 @@ useDefault = true   # keep all upstream secret rules
 
 [allowlist]
 description = "Test fixtures + doc examples use documented FAKE AWS identifiers only."
+# Allowlist ONLY by path. matchCondition = "AND" states the intent (a hit should
+# be excused only when under an allowlisted path) and is forward-compatible with
+# any gitleaks that gates conditions on the global allowlist.
+#
+# WHY NO regexes HERE: gitleaks (verified 8.30.1) does NOT honor matchCondition on
+# the top-level [allowlist] - it always ORs the condition types. So listing
+# EXAMPLE/FAKE/DUMMY marker regexes alongside paths does NOT gate them to those
+# paths; it allowlists that text REPO-WIDE, exactly the "broad key regex that
+# would blind the scanner" this header warns against. A real accidental secret
+# whose value happened to contain EXAMPLE/FAKE/DUMMY anywhere in the tree would be
+# silently suppressed. Path-only scoping is therefore the only way to keep the
+# allowlist narrow on this gitleaks version. Fixtures/tests/docs/samples are
+# excused by path; nothing outside them is. If a future rule needs a marker-gated
+# exception, add it as a RULE-level [[rules.allowlists]] (per-rule), never here.
+matchCondition = "AND"
 paths = [
   '''tools/iam-blast-radius/fixtures/.*''',
   '''tools/iam-blast-radius/tests/.*''',
   '''tools/iam-blast-radius/docs/.*\.md''',
   '''content/tools/iam-blast-radius/samples\.js''',
-]
-# Convention: any fake credential in scanned code must carry a dummy marker or be
-# AWS's documented example key, so a real accidental leak still trips.
-regexes = [
-  '''EXAMPLE''',
-  '''FAKE''',
-  '''DUMMY''',
-  '''AKIAIOSFODNN7EXAMPLE''',
-  '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
 ]

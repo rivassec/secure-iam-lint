@@ -374,3 +374,24 @@ Last-round reason per story:
 - S1-symlink-failclosed[semantic]: accepted (all-pass (2423 tests))
 - S2-crossaccount-scoped-surface[semantic]: accepted (all-pass (2479 tests))
 - S3-readfilecap-special[mechanical]: accepted (all-pass (2488 tests))
+
+## Phase 2 story outcomes (2026-08-27)
+All Phase-2 stories accepted.
+Last-round reason per story:
+- S1-entrypoint-guard[semantic]: accepted (all-pass (2587 tests))
+- S2-action-enumeration[semantic]: accepted (all-pass (2595 tests))
+- S3-rules-breadth[semantic]: accepted (all-pass (2604 tests))
+- S4-rules-dos[semantic]: accepted (all-pass (2612 tests))
+- S5-partition-parity[semantic]: accepted (all-pass (2625 tests))
+- S6-sarif-testrealism[mechanical]: accepted (all-pass (2629 tests))
+- S7-lows-and-orphan[mechanical]: accepted (all-pass (2585 tests))
+
+## Phase 3 story outcomes (2026-08-27)
+All Phase-3 stories accepted.
+Last-round reason per story:
+- S1-R1-deny-fence-surviving[semantic]: accepted (all-pass (2662 tests))
+- S2-R2-sarif-identity[semantic]: accepted (all-pass (2688 tests))
+- S3-R5-uri-trunc[mechanical]: accepted (all-pass (2691 tests))
+- S4-R6-dirbomb[mechanical]: accepted (all-pass (2683 tests))
+- S5-R3-gitleaks[mechanical]: accepted (all-pass (2688 tests))
+- S6-R4-runner-selftests[mechanical]: accepted (all-pass (2697 tests))

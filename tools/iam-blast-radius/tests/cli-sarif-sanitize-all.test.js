@@ -291,6 +291,71 @@ test('S2: artifactLocation.uri strips control chars but preserves a legitimate p
   assert.ok(!CONTROL.test(uri), `no control chars in uri: ${JSON.stringify(uri)}`);
 });
 
+// R5-uri-trunc: a URI longer than MAX_URI_LEN (2048) is sliced to a still-VALID path with NO
+// truncation marker mutated into the location string, and the slice is recorded on a SEPARATE
+// properties.uriTruncated flag - on BOTH the security-finding row and the analyzer-state row.
+test('R5: over-length artifact URI -> sliced-but-unmutated location + properties.uriTruncated flag', () => {
+  const MAX_URI_LEN = 2048;
+  const result = evidenceResult({ StringEquals: { 'aws:X': 'a' } });
+  // A deep repo-relative path of ASCII segments, well past the 2048 cap. All chars survive
+  // neutralization (no control/non-ASCII), so length alone drives the truncation.
+  const longUri = `${'seg/'.repeat(700)}app.json`;
+  assert.ok(longUri.length > MAX_URI_LEN, 'fixture URI exceeds the cap');
+  const log = buildSarifLog(result, { file: longUri }, MANIFEST);
+  const sec = log.runs[0].results.find((r) => r.properties && r.properties.category === 'security');
+  assert.ok(sec, 'a security finding is present');
+  const uri = sec.locations[0].physicalLocation.artifactLocation.uri;
+  // Sliced to exactly the cap; NO marker/ellipsis appended (still a valid path prefix, no "...").
+  assert.equal(uri.length, MAX_URI_LEN, 'location URI sliced to MAX_URI_LEN');
+  assert.equal(uri, longUri.slice(0, MAX_URI_LEN), 'location URI is an unmodified prefix of the input path');
+  assert.ok(!uri.includes('...'), 'no truncation marker mutated into the location URI');
+  assert.equal(sec.properties.uriTruncated, true, 'truncation recorded on a SEPARATE properties flag');
+
+  // The URI is excluded from findingIdentity, so slicing must not churn the fingerprint.
+  const short = buildSarifLog(result, { file: 'policies/app.json' }, MANIFEST);
+  const secShort = short.runs[0].results.find((r) => r.properties && r.properties.category === 'security');
+  assert.equal(sec.partialFingerprints[FINGERPRINT_KEY], secShort.partialFingerprints[FINGERPRINT_KEY],
+    'fingerprint is unaffected by URI truncation');
+});
+
+test('R5: a normal-length artifact URI sets NO uriTruncated flag (finding + analyzer-state rows)', () => {
+  // Security finding row: no flag on a short path.
+  const result = evidenceResult({ StringEquals: { 'aws:X': 'a' } });
+  const log = buildSarifLog(result, { file: 'policies/app.json' }, MANIFEST);
+  const sec = log.runs[0].results.find((r) => r.properties && r.properties.category === 'security');
+  assert.ok(sec, 'a security finding is present');
+  assert.equal('uriTruncated' in sec.properties, false, 'no uriTruncated flag on a normal URI');
+
+  // Analyzer-state row: a fail-closed policy, short path -> no flag either.
+  const failText = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:x",'
+    + '"Action":"s3:y","Resource":"*"}]}';
+  const stateResult = scan({ text: failText, family: 'identity' });
+  const stateLog = buildSarifLog(stateResult, { file: 'p.json' }, MANIFEST);
+  const states = stateLog.runs[0].results.filter((r) => r.properties && r.properties.category === 'analysis-state');
+  assert.ok(states.length >= 1, 'the policy fails closed with an analyzer-state result');
+  for (const st of states) {
+    assert.equal('uriTruncated' in st.properties, false, 'no uriTruncated flag on a normal analyzer-state URI');
+  }
+});
+
+test('R5: analyzer-state row also carries uriTruncated on an over-length URI', () => {
+  const MAX_URI_LEN = 2048;
+  const failText = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:x",'
+    + '"Action":"s3:y","Resource":"*"}]}';
+  const stateResult = scan({ text: failText, family: 'identity' });
+  const longUri = `${'seg/'.repeat(700)}p.json`;
+  assert.ok(longUri.length > MAX_URI_LEN, 'fixture URI exceeds the cap');
+  const log = buildSarifLog(stateResult, { file: longUri }, MANIFEST);
+  const states = log.runs[0].results.filter((r) => r.properties && r.properties.category === 'analysis-state');
+  assert.ok(states.length >= 1, 'a fail-closed analyzer-state result is present');
+  for (const st of states) {
+    const uri = st.locations[0].physicalLocation.artifactLocation.uri;
+    assert.equal(uri.length, MAX_URI_LEN, 'analyzer-state location URI sliced to MAX_URI_LEN');
+    assert.ok(!uri.includes('...'), 'no marker mutated into the analyzer-state location URI');
+    assert.equal(st.properties.uriTruncated, true, 'analyzer-state row records the slice on a separate flag');
+  }
+});
+
 test('S2: an analyzer-state path carrying attacker key names is rendered inert (no live link in properties.path)', () => {
   // A duplicate object key fails closed in validate.js; its path/message can interpolate
   // attacker key names. The duplicate Action here carries a markdown-link spelling.

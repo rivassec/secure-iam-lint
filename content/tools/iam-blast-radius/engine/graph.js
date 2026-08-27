@@ -1,8 +1,8 @@
 // IAM Blast Radius - graph model builder (data only) (IAM-006).
 //
 // Sixth stage of the pipeline (see docs/architecture.md data-flow):
-//   text -> validate() -> parse() -> buildModel() -> [ evaluator, rules,
-//   escalation ] -> { findings[], graph{nodes,edges} }
+//   text -> validate() -> parse() -> buildModel() -> [ rules, escalation,
+//   family-aware analyzers ] -> { findings[], graph{nodes,edges} }
 //
 // buildGraph() turns a normalized, frozen model (buildModel(), IAM-002) plus the
 // findings emitted by rules.js (IAM-004) and escalation.js (IAM-005) into a pure

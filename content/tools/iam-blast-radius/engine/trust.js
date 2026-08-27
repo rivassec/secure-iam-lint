@@ -384,9 +384,25 @@ function principalPinsAccount(principals) {
 // role arn:aws:iam::<pinned>:role/deploy - NOT broad (finding 3).
 function principalArnValueIsBroad(value, principalPins) {
   const segs = String(value).split(':');
-  const account = segs.length > 4 ? segs[4] : '';
-  const resource = segs.length > 5 ? segs.slice(5).join(':') : '';
+  // A well-formed ARN has 6 colon-separated fields
+  // (arn:partition:service:region:account:resource). FEWER means the value is
+  // TRUNCATED/malformed: the account (field 4) and resource (field 5+) segments
+  // this breadth test reasons about do not exist, so the value is UNDECIDABLE.
+  // An undecidable principal must fail CLOSED (mark broad) - never be silently
+  // truncated (segs.slice(0,4) / the old `segs.length > N ? ... : ''` guards) into
+  // a spurious NARROW scope. Repro (S7-lows-and-orphan item 4): a public "*" trust
+  // scoped by aws:PrincipalArn "arn:aws:iam" (3 fields, no glob) is credited as
+  // narrowing by arnValueNarrows (glob-free) and, pre-fix, principalArnValueIsBroad
+  // returned false (account='' resource='' pinned nothing) -> the finding was
+  // DOWNGRADED critical->medium and mislabeled "a specific principal" (T8
+  // overstated certainty). Marking it broad keeps a public trust surfaced at high.
+  if (segs.length < 6) return true;
+  const account = segs[4];
+  const resource = segs.slice(5).join(':');
   const beforeAccount = segs.slice(0, 4); // arn, partition, service, region
+  // A value that pins NEITHER an account NOR any resource identifier (both segments
+  // empty, e.g. "arn:aws:iam::::") is likewise undecidable -> broad (fail closed).
+  if (account === '' && resource === '') return true;
   if (hasGlob(resource)) return true; // a globbed resource identifier -> a SET
   if (hasGlob(account) && !principalPins) return true; // account not pinned by Principal
   if (beforeAccount.some((s) => hasGlob(s))) return true; // partition/service/region glob

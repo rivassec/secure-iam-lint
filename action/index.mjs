@@ -846,6 +846,112 @@ function symlinkExcludedUnits(patterns, excludedSymlinks, family) {
   }));
 }
 
+// --- S2-action-enumeration: enumeration fail-closed units ---------------------
+//
+// walkFiles enumerates the workspace tree. TWO ways it could DROP candidate policy files
+// silently, each an enumeration fail-open the audit reproduced:
+//   (A) an UNREADABLE directory (chmod 000 / I/O error) whose whole subtree is invisible -
+//       the old `readdirSync(...) catch { continue }` skipped it with ZERO bookkeeping, so a
+//       chmod-000 subdir holding an admin policy made the Action exit 0 / complete.
+//   (B) the defensive MAX_FILES enumeration ceiling returned early with NO fail-closed signal,
+//       so a truncated walk (files past the ceiling never enumerated) still read clean.
+// Both are closed by MIRRORING the S1 symlink-exclusion machinery: walkFiles RECORDS each
+// unreadable directory + a `truncated` flag, and runAction synthesizes fail-closed (exit 3)
+// 'incomplete' analyzer-state units so a partial/cut-short enumeration is NEVER a clean
+// aggregate. Same shape as symlinkExcludedResult / aggregateCapResult: analysisStatus
+// 'partial' (some files WERE analyzed), analysisState 'incomplete', exitCode FAIL_CLOSED,
+// no security-severity - a tool-level could-not-analyze notification, never a policy finding.
+
+export const ENUMERATION_UNREADABLE_REASON = 'ENUMERATION_UNREADABLE';
+function enumerationUnreadableResult(message, family) {
+  return Object.freeze({
+    analysisStatus: 'partial',
+    analysisStates: Object.freeze([Object.freeze({
+      analysisState: 'incomplete', code: ENUMERATION_UNREADABLE_REASON, message, path: null,
+    })]),
+    findings: Object.freeze([]),
+    findingsCount: 0,
+    blockingCount: 0,
+    exitCode: EXIT.FAIL_CLOSED,
+    reason: ENUMERATION_UNREADABLE_REASON,
+    family: family != null ? family : null,
+  });
+}
+
+export const ENUMERATION_TRUNCATED_REASON = 'ENUMERATION_TRUNCATED';
+function enumerationTruncatedResult(message, family) {
+  return Object.freeze({
+    analysisStatus: 'partial',
+    analysisStates: Object.freeze([Object.freeze({
+      analysisState: 'incomplete', code: ENUMERATION_TRUNCATED_REASON, message, path: null,
+    })]),
+    findings: Object.freeze([]),
+    findingsCount: 0,
+    blockingCount: 0,
+    exitCode: EXIT.FAIL_CLOSED,
+    reason: ENUMERATION_TRUNCATED_REASON,
+    family: family != null ? family : null,
+  });
+}
+
+// The unreadable directories whose hidden subtree COULD contain a file a scan pattern selects
+// - the SAME "invisible subtree" test the S1-DIRSYMLINK path uses (globCanMatchUnderDir), so an
+// unreadable directory the glob can never descend into does NOT false-fail (parity with an
+// unrelated directory symlink). The workspace ROOT (recorded as '') is a special case: if the
+// base directory itself cannot be enumerated, NOTHING is listable and no pattern can be
+// evaluated against any file, so it ALWAYS fails closed regardless of pattern. An over-complex
+// pattern is skipped (resolveFiles already fails it closed to a usage error). Returns a stable,
+// de-duplicated, sorted list so the resulting fail-closed units are deterministic.
+export function matchedUnreadableDirs(patterns, unreadableDirs) {
+  const pats = Array.isArray(patterns) ? patterns : [];
+  const dirs = Array.isArray(unreadableDirs) ? unreadableDirs : [];
+  if (dirs.length === 0) return [];
+  const norm = pats
+    .map((p) => normalizePattern(p))
+    .filter((p) => !globPatternTooComplex(p));
+  const matched = new Set();
+  for (const rawDir of dirs) {
+    const dir = String(rawDir == null ? '' : rawDir);
+    if (dir === '') { matched.add(''); continue; } // workspace root unreadable -> always fail closed
+    for (const pattern of norm) {
+      if (globCanMatchUnderDir(pattern, dir)) { matched.add(dir); break; }
+    }
+  }
+  return [...matched].sort();
+}
+
+// Build the fail-closed enumeration units: one ENUMERATION_UNREADABLE unit per unreadable
+// directory a scan pattern could descend into, plus a single ENUMERATION_TRUNCATED unit when
+// the walk hit its file ceiling and stopped early. Empty when enumeration was complete +
+// fully readable. Folded into EVERY downstream return path so the exit-3 verdict is never lost.
+function enumerationUnits(patterns, unreadableDirs, truncated, family) {
+  const units = matchedUnreadableDirs(patterns, unreadableDirs).map((rel) => ({
+    file: isNonEmptyString(rel) ? rel : null,
+    result: enumerationUnreadableResult(
+      'A directory a scan pattern could descend into could NOT be enumerated during the walk '
+        + '(permission denied or I/O error), so its ENTIRE subtree was invisible and any policy '
+        + 'file inside it was NOT analyzed. This run is INCOMPLETE and FAILS CLOSED (exit 3) - it '
+        + 'is never reported as a clean pass. Zero findings does NOT mean the policies are safe; '
+        + 'it means part of the tree could not be enumerated. Fix the directory permissions and '
+        + `re-run. Path: ${isNonEmptyString(rel) ? rel : '(workspace root)'}`,
+      family,
+    ),
+  }));
+  if (truncated) {
+    units.push({
+      file: null,
+      result: enumerationTruncatedResult(
+        'File enumeration hit its defensive ceiling and STOPPED before the whole tree was '
+          + 'walked, so an unknown set of files past the ceiling was NOT enumerated or analyzed. '
+          + 'This run is INCOMPLETE and FAILS CLOSED (exit 3) - it is never reported as a clean '
+          + 'pass. Split the scan or raise the enumeration ceiling for a legitimately huge tree.',
+        family,
+      ),
+    });
+  }
+  return units;
+}
+
 // --- SARIF assembly -----------------------------------------------------------
 
 // Build one multi-run SARIF 2.1.0 log: one run per scanned unit (each carrying its
@@ -1033,12 +1139,28 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
       ? io.listExcludedSymlinks() : [];
     const symlinkUnits = symlinkExcludedUnits(patterns, excludedSymlinks, inputs.family);
 
+    // S2-action-enumeration: recover the enumeration fail-closed signals walkFiles records -
+    // directories that could not be read (their subtree invisible) and whether the walk was
+    // truncated at its file ceiling - and build fail-closed (exit 3) 'incomplete' units for
+    // them. Without this, a chmod-000 subtree holding an admin policy, or a truncated walk,
+    // would let the aggregate report complete / exit 0 with candidate files silently dropped -
+    // the exact "a candidate policy file quietly falls out of enumeration" the threat model
+    // forbids. An unreadable dir no scan pattern could descend into contributes nothing (parity
+    // with an unrelated directory symlink), so a monorepo with unrelated unreadable dirs does
+    // not false-fail. These units are folded into EVERY downstream return path (the usage-error
+    // resolveFiles branch AND the scan branch) so the exit-3 verdict can never be lost.
+    const unreadableDirs = io && typeof io.listUnreadableDirs === 'function'
+      ? io.listUnreadableDirs() : [];
+    const enumTruncated = io && typeof io.enumerationTruncated === 'function'
+      ? io.enumerationTruncated() === true : false;
+    const enumUnits = enumerationUnits(patterns, unreadableDirs, enumTruncated, inputs.family);
+
     const { files, error } = resolveFiles(patterns, io && typeof io.listFiles === 'function' ? io.listFiles() : []);
     if (error) {
       return finalize([{
         file: null,
         result: usageResult(error.reason, error.message, inputs.family),
-      }, ...symlinkUnits], inputs, manifest);
+      }, ...symlinkUnits, ...enumUnits], inputs, manifest);
     }
 
     // --- Scan each resolved file READ-ONLY, under the AGGREGATE ceiling. -------
@@ -1142,6 +1264,11 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
     // dropped (S1-symlink-failclosed).
     for (const u of symlinkUnits) units.push(u);
 
+    // Fold in the enumeration fail-closed units (unreadable subtree / truncated walk) so a
+    // clean set of real files can NEVER report exit 0 while a candidate subtree was skipped or
+    // enumeration was cut short (S2-action-enumeration).
+    for (const u of enumUnits) units.push(u);
+
     return finalize(units, inputs, manifest);
   } catch (e) {
     // Catch-all: an unexpected error NEVER becomes exit 0. Fail closed to INTERNAL.
@@ -1235,28 +1362,83 @@ export function emitArtifacts(final, env, sinks) {
 
 // --- Process entry point ------------------------------------------------------
 
+// The defensive enumeration ceiling: an upper bound on how many files (or excluded symlink
+// entries) walkFiles will record before it stops, so a pathological tree cannot make
+// enumeration run unbounded. Hitting it is a FAIL-CLOSED condition (S2-action-enumeration):
+// the walk sets `truncated` and runAction surfaces an ENUMERATION_TRUNCATED exit-3 unit, never
+// a silent clean pass. Configurable via the IAM_BR_ENUM_MAX_FILES env override (a positive
+// integer) for a legitimately huge tree; absent/invalid falls back to this default.
+export const ENUMERATION_MAX_FILES = 200000;
+
+// The defensive DIRECTORY ceiling (S4-R6-dirbomb): an upper bound on how many directories
+// walkFiles will POP+process before it stops, so a deep/wide tree of MANY directories but FEW
+// files (e.g. 1000 chains x 2000 deep = ~2M readdir ops, all well under MAX_FILES) cannot make
+// enumeration run unbounded - the file/symlink ceilings never trip because almost no files
+// exist, yet the walk does one readdir per directory. This is the CUMULATIVE dir-count twin of
+// ENUMERATION_MAX_FILES: hitting it is the same FAIL-CLOSED condition (sets `truncated`, so
+// runAction surfaces an exit-3 ENUMERATION_TRUNCATED unit, never a silent clean pass).
+// Configurable via the IAM_BR_ENUM_MAX_DIRS env override (a positive integer) for a
+// legitimately huge tree; absent/invalid falls back to this default. Sized generously so a
+// normal large monorepo is never forced fail-closed, while a directory bomb is bounded.
+export const ENUMERATION_MAX_DIRS = 500000;
+
 // A recursive file walk producing cwd-relative POSIX paths. Skips .git and
 // node_modules (never useful policy sources, and skipping them bounds the walk),
 // and never follows symlinks (avoids cycles + traversal out of the workspace).
 //
-// Returns { files, excludedSymlinks }. S1-symlink-failclosed: a symlink is NEVER
-// followed (traversal safety), but the excluded entry is RECORDED rather than silently
-// dropped, so a symlinked policy file whose path MATCHES a scan pattern cannot quietly
-// fall out of the aggregate. runAction fails the run CLOSED (exit 3) if any recorded
-// symlink matches a scan pattern; an unrelated symlink (no pattern match) is ignored.
-function walkFiles(nodeFs, nodePath, baseDir) {
+// Returns { files, excludedSymlinks, unreadableDirs, truncated }.
+//   - S1-symlink-failclosed: a symlink is NEVER followed (traversal safety), but the excluded
+//     entry is RECORDED rather than silently dropped, so a symlinked policy file whose path
+//     MATCHES a scan pattern cannot quietly fall out of the aggregate.
+//   - S2-action-enumeration (A): a directory whose readdir FAILS (chmod 000 / I/O error) is
+//     RECORDED in `unreadableDirs` (as its workspace-relative path; the root is '') instead of
+//     being silently skipped, so an unreadable subtree that a scan pattern could descend into
+//     fails the run CLOSED (exit 3) rather than reading complete/clean.
+//   - S2-action-enumeration (B): hitting the ENUMERATION FILE ceiling sets `truncated`, so a
+//     cut-short walk fails CLOSED (exit 3) instead of returning a partial file set as if it
+//     were the whole tree.
+//   - S4-R6-dirbomb: hitting the ENUMERATION DIRECTORY ceiling ALSO sets `truncated`, so a
+//     deep/wide tree of many directories but few files (which the file/symlink ceilings never
+//     catch) is bounded and fails CLOSED (exit 3) too, never a silent unbounded walk. The
+//     ignore rules (.git / node_modules) run BEFORE a directory is counted (a skipped dir is
+//     never pushed, so never popped/counted), so a normal large repo is not forced fail-closed.
+//     walkFiles never DESCENDS into a symlink, so there is no directory cycle to guard against
+//     (a symlinked dir is recorded, never pushed) - the dir counter cannot be inflated by a loop.
+// runAction turns these signals into fail-closed units; an unreadable dir / truncation the
+// scan patterns can never reach into does not false-fail (parity with an unrelated symlink).
+function walkFiles(nodeFs, nodePath, baseDir, maxFiles = ENUMERATION_MAX_FILES, maxDirs = ENUMERATION_MAX_DIRS) {
   const out = [];
   const excludedSymlinks = [];
-  const MAX_FILES = 200000; // defensive bound against a pathological tree
+  const unreadableDirs = [];
+  const MAX_FILES = Number.isInteger(maxFiles) && maxFiles > 0 ? maxFiles : ENUMERATION_MAX_FILES;
+  const MAX_DIRS = Number.isInteger(maxDirs) && maxDirs > 0 ? maxDirs : ENUMERATION_MAX_DIRS;
   const SKIP_DIRS = new Set(['.git', 'node_modules']);
   const stack = [''];
+  // Cumulative count of directories POPPED from the stack (root included). Structurally the
+  // twin of out.length / excludedSymlinks.length: it charges every directory the walk actually
+  // processes, so N shallow chains that each stay under any depth cap still multiply into it and
+  // trip the ceiling. Ignore-listed dirs are never pushed, so they never reach this counter.
+  let dirsVisited = 0;
   while (stack.length > 0) {
     const relDir = stack.pop();
+    // Off-by-one guard (mirrors the out.length / excludedSymlinks.length twins below): charge
+    // this directory, then trip only when we have POPPED a directory BEYOND the ceiling. Gating
+    // on `>` (not `>=`) lets a tree of EXACTLY MAX_DIRS directories finish and exit 0; the
+    // (MAX_DIRS+1)-th popped directory is the first true overflow. Checked BEFORE readdir so the
+    // walk performs at most MAX_DIRS readdir ops - the unbounded-enumeration bound is real.
+    dirsVisited += 1;
+    if (dirsVisited > MAX_DIRS) {
+      return { files: out, excludedSymlinks, unreadableDirs, truncated: true };
+    }
     const absDir = relDir ? nodePath.join(baseDir, relDir) : baseDir;
     let entries;
     try {
       entries = nodeFs.readdirSync(absDir, { withFileTypes: true });
     } catch {
+      // S2-action-enumeration (A): the subtree under this directory is now INVISIBLE. RECORD
+      // the unreadable path (the root is '') instead of silently continuing, so runAction can
+      // fail the run closed if a scan pattern could have descended into it. Never silently drop.
+      unreadableDirs.push(relDir);
       continue;
     }
     for (const ent of entries) {
@@ -1276,7 +1458,13 @@ function walkFiles(nodeFs, nodePath, baseDir) {
           isDir = false;
         }
         excludedSymlinks.push({ path: rel, isDir });
-        if (excludedSymlinks.length >= MAX_FILES) return { files: out, excludedSymlinks };
+        // Off-by-one guard: signal truncation only when an entry BEYOND the ceiling actually
+        // exists. Gating on `>` (not `>=`) lets a tree of EXACTLY MAX_FILES fully-enumerated
+        // entries finish and exit 0; a legitimately fully-analyzable tree must not be reported
+        // ENUMERATION_TRUNCATED. The (MAX_FILES+1)-th entry is the first true overflow.
+        if (excludedSymlinks.length > MAX_FILES) {
+          return { files: out, excludedSymlinks, unreadableDirs, truncated: true };
+        }
         continue;
       }
       if (ent.isDirectory()) {
@@ -1284,11 +1472,17 @@ function walkFiles(nodeFs, nodePath, baseDir) {
         stack.push(rel);
       } else if (ent.isFile()) {
         out.push(rel);
-        if (out.length >= MAX_FILES) return { files: out, excludedSymlinks };
+        // Off-by-one guard (see the excludedSymlinks twin above): only the (MAX_FILES+1)-th
+        // file is a genuine overflow. Gate on `>` so a tree of EXACTLY MAX_FILES fully-
+        // enumerated files finishes with truncated:false and exits 0, and reserve the
+        // ENUMERATION_TRUNCATED fail-close for a walk that truly ran past the ceiling.
+        if (out.length > MAX_FILES) {
+          return { files: out, excludedSymlinks, unreadableDirs, truncated: true };
+        }
       }
     }
   }
-  return { files: out, excludedSymlinks };
+  return { files: out, excludedSymlinks, unreadableDirs, truncated: false };
 }
 
 export async function main() {
@@ -1298,14 +1492,23 @@ export async function main() {
   // The workspace base: the runner-provided workspace, else the process cwd.
   const baseDir = process.env.GITHUB_WORKSPACE || process.cwd();
 
-  // Walk the tree ONCE (memoized) and expose both the real files and the excluded
-  // symlink entries; walkFiles never follows a symlink but records it so a symlinked
-  // policy file matching a scan pattern cannot silently drop from the aggregate.
+  // Walk the tree ONCE (memoized) and expose the real files, the excluded symlink entries,
+  // AND the enumeration fail-closed signals (unreadable directories + a truncation flag);
+  // walkFiles never follows a symlink but records it, and records an unreadable subtree /
+  // truncated walk, so no candidate policy file can silently drop from the aggregate.
+  // The enumeration ceilings are configurable via IAM_BR_ENUM_MAX_FILES / IAM_BR_ENUM_MAX_DIRS
+  // (positive integers) for a legitimately huge tree; absent/invalid each falls back to its
+  // default (ENUMERATION_MAX_FILES / ENUMERATION_MAX_DIRS). The DIRECTORY ceiling bounds a
+  // deep/wide many-directory-few-file tree the file ceiling would never catch (S4-R6-dirbomb).
+  const enumMaxFiles = positiveIntInput(process.env.IAM_BR_ENUM_MAX_FILES, ENUMERATION_MAX_FILES);
+  const enumMaxDirs = positiveIntInput(process.env.IAM_BR_ENUM_MAX_DIRS, ENUMERATION_MAX_DIRS);
   let walkResult;
-  const walk = () => (walkResult || (walkResult = walkFiles(nodeFs, nodePath, baseDir)));
+  const walk = () => (walkResult || (walkResult = walkFiles(nodeFs, nodePath, baseDir, enumMaxFiles, enumMaxDirs)));
   const io = {
     listFiles: () => walk().files,
     listExcludedSymlinks: () => walk().excludedSymlinks,
+    listUnreadableDirs: () => walk().unreadableDirs,
+    enumerationTruncated: () => walk().truncated === true,
     // Enforce the MAX_BYTES cap via statSync BEFORE readFileSync (threat-model T5): an
     // over-cap policy file is rejected with a tagged INPUT_TOO_LARGE error and is never
     // read into memory. runAction routes that to a fail-closed exit-3 unit for the file.
@@ -1389,12 +1592,30 @@ export async function main() {
 // Run only when invoked directly by the runner (`node action/index.mjs`), NOT when
 // imported by a test or another module. Compares this module's URL to the process
 // entry point exactly like cli/iam-br.mjs, so importing it here has no side effect.
+//
+// import.meta.url is REALPATH-resolved by Node's ESM loader, while process.argv[1] is
+// the RAW path. A symlink in the invocation path (an npm `.bin` shim, `npx`, a
+// self-hosted-runner checkout, a macOS `/tmp` -> `/private/tmp` link) makes a RAW-only
+// compare MISS - main() never runs and the process exits 0 having done ZERO analysis,
+// a false green check on a real-risk policy. FAIL CLOSED: run when EITHER the raw entry
+// OR its realpath-resolved form matches, with realpathSync in its OWN try so a resolve
+// failure can never silence a genuine direct invocation. An in-process import matches
+// NEITHER, so importing this module (test/wrapper) still does not auto-run main().
 const invokedDirectly = await (async () => {
   try {
     const entry = process.argv && process.argv[1];
     if (!entry) return false;
     const { pathToFileURL } = await import('node:url');
-    return import.meta.url === pathToFileURL(entry).href;
+    const rawHref = pathToFileURL(entry).href;
+    if (import.meta.url === rawHref) return true;
+    let realHref = null;
+    try {
+      const { realpathSync } = await import('node:fs');
+      realHref = pathToFileURL(realpathSync(entry)).href;
+    } catch {
+      realHref = null;
+    }
+    return realHref !== null && import.meta.url === realHref;
   } catch {
     return false;
   }

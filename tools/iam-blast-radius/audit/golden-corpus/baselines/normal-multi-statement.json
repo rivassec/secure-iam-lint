@@ -1,0 +1,68 @@
+{
+  "id": "normal-multi-statement",
+  "klass": "clean",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 0,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "identity",
+      "threshold": "high",
+      "partitionAsserted": null,
+      "analysisStatus": "complete",
+      "reason": "CLEAN",
+      "exitCode": 0,
+      "findingsCount": 0,
+      "blockingCount": 0,
+      "analysisStates": [],
+      "findings": []
+    }
+  },
+  "cliSarif": {
+    "exit": 0,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": []
+            }
+          },
+          "properties": {
+            "analysisStatus": "complete",
+            "exitCode": 0,
+            "blockingCount": 0,
+            "findingsCount": 0
+          },
+          "results": []
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": true,
+    "coverage": {
+      "incomplete": false,
+      "analysisAborted": false,
+      "codes": [],
+      "statements": {
+        "total": 3,
+        "accepted": 3,
+        "rejected": 0
+      },
+      "counts": {
+        "unrecognizedActions": 0,
+        "unsupportedConditions": 0,
+        "unsupportedElements": 0,
+        "actionResourceMismatches": 0,
+        "maskedGrants": 0,
+        "broadUndecidableUncovered": 0
+      }
+    },
+    "findings": []
+  }
+}
