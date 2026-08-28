@@ -1,5 +1,5 @@
 {
-  "scanned": 30,
+  "scanned": 0,
   "missing": [],
   "active": [
     {
@@ -95,21 +95,21 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/graph.js",
-      "line": 412,
+      "line": 269,
       "cls": "budget-bypass",
       "snippet": "for (const dp of deny.actions) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/graph.js",
-      "line": 1586,
+      "line": 1443,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/graph.js",
-      "line": 1881,
+      "line": 1738,
       "cls": "unbounded-walk",
       "snippet": "function deepFreeze(value) {",
       "note": "recursion (deepFreeze) with no visible depth/node/size cap"
