@@ -4,7 +4,9 @@
 # The dev harness (tools/iam-blast-radius) owns @jazzer.js/core + is where the
 # fuzz target lives; install its deps there so node resolves them.
 cd "$SRC/secure-iam-lint/tools/iam-blast-radius"
-npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+# npm ci installs EXACTLY the committed package-lock.json (integrity-hash pinned),
+# and fails closed on any drift - the pinned form (no unpinned `npm install`).
+npm ci --no-audit --no-fund
 
 # Compile from the REPO ROOT so the whole tree (content/, cli/, tools/) lands in
 # $OUT and the target's relative imports resolve at runtime. The shipped ESM

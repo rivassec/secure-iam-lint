@@ -28,3 +28,13 @@ updates:
     groups:
       dev-dependencies:
         patterns: ["*"]
+
+  # The ClusterFuzzLite base image (.clusterfuzzlite/Dockerfile) is digest-pinned;
+  # Dependabot bumps the digest so the pin stays current instead of going stale.
+  - package-ecosystem: docker
+    directory: /.clusterfuzzlite
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
