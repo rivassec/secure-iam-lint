@@ -60,7 +60,7 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/analyze.js",
-      "line": 979,
+      "line": 710,
       "cls": "budget-bypass",
       "snippet": "for (const s of m.model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
