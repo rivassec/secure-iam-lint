@@ -25,7 +25,8 @@ RECOMMENDED NEXT (supervised session): (a) extract a canonical arn-util leaf (pa
 - D3 giant fns: LEAVE resourceFindings/detectPassRolePaths intact for v1.0.0 (file-level manageable only). Owner: file-level scope.
 - [x] arn-util.js (parseArn/serviceForArn/parseResourceContext, imports 3 catalogs, export *) resource.js 2760->2610
 - [x] resource-source-binding.js (7 syms, imports parseArn+parseOperator/NEGATED_OPERATORS+chargeWork, export *) resource.js 2610->2445
-- [ ] resource-conditions (scoping/selector/inventory helpers), resource-service-rules (s3/kms/sns-sqs)
+- [x] resource-conditions.js (9 syms: principal-scoping+selector+inventory+composition, export *) resource.js 2445->2247
+- [ ] resource principal-classification (hasTransportOnlyDeny/principalSubKind/SUBKIND_LABELS/FAIL_CLOSED_*), resource-service-rules (s3/kms/sns-sqs)
 - [ ] escalation-reachability.js (SCC: pins+role-targets+role-coverage together)
 
 ## Autonomous state machine (original)
