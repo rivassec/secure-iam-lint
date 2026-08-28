@@ -1060,6 +1060,35 @@ test('analyzeResource: a genuine scoping key alongside a bypassable one still na
   assert.equal(f.severity, 'high', 'the non-bypassable StringEquals still narrows; the bypassable key adds nothing');
 });
 
+// --- Federated (OIDC/SAML) principals on a RESOURCE policy are recognized-but-
+// unmodeled and MUST be surfaced fail-closed, never dropped to zero findings
+// (adversarial-critic: federated-oidc/federated-saml were classified then discarded,
+// unlike their federated-wildcard / canonical-user siblings). ------------------------
+const resourceUnsupported = (principal) => {
+  const policy = {
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Principal: principal, Action: 's3:GetObject', Resource: 'arn:aws:s3:::example-bucket/*' }],
+  };
+  const r = analyze(JSON.stringify(policy), {
+    family: 'resource', requireExplicitFamily: true,
+    resourceContext: { type: 's3-object', arn: 'arn:aws:s3:::example-bucket/*' },
+  });
+  return r.findings.filter((f) => f.id === 'RESOURCE-UNSUPPORTED-PRINCIPAL');
+};
+
+test('analyzeResource: a Federated SAML principal on a resource policy surfaces a fail-closed finding (not zero findings)', () => {
+  const fs = resourceUnsupported({ Federated: 'arn:aws:iam::123456789012:saml-provider/ExampleProvider' });
+  assert.equal(fs.length, 1, 'a Federated SAML grant must be surfaced, never silently dropped');
+  assert.equal(fs[0].severity, 'medium');
+  assert.match(fs[0].why, /role-trust|UNDETERMINED|unsupported != safe/i, 'explains it is recognized-but-unmodeled, not safe');
+});
+
+test('analyzeResource: a Federated OIDC principal on a resource policy surfaces a fail-closed finding (not zero findings)', () => {
+  const fs = resourceUnsupported({ Federated: 'arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com' });
+  assert.equal(fs.length, 1, 'a Federated OIDC grant must be surfaced, never silently dropped');
+  assert.equal(fs[0].severity, 'medium');
+});
+
 test('analyzeResource: confused-deputy graph origin is the SERVICE principal (test 26)', () => {
   const res = analyze(JSON.stringify({
     Version: '2012-10-17',

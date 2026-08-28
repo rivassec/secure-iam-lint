@@ -56,6 +56,8 @@ export const SUBKIND_LABELS = Object.freeze({
 export const FAIL_CLOSED_PRINCIPAL_TYPES = Object.freeze([
   'aws-principal-arn-wildcard',
   'canonical-user',
+  'federated-oidc',
+  'federated-saml',
   'federated-wildcard',
   'service-wildcard',
 ]);
@@ -119,6 +121,46 @@ export const FAIL_CLOSED_PRINCIPAL_META = Object.freeze({
       's3.amazonaws.com), one per member; the Service principal element does not ' +
       'support "*"/"?" matching. Add a confused-deputy source binding ' +
       '(aws:SourceArn / aws:SourceAccount) for each service that needs access.',
+  },
+  'federated-oidc': {
+    severity: 'medium',
+    title: 'Resource grant to a Federated (OIDC) principal (recognized but unmodeled - fail closed)',
+    why: (who, serviceLabel, acts) =>
+      `The resource policy names a Federated OIDC identity-provider principal (${who}) ` +
+      `while granting ${acts} on this ${serviceLabel}. A Federated principal is a ` +
+      'recognized IAM principal form, but AWS treats OIDC/SAML Federated principals as ' +
+      'valid ONLY in role-trust policies (sts:AssumeRoleWithWebIdentity), not on other ' +
+      'resource-based policies, and this analyzer does NOT model what a Federated grant ' +
+      'reaches on a resource policy. WHO it resolves to and how far it reaches are ' +
+      'UNDETERMINED from this document. It is surfaced fail-closed rather than dropped: ' +
+      'the absence of a modeled finding does NOT mean the grant is safe (unsupported != ' +
+      'safe), and the Federated grant is never silently ignored.',
+    remediation:
+      'Do not place an OIDC Federated principal on a non-trust resource policy - it ' +
+      'belongs in a role-trust policy consumed via sts:AssumeRoleWithWebIdentity. If ' +
+      'you intend cross-account or external access to this resource, name the specific ' +
+      'AWS account, role, or service principal that must reach it, and grant the ' +
+      'federated identity access to a ROLE (via that role\'s trust policy) instead.',
+  },
+  'federated-saml': {
+    severity: 'medium',
+    title: 'Resource grant to a Federated (SAML) principal (recognized but unmodeled - fail closed)',
+    why: (who, serviceLabel, acts) =>
+      `The resource policy names a Federated SAML identity-provider principal (${who}) ` +
+      `while granting ${acts} on this ${serviceLabel}. A Federated principal is a ` +
+      'recognized IAM principal form, but AWS treats OIDC/SAML Federated principals as ' +
+      'valid ONLY in role-trust policies (sts:AssumeRoleWithSAML), not on other ' +
+      'resource-based policies, and this analyzer does NOT model what a Federated grant ' +
+      'reaches on a resource policy. WHO it resolves to and how far it reaches are ' +
+      'UNDETERMINED from this document. It is surfaced fail-closed rather than dropped: ' +
+      'the absence of a modeled finding does NOT mean the grant is safe (unsupported != ' +
+      'safe), and the Federated grant is never silently ignored.',
+    remediation:
+      'Do not place a SAML Federated principal on a non-trust resource policy - it ' +
+      'belongs in a role-trust policy consumed via sts:AssumeRoleWithSAML. If you ' +
+      'intend cross-account or external access to this resource, name the specific AWS ' +
+      'account, role, or service principal that must reach it, and grant the federated ' +
+      'identity access to a ROLE (via that role\'s trust policy) instead.',
   },
   'federated-wildcard': {
     severity: 'high',
