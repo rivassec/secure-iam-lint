@@ -2,6 +2,8 @@
 
 State machine for the autonomous refactor. Each tick: do the NEXT unchecked item per REFACTOR-PLAN.md, gate, commit, push backup, check it off. On a stall: roll back the failed extraction (`git checkout -- <touched>`), mark the current file PARTIAL at its last green module, and SKIP to the next FILE (Oliver's directive). Hold public push / PR / tag.
 
+ROOT CAUSE of the earlier defers (SOLVED): TESTS import engine internals directly from the file (step-0 grep must include tools/iam-blast-radius/tests). FIX: after every extraction add `export * from './<newmod>.js';` to the orchestrator - preserves ALL exports for tests + external importers. This makes the previously-deferred pins/role-coverage/rules-catalogs extractable too (re-attempt them).
+
 Per-extraction protocol (MANDATORY every time): (1) re-grep exact CURRENT line numbers of the target functions - they DRIFT after every edit, never trust stale numbers; (2) Write the new leaf module (import only what it needs; export every symbol used outside it); (3) Edit the orchestrator: add `import {...} from './<new>.js'` + re-export the EXTERNALLY-imported names, remove the moved block; (4) GATE - `npx madge --circular content/tools/iam-blast-radius/engine` = 0 cycles AND `cd tools/iam-blast-radius && node --test 'tests/**/*.test.js' 'audit/**/*.test.js'` = 2778 pass/0 fail/0 todo (count must not drop) AND `GOLDEN_RELEASE_GATE=1 node --test audit/golden-corpus/release-gate.test.js` 16/16 AND `node audit/lint/lint.mjs` no NEW class; (5) green -> `git add -A && git commit -m "refactor(<file>): extract <module> (pure move)"` + `GIT_SSH_COMMAND='ssh -i ~/.ssh/git_rivassec -o IdentitiesOnly=yes' git push backup wip/appsec-phase2-4-20260827` + check the box; red -> 1 fix attempt, else roll back + skip to next FILE.
 
 ## FILE 1: escalation.js -- PARTIAL (5 clean leaves extracted: action-grants/catalogs/scope/statement/conditions; 3016->2399... currently 2545 LOC. The coupled detector/partition/pins region (principal-pins, role-coverage, role-targets, passrole, families, takeover, finding, deny) resisted mechanical extraction - 2 catastrophic full-suite regressions (pins 50-fail, role-coverage 962-fail) despite madge/node-c clean => shared load-order/state coupling. NEEDS A SUPERVISED PASS, not overnight-autonomous. Moving to FILE 2.)
@@ -24,6 +26,7 @@ Per-extraction protocol (MANDATORY every time): (1) re-grep exact CURRENT line n
 - [~] rules-catalogs.js DEFERRED (3 full-suite fails: evidence/fixture-matrix/rules - a subtle cross-region behavioral coupling; madge+node-c clean; needs supervised diagnosis) / rules-finding-factory.js / rules-deny-precedence.js / rules-eval-*.js (see REFACTOR-PLAN.md sec 6)
 
 ## FILE 3: trust.js - run step-0 grep first
+- [x] trust-catalogs.js (pure-const, export *) -- FIRST trust module
 - [ ] trust-principals.js (classifyPrincipals + front-matter, imported by resource.js) / trust-conditions.js / trust-findings.js / trust-deny.js
 
 ## FILE 4: resource.js - run step-0 grep first
