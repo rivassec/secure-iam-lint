@@ -1,3 +1,6 @@
+
+// 12-digit AWS account id (bare). Shared by escalation.js + escalation-reachability.js.
+export const CONCRETE_ACCOUNT_ID_RE = /^[0-9]{12}$/;
 // escalation-catalogs.js - escalation trigger catalogs + metadata.
 // Extracted verbatim from escalation.js (behavior-preserving refactor). Pure data + pure classifiers; no imports.
 

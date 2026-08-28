@@ -145,7 +145,7 @@ import {
   PASS_ROLE_SERVICES, PASS_ROLE_ACTION, classifyEcsRole, ECS_LAUNCH_ACTIONS, ecsRoleClasses,
   POLICY_VERSION_ACTIONS, ATTACH_POLICY_ACTIONS, PUT_INLINE_POLICY_ACTIONS, TRUST_MODIFY_ACTIONS,
   CREDENTIAL_ACTIONS, ASSUME_ROLE_ACTIONS, ROLE_TAKEOVER_GRANT_ACTIONS, ROLE_TAKEOVER_ASSUME_ACTIONS,
-  ESCALATIONS, ESCALATION_IDS,
+  ESCALATIONS, ESCALATION_IDS, CONCRETE_ACCOUNT_ID_RE,
 } from './escalation-catalogs.js';
 export { ESCALATIONS, ESCALATION_IDS } from './escalation-catalogs.js';
 // --- Condition helpers -------------------------------------------------------
@@ -636,7 +636,6 @@ const LAMBDA_CODE_ONLY_ACTIONS = Object.freeze(['lambda:UpdateFunctionCode']);
 // fire (firing it would silently suppress a possibly-viable critical path - the
 // exact false negative threat-model T8 forbids). Normalize/validate here so the
 // passedRoleAccounts comparison downstream is only reached for a real account id.
-const CONCRETE_ACCOUNT_ID_RE = /^[0-9]{12}$/;
 
 function detectPassRolePaths(allows, out, denies, ctx) {
   const rawSubjectAccount = ctx && ctx.subjectAccount != null ? String(ctx.subjectAccount) : null;
