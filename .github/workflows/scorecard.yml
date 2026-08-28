@@ -1,8 +1,8 @@
 # OpenSSF Scorecard: automated grade of this repo's security posture (branch protection,
-# pinned dependencies, token permissions, signed/provenance releases, code scanning, etc.).
-# Results upload to the Code scanning tab and (publish_results) feed the public badge -
-# a credibility signal for a Marketplace security tool, and a check that the hardening in
-# this repo (SHA pins, least-priv permissions, branch protection, npm provenance) is real.
+# dependency pinning, least-privilege workflow permissions, release provenance, code
+# scanning, etc.). Results upload to the Code scanning tab and (publish_results) feed the
+# public badge - a credibility signal for a Marketplace security tool, and a check that the
+# hardening in this repo (SHA pins, least-priv permissions, branch protection) is real.
 name: Scorecard
 
 on:

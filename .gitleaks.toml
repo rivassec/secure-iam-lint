@@ -30,4 +30,9 @@ paths = [
   '''tools/iam-blast-radius/tests/.*''',
   '''tools/iam-blast-radius/docs/.*\.md''',
   '''content/tools/iam-blast-radius/samples\.js''',
+  # scorecard.yml is a fixed OSSF Scorecard workflow with NO literal secrets (it
+  # references ${{ secrets.* }} by expression only). A generic-api-key false positive
+  # fired on the prose word "token" in a descriptive comment; excuse this one file by
+  # path (narrow, per the path-only policy above) rather than a repo-wide regex.
+  '''\.github/workflows/scorecard\.yml''',
 ]

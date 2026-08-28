@@ -83,11 +83,15 @@ Controls ENFORCED in CI today (`.github/workflows/security.yml` + `ci.yml`):
   it (any un-pinned `uses:` fails the Security workflow).
 - `gitleaks` scans the full git history for secrets.
 - `actionlint` lints every workflow.
-NOT yet implemented (tracked; this file must NOT claim them as present until the
-workflow actually runs them): SBOM generation, `npm audit` / OSV dependency-
-advisory scanning, and an automated license allowlist. These would cover only
-the dev-only deps (the shipped artifact has none), so they rank below the
-zero-runtime-dep + no-build guarantees above.
+- `OSV-Scanner` (pinned, checksum-verified binary) scans every committed lockfile
+  for known-CVE advisories; the job exit gates. This covers the dev-only tree
+  (the shipped artifact has zero runtime dependencies).
+NOT yet implemented as a per-push CI gate (tracked; this file must NOT claim it as
+present until a `security.yml`/`ci.yml` gate runs it): SBOM generation (a CycloneDX
+SBOM IS emitted on a tagged release via `release.yml`, but that is a release artifact,
+not a push gate) and an automated license allowlist. These cover only the dev-only
+deps (the shipped artifact has none), so they rank below the zero-runtime-dep +
+no-build guarantees above.
 
 T8. **Misleading conclusions as a security harm** -> The tool must not claim
 effective permissions from insufficient context. Overstated certainty is a

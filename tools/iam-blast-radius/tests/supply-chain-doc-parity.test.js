@@ -76,6 +76,7 @@ test('every supply-chain control T7 claims as enforced is actually in CI', () =>
     { name: 'zizmor SHA-pin audit', docRe: /zizmor/i, ciRe: /zizmor/ },
     { name: 'gitleaks secret scan', docRe: /gitleaks/i, ciRe: /gitleaks/ },
     { name: 'actionlint', docRe: /actionlint/i, ciRe: /actionlint/ },
+    { name: 'OSV-Scanner', docRe: /OSV/, ciRe: /osv/i },
   ];
   for (const c of REQUIRED) {
     assert.match(enforcedClaims, c.docRe, `T7 should list ${c.name} as an enforced control`);
@@ -88,7 +89,6 @@ test('every supply-chain control T7 claims as enforced is actually in CI', () =>
 test('T7 does not claim un-wired supply-chain controls as enforced', () => {
   const UNWIRED = [
     { name: 'npm audit', re: /npm audit/i, ciRe: /npm audit/ },
-    { name: 'OSV scanning', re: /\bOSV\b/, ciRe: /osv/i },
     { name: 'SBOM', re: /\bSBOM\b/, ciRe: /sbom|cyclonedx/i },
     { name: 'license allowlist', re: /license allowlist/i, ciRe: /license-checker|licensee|license allowlist/i },
   ];
