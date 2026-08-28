@@ -152,6 +152,23 @@ function copyGuarded(value, errors, path) {
       );
       continue;
     }
+    // S4-unicode-spoof (collision): two DISTINCT raw keys that differ only by an
+    // invisible control character collapse to the SAME normalized key here. Without
+    // this guard the second silently OVERWRITES the first - erasing a real Condition
+    // operator/key (e.g. a restriction) while analysis reports CLEAN/complete. A
+    // spoofed duplicate is malformed; fail CLOSED (the pushed error -> ok:false) and
+    // keep the FIRST value rather than silently dropping either one.
+    if (Object.prototype.hasOwnProperty.call(out, key)) {
+      errors.push(
+        err(
+          'SPOOFED_DUPLICATE_KEY',
+          `Object key "${key}" appears more than once after control-character `
+            + `normalization (a distinct raw key collapsed onto it).`,
+          `${path}.${key}`,
+        ),
+      );
+      continue;
+    }
     out[key] = copyGuarded(value[rawKey], errors, `${path}.${key}`);
   }
   return out;
@@ -195,6 +212,22 @@ function normalizePrincipal(value, errors, path, element) {
         err(
           'DANGEROUS_KEY',
           `Rejected dangerous key "${key}" (prototype-pollution guard).`,
+          `${path}.${name}.${key}`,
+        ),
+      );
+      continue;
+    }
+    // S4-unicode-spoof (collision): a zero-width/format-control twin of a principal
+    // TYPE key (e.g. "AWS" + "AWS​") collapses to one key here; without this
+    // guard the second silently OVERWRITES the first, erasing a real principal (the
+    // reported CRITICAL public/cross-account grant vanishes under a benign decoy while
+    // analysis reads CLEAN). Fail CLOSED on the collision, keep the FIRST value.
+    if (Object.prototype.hasOwnProperty.call(byType, key)) {
+      errors.push(
+        err(
+          'SPOOFED_DUPLICATE_KEY',
+          `${name} type "${key}" appears more than once after control-character `
+            + `normalization (a distinct raw key collapsed onto it).`,
           `${path}.${name}.${key}`,
         ),
       );
