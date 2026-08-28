@@ -1,6 +1,15 @@
 # Refactor progress ledger (overnight 2026-08-27 -> 28)
 
 
+## PEER REVIEW + VALIDATION (2026-08-28, Openclaw + Gentoo)
+Refactor validated behavior-preserving beyond the suite:
+- Export-surface snapshot (runtime Object.keys+typeof+fn-arity) vs pre-refactor baseline ceab95c: 0 lost, 0 type-changed across all orchestrators + 14 key modules.
+- export-* name-collision check across every orchestrator's re-export sources: 0.
+- All intra-engine imports use consistent ./name.js (no ../, no extensionless) -> no duplicate-module risk.
+- All ~30 new modules: declaration-only top level -> no top-level side effects (ESM eval-order inert).
+- BLACK-BOX PUBLIC-ENTRYPOINT DIFF (Gentoo's ask): ran cli/scan.mjs `scan()` over 384 fixtures x 6 families = 2303 runs at baseline ceab95c vs HEAD -> BYTE-IDENTICAL. Exercises the export-* chains as a real consumer, incl. the 3 untouched giant functions. This is the strongest proof of the pure-move claim.
+Openclaw's remaining suggestion (a bundled headless-browser golden test) is partly covered by the golden-gate npm-pack/npx packaging test + enforced browser-purity lint; a true bundler smoke test is the one check not run.
+
 ## EXTENDED SCOPE (2026-08-28, user-approved "do A"): graph.js + analyze.js ALSO done
 - graph.js  1808 -> 321  modules: graph-catalogs/graph-helpers/graph-result/graph-trust/graph-resource/graph-edges
 - analyze.js 1138 -> 489 modules: analyze-format/analyze-results (CATALOG_VERSION relocated to analyze-format leaf)
