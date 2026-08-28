@@ -48,7 +48,11 @@ jobs:
         run: |
           out="$(node audit/lint/lint.mjs 2>&1 || true)"
           echo "$out"
-          echo "$out" | grep -qE '0 missing target' \
+          # Anchor on the exact RESULT line. A bare `0 missing target` substring ALSO
+          # matches `10/20/... missing target` (the `0` inside `10`), silently passing the
+          # gate on a real MISSING-target regression; the leading space in ` 0 missing`
+          # can only match a genuine single zero.
+          echo "$out" | grep -qE 'RESULT:.* 0 missing target\(s\)' \
             || { echo "::error::fail-open lint reports MISSING guard target(s)"; exit 1; }
 
   # Obfuscation-proof no-eval / no-proto-mutation guard: the WHOLE suite runs with dynamic
