@@ -186,6 +186,47 @@ function coversOnlyPathServices(finding, pathServices) {
   return tokens.every((t) => pathServices.has(actionServiceOf(t)));
 }
 
+// --- GATING-SEVERITY INVARIANT (S2-passrole-allstmts, iteration 5) ------------
+//
+// Folding a subordinate finding into a primary REMOVES it from the top-level
+// findings list the CLI/Action exit gate scores (cli/scan.mjs counts only
+// top-level findings.length at/above the threshold; a `subsumed[]` entry never
+// counts). That is safe ONLY while the primary that swallows it is at least as
+// severe - the primary then carries the subordinate's gating weight.
+//
+// It becomes a FAIL-OPEN (threat-model T8) the moment a subordinate is MORE severe
+// than the primary it folds into. The canonical break: a compound PassRole path
+// subsumes a same-service HIGH over-broad-resource (WILDCARD-RESOURCE) grant, then
+// the T91/S2 cross-account viability check demotes that path critical->medium/low.
+// The HIGH grant, now buried inside a medium/low primary, drops beneath the 'high'
+// exit gate and the shipped CLI reports exit 0 CLEAN on a policy carrying a genuine
+// HIGH risk - and reordering the byte-content-identical statements flips exit 0<->1.
+//
+// The invariant that closes the CLASS (not one instance): a subsumption must never
+// lower the effective gating severity below the severity of what it folds away.
+// Concretely, a subordinate whose severity STRICTLY OUTRANKS the primary is NOT
+// subsumed - it stays an independent top-level row so its own severity keeps
+// gating. Mirrors the "keep the MOST severe still-correct outcome" rule the
+// pass-statement viability tier already applies on the detection side. Applied at
+// EVERY fold site below; it is inert where the primary is structurally always at
+// least as severe (role-takeover=critical, iam-admin generic/specific=high) and
+// load-bearing where the primary's severity is variable/demotable (the compound
+// PassRole path, and the medium/high capability primaries).
+const SUBSUMPTION_SEVERITY_ORDER = Object.freeze(['critical', 'high', 'medium', 'low', 'info']);
+function subsumptionSeverityRank(sev) {
+  const i = SUBSUMPTION_SEVERITY_ORDER.indexOf(String(sev));
+  // An unknown/absent token ranks LEAST severe (largest) so it can never be treated
+  // as outranking a real severity, and can never itself be hidden under a real one.
+  return i === -1 ? SUBSUMPTION_SEVERITY_ORDER.length : i;
+}
+// True when folding `sub` into `primary` would hide `sub` beneath the exit gate:
+// the subordinate is strictly more severe (lower rank) than the primary it would
+// fold into. Such a subordinate must be LEFT as an independent top-level row.
+function subsumptionWouldHideSeverity(sub, primary) {
+  return subsumptionSeverityRank(sub && sub.severity)
+    < subsumptionSeverityRank(primary && primary.severity);
+}
+
 // Reason wording for the two DISTINCT subsumption relationships. Keeping them
 // separate matters for truthfulness (adversarial-iam-semantics): only the
 // compound pass has actually detected an escalation path, so only its wording
@@ -291,6 +332,15 @@ function correlateCompoundPaths(findings) {
     const union = new Set();
     for (const p of consuming) for (const svc of primaryServices.get(p)) union.add(svc);
     if (!coversOnlyPathServices(f, union)) continue; // unrelated capability -> stays top-level
+
+    // GATING-SEVERITY INVARIANT: a subordinate is folded away (removed from the
+    // top-level rows the exit gate scores) ONLY when some consuming primary is at
+    // least as severe as it - that primary then carries its gating weight. If EVERY
+    // consuming path is LESS severe (e.g. a HIGH broad-resource grant over a PassRole
+    // path the T91/S2 cross-account check demoted to medium/low), folding it would
+    // sink the higher-severity grant beneath the exit gate (fail-open, threat-model
+    // T8, order-dependently). Keep it an independent top-level row instead.
+    if (consuming.every((p) => subsumptionWouldHideSeverity(f, p))) continue;
 
     for (const p of consuming) {
       if (!attachments.has(p)) attachments.set(p, []);
@@ -420,6 +470,10 @@ function correlateSameStatementCapabilities(findings) {
     for (const c of caps) {
       if (CAPABILITY_PRIORITY.get(c.id) < CAPABILITY_PRIORITY.get(target.id)) target = c;
     }
+    // GATING-SEVERITY INVARIANT: never fold a WILDCARD-RESOURCE into a capability
+    // that is LESS severe than it - that would drop the broad-resource grant beneath
+    // the exit gate (threat-model T8). Leave it an independent top-level row instead.
+    if (subsumptionWouldHideSeverity(f, target)) continue;
     attachTo.set(target, f);
     subsumed.add(f);
   }
@@ -649,9 +703,12 @@ function correlateIamAdmin(findings) {
     if (directIamIsServiceWildcard(generic)) {
       // Scenario A: iam:* flood. DIRECT-IAM-ADMIN is the primary; fold the
       // specific primitives + the co-located iam:* WILDCARD-ACTION into it.
-      const folded = specifics.slice();
+      // GATING-SEVERITY INVARIANT: only fold a member the generic is at least as
+      // severe as (inert here - generic + every member are `high` - but it keeps a
+      // future severity change from sinking a member beneath the exit gate, T8).
+      const folded = specifics.filter((s) => !subsumptionWouldHideSeverity(s, generic));
       const wa = iamWildcardActionByStmt.get(stmt);
-      if (wa) folded.push(wa);
+      if (wa && !subsumptionWouldHideSeverity(wa, generic)) folded.push(wa);
       if (folded.length > 0) {
         scenarioA.set(generic, folded);
         for (const f of folded) subsumed.add(f);
@@ -667,8 +724,12 @@ function correlateIamAdmin(findings) {
           bestRank = rank;
         }
       }
-      scenarioB.set(target, generic);
-      subsumed.add(generic);
+      // GATING-SEVERITY INVARIANT: fold the generic into the specific ONLY when the
+      // specific is at least as severe (inert - both `high` - guards a future change).
+      if (!subsumptionWouldHideSeverity(generic, target)) {
+        scenarioB.set(target, generic);
+        subsumed.add(generic);
+      }
     }
     // else: standalone DIRECT-IAM-ADMIN (e.g. iam:CreateUser) -> untouched.
   }
@@ -796,6 +857,10 @@ function correlateRoleTakeover(findings) {
       }
     }
     if (!target) continue;
+    // GATING-SEVERITY INVARIANT: fold a contributing primitive into the takeover
+    // chain ONLY when the chain is at least as severe (inert - the chain is always
+    // `critical` - but keeps the class closed if that ever changes, T8).
+    if (subsumptionWouldHideSeverity(f, target)) continue;
     if (!attachments.has(target)) attachments.set(target, []);
     attachments.get(target).push(f);
     subsumed.add(f);

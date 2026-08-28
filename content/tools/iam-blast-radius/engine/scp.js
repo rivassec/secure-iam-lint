@@ -33,6 +33,15 @@
 // DOM. Same model (+ same family) -> same findings, same order, every run
 // (no Date.now()/Math.random()).
 
+// parseOperator strips the set-operator qualifier (ForAllValues:/ForAnyValue:)
+// and the ...IfExists suffix, returning the lowercased BASE comparator. Operator
+// POLARITY must be judged on that base form: a valid AWS spelling like
+// `ForAnyValue:StringEquals` is still a POSITIVE string comparator, but a naive
+// startsWith('string') on the raw key would miss it and credit an inverted fence
+// as protective. Reuse the canonical parser so every polarity check sees through
+// the qualifier prefix.
+import { parseOperator } from './conditions.js';
+
 // Finding ids emitted by this evaluator. Kept distinct from the identity
 // RULE_IDS / ESCALATION_IDS, the trust TRUST_IDS, and the envelope ENVELOPE_IDS:
 // an SCP finding is a different kind of observation (a permission ceiling or a
@@ -123,11 +132,14 @@ const GLOBAL_SERVICE_PREFIXES = [
 ];
 
 // Extract the aws:RequestedRegion value list from a normalized condition map,
-// plus whether ANY operator gating that key is a negated ...IfExists form (the
-// fail-closed guardrail that also denies when the key is ABSENT). Returns
-// { present, regions[], negatedIfExists } - regions is a fresh string array.
+// plus operator POLARITY evidence: whether ANY operator gating that key is a
+// negated ...IfExists form (the fail-closed guardrail that also denies when the
+// key is ABSENT), and whether the key rides under a POSITIVE string comparator
+// (StringEquals / StringLike, no 'Not') - the INVERTED region fence (see below).
+// Returns { present, regions[], negatedIfExists, positive } - regions is a fresh
+// string array.
 function inspectRegionCondition(condition) {
-  const out = { present: false, regions: [], negatedIfExists: false };
+  const out = { present: false, regions: [], negatedIfExists: false, positive: false };
   if (!condition || typeof condition !== 'object') return out;
   for (const op of Object.getOwnPropertyNames(condition)) {
     const inner = condition[op];
@@ -141,11 +153,30 @@ function inspectRegionCondition(condition) {
       } else if (val !== null && val !== undefined) {
         out.regions.push(String(val));
       }
-      const opLower = String(op).toLowerCase();
-      // A NEGATED ...IfExists (e.g. StringNotEqualsIfExists) in a Deny still
-      // denies when the key is absent (docs/scp-rcp-semantics.md section 6).
-      if (opLower.indexOf('not') !== -1 && opLower.endsWith('ifexists')) {
+      // Judge polarity on the BASE comparator, with the set-operator qualifier
+      // (ForAllValues:/ForAnyValue:) and ...IfExists suffix stripped. A raw key
+      // such as `ForAnyValue:StringEquals` is a valid AWS spelling of a POSITIVE
+      // string comparator; testing the raw key with startsWith('string') would
+      // miss the qualifier prefix and credit an inverted fence as protective.
+      const { base, ifExists } = parseOperator(op);
+      const negatedOp = base.indexOf('not') !== -1;
+      // A NEGATED ...IfExists (e.g. StringNotEqualsIfExists, or its set-qualified
+      // spelling) in a Deny still denies when the key is absent
+      // (docs/scp-rcp-semantics.md section 6).
+      if (negatedOp && ifExists) {
         out.negatedIfExists = true;
+      }
+      // Operator POLARITY (mirrors rcp.js orgScopePositive): a region Deny gated by
+      // a POSITIVE string comparator (StringEquals / StringLike, no 'Not') fires the
+      // Deny WHEN the requested Region MATCHES the listed set - it denies INSIDE the
+      // listed regions and PERMITS every region outside them, the INVERSE of a region
+      // lock (whose correct form is StringNotEquals: deny UNLESS the region is in the
+      // allowed set). Only string comparators carry this polarity (regions are
+      // string-typed); a positive-operator region fence is a likely misconfiguration,
+      // NEVER a protective lock. The set-operator qualifier is stripped above, so a
+      // ForAnyValue:/ForAllValues:-qualified positive comparator is caught too.
+      if (base.startsWith('string') && !negatedOp) {
+        out.positive = true;
       }
     }
   }
@@ -227,6 +258,14 @@ function buildGuardrailFinding(stmt) {
   // the key (global-service calls to us-east-1), and without a NotAction global-
   // service carve-out it can block global services broadly.
   const overBroadRegionHazard = isRegion && region.negatedIfExists && !carveOut;
+  // The INVERTED region-fence HAZARD (mirrors rcp.js invertedOrgScopeHazard): a
+  // region Deny gated by a POSITIVE comparator (StringEquals-style, not negated)
+  // fires WHEN the requested Region matches the listed set - it denies INSIDE the
+  // listed regions and PERMITS every region outside them, the INVERSE of a region
+  // lock (whose correct form is StringNotEquals). This is a likely misconfiguration
+  // and must NEVER be credited as a protective lock. It is still a Deny (grants
+  // nothing). Positive and negated-IfExists polarity are mutually exclusive.
+  const invertedRegionHazard = isRegion && region.positive;
 
   let guardrailKind;
   if (isRegion) guardrailKind = 'region';
@@ -243,38 +282,67 @@ function buildGuardrailFinding(stmt) {
 
   if (isRegion) {
     const regionList = region.regions.length > 0 ? region.regions.join(', ') : '(none listed)';
-    title = overBroadRegionHazard
-      ? 'SCP region guardrail (potentially over-broad regional Deny)'
-      : 'SCP region guardrail (Deny)';
-    why =
-      'This SCP Deny is a REGION GUARDRAIL: it denies actions whose requested ' +
-      `Region is outside the allowed set {${regionList}}. ` +
-      (hasCarveList
-        ? 'The NotAction list is a global-service CARVE-OUT (services exempt from ' +
-          'the region deny, because their single endpoint lives in us-east-1); it ' +
-          'is NOT a set of allowed actions. '
-        : '') +
-      (region.negatedIfExists
-        ? 'The guardrail uses a negated ...IfExists operator in a Deny, so it ' +
-          'ALSO denies requests that omit aws:RequestedRegion entirely - including ' +
-          'global-service requests (IAM, CloudFront, Route 53, Support) routed to ' +
-          'us-east-1 - because a negated ...IfExists in a Deny still denies when ' +
-          'the key is absent. '
-        : '') +
-      (overBroadRegionHazard
-        ? 'With no global-service carve-out this can block global services ' +
-          'broadly (a potentially over-broad regional Deny). '
-        : '') +
-      'A guardrail removes actions from the ceiling; it never grants.';
-    remediation = overBroadRegionHazard
-      ? 'Add explicit global-service exceptions (a NotAction listing iam:*, ' +
-        'cloudfront:*, route53:*, support:*, organizations:* and any other global ' +
-        'services in use) or adopt the documented regional-control pattern so ' +
-        'global services routed to us-east-1 are not denied.'
-      : 'Confirm the allowed-Region set and the global-service carve-out match ' +
-        'your intended footprint. Keep this guardrail paired with identity ' +
-        'policies that grant the actions you do want - an SCP only removes access.';
-    docRef = region.negatedIfExists ? IFEXISTS_DOC : REGION_DENY_DOC;
+    if (invertedRegionHazard) {
+      // Positive-operator region fence: denies INSIDE the listed regions and PERMITS
+      // everything outside them - the INVERSE of a region lock. Narrate the real
+      // effect ("permits every region except..."); never credit it as protective.
+      title = 'SCP region guardrail (potentially inverted region Deny)';
+      why =
+        'This SCP Deny is gated by a POSITIVE operator on aws:RequestedRegion, so ' +
+        `it denies actions WHEN the requested Region IS one of {${regionList}} and ` +
+        'PERMITS every region except those - the INVERSE of a region lock and a ' +
+        'likely MISCONFIGURATION (a positive-operator region Deny such as ' +
+        'StringEquals denies only inside the listed regions and leaves every other ' +
+        'region un-guardrailed; the intended region lock uses a NEGATED operator ' +
+        'like StringNotEquals, which denies UNLESS the requested Region is in the ' +
+        'allowed set). ' +
+        (hasCarveList
+          ? 'The NotAction list is a carve-out (services exempt from the deny); it ' +
+            'is NOT a set of allowed actions. '
+          : '') +
+        'A guardrail removes actions from the ceiling; it never grants.';
+      remediation =
+        'Fix the operator polarity: a region lock should use a NEGATED comparator ' +
+        '(StringNotEquals on aws:RequestedRegion) so it denies UNLESS the requested ' +
+        'Region is in your allowed set. As written (a positive StringEquals-style ' +
+        'comparator) it denies only inside the listed regions and permits every ' +
+        'other region - the inverse of the intended control. It is still a Deny (it ' +
+        'grants nothing), but it does not provide the region lock it appears to.';
+      docRef = REGION_DENY_DOC;
+    } else {
+      title = overBroadRegionHazard
+        ? 'SCP region guardrail (potentially over-broad regional Deny)'
+        : 'SCP region guardrail (Deny)';
+      why =
+        'This SCP Deny is a REGION GUARDRAIL: it denies actions whose requested ' +
+        `Region is outside the allowed set {${regionList}}. ` +
+        (hasCarveList
+          ? 'The NotAction list is a global-service CARVE-OUT (services exempt from ' +
+            'the region deny, because their single endpoint lives in us-east-1); it ' +
+            'is NOT a set of allowed actions. '
+          : '') +
+        (region.negatedIfExists
+          ? 'The guardrail uses a negated ...IfExists operator in a Deny, so it ' +
+            'ALSO denies requests that omit aws:RequestedRegion entirely - including ' +
+            'global-service requests (IAM, CloudFront, Route 53, Support) routed to ' +
+            'us-east-1 - because a negated ...IfExists in a Deny still denies when ' +
+            'the key is absent. '
+          : '') +
+        (overBroadRegionHazard
+          ? 'With no global-service carve-out this can block global services ' +
+            'broadly (a potentially over-broad regional Deny). '
+          : '') +
+        'A guardrail removes actions from the ceiling; it never grants.';
+      remediation = overBroadRegionHazard
+        ? 'Add explicit global-service exceptions (a NotAction listing iam:*, ' +
+          'cloudfront:*, route53:*, support:*, organizations:* and any other global ' +
+          'services in use) or adopt the documented regional-control pattern so ' +
+          'global services routed to us-east-1 are not denied.'
+        : 'Confirm the allowed-Region set and the global-service carve-out match ' +
+          'your intended footprint. Keep this guardrail paired with identity ' +
+          'policies that grant the actions you do want - an SCP only removes access.';
+      docRef = region.negatedIfExists ? IFEXISTS_DOC : REGION_DENY_DOC;
+    }
   } else if (isOrg) {
     title = 'SCP organization guardrail (Deny)';
     why =
@@ -303,10 +371,12 @@ function buildGuardrailFinding(stmt) {
   const finding = {
     id: 'SCP-GUARDRAIL',
     // A guardrail is protective (informational) - it subtracts from the ceiling.
-    // The one exception is the over-broad regional-Deny hazard, a misconfiguration
-    // that can block far more than intended: raise it to medium so it is visible.
-    // Never high/critical: a guardrail is not an attack path.
-    severity: overBroadRegionHazard ? 'medium' : 'info',
+    // Two exceptions are misconfiguration HAZARDS raised to medium so they are
+    // visible (never high/critical - a guardrail is not an attack path):
+    //   - the over-broad regional-Deny (negated ...IfExists, no global carve-out);
+    //   - the INVERTED region fence (positive operator: denies inside the listed
+    //     regions and permits everything outside - the inverse of a region lock).
+    severity: (overBroadRegionHazard || invertedRegionHazard) ? 'medium' : 'info',
     title,
     statementSid: statementSid(stmt),
     statementIndex: stmt.index,
@@ -330,10 +400,18 @@ function buildGuardrailFinding(stmt) {
     finding.excludedResources = stmt.notResources.slice();
   }
   if (isRegion) {
-    finding.allowedRegions = region.regions.slice();
     finding.negatedIfExists = region.negatedIfExists;
+    if (invertedRegionHazard) {
+      // A positive-operator fence denies the LISTED regions (fires when the region
+      // matches). Record them as the DENIED set - NEVER as allowedRegions, so a
+      // broken fence is never surfaced as a protective allow-list.
+      finding.deniedRegions = region.regions.slice();
+      finding.regionPositiveOperator = true;
+    } else {
+      finding.allowedRegions = region.regions.slice();
+    }
   }
-  if (overBroadRegionHazard) finding.hazard = true;
+  if (overBroadRegionHazard || invertedRegionHazard) finding.hazard = true;
   return finding;
 }
 

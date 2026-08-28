@@ -1,0 +1,16 @@
+{
+  "name": "iam:PassRole on arn:aws:iam::*:role/* (pass ANY role in ANY account) must warn",
+  "note": "S1-dataexfil-arn iteration 3 regression, WILDCARD-RESOURCE account-wildcard variant. account='*' AND resource-id='role/*'. The old account-wildcard branch additionally required the resource-id STRING to be leading-wildcard, but 'role/*' starts with the concrete type 'role', so that branch was skipped; the head-only check also missed the wildcard one segment deeper - findings=[] exit 0 CLEAN. This grants pass-any-role across every account in the partition, strictly broader than the single-account role/* case. PassRole is non-read, so WILDCARD-RESOURCE (high) must fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PassAnyRoleAnyAccount", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::*:role/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["WILDCARD-RESOURCE"],
+    "mustNotFind": ["WILDCARD-ACTION"],
+    "minSeverity": { "WILDCARD-RESOURCE": "high" },
+    "nonZeroExit": true
+  }
+}

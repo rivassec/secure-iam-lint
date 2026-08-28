@@ -1,0 +1,120 @@
+{
+  "id": "notresource-deny-fence-dos-budget",
+  "klass": "risky",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 3,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "identity",
+      "threshold": "high",
+      "partitionAsserted": null,
+      "analysisStatus": "failed",
+      "reason": "RESOURCE_BUDGET_EXCEEDED",
+      "exitCode": 3,
+      "findingsCount": 0,
+      "blockingCount": 0,
+      "analysisStates": [
+        {
+          "analysisState": "incomplete",
+          "code": "RESOURCE_BUDGET_EXCEEDED",
+          "message": "analysis aborted (resource budget): the analysis exceeded its resource budget and was stopped before completing. Zero findings here does NOT mean the policy is safe - it means the policy could not be fully analyzed.",
+          "path": null
+        }
+      ],
+      "findings": []
+    }
+  },
+  "cliSarif": {
+    "exit": 3,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": [
+                {
+                  "id": "analysis.RESOURCE_BUDGET_EXCEEDED",
+                  "name": "analysis.RESOURCE_BUDGET_EXCEEDED",
+                  "shortDescription": {
+                    "text": "Analyzer state (incomplete): RESOURCE_BUDGET_EXCEEDED. Fail-closed \"could not analyze\"; this is NOT a vulnerability score."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "analysis-state",
+                    "failClosed": true,
+                    "analysisState": "incomplete"
+                  }
+                }
+              ]
+            }
+          },
+          "properties": {
+            "analysisStatus": "failed",
+            "exitCode": 3,
+            "blockingCount": 0,
+            "findingsCount": 0
+          },
+          "results": [
+            {
+              "ruleId": "analysis.RESOURCE_BUDGET_EXCEEDED",
+              "kind": "fail",
+              "level": "error",
+              "message": {
+                "text": "analysis aborted \\(resource budget\\)\\: the analysis exceeded its resource budget and was stopped before completing\\. Zero findings here does NOT mean the policy is safe \\- it means the policy could not be fully analyzed\\."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "0c4029febec4b11260d92d4c5ca6"
+              },
+              "properties": {
+                "category": "analysis-state",
+                "failClosed": true,
+                "analysisState": "incomplete"
+              },
+              "ruleIndex": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": true,
+    "coverage": {
+      "incomplete": true,
+      "analysisAborted": true,
+      "codes": [
+        "RESOURCE_BUDGET_EXCEEDED"
+      ],
+      "statements": {
+        "total": 2,
+        "accepted": 2,
+        "rejected": 0
+      },
+      "counts": {
+        "unrecognizedActions": 0,
+        "unsupportedConditions": 0,
+        "unsupportedElements": 1,
+        "actionResourceMismatches": 0,
+        "maskedGrants": 0,
+        "broadUndecidableUncovered": 0
+      }
+    },
+    "findings": []
+  }
+}

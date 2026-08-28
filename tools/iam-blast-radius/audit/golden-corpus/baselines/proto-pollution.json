@@ -1,0 +1,107 @@
+{
+  "id": "proto-pollution",
+  "klass": "malformed",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 3,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "identity",
+      "threshold": "high",
+      "partitionAsserted": null,
+      "analysisStatus": "failed",
+      "reason": "MALFORMED_INPUT",
+      "exitCode": 3,
+      "findingsCount": 0,
+      "blockingCount": 0,
+      "analysisStates": [
+        {
+          "analysisState": "malformed",
+          "code": "DANGEROUS_KEY",
+          "message": "Rejected dangerous key \"__proto__\" (prototype-pollution guard).",
+          "path": "__proto__"
+        }
+      ],
+      "findings": []
+    }
+  },
+  "cliSarif": {
+    "exit": 3,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": [
+                {
+                  "id": "analysis.DANGEROUS_KEY",
+                  "name": "analysis.DANGEROUS_KEY",
+                  "shortDescription": {
+                    "text": "Analyzer state (malformed): DANGEROUS_KEY. Fail-closed \"could not analyze\"; this is NOT a vulnerability score."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "analysis-state",
+                    "failClosed": true,
+                    "analysisState": "malformed"
+                  }
+                }
+              ]
+            }
+          },
+          "properties": {
+            "analysisStatus": "failed",
+            "exitCode": 3,
+            "blockingCount": 0,
+            "findingsCount": 0
+          },
+          "results": [
+            {
+              "ruleId": "analysis.DANGEROUS_KEY",
+              "kind": "fail",
+              "level": "error",
+              "message": {
+                "text": "Rejected dangerous key \\\"\\_\\_proto\\_\\_\\\" \\(prototype\\-pollution guard\\)\\."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "1a1db087b06c2d172eb1b4f73f51"
+              },
+              "properties": {
+                "category": "analysis-state",
+                "failClosed": true,
+                "analysisState": "malformed",
+                "path": "\\_\\_proto\\_\\_"
+              },
+              "ruleIndex": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": false,
+    "coverage": {
+      "incomplete": false,
+      "codes": [],
+      "statements": null,
+      "counts": {}
+    },
+    "findings": []
+  }
+}

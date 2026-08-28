@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:?:?:?:?:? (every segment single-char wildcard) must warn",
+  "note": "S1-dataexfil-arn regression (iter2): '?' is a single-character ARN wildcard, so arn:?:?:?:?:? has a leading '?' partition (and every other segment wildcarded) and matches essentially every ARN - the '?'-spelled twin of arn:*:*:*:*:* . partition/service broadness tested only startsWith('*'), so this returned CLEAN (DATA-EXFIL fail-open, T8). DATA-EXFIL must fire at high; CLI must exit non-zero.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadEveryArnQmark", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:?:?:?:?:?" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

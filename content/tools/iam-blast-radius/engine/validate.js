@@ -25,6 +25,30 @@ export const LIMITS = Object.freeze({
   MAX_STATEMENTS: 1000,
   MAX_ACTIONS: 10000,
   MAX_RESOURCES: 10000,
+  // Max length (in UTF-16 code units) of any SINGLE Action/NotAction/Resource/
+  // NotResource string. Real IAM action names are tiny (< ~100 chars) and an ARN
+  // is capped by AWS at 2048 chars, so 2048 accepts every legitimate token yet
+  // rejects an adversarially long pattern outright. This is the per-STRING
+  // companion to MAX_BYTES (a whole-document cap): MAX_BYTES alone permits one
+  // multi-hundred-KB Action/Resource string, which is the exact input the wildcard
+  // matcher does the most work on (threat-model T5). A single over-cap token fails
+  // CLOSED here, before any analysis, rather than being fed to the matcher. The
+  // matcher itself is now linear (engine/glob.js), so this cap is defense in depth,
+  // not the sole control.
+  MAX_STRING_LENGTH: 2048,
+  // Max number of Condition VALUES on any SINGLE statement (summed across every
+  // operator block and key in that statement's Condition). Real policies carry a
+  // handful of condition values (an allowlist of a few VPCs / IP ranges / accounts);
+  // 50000 (5x the MAX_ACTIONS / MAX_RESOURCES caps) is far beyond any legitimate policy
+  // yet bounds an adversarial value-array flood (the Condition-axis companion to
+  // MAX_ACTIONS / MAX_RESOURCES). Unlike those
+  // whole-document count caps this is NOT a hard reject: a value-array flood is a DoS
+  // work-budget concern (the classifier does O(values) work per key - now charged; see
+  // engine/conditions.js), not a malformed document, so an over-cap statement routes to
+  // coverage.summary.incomplete via engine/masked-grant.js (TOO_MANY_CONDITION_VALUES)
+  // rather than discarding the whole document. Values are NEVER silently dropped or
+  // truncated. See the enforceCounts note below.
+  MAX_CONDITION_VALUES: 50000,
 });
 
 // Keys that enable prototype pollution. Rejected at ANY depth, as object keys.
@@ -293,6 +317,38 @@ function countArrayOrString(v) {
   return 0;
 }
 
+// Per-string length guard (threat-model T5). Reject any single Action / NotAction /
+// Resource / NotResource token longer than LIMITS.MAX_STRING_LENGTH, failing CLOSED
+// before analysis. `field` is the IAM element name (for the error path); `value` is
+// a string or an array of strings (any non-string element is left to schema
+// validation downstream and ignored here). Returns an error object on the FIRST
+// over-cap token found, or null. Deterministic: scans in element order.
+function overLongString(field, value, stmtIndex) {
+  const check = (s, idx) => {
+    if (typeof s === 'string' && s.length > LIMITS.MAX_STRING_LENGTH) {
+      const path = idx === null
+        ? `Statement[${stmtIndex}].${field}`
+        : `Statement[${stmtIndex}].${field}[${idx}]`;
+      return err(
+        'STRING_TOO_LONG',
+        `A ${field} value is ${s.length} characters; the per-string limit is ` +
+          `${LIMITS.MAX_STRING_LENGTH}. Real IAM actions/ARNs are far shorter; an ` +
+          'over-long token is rejected before analysis (fails closed).',
+        path,
+      );
+    }
+    return null;
+  };
+  if (typeof value === 'string') return check(value, null);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const e = check(value[i], i);
+      if (e) return e;
+    }
+  }
+  return null;
+}
+
 function enforceCounts(raw, errors) {
   // raw is null-prototype; access via bracket notation is safe.
   const stmtRaw = raw['Statement'];
@@ -319,11 +375,45 @@ function enforceCounts(raw, errors) {
 
   let actions = 0;
   let resources = 0;
-  for (const s of statements) {
+  for (let si = 0; si < statements.length; si++) {
+    const s = statements[si];
     if (!s || typeof s !== 'object' || Array.isArray(s)) continue;
+    // Per-string cap (T5): a single over-long Action/Resource token fails CLOSED
+    // before it can reach the wildcard matcher. Checked here, in the statement walk
+    // we already do for counts, so it costs no extra pass.
+    const longFields = ['Action', 'NotAction', 'Resource', 'NotResource'];
+    for (const field of longFields) {
+      const e = overLongString(field, s[field], si);
+      if (e) {
+        errors.push(e);
+        return;
+      }
+    }
     actions += countArrayOrString(s['Action']) + countArrayOrString(s['NotAction']);
     resources += countArrayOrString(s['Resource']) + countArrayOrString(s['NotResource']);
   }
+  // NOTE (S1-breadth-failclosed): validate() deliberately does NOT ARN-SHAPE-validate
+  // Resource / NotResource element values. Per the AWS IAM grammar a Resource element
+  // must be "*" or an ARN, so a value that is neither (a suffix/infix key glob like
+  // "*.pem", a bare literal, a URL) is MALFORMED - but rejecting it HERE (ok:false /
+  // BLOCKED) would discard the whole document and lose the findings the supported
+  // subset still yields (e.g. a co-located WILDCARD-ACTION on Action "*"). Instead the
+  // SHARED engine treats such a value as UNDECIDABLE and routes it to
+  // coverage.summary.incomplete via engine/masked-grant.js (MALFORMED_RESOURCE_ARN),
+  // so BOTH the browser (analyze()) and the CLI (scan()) fail CLOSED - never a bare
+  // clean pass - while still surfacing whatever the rest of the policy grants. This is
+  // the "undecidable, not rejected" resolution (threat-model T8); do not add a hard
+  // ARN-shape reject here without moving that contract.
+  // NOTE (A-condition-budget): validate() likewise does NOT hard-reject a statement whose
+  // Condition carries more than LIMITS.MAX_CONDITION_VALUES values. As with the malformed-
+  // resource case above, a hard reject here (ok:false / BLOCKED) would discard the whole
+  // document and lose the findings the rest of the policy yields. A value-array flood is a
+  // DoS work-budget concern (the classifier does O(values) work per key - now charged in
+  // engine/conditions.js), not a malformed document, so the SHARED engine routes an over-
+  // cap statement to coverage.summary.incomplete via engine/masked-grant.js
+  // (TOO_MANY_CONDITION_VALUES) - fail CLOSED, never a bare clean pass, and NEVER by
+  // silently dropping/truncating values. Both surfaces (browser analyze() + CLI scan())
+  // observe it from that one source. Do not add a hard reject here.
   if (actions > LIMITS.MAX_ACTIONS) {
     errors.push(
       err('TOO_MANY_ACTIONS', `Policy has ${actions} actions; limit is ${LIMITS.MAX_ACTIONS}.`),

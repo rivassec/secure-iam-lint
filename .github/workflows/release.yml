@@ -1,0 +1,95 @@
+# Publish secure-iam-lint to npm WITH provenance (SLSA build attestation via Sigstore).
+#
+# DORMANT until you deliberately release: it fires only on a pushed version tag
+# (v*.*.*) or a manual dispatch. Nothing here runs on normal pushes/PRs.
+#
+# PREREQUISITES before the first real publish (Item 5, app-sec panel):
+#   1. Claim the `secure-iam-lint` name on npm (or switch package.json to a scoped
+#      name, e.g. @rivassec/secure-iam-lint, and set access: public below).
+#   2. Add a repo secret NPM_TOKEN = an npm *granular automation* token with
+#      publish rights to the package (Settings -> Secrets and variables -> Actions).
+#   3. Confirm package.json `version` matches the tag you push (the guard below
+#      fails the release on a mismatch so a stray tag can never publish).
+#   4. First time: run this workflow via "Run workflow" with dry_run=true to see
+#      `npm publish --dry-run` output before a real publish.
+#
+# `--provenance` requires `id-token: write` (OIDC) and a public repo; npm attaches a
+# verifiable provenance attestation consumers can check with `npm audit signatures`.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run npm publish --dry-run only (no publish)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # OIDC token for npm provenance (Sigstore)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # A tag must match the version being published, or the release fails closed.
+      - name: Verify tag matches package.json version
+        if: github.event_name == 'push'
+        run: |
+          pkg_version="$(node -p "require('./package.json').version")"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$pkg_version" != "$tag_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME (=$tag_version) != package.json version $pkg_version"
+            exit 1
+          fi
+
+      # Green-before-publish: the full test suite + the security gates must pass.
+      - name: Test + security gates
+        working-directory: tools/iam-blast-radius
+        run: |
+          node --test "tests/**/*.test.js"
+          npm run gate:no-network
+          npm run gate:no-unsafe-dom
+          npm run gate:no-network:node
+          npm run gate:no-unsafe:node
+
+      - name: Publish (dry-run)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: npm publish --provenance --access public --dry-run
+
+      - name: Publish to npm with provenance
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Ship a CycloneDX SBOM alongside the provenance attestation. The package is
+      # zero-dependency, so this is a small, verifiable record of exactly that.
+      - name: Generate CycloneDX SBOM
+        if: github.event_name == 'push'
+        run: npm sbom --sbom-format cyclonedx > "sbom-${GITHUB_REF_NAME}.cdx.json"
+      - name: Upload SBOM artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom-*.cdx.json
+          retention-days: 90

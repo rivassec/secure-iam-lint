@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:aws:s3:::???*/* (multi single-char wildcard bucket head) must warn",
+  "note": "S1-dataexfil-arn regression (iter2): a bucket-name head of '???*' begins with the '?' single-char ARN wildcard, so it is unbounded from its head and matches nearly-all buckets (any name of length>=3), then '/*' reaches every object. isBroadArnResource() only tested startsWith('*'), so this returned CLEAN (DATA-EXFIL fail-open, T8). The head-broadness test keys off the LEADING wildcard character, so '???*' is broad just like '?*'. DATA-EXFIL must fire at high; CLI must exit non-zero.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadQmarkTripleHeadObjects", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::???*/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

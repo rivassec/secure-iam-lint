@@ -1,0 +1,270 @@
+{
+  "id": "wildcard-arn-write",
+  "klass": "risky",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 1,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "identity",
+      "threshold": "high",
+      "partitionAsserted": null,
+      "analysisStatus": "complete",
+      "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
+      "exitCode": 1,
+      "findingsCount": 2,
+      "blockingCount": 2,
+      "analysisStates": [],
+      "findings": [
+        {
+          "id": "WILDCARD-ACTION",
+          "severity": "high",
+          "title": "Wildcard action grant",
+          "statementSid": "WildcardArnWrite",
+          "statementIndex": 0,
+          "actions": [
+            "ec2:*"
+          ],
+          "resources": [
+            "arn:aws:*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "high",
+          "why": "Service wildcard(s) ec2:* grant every action in the named service(s), including any destructive, data-read, or administrative actions those services expose.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+          "remediation": "Enumerate the specific actions required and drop the \"service:*\" wildcard(s) in favor of an explicit action list.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html",
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "WILDCARD-RESOURCE",
+          "severity": "high",
+          "title": "Wildcard / overly broad resource scope",
+          "statementSid": "WildcardArnWrite",
+          "statementIndex": 0,
+          "actions": [
+            "ec2:*"
+          ],
+          "resources": [
+            "arn:aws:*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "high",
+          "why": "An ARN-wildcard Resource that matches all / nearly-all ARNs leaves the granted action(s) broadly resource-scoped: they apply across the whole service / account rather than a specific ARN.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+          "remediation": "Scope Resource to the specific ARNs (or ARN prefixes) the principal must act on; avoid \"*\" and prefer Resource over NotResource.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_resource.html",
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        }
+      ]
+    }
+  },
+  "cliSarif": {
+    "exit": 1,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": [
+                {
+                  "id": "WILDCARD-ACTION",
+                  "name": "WILDCARD-ACTION",
+                  "shortDescription": {
+                    "text": "Wildcard action grant"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type WILDCARD-ACTION. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html"
+                },
+                {
+                  "id": "WILDCARD-RESOURCE",
+                  "name": "WILDCARD-RESOURCE",
+                  "shortDescription": {
+                    "text": "Wildcard / overly broad resource scope"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type WILDCARD-RESOURCE. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_resource.html"
+                }
+              ]
+            }
+          },
+          "properties": {
+            "analysisStatus": "complete",
+            "exitCode": 1,
+            "blockingCount": 2,
+            "findingsCount": 2
+          },
+          "results": [
+            {
+              "ruleId": "WILDCARD-ACTION",
+              "level": "error",
+              "message": {
+                "text": "Wildcard action grant [identity policy] at statement `WildcardArnWrite`; actions: `ec2:*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "134cf0208c61a71e519ac197fe1d"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "high"
+                },
+                "jsonPointer": "/Statement/0",
+                "statementSid": "WildcardArnWrite"
+              },
+              "ruleIndex": 0
+            },
+            {
+              "ruleId": "WILDCARD-RESOURCE",
+              "level": "error",
+              "message": {
+                "text": "Wildcard / overly broad resource scope [identity policy] at statement `WildcardArnWrite`; actions: `ec2:*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "04312a240802d60c56d9ae8a5efc"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "high"
+                },
+                "jsonPointer": "/Statement/0",
+                "statementSid": "WildcardArnWrite"
+              },
+              "ruleIndex": 1
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": true,
+    "coverage": {
+      "incomplete": false,
+      "analysisAborted": false,
+      "codes": [],
+      "statements": {
+        "total": 1,
+        "accepted": 1,
+        "rejected": 0
+      },
+      "counts": {
+        "unrecognizedActions": 0,
+        "unsupportedConditions": 0,
+        "unsupportedElements": 0,
+        "actionResourceMismatches": 0,
+        "maskedGrants": 0,
+        "broadUndecidableUncovered": 0
+      }
+    },
+    "findings": [
+      {
+        "id": "WILDCARD-ACTION",
+        "severity": "high",
+        "title": "Wildcard action grant",
+        "statementIndex": 0,
+        "actions": [
+          "ec2:*"
+        ],
+        "resources": [
+          "arn:aws:*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "ed1cd6730de7a63f"
+      },
+      {
+        "id": "WILDCARD-RESOURCE",
+        "severity": "high",
+        "title": "Wildcard / overly broad resource scope",
+        "statementIndex": 0,
+        "actions": [
+          "ec2:*"
+        ],
+        "resources": [
+          "arn:aws:*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "6c19ae7e0ef9125f"
+      }
+    ]
+  }
+}

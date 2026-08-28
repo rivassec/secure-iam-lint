@@ -183,13 +183,21 @@ test('every rule family has at least one positive and one negative fixture', () 
     'DETECTION-IMPAIRMENT': ['detection'],
     'NOTACTION-ALLOW': ['notaction-allow'],
     'GROUP-MEMBERSHIP': ['group-membership'],
+    // S2-crossaccount-scoped-surface (B): context-gated; the exfil/ fixtures that
+    // produce it carry a `context.subjectAccount` passed through below.
+    'CROSS-ACCOUNT-DATA-READ': ['exfil'],
+    // S2-crossaccount-scoped-surface (iteration-5): context-gated undeterminable-owner
+    // whole-bucket read; its exfil/ fixture carries a `context.subjectAccount` too.
+    'CROSS-ACCOUNT-DATA-READ-UNDETERMINED': ['exfil'],
   };
   for (const id of RULE_IDS) {
     const cats = positiveByRule[id] || [];
     let seen = false;
     for (const cat of cats) {
       for (const { data } of loadFixtures(cat)) {
-        const r = analyzeRulesFromText(fixtureText(data));
+        // Pass any per-fixture analysis context (subjectAccount / partition) so
+        // context-gated rules can be witnessed; context-free fixtures are unchanged.
+        const r = analyzeRulesFromText(fixtureText(data), data.context || undefined);
         if (r.ok && r.findings.some((f) => f.id === id)) seen = true;
       }
     }
@@ -228,13 +236,24 @@ test('WILDCARD-RESOURCE does not fire on a read-only wildcard-resource grant', (
   assert.deepEqual(idsOf(r.findings), []);
 });
 
-test('WILDCARD-RESOURCE fires (medium) on Allow+NotResource with a write', () => {
+// S3-rules-breadth (B): a NotResource-only broad non-read grant is inherently
+// broad - it reaches every resource EXCEPT a listed few, as account-wide as "*" -
+// so it is HIGH, not medium. Keying severity on stmt.resources (empty for a
+// NotResource grant) scored it 'medium' and it slipped under the default 'high'
+// gate (a syntax-keyed-severity fail-open). The effective carve-out must still be
+// visible: resourceScope falls back to NotResource and excludedResources records it.
+test('WILDCARD-RESOURCE fires HIGH on Allow+NotResource with a write (effective breadth, not syntax)', () => {
   const r = analyzeRulesFromText(
     '{"Statement":[{"Effect":"Allow","Action":"s3:PutObject","NotResource":"arn:aws:s3:::keep/*"}]}',
   );
   const wr = r.findings.find((f) => f.id === 'WILDCARD-RESOURCE');
   assert.ok(wr, 'NotResource on an Allow with a write should flag WILDCARD-RESOURCE');
-  assert.equal(wr.severity, 'medium');
+  assert.equal(wr.severity, 'high');
+  // A NotResource grant has no literal granted ARN (resources stays empty); the
+  // effective carve-out rides in excludedResources so SARIF/reviewers see it and it
+  // is never presented as the granted resource.
+  assert.deepEqual(wr.resources, []);
+  assert.deepEqual(wr.excludedResources, ['arn:aws:s3:::keep/*']);
 });
 
 // ---------------------------------------------------------------------------

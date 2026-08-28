@@ -295,3 +295,116 @@ All Phase 15/16 stories accepted. Last-round reason per story:
 - P16-action: accepted (all-pass)
 - P16-selftests: accepted (all-pass)
 - P16-docs: accepted (all-pass)
+
+## Phase 17 - app-sec-remediation story outcomes (2026-08-25)
+Chain halted early at S1; downstream stories un-reached (pending).
+Last-round reason per story:
+- S1-dataexfil-arn: human-review (1 blocking) - chain halted here
+- (subsequent stories): pending - un-reached due to early halt
+
+## Phase 17 - app-sec-remediation story outcomes (re-run 2026-08-25)
+Chain halted early at S5. Stories after the halt point un-reached (pending).
+Last-round reason per story:
+- S1-dataexfil-arn: accepted (all-pass)
+- S2-guard-parity: accepted (all-pass)
+- S3-dos-budget: accepted (all-pass)
+- S4-sarif-sid: accepted (all-pass)
+- S5-md-autolink: human-review (1 blocking) - chain halted here
+- (subsequent stories): pending - un-reached due to early halt
+
+## Phase 18 - app-sec-round2 story outcomes (2026-08-25)
+Chain halted early at S2. Stories after the halt point un-reached (pending).
+Last-round reason per story:
+- S1-shape-failclosed: accepted (all-pass)
+- S2-passrole-allstmts: human-review (1 blocking) - chain halted here
+- (subsequent stories): pending - un-reached due to early halt
+
+## Phase 18 - app-sec-round2 story outcomes (re-run 2026-08-25)
+Chain halted early at S3. Stories after the halt point un-reached (pending).
+Last-round reason per story:
+- S1-shape-failclosed: accepted (all-pass)
+- S2-passrole-allstmts: accepted (all-pass)
+- S3-dos-budget-all: human-review (1 blocking) - chain halted here
+- (subsequent stories): pending - un-reached due to early halt
+
+## Phase 18 - app-sec-round2 story outcomes (final 2026-08-26)
+All Phase-18 stories accepted.
+Last-round reason per story:
+- S1-shape-failclosed: accepted (all-pass)
+- S2-passrole-allstmts: accepted (all-pass)
+- S3-dos-budget-all: accepted (all-pass)
+- S4-action-hardening: accepted (all-pass)
+- S5-sarif-symmetric: accepted (all-pass)
+- S6-cigate-doc: accepted (all-pass)
+
+## Phase 19 - app-sec-round3 story outcomes (2026-08-26)
+Chain halted early at S2. Stories after the halt point un-reached (pending).
+Last-round reason per story:
+- S1-breadth-failclosed: accepted (all-pass)
+- S2-sarif-sanitize-all: human-review (1 blocking) - chain halted here
+- (subsequent stories): pending - un-reached due to early halt
+
+## Phase 19 - app-sec-round3 story outcomes (final 2026-08-26)
+All Phase-19 stories accepted.
+Last-round reason per story:
+- S1-breadth-failclosed: accepted (all-pass)
+- S2-sarif-sanitize-all: accepted (all-pass)
+- S3-md-coverage-escape: accepted (all-pass)
+- S4-unicode-spoof: accepted (all-pass)
+- S5-cli-hardening: accepted (all-pass)
+- S6-action-aggregate-cap: accepted (all-pass)
+- S7-ci-doc-hygiene: accepted (all-pass)
+
+## Phase 20 - verdict-core story outcomes (2026-08-26)
+All Phase-20 stories accepted.
+Last-round reason per story:
+- S1-breadth-classify[semantic]: accepted (all-pass (2336 tests))
+- S2-airtight-incomplete[semantic]: accepted (all-pass (2357 tests))
+- S3-trust-calibration[semantic]: accepted (all-pass (2377 tests))
+- S4-guardrail-polarity[semantic]: accepted (all-pass (2389 tests))
+- S5-graph-dataread-edge[mechanical]: accepted (all-pass (2390 tests))
+- A-condition-budget[mechanical]: accepted (all-pass (2400 tests))
+- B-aria-label[mechanical]: accepted (all-pass (2400 tests))
+- D-byte-cap[mechanical]: accepted (all-pass (2412 tests))
+- C-doc-note[mechanical]: accepted (all-pass (2418 tests))
+
+## Phase 21 story outcomes (2026-08-26)
+All Phase-21 stories accepted.
+Last-round reason per story:
+- S1-symlink-failclosed[semantic]: accepted (all-pass (2423 tests))
+- S2-crossaccount-scoped-surface[semantic]: accepted (all-pass (2479 tests))
+- S3-readfilecap-special[mechanical]: accepted (all-pass (2488 tests))
+
+## Phase 2 story outcomes (2026-08-27)
+All Phase-2 stories accepted.
+Last-round reason per story:
+- S1-entrypoint-guard[semantic]: accepted (all-pass (2587 tests))
+- S2-action-enumeration[semantic]: accepted (all-pass (2595 tests))
+- S3-rules-breadth[semantic]: accepted (all-pass (2604 tests))
+- S4-rules-dos[semantic]: accepted (all-pass (2612 tests))
+- S5-partition-parity[semantic]: accepted (all-pass (2625 tests))
+- S6-sarif-testrealism[mechanical]: accepted (all-pass (2629 tests))
+- S7-lows-and-orphan[mechanical]: accepted (all-pass (2585 tests))
+
+## Phase 3 story outcomes (2026-08-27)
+All Phase-3 stories accepted.
+Last-round reason per story:
+- S1-R1-deny-fence-surviving[semantic]: accepted (all-pass (2662 tests))
+- S2-R2-sarif-identity[semantic]: accepted (all-pass (2688 tests))
+- S3-R5-uri-trunc[mechanical]: accepted (all-pass (2691 tests))
+- S4-R6-dirbomb[mechanical]: accepted (all-pass (2683 tests))
+- S5-R3-gitleaks[mechanical]: accepted (all-pass (2688 tests))
+- S6-R4-runner-selftests[mechanical]: accepted (all-pass (2697 tests))
+
+## Phase 4 story outcomes (2026-08-27)
+All Phase-4 stories accepted.
+Last-round reason per story:
+- S1-NEW02-sarif-identity-injective: accepted (all-pass (2707 tests))
+- S2-NEW01-undetermined-service-agnostic: accepted (all-pass (2733 tests))
+- S3-class-sweep: accepted (all-pass (2753 tests))
+
+## Phase 5 story outcomes (2026-08-27)
+All Phase-5 stories accepted.
+Last-round reason per story:
+- S1-NEW-BUDGET-chargeWork: accepted (all-pass (2767 tests))
+- S2-NEW-SARIF-AGGREGATE-budget: accepted (all-pass (2778 tests))

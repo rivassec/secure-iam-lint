@@ -352,6 +352,91 @@ test('F1 regression: a NEGATED org-scope Deny (test 52) still narrates "deny unl
 });
 
 // ---------------------------------------------------------------------------
+// F1 iteration 2: the polarity detector must see THROUGH a set-operator qualifier
+// (ForAnyValue:/ForAllValues:). `ForAnyValue:StringEquals aws:PrincipalOrgID [o-x]`
+// is a valid AWS spelling of a POSITIVE comparator - in a Deny it fires WHEN the
+// org matches, denying your OWN org and permitting outsiders, the identical
+// inverted fence as the plain StringEquals form. The pre-fix check tested
+// startsWith('string') on the RAW key, so 'foranyvalue:stringequals' slipped
+// through as info/hazard=false, leaving the inverted org-scope Deny un-flagged.
+// The fix strips the qualifier (conditions.js parseOperator) before the test.
+// ---------------------------------------------------------------------------
+
+for (const operator of ['ForAnyValue:StringEquals', 'ForAllValues:StringEquals', 'ForAnyValue:StringLike']) {
+  test(`F1 iter2: set-operator inverted org-scope Deny (${operator}) is flagged inverted/hazard, not credited as protection`, () => {
+    const bytes = JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [{
+        Sid: 'EnforceServiceSourceOrganizationInvertedSetOp',
+        Effect: 'Deny',
+        Principal: '*',
+        Action: 's3:*',
+        Resource: '*',
+        Condition: {
+          [operator]: { 'aws:PrincipalOrgID': 'o-exampleorgid' },
+          Bool: { 'aws:PrincipalIsAWSService': 'true' },
+        },
+      }],
+    });
+    const r = analyze(bytes, { family: 'rcp', requireExplicitFamily: true });
+    assert.equal(r.ok, true);
+    assert.equal(r.coverage.blocked, false);
+    // Guardrail-not-grant invariant unchanged: deny-only, empty graph, no grant.
+    assert.equal(r.graph.edges.length, 0, `${operator}: still zero capability edges`);
+    assert.equal(r.graph.nodes.length, 0);
+    assert.equal(r.findings.length, 1);
+    const g = r.findings[0];
+    assert.equal(g.id, 'RCP-GUARDRAIL');
+    assert.equal(g.denyOnly, true);
+    assert.ok(!r.findings.some((f) => f.id === 'PUBLIC-ACCESS'), 'no public-access finding');
+    // Identical verdict to the plain StringEquals form - the qualifier must not
+    // downgrade it to a credited protective guardrail.
+    assert.equal(g.hazard, true, `${operator}: set-op inverted org-scope Deny raised as a hazard`);
+    assert.equal(g.orgScopePositiveOperator, true, `${operator}: positive operator polarity recorded through the qualifier`);
+    assert.equal(g.severity, 'medium', `${operator}: raised to medium (never info/high/critical)`);
+    assert.notEqual(g.severity, 'info');
+    assert.notEqual(g.severity, 'high');
+    assert.notEqual(g.severity, 'critical');
+    assert.match(g.title, /inverted org-scope Deny/i, `${operator}: title flags the inverted polarity`);
+    assert.match(g.why, /INVERSE/i);
+    assert.match(g.why, /MISCONFIGURATION/i);
+    assert.doesNotMatch(g.why, /UNLESS the source organization matches/i, `${operator}: must NOT emit the inverted "unless matches" clause`);
+    assert.doesNotMatch(g.why, /implementing confused-deputy protection/i, `${operator}: must NOT assert confused-deputy protection`);
+    assert.match(g.remediation, /NEGATED comparator|StringNotEqualsIfExists/i, `${operator}: remediation points at the operator fix`);
+    assert.match(g.limit, /not\s+grant/i, `${operator}: guardrail-not-grant caveat intact`);
+  });
+}
+
+// Control (no over-correction): a set-operator-qualified NEGATED ...IfExists
+// comparator is the correct confused-deputy form and must STAY credited (info, no
+// hazard, keeps the "deny unless the org matches" narration).
+test('F1 iter2 control: a set-operator NEGATED org-scope Deny (ForAnyValue:StringNotEqualsIfExists) stays credited as protection', () => {
+  const bytes = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{
+      Sid: 'EnforceServiceSourceOrganizationSetOpNegated',
+      Effect: 'Deny',
+      Principal: '*',
+      Action: 's3:*',
+      Resource: '*',
+      Condition: {
+        'ForAnyValue:StringNotEqualsIfExists': { 'aws:PrincipalOrgID': 'o-exampleorgid' },
+        Bool: { 'aws:PrincipalIsAWSService': 'true' },
+      },
+    }],
+  });
+  const r = analyze(bytes, { family: 'rcp', requireExplicitFamily: true });
+  const g = r.findings[0];
+  assert.equal(g.id, 'RCP-GUARDRAIL');
+  assert.equal(g.hazard, undefined, 'a correctly-negated guardrail is not a hazard even with a set qualifier');
+  assert.equal(g.orgScopePositiveOperator, undefined, 'no positive-operator polarity on a negated Deny');
+  assert.equal(g.severity, 'info');
+  assert.equal(g.orgScopeNegatedIfExists, true, 'the set-qualified negated ...IfExists is still recognized as fail-closed');
+  assert.match(g.why, /UNLESS the source organization matches/i, 'negated path keeps the correct "unless matches" clause');
+  assert.doesNotMatch(g.why, /INVERSE|MISCONFIGURATION/i, 'no inverted-effect narration on a correct guardrail');
+});
+
+// ---------------------------------------------------------------------------
 // Auto-detect still FAILS CLOSED on an RCP shape (IAM-1303 flips the auto path).
 // Under auto-detect the RCP shape reads as a resource-based document and blocks
 // with UNSUPPORTED_POLICY_FAMILY (detected=resource) - unchanged by IAM-1302.

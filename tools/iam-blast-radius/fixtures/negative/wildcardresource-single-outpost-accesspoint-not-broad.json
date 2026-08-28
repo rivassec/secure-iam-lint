@@ -1,0 +1,24 @@
+{
+  "name": "s3:PutObject scoped to ONE named access point's objects on an outpost (outpost/op-abc/accesspoint/my-ap/object/*) is NOT broad",
+  "note": "S1-dataexfil-arn iteration 5 over-correction guard, WILDCARD-RESOURCE side. Treating a TERMINAL collection wildcard (outpost/<id>/accesspoint/* , every access point) as broad must NOT flag a grant whose access point is a CONCRETE name and only the trailing object key is wildcarded. Here idParts=[outpost,op-abc,accesspoint,my-ap,object,*]: every collection identifier except the leaf object key is concrete (op-abc, my-ap); the terminal wildcard sits on a content-leaf 'object' identifier scoped within one named access point, exempted by OUTPOST_CONTENT_LEAF_KEYWORDS. This narrows WITHIN one access point rather than widening the access-point set, so no broad resource scope (WILDCARD-RESOURCE) exists even though PutObject is a mutating action.",
+  "phase": 3,
+  "story": "S1-dataexfil-arn",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PutObjectOneOutpostAccessPoint",
+        "Effect": "Allow",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3-outposts:us-east-1:123456789012:outpost/op-abc/accesspoint/my-ap/object/*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "arn:aws:s3-outposts:us-east-1:123456789012:outpost/op-abc/accesspoint/my-ap/object/* targets objects reached through exactly one named access point (my-ap) on one named outpost (op-abc) - not every access point on the outpost. S3 on Outposts nests collections as outpost/<id>/accesspoint/<id>/object/<key>; broadness is a leading wildcard on a NON-LEAF collection identifier (the outpost id or the access-point id), which would require outpost/*/... or outpost/op-abc/accesspoint/*. Here both non-leaf identifiers are concrete and only the leaf object-key is wildcarded, narrowing WITHIN one access point rather than widening the access-point set, so resourceIsBroad is false and no WILDCARD-RESOURCE capability exists. The names carry no sensitivity token and the ARN holds no policy variable, so DATA-READ/DATA-EXFIL also stay quiet. Ref: AWS S3 on Outposts ARN format arn:aws:s3-outposts:region:account:outpost/outpost-id/accesspoint/accesspoint-name and /object/ object-scoping."
+}

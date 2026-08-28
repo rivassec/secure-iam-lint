@@ -1,0 +1,16 @@
+{
+  "name": "lambda:UpdateFunctionCode on arn:aws:lambda:*:*:function:svc-* (any svc-* function in ANY account) must warn",
+  "note": "S1-dataexfil-arn iteration 4 BLOCKER regression: account-wildcard fail-open on a 'type:id'-form ARN in a non-IAM service. account='*' with concrete-prefixed identifier 'function:svc-*'. The resource identifier uses the colon form (function:name), and its first segment after the type is 'svc-*' (concrete leading char), so neither the type-prefix branch nor the head check fired; the old account-wildcard branch required an empty/leading-wildcard resource id. A wildcard ACCOUNT spans every account in the partition - update-any-svc-*-function's-code in every account. lambda:UpdateFunctionCode is non-read, so WILDCARD-RESOURCE (high) must fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "UpdateAnySvcFunctionAnyAccount", "Effect": "Allow", "Action": "lambda:UpdateFunctionCode", "Resource": "arn:aws:lambda:*:*:function:svc-*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["WILDCARD-RESOURCE"],
+    "mustNotFind": ["WILDCARD-ACTION"],
+    "minSeverity": { "WILDCARD-RESOURCE": "high" },
+    "nonZeroExit": true
+  }
+}

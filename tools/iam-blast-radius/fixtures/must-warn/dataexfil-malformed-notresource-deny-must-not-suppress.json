@@ -1,0 +1,17 @@
+{
+  "name": "Broad s3:GetObject fenced by an UNDECIDABLE Deny (NotResource 'not-an-arn') must still warn DATA-EXFIL",
+  "note": "S3-rules-breadth (A) regression, deny-fence fail-open, MALFORMED spared-set variant. A broad Allow (s3:GetObject on Resource:*) is 'fenced' by a Deny whose NotResource is a bare non-ARN token ('not-an-arn'). classifyResource() reports that value MALFORMED (undecidable breadth - its narrowness would rest on the UNVERIFIED grammar the HYBRID default refuses to trust), NOT NARROW. Crediting a Deny as a narrowing fence SUPPRESSES a finding, so the burden is to PROVE the spared set narrow; an undecidable spared element is not proven narrow. The old denyFencesToNarrow only rejected a BROAD spared element, so a MALFORMED spared set slipped through and was credited as a narrowing fence: ruleFindingDenySuppressed dropped DATA-EXFIL and survivingBroadReadActions left coverage complete, so analyze() ok:true findings=[] and CLI exit 0 CLEAN on the archetypal exfil primitive. Fix: fence only when EVERY spared element is a NARROW verdict (fail closed on BROAD and MALFORMED alike). Contrast the negative fixture notresource-deny-fences-exfil (spared set arn:aws:s3:::approved-data/* is NARROW), which genuinely fences and stays clean. FAIL CLOSED.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowReadBroad", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" },
+      { "Sid": "DenyUndecidableSpared", "Effect": "Deny", "Action": "s3:GetObject", "NotResource": "not-an-arn" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-ACTION"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

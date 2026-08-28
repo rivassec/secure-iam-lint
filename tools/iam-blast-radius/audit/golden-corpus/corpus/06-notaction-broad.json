@@ -1,0 +1,1 @@
+{ "Version": "2012-10-17", "Statement": [ { "Sid": "EverythingExceptIam", "Effect": "Allow", "NotAction": [ "iam:*" ], "Resource": "*" } ] }

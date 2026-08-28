@@ -260,6 +260,173 @@ test('test 43: negated ...IfExists region Deny flagged as a potentially over-bro
 });
 
 // ---------------------------------------------------------------------------
+// S4-guardrail-polarity - INVERTED region fence (operator polarity blind spot).
+//
+// A region lock is a Deny with a NEGATED comparator (StringNotEquals): "deny
+// UNLESS the requested Region is in the allowed set" -> denies OUTSIDE, permits
+// INSIDE the allowed regions. A Deny with a POSITIVE comparator (StringEquals)
+// is its INVERSE: it fires WHEN the region matches, so it denies INSIDE the
+// listed regions and PERMITS every region outside them. Before the fix this
+// produced byte-identical output to a correct StringNotEquals lock and was
+// credited as protective (appears:narrows). The evaluator must inspect operator
+// polarity and flag the positive-operator fence as an inverted/misconfiguration
+// hazard, mirroring rcp.js's invertedOrgScopeHazard. It is still a Deny (grants
+// nothing): zero capability edges, ceiling-not-grant caveat intact.
+// ---------------------------------------------------------------------------
+
+const SCP_INVERTED_REGION_BYTES = JSON.stringify({
+  Version: '2012-10-17',
+  Statement: [
+    {
+      Sid: 'DenyRequestedRegionInverted',
+      Effect: 'Deny',
+      Action: '*',
+      Resource: '*',
+      Condition: { StringEquals: { 'aws:RequestedRegion': ['ap-south-1'] } },
+    },
+  ],
+});
+
+test('S4: positive-operator region Deny is flagged as an inverted-polarity hazard, not a region lock', () => {
+  const r = analyze(SCP_INVERTED_REGION_BYTES, { family: 'scp', requireExplicitFamily: true });
+  assert.equal(r.ok, true);
+  assert.equal(r.coverage.blocked, false);
+  assert.equal(r.family, 'scp-rcp');
+  // Ceiling-not-grant invariant is UNCHANGED: empty graph, no grant.
+  assert.equal(r.graph.edges.length, 0, 'still zero capability edges');
+  assert.equal(r.graph.nodes.length, 0);
+  assert.equal(r.findings.length, 1);
+  const g = r.findings[0];
+  assert.equal(g.id, 'SCP-GUARDRAIL');
+  assert.equal(g.guardrailKind, 'region');
+  // Polarity is recorded and surfaced as a misconfiguration hazard.
+  assert.equal(g.hazard, true, 'inverted region Deny raised as a hazard');
+  assert.equal(g.regionPositiveOperator, true, 'positive operator polarity recorded');
+  assert.equal(g.severity, 'medium', 'a likely misconfiguration is raised to medium (never high/critical)');
+  assert.notEqual(g.severity, 'high');
+  assert.notEqual(g.severity, 'critical');
+  // The listed regions are the DENIED set - NEVER surfaced as a protective
+  // allowed-region allow-list (that is what crediting a broken fence looks like).
+  assert.equal(g.allowedRegions, undefined, 'a broken fence is never credited with an allowed-region set');
+  assert.deepEqual(g.deniedRegions, ['ap-south-1'], 'the listed regions are recorded as the DENIED set');
+  // Narration describes the INVERTED effect ("permits every region except...") and
+  // must NOT claim the correct region-lock semantics ("outside the allowed set").
+  assert.match(g.title, /inverted region Deny/i, 'title flags the inverted polarity');
+  assert.match(g.why, /permits every region except/i, 'narrates the inverted permit-everything-else effect');
+  assert.match(g.why, /INVERSE/i);
+  assert.match(g.why, /MISCONFIGURATION/i);
+  assert.doesNotMatch(g.why, /outside the allowed set/i, 'must NOT emit the correct region-lock clause');
+  assert.match(g.remediation, /NEGATED comparator|StringNotEquals/i, 'remediation points at the operator fix');
+  // Still a denial that grants nothing.
+  assert.match(g.why, /never grants|removes actions from the ceiling/i, 'states it grants nothing');
+  assert.match(g.limit, /not\s+grant/i, 'ceiling-not-grant caveat intact');
+});
+
+const SCP_CORRECT_REGION_LOCK_BYTES = JSON.stringify({
+  Version: '2012-10-17',
+  Statement: [
+    {
+      Sid: 'DenyOutsideApprovedRegion',
+      Effect: 'Deny',
+      Action: '*',
+      Resource: '*',
+      Condition: { StringNotEquals: { 'aws:RequestedRegion': ['ap-south-1'] } },
+    },
+  ],
+});
+
+test('S4 control: a NEGATED StringNotEquals region Deny stays credited as a correct region lock (no hazard)', () => {
+  const r = analyze(SCP_CORRECT_REGION_LOCK_BYTES, { family: 'scp', requireExplicitFamily: true });
+  const g = r.findings[0];
+  assert.equal(g.id, 'SCP-GUARDRAIL');
+  assert.equal(g.guardrailKind, 'region');
+  assert.equal(g.hazard, undefined, 'a correctly-negated region lock is not a hazard');
+  assert.equal(g.regionPositiveOperator, undefined, 'no positive-operator polarity on a negated Deny');
+  assert.equal(g.severity, 'info');
+  assert.deepEqual(g.allowedRegions, ['ap-south-1'], 'the negated lock credits the listed set as ALLOWED');
+  assert.equal(g.deniedRegions, undefined, 'the correct lock does not carry a denied-set field');
+  assert.match(g.why, /outside the allowed set/i, 'negated path keeps the correct region-lock clause');
+  assert.doesNotMatch(g.why, /INVERSE|MISCONFIGURATION|permits every region except/i, 'no inverted-effect narration on a correct lock');
+});
+
+// ---------------------------------------------------------------------------
+// S4-guardrail-polarity iteration 2: the polarity detector must see THROUGH a
+// set-operator qualifier (ForAnyValue:/ForAllValues:). `ForAnyValue:StringEquals
+// aws:RequestedRegion [x]` is a valid AWS spelling of a POSITIVE comparator - in a
+// Deny it fires WHEN the region matches, denying INSIDE {x} and PERMITTING every
+// other region, the identical inverted fence as the plain StringEquals form. The
+// pre-fix check tested startsWith('string') on the RAW key, so 'foranyvalue:
+// stringequals' slipped through as info/hazard=false and the DENIED region was
+// surfaced as allowedRegions - crediting a broken fence as protective. The fix
+// strips the qualifier (conditions.js parseOperator) before the polarity test.
+// ---------------------------------------------------------------------------
+
+function scpSetOpInvertedRegionBytes(operator) {
+  return JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [
+      {
+        Sid: 'DenyRequestedRegionInvertedSetOp',
+        Effect: 'Deny',
+        Action: '*',
+        Resource: '*',
+        Condition: { [operator]: { 'aws:RequestedRegion': ['ap-south-1'] } },
+      },
+    ],
+  });
+}
+
+// Every set-operator-qualified POSITIVE comparator must be caught, exactly like the
+// plain StringEquals form: medium + hazard + deniedRegions, never allowedRegions.
+for (const operator of ['ForAnyValue:StringEquals', 'ForAllValues:StringEquals', 'ForAnyValue:StringLike']) {
+  test(`S4 iter2: set-operator inverted region Deny (${operator}) is flagged inverted/hazard, not credited as a lock`, () => {
+    const r = analyze(scpSetOpInvertedRegionBytes(operator), { family: 'scp', requireExplicitFamily: true });
+    assert.equal(r.ok, true);
+    assert.equal(r.coverage.blocked, false);
+    // Ceiling-not-grant invariant unchanged: empty graph, no grant.
+    assert.equal(r.graph.edges.length, 0, `${operator}: still zero capability edges`);
+    assert.equal(r.graph.nodes.length, 0);
+    assert.equal(r.findings.length, 1);
+    const g = r.findings[0];
+    assert.equal(g.id, 'SCP-GUARDRAIL');
+    assert.equal(g.guardrailKind, 'region');
+    // Identical verdict to the plain StringEquals form - the qualifier must not
+    // downgrade it to a credited protective lock.
+    assert.equal(g.hazard, true, `${operator}: set-op inverted region Deny raised as a hazard`);
+    assert.equal(g.regionPositiveOperator, true, `${operator}: positive operator polarity recorded through the qualifier`);
+    assert.equal(g.severity, 'medium', `${operator}: raised to medium (never info/high/critical)`);
+    assert.notEqual(g.severity, 'info');
+    assert.notEqual(g.severity, 'high');
+    assert.notEqual(g.severity, 'critical');
+    // The DENIED region is NEVER surfaced as a protective allowed-region set.
+    assert.equal(g.allowedRegions, undefined, `${operator}: a broken fence is never credited with an allowed-region set`);
+    assert.deepEqual(g.deniedRegions, ['ap-south-1'], `${operator}: the listed regions are recorded as the DENIED set`);
+    assert.match(g.title, /inverted region Deny/i, `${operator}: title flags the inverted polarity`);
+    assert.match(g.why, /permits every region except/i, `${operator}: narrates the inverted permit-everything-else effect`);
+    assert.doesNotMatch(g.why, /outside the allowed set/i, `${operator}: must NOT emit the correct region-lock clause`);
+    assert.match(g.why, /never grants|removes actions from the ceiling/i, `${operator}: states it grants nothing`);
+    assert.match(g.limit, /not\s+grant/i, `${operator}: ceiling-not-grant caveat intact`);
+  });
+}
+
+// Control (no over-correction): a set-operator-qualified NEGATED comparator is a
+// correct region lock and must STAY credited (allowedRegions, info, no hazard).
+test('S4 iter2 control: a set-operator NEGATED region Deny (ForAnyValue:StringNotEquals) stays credited as a correct lock', () => {
+  const bytes = scpSetOpInvertedRegionBytes('ForAnyValue:StringNotEquals');
+  const r = analyze(bytes, { family: 'scp', requireExplicitFamily: true });
+  const g = r.findings[0];
+  assert.equal(g.id, 'SCP-GUARDRAIL');
+  assert.equal(g.guardrailKind, 'region');
+  assert.equal(g.hazard, undefined, 'a correctly-negated region lock is not a hazard even with a set qualifier');
+  assert.equal(g.regionPositiveOperator, undefined, 'no positive-operator polarity on a negated Deny');
+  assert.equal(g.severity, 'info');
+  assert.deepEqual(g.allowedRegions, ['ap-south-1'], 'the negated lock credits the listed set as ALLOWED');
+  assert.equal(g.deniedRegions, undefined, 'the correct lock does not carry a denied-set field');
+  assert.match(g.why, /outside the allowed set/i, 'negated path keeps the correct region-lock clause');
+  assert.doesNotMatch(g.why, /INVERSE|MISCONFIGURATION|permits every region except/i, 'no inverted-effect narration on a correct lock');
+});
+
+// ---------------------------------------------------------------------------
 // Auto-detect still FAILS CLOSED on a deny-guardrail SCP shape (IAM-1303 flips
 // the auto path). The explicit SCP selection is what unlocks the evaluator.
 // ---------------------------------------------------------------------------

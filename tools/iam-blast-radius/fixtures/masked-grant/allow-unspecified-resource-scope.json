@@ -1,0 +1,23 @@
+{
+  "name": "Allow + unspecified resource scope (no Resource and no NotResource)",
+  "note": "S1-shape-failclosed regression. An identity Allow (no Principal/NotPrincipal) names an Action but omits BOTH Resource and NotResource, so its resource scope is UNSPECIFIED. AWS requires a Resource element on an identity statement; with neither key the model collapses to resources:[] and resourceIsBroad(rules.js) reads it as NARROW, suppressing WILDCARD-RESOURCE / bulk-read DATA-EXFIL - a silent fail-OPEN. The presence flag resourcePresent distinguishes this from the benign explicit empty set Resource:[]. The shared engine must mark coverage INCOMPLETE (UNSPECIFIED_RESOURCE_SCOPE) so neither surface reports a clean pass.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": ["s3:GetObject"] }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": true,
+    "code": "UNSPECIFIED_RESOURCE_SCOPE",
+    "kind": "malformed",
+    "path": "Statement[0]",
+    "coverageIncomplete": true,
+    "scanExit": 3,
+    "scanReason": "UNSPECIFIED_RESOURCE_SCOPE",
+    "scanStatus": "failed"
+  }
+}

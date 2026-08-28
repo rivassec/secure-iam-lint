@@ -61,7 +61,13 @@ The same engine runs headless, with a fail-closed exit-code contract so
   `pull_request_target` guidance, supported families, and limits.
 - **Headless CLI + SARIF 2.1.0** - the `iam-br` CLI the Action wraps, with the
   full `0`/`1`/`2`/`3`/`4` exit-code contract. See
-  `tools/iam-blast-radius/docs/sarif-cli-design.md`.
+  `tools/iam-blast-radius/docs/sarif-cli-design.md`. `--format json` is a
+  **byte-faithful machine artifact** (not display-safe): it emits policy-derived
+  strings verbatim so downstream tooling gets exact bytes, and hostile
+  Unicode/bidi rides through inert. When a human reads findings, use
+  `--format sarif` (or the browser tool) - both neutralize the visual spoof
+  class - and never trust raw `cat report.json` in a bidi-aware terminal as a
+  review surface.
 
 ## History
 

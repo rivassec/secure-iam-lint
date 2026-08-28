@@ -1,0 +1,44 @@
+{
+  "id": "scp-inverted-region-setop-hazard",
+  "title": "SCP region Deny with INVERTED polarity hidden behind a set-operator qualifier (ForAnyValue:StringEquals)",
+  "note": "S4-guardrail-polarity iteration 2: the same inverted region fence as scp-inverted-region-hazard, but the positive comparator carries a valid AWS set-operator qualifier prefix (ForAnyValue:StringEquals). A naive startsWith('string') on the RAW operator key ('foranyvalue:stringequals') does NOT start with 'string', so the pre-fix evaluator left out.positive=false and credited this broken fence as PROTECTIVE (severity info, hazard=false, title 'SCP region guardrail (Deny)', the DENIED region surfaced as allowedRegions) - byte-identical to a correct StringNotEquals lock. Semantics: ForAnyValue:StringEquals aws:RequestedRegion [ap-south-1] in a Deny fires WHEN RequestedRegion==ap-south-1, denying INSIDE ap-south-1 and PERMITTING every other region. The fix strips the set-operator qualifier (conditions.js parseOperator) BEFORE the polarity test, so this variant is flagged inverted/hazard exactly like the plain StringEquals form: severity medium, hazard=true, regionPositiveOperator=true, deniedRegions=[ap-south-1], never allowedRegions. Ceiling-not-grant invariant holds: zero capability edges, no escalation, states SCPs set ceilings and do not grant.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyRequestedRegionInvertedSetOp",
+        "Effect": "Deny",
+        "Action": "*",
+        "Resource": "*",
+        "Condition": {
+          "ForAnyValue:StringEquals": {
+            "aws:RequestedRegion": [
+              "ap-south-1"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "options": {
+    "family": "scp",
+    "requireExplicitFamily": true
+  },
+  "scpExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "scp-rcp",
+    "override": "scp-rcp",
+    "status": "ok",
+    "findingIds": [
+      "SCP-GUARDRAIL"
+    ],
+    "severities": {
+      "SCP-GUARDRAIL": "medium"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesCeilingNotGrant": true,
+    "guardrailKinds": ["region"]
+  }
+}

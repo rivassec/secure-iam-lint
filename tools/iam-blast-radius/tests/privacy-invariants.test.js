@@ -171,7 +171,24 @@ test('hostile Unicode (BiDi / zero-width) rides through analysis as inert data',
   });
   const res = analyze(policy);
   assert.equal(res.ok, true, 'unicode payload must not break analysis');
-  // JSON keeps it verbatim (inert); round-trips exactly.
+  // S4-unicode-spoof (Trojan-Source defense, threat-model T1/T8): the model is the
+  // NORMALIZATION boundary. The RLO / ZWSP / BOM are invisible/reordering spoof
+  // code points with no legitimate meaning in a Sid, so they are stripped as the
+  // string enters the model - the legible text ("abc") is preserved. Stripping at
+  // the boundary closes the class for EVERY downstream trust surface (findings
+  // table, SVG graph, and the JSON/Markdown/SARIF exports), not just the export
+  // sinks. This supersedes the earlier verbatim-in-model + strip-at-export-only
+  // design (sink-only stripping was brittle: a new sink reopened the class).
+  assert.equal(res.model.statements[0].sid, 'abc', 'the model de-spoofs the hostile Sid, keeping legible text');
+  for (const cp of [RLO, ZWSP, BOM]) {
+    assert.ok(!res.model.statements[0].sid.includes(cp), 'no bidi/zero-width control survives in the model');
+  }
+  // Defense in depth: the JSON export sink strips the same class, so a
+  // downloaded/opened .json report cannot carry a bidi/zero-width visual spoof.
   const parsed = JSON.parse(toJSON(res));
-  assert.equal(parsed.model.statements[0].sid, sid);
+  const exportedSid = parsed.model.statements[0].sid;
+  assert.equal(exportedSid, 'abc', 'export keeps the legible text, no invisible spoof');
+  for (const cp of [RLO, ZWSP, BOM]) {
+    assert.ok(!exportedSid.includes(cp), 'no bidi/zero-width control survives in the export');
+  }
 });

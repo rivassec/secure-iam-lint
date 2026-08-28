@@ -346,6 +346,179 @@ test('runAction: a named literal missing file -> exit 2 (fail closed)', () => {
   assert.equal(r.reason, 'MISSING_FILE');
 });
 
+// --- S4-action-hardening: sarif-output confinement (arbitrary-file-write) --------
+// The Action's contract (ACTION.md) is to write a SARIF FILE IN THE WORKSPACE. A
+// caller-supplied absolute path, a path escaping the workspace via "..", or one
+// carrying a control character is an arbitrary-file-write / output-forgery vector and
+// must fail CLOSED as a usage error (exit 2) with the hostile value NEVER surviving
+// into an output or a file write.
+for (const bad of [
+  '/etc/passwd',
+  '/home/runner/.bashrc',
+  '/tmp/x.sarif',
+  '../evil.sarif',
+  '../../evil.sarif',
+  'out/../../evil.sarif',
+  'C:\\Windows\\x.sarif',
+  '\\\\host\\share\\x.sarif',
+  '\\leading-backslash.sarif',
+  'has\nnewline.sarif',
+]) {
+  test(`runAction: an unsafe sarif-output (${JSON.stringify(bad)}) is a usage error (exit 2), sanitized`, () => {
+    const env = makeEnv({ paths: 'a.json', family: 'identity', sarifOutput: bad });
+    const io = makeIo({ 'a.json': ADMIN_IDENTITY });
+    const r = runAction({ env, io });
+    assert.equal(r.exitCode, EXIT.USAGE, 'must fail closed as a usage error');
+    assert.notEqual(r.exitCode, EXIT.CLEAN);
+    // The hostile value must NOT propagate to the emitted sarif path/output.
+    assert.equal(r.sarifPath, 'iam-blast-radius.sarif', 'hostile path swapped for the safe default');
+    assert.equal(r.outputs['sarif-path'], 'iam-blast-radius.sarif');
+  });
+}
+
+test('runAction: a SAFE relative sarif-output inside the workspace is accepted', () => {
+  const env = makeEnv({ paths: 'a.json', family: 'identity', sarifOutput: 'out/reports/br.sarif' });
+  const io = makeIo({ 'a.json': ADMIN_IDENTITY });
+  const r = runAction({ env, io });
+  assert.notEqual(r.exitCode, EXIT.USAGE);
+  assert.equal(r.sarifPath, 'out/reports/br.sarif');
+});
+
+test('runAction: a benign ".." that does NOT escape the workspace is accepted', () => {
+  const env = makeEnv({ paths: 'a.json', family: 'identity', sarifOutput: 'a/b/../c.sarif' });
+  const io = makeIo({ 'a.json': ADMIN_IDENTITY });
+  const r = runAction({ env, io });
+  assert.notEqual(r.exitCode, EXIT.USAGE);
+  assert.equal(r.sarifPath, 'a/b/../c.sarif');
+});
+
+// --- S4-action-hardening (ROUND 2): a hostile sarif-output must NOT survive on ANY
+// early-return path, not only its own usage-error branch. -----------------------
+// The confinement check was ordered AFTER the MISSING_FAMILY / paths usage checks, so
+// a hostile sarif-output combined with an EARLIER-firing usage error (e.g. missing
+// family) bypassed confinement and leaked the raw value into outputs['sarif-path'] and
+// the SARIF write target. Sanitization now happens AT THE SOURCE, so every return path
+// carries the safe default. This pins the CLASS (all branches), not one instance.
+for (const bad of [
+  '/etc/passwd',
+  '../../evil.sarif',
+  'out/../../evil.sarif',
+  'C:\\Windows\\x.sarif',
+  'ok.sarif\nforged-key=pwned', // heredoc/newline break-out attempt
+  'x\u0000y.sarif',             // control char
+]) {
+  test(`runAction: hostile sarif-output (${JSON.stringify(bad)}) + MISSING family never survives into an output`, () => {
+    const env = makeEnv({ paths: 'a.json', family: '', sarifOutput: bad });
+    const io = makeIo({ 'a.json': ADMIN_IDENTITY });
+    const r = runAction({ env, io });
+    // Fails closed as a usage error (family missing wins the reason here), but the
+    // hostile path is ALREADY neutralized to the safe default on this earlier branch.
+    assert.equal(r.exitCode, EXIT.USAGE);
+    assert.notEqual(r.exitCode, EXIT.CLEAN);
+    assert.equal(r.sarifPath, 'iam-blast-radius.sarif', 'hostile path must not survive the missing-family branch');
+    assert.equal(r.outputs['sarif-path'], 'iam-blast-radius.sarif');
+    // And the emitted GITHUB_OUTPUT body carries no forged/hostile sarif-path: parsing
+    // it yields exactly the authored keys, and sarif-path is the safe default.
+    const parsed = parseGithubOutput(formatOutputs(r.outputs));
+    assert.ok(!('forged-key' in parsed), 'attacker must not forge an output key via a bypassed sarif-output');
+    assert.equal(parsed['sarif-path'], 'iam-blast-radius.sarif');
+  });
+}
+
+test('runAction: hostile sarif-output + MISSING paths still neutralizes the path (source-level)', () => {
+  // Even paired with another usage error (missing paths), a hostile sarif-output never
+  // survives. Because sanitization happens at the SOURCE, whichever usage reason wins,
+  // the emitted path is the safe default - proving the fix is not per-branch.
+  const env = makeEnv({ paths: '', family: 'identity', sarifOutput: '../../evil.sarif' });
+  const io = makeIo({ 'a.json': ADMIN_IDENTITY });
+  const r = runAction({ env, io });
+  assert.equal(r.exitCode, EXIT.USAGE);
+  assert.ok(['UNSAFE_SARIF_OUTPUT', 'MISSING_PATHS'].includes(r.reason), `usage reason, got ${r.reason}`);
+  assert.equal(r.sarifPath, 'iam-blast-radius.sarif');
+  assert.equal(r.outputs['sarif-path'], 'iam-blast-radius.sarif');
+});
+
+test('runAction: hostile sarif-output WITH a valid family still reports UNSAFE_SARIF_OUTPUT (exit 2)', () => {
+  // The dedicated usage-error branch is preserved: when family is valid, a hostile
+  // sarif-output is reported on its own terms, still neutralized in the metadata.
+  const env = makeEnv({ paths: 'a.json', family: 'identity', sarifOutput: '../../evil.sarif' });
+  const io = makeIo({ 'a.json': ADMIN_IDENTITY });
+  const r = runAction({ env, io });
+  assert.equal(r.exitCode, EXIT.USAGE);
+  assert.equal(r.reason, 'UNSAFE_SARIF_OUTPUT');
+  assert.equal(r.sarifPath, 'iam-blast-radius.sarif');
+});
+
+// --- S4-action-hardening (ROUND 2): SYMLINK containment of sarif-output ----------
+// The lexical guard cannot see symlinks. A sarif-output that is a RELATIVE, "..".-free,
+// control-char-free path is lexically "contained", yet if a leading directory component
+// (or the target file itself) is a symlink escaping the workspace, the write lands
+// OUTSIDE it. runAction folds an fs-aware check (io.sarifTargetContained) into the SAME
+// sarifSafe gate as the lexical check, so the symlink shape fails CLOSED (exit 2,
+// UNSAFE_SARIF_OUTPUT) with the value swapped for the safe default - never a silent
+// escaping write. These unit tests drive that gate with an injected resolver; the real
+// filesystem symlink PoC is exercised in action-symlink-write.test.js.
+
+// An io whose sarifTargetContained reports the given rel path(s) as escaping (false).
+function makeIoWithSymlinkGuard(files, escapingRels) {
+  const base = makeIo(files);
+  const escaping = new Set(escapingRels);
+  return { ...base, sarifTargetContained: (rel) => !escaping.has(rel) };
+}
+
+test('runAction: a sarif-output whose dir component is a symlink escaping the workspace fails CLOSED (exit 2), sanitized', () => {
+  // Variant A: `reports` is a symlink to an external dir; sarif-output=reports/pwned.sarif
+  // is lexically contained but escapes via the symlink. Must fail closed, swap to default.
+  const env = makeEnv({ paths: 'a.json', family: 'identity', sarifOutput: 'reports/pwned.sarif' });
+  const io = makeIoWithSymlinkGuard({ 'a.json': ADMIN_IDENTITY }, ['reports/pwned.sarif']);
+  const r = runAction({ env, io });
+  assert.equal(r.exitCode, EXIT.USAGE, 'symlink-escaping sarif-output must fail closed');
+  assert.notEqual(r.exitCode, EXIT.CLEAN);
+  assert.equal(r.reason, 'UNSAFE_SARIF_OUTPUT');
+  assert.equal(r.sarifPath, 'iam-blast-radius.sarif', 'hostile symlink path swapped for the safe default');
+  assert.equal(r.outputs['sarif-path'], 'iam-blast-radius.sarif');
+});
+
+test('runAction: a sarif-output that IS a symlink file escaping the workspace fails CLOSED (exit 2), sanitized', () => {
+  // Variant B: results.sarif is itself a symlink to an external file.
+  const env = makeEnv({ paths: 'a.json', family: 'identity', sarifOutput: 'results.sarif' });
+  const io = makeIoWithSymlinkGuard({ 'a.json': ADMIN_IDENTITY }, ['results.sarif']);
+  const r = runAction({ env, io });
+  assert.equal(r.exitCode, EXIT.USAGE);
+  assert.equal(r.reason, 'UNSAFE_SARIF_OUTPUT');
+  assert.equal(r.sarifPath, 'iam-blast-radius.sarif');
+});
+
+test('runAction: a resolver that THROWS fails CLOSED (cannot vouch for containment)', () => {
+  const env = makeEnv({ paths: 'a.json', family: 'identity', sarifOutput: 'reports/x.sarif' });
+  const base = makeIo({ 'a.json': ADMIN_IDENTITY });
+  const io = { ...base, sarifTargetContained: () => { throw new Error('realpath exploded'); } };
+  const r = runAction({ env, io });
+  assert.equal(r.exitCode, EXIT.USAGE);
+  assert.equal(r.reason, 'UNSAFE_SARIF_OUTPUT');
+  assert.equal(r.sarifPath, 'iam-blast-radius.sarif');
+});
+
+test('runAction: a symlink-safe (real) sarif-output is still accepted verbatim', () => {
+  // The fs-aware check reports containment true; the value is preserved and the run
+  // proceeds. This guards against the symlink guard becoming an indiscriminate reject.
+  const env = makeEnv({ paths: 'a.json', family: 'identity', sarifOutput: 'out/br.sarif' });
+  const io = makeIoWithSymlinkGuard({ 'a.json': ADMIN_IDENTITY }, []); // nothing escapes
+  const r = runAction({ env, io });
+  assert.notEqual(r.exitCode, EXIT.USAGE);
+  assert.equal(r.sarifPath, 'out/br.sarif');
+});
+
+test('runAction: with NO fs-aware resolver, a lexically-safe path is accepted (in-memory io parity)', () => {
+  // Existing pure-in-memory io (no sarifTargetContained) must behave exactly as before:
+  // the fs half is simply skipped since there is no filesystem to traverse.
+  const env = makeEnv({ paths: 'a.json', family: 'identity', sarifOutput: 'reports/pwned.sarif' });
+  const io = makeIo({ 'a.json': ADMIN_IDENTITY });
+  const r = runAction({ env, io });
+  assert.notEqual(r.exitCode, EXIT.USAGE);
+  assert.equal(r.sarifPath, 'reports/pwned.sarif');
+});
+
 test('runAction: an empty policy file is a per-unit usage error (exit 2), not clean', () => {
   const env = makeEnv({ paths: 'empty.json', family: 'identity' });
   const io = makeIo({ 'empty.json': '   ' });
@@ -435,9 +608,68 @@ test('formatOutputs: single-line scalars render as name=value lines', () => {
   assert.equal(body, 'exit-code=3\nanalysis-status=failed\n');
 });
 
-test('formatOutputs: a value containing a newline uses the heredoc delimiter form', () => {
+test('formatOutputs: a value containing a newline uses an UNPREDICTABLE heredoc delimiter (S4-action-hardening)', () => {
   const body = formatOutputs({ note: 'line1\nline2' });
-  assert.match(body, /^note<<ghadelim_note_EOF\nline1\nline2\nghadelim_note_EOF\n$/);
+  // heredoc form: note<<ghadelim_<uuid>_EOF\nline1\nline2\n<same delim>\n
+  const m = /^note<<(ghadelim_[0-9a-f-]{36}_EOF)\nline1\nline2\n\1\n$/.exec(body);
+  assert.ok(m, `heredoc must use a random ghadelim_<uuid>_EOF delimiter; got:\n${body}`);
+  // The old FIXED, guessable delimiter must NOT appear (that was the injection vector).
+  assert.ok(!body.includes('ghadelim_note_EOF'), 'must not use the old predictable key-based delimiter');
+  // Two calls draw two different delimiters (randomized per value).
+  const body2 = formatOutputs({ note: 'line1\nline2' });
+  assert.notEqual(body, body2, 'delimiter must be freshly randomized each call');
+});
+
+// A faithful GITHUB_OUTPUT parser (GitHub's env-file semantics): a top-level line is
+// either `key=value` or `key<<DELIM` opening a heredoc that runs until a line EXACTLY
+// equal to DELIM; every line in between is DATA, never a key assignment. Returns the
+// map of TOP-LEVEL keys -> values.
+function parseGithubOutput(body) {
+  const out = {};
+  const lines = body.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === '') continue;
+    const hd = /^([^=<\n]+)<<(.+)$/.exec(line);
+    if (hd) {
+      const key = hd[1];
+      const delim = hd[2];
+      const buf = [];
+      i += 1;
+      while (i < lines.length && lines[i] !== delim) { buf.push(lines[i]); i += 1; }
+      out[key] = buf.join('\n');
+      continue;
+    }
+    const eq = /^([^=]+)=(.*)$/.exec(line);
+    if (eq) out[eq[1]] = eq[2];
+  }
+  return out;
+}
+
+test('formatOutputs: a break-out sarif-path value cannot forge or suppress an output key (S4-action-hardening)', () => {
+  // A crafted value that TRIES to close a guessable heredoc early and inject a forged
+  // `forged-key=...` output line. With a RANDOM delimiter the attacker's guessed closing
+  // line cannot match, so the whole payload stays INSIDE the heredoc value - GitHub never
+  // interprets it as a new top-level assignment.
+  const attack = 'ok.sarif\nghadelim_sarif-path_EOF\nforged-key=pwned';
+  const body = formatOutputs({ 'sarif-path': attack, 'exit-code': '1' });
+  const parsed = parseGithubOutput(body);
+  // The ONLY top-level keys are the two we authored - no forged/suppressed key.
+  assert.deepEqual(Object.keys(parsed).sort(), ['exit-code', 'sarif-path']);
+  assert.ok(!('forged-key' in parsed), 'attacker must not forge a new output key');
+  // The entire attack payload is preserved as the DATA of sarif-path (nothing escaped).
+  assert.equal(parsed['sarif-path'], attack);
+  assert.equal(parsed['exit-code'], '1');
+  // And the guessable fixed delimiter is not what was used to frame the heredoc.
+  assert.ok(!new RegExp('sarif-path<<ghadelim_sarif-path_EOF\\n').test(body),
+    'must not frame the heredoc with the old guessable delimiter');
+});
+
+test('formatOutputs: a control character (NUL/CR) in a value fails CLOSED (throws)', () => {
+  assert.throws(() => formatOutputs({ 'sarif-path': 'x\u0000y' }), /control character/);
+  assert.throws(() => formatOutputs({ 'sarif-path': 'x\ry' }), /control character/);
+  // A newline alone is still allowed (routes to the safe randomized heredoc form).
+  assert.doesNotThrow(() => formatOutputs({ note: 'a\nb' }));
 });
 
 test('formatSummary: PASS only when exit 0; carries no policy content', () => {

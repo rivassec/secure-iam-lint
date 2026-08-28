@@ -1,0 +1,27 @@
+{
+  "name": "Bare email address in policy fields (mailto: autolink break)",
+  "note": "S5-md-autolink (threat-model T1/T6): a policy-derived value can carry a bare 'local@domain.tld' - most realistically an IAM username embedded in an ARN ('arn:aws:iam::...:user/alice@evil.com'), but also a hostile Sid or condition value. GFM / CommonMark-with-autolink / pandoc's bare-email autolink pass turns such a token into an ACTIVE 'mailto:' link in a downloaded/shared Markdown report, handing an attacker a clickable contact/tracking link. breakAutolinks() must neutralize it (a backslash before the first ALNUM domain char - a backslash before a non-punctuation char survives cmark-gfm's/pandoc's inline-parse escape pass, unlike a backslash before '_'/'@' which is consumed and re-exposes the address) so the address renders as inert text. The statement grants Action '*' so WILDCARD-ACTION fires and every @-bearing value rides through into the findings and the Markdown export. The Resource list exercises: a plain alnum-domain email, a 'www.'-domain address (must break on BOTH the mailto and www. autolink axes), an underscore-in-a-non-final-label domain (GFM/pandoc accept '_' in the domain; iteration-2 blocker: DOMAIN_CHAR omitted '_' so the domain scan stopped before any dot and no break was inserted), an underscore-LEADING domain (iteration-2 blocker: the '@' trigger required an alnum immediately after '@', so a '_'-leading domain was never even considered - yet pandoc autolinks it), and HYPHEN-LEADING domains (iteration-3 blocker: DOMAIN_START excluded '-' on the flawed premise that 'a label cannot begin with -', so 'erin@-evil.example.com' / 'frank@--evil.example.com' / 'grace@-1.2.3.4' fell through the gate and rode verbatim into the export where cmark-gfm/pandoc autolink them - their domain scan continues over a leading hyphen). Not flagged hostile:true because this fixture witnesses the export-inertness of the mailto vector (asserted in report.test.js), not the analyze()-time HTML/JS inert-rendering matrix.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "notify-alice@evil.example.com",
+        "Effect": "Allow",
+        "Action": "*",
+        "Resource": [
+          "*",
+          "arn:aws:iam::111122223333:user/alice@evil.example.com",
+          "arn:aws:iam::111122223333:user/carol@www.evil.example.com",
+          "arn:aws:iam::111122223333:user/carol@x_y.evil.example.com",
+          "arn:aws:iam::111122223333:user/dave@_x.evil.example.com",
+          "arn:aws:iam::111122223333:user/erin@-evil.example.com",
+          "arn:aws:iam::111122223333:user/frank@--evil.example.com",
+          "arn:aws:iam::111122223333:user/grace@-1.2.3.4"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  }
+}

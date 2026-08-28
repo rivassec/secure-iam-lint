@@ -1,0 +1,23 @@
+{
+  "name": "Undeterminable-owner whole-bucket read (positive; conditioned; hostile Sid rides through inert)",
+  "note": "S2-crossaccount-scoped-surface iteration-5 (S3 fail-open close): s3:GetObject on a CANONICAL S3 bucket ARN (arn:aws:s3:::partner-data-bucket/*) is a whole-container read, but a canonical bucket ARN carries NO account field and no aws:ResourceAccount / s3:ResourceAccount condition pins the owner, so the owning account cannot be determined from the policy. Before the fix this read affirmatively CLEAN even with a known subject account (context.subjectAccount 123456789012) - the archetypal exfil primitive silently cleared. It now surfaces at INFO as CROSS-ACCOUNT-DATA-READ-UNDETERMINED so 'complete'/'CLEAN' is never a safety claim here, WITHOUT fabricating a confirmed cross-account claim. The bucket name is NEUTRAL (the sensitivity wordlist RAISES severity, never gates reporting). A narrowing Condition (aws:SourceVpc, orthogonal to account-determinability) is present so it still fires conditioned, and the Sid embeds an HTML/JS payload that must survive verbatim in the finding as inert DATA.",
+  "context": { "subjectAccount": "123456789012", "partition": "aws" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "<script>alert(1)</script>",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::partner-data-bucket/*",
+        "Condition": { "StringEquals": { "aws:SourceVpc": "vpc-0abc123" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "hostile": true,
+    "hostileFor": ["CROSS-ACCOUNT-DATA-READ-UNDETERMINED"],
+    "notFindingIds": ["CROSS-ACCOUNT-DATA-READ", "DATA-EXFIL", "WILDCARD-RESOURCE"]
+  }
+}

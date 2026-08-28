@@ -49,9 +49,11 @@ engine/
   parse.js          IAM JSON parser -> raw statements (tolerant of arrays/strings)
   model.js          Normalized IAM model (statements, effect, actions, resources,
                     conditions, notAction/notResource)
-  evaluator.js      Allow/Deny/NotAction/NotResource semantics; explicit-deny
-                    precedence; boundary/SCP/session constraint (Phase 3)
-  rules.js          risk-rule catalog (wildcard, destructive, exfil, direct-IAM)
+  rules.js          risk-rule catalog (wildcard, destructive, exfil, direct-IAM).
+                    Allow/Deny/NotAction/NotResource semantics + explicit-deny
+                    precedence live here and in escalation.js / the family-aware
+                    analyzers (trust/envelope/scp/rcp/resource.js), NOT a separate
+                    evaluator module.
   escalation.js     attack-path rule families (PassRole+service, etc.)
   graph.js          node/edge model builder (data only; no rendering)
   render-graph.js   SVG renderer behind a rendering interface
@@ -64,8 +66,9 @@ Dev-only (NOT served; outside content/): repo-root `tools/iam-blast-radius/` hol
 
 ## Data-flow
 
-`paste/import -> validate -> parse -> normalized model -> evaluator + rules
-+ escalation -> {findings[], graph{nodes,edges}} -> DOM findings table
+`paste/import -> validate -> parse -> normalized model -> rules + escalation
+(+ the family-aware analyzers: trust/envelope/scp/rcp/resource)
+-> {findings[], graph{nodes,edges}} -> DOM findings table
 (always) + SVG graph (progressive enhancement) -> JSON/MD export`.
 
 The findings table is the source of truth and is fully usable with no graph

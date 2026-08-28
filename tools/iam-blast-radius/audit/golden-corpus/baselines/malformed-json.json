@@ -1,0 +1,106 @@
+{
+  "id": "malformed-json",
+  "klass": "malformed",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 3,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "identity",
+      "threshold": "high",
+      "partitionAsserted": null,
+      "analysisStatus": "failed",
+      "reason": "MALFORMED_INPUT",
+      "exitCode": 3,
+      "findingsCount": 0,
+      "blockingCount": 0,
+      "analysisStates": [
+        {
+          "analysisState": "malformed",
+          "code": "INVALID_JSON",
+          "message": "Input is not valid JSON.",
+          "path": null
+        }
+      ],
+      "findings": []
+    }
+  },
+  "cliSarif": {
+    "exit": 3,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": [
+                {
+                  "id": "analysis.INVALID_JSON",
+                  "name": "analysis.INVALID_JSON",
+                  "shortDescription": {
+                    "text": "Analyzer state (malformed): INVALID_JSON. Fail-closed \"could not analyze\"; this is NOT a vulnerability score."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "analysis-state",
+                    "failClosed": true,
+                    "analysisState": "malformed"
+                  }
+                }
+              ]
+            }
+          },
+          "properties": {
+            "analysisStatus": "failed",
+            "exitCode": 3,
+            "blockingCount": 0,
+            "findingsCount": 0
+          },
+          "results": [
+            {
+              "ruleId": "analysis.INVALID_JSON",
+              "kind": "fail",
+              "level": "error",
+              "message": {
+                "text": "Input is not valid JSON\\."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "1126780436beaa0016d315aa1c91"
+              },
+              "properties": {
+                "category": "analysis-state",
+                "failClosed": true,
+                "analysisState": "malformed"
+              },
+              "ruleIndex": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": false,
+    "coverage": {
+      "incomplete": false,
+      "codes": [],
+      "statements": null,
+      "counts": {}
+    },
+    "findings": []
+  }
+}

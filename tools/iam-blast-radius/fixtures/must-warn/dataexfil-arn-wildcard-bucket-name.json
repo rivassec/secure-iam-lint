@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:aws:s3:::*-exports/* (leading-wildcard bucket name) must warn",
+  "note": "S1-dataexfil-arn regression + boundary: the bucket-name head begins with '*', so this matches EVERY bucket whose name ends in '-exports', account-wide - an unbounded, naming-based set, not a single named bucket. FAIL CLOSED: a leading '*' on the bucket segment is broad. Contrast the negative boundary dataexfil-scoped-arn-not-broad (arn:aws:s3:::my-bucket/prefix/*), where the bucket head is a CONCRETE name and only the trailing key is wildcarded - that stays quiet. DATA-EXFIL must fire; CLI must exit non-zero.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadAllExportBuckets", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::*-exports/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

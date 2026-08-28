@@ -12,9 +12,18 @@
       },
       {
         "Effect": "Allow",
-        "Action": ["ec2:DescribeInstances", "ec2:DescribeTags"],
-        "Resource": ["*"],
-        "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+        "Action": [
+          "ec2:DescribeInstances",
+          "ec2:DescribeTags"
+        ],
+        "Resource": [
+          "*"
+        ],
+        "Condition": {
+          "StringEquals": {
+            "aws:RequestedRegion": "us-east-1"
+          }
+        }
       }
     ]
   },
@@ -29,25 +38,44 @@
           "index": 0,
           "sid": "ScalarForms",
           "effect": "Allow",
-          "actions": ["s3:GetObject"],
+          "actions": [
+            "s3:GetObject"
+          ],
           "notActions": [],
-          "resources": ["arn:aws:s3:::reports-bucket/*"],
+          "resources": [
+            "arn:aws:s3:::reports-bucket/*"
+          ],
           "notResources": [],
           "condition": null,
           "principal": null,
-          "notPrincipal": null
+          "notPrincipal": null,
+          "notActionPresent": false,
+          "notResourcePresent": false,
+          "resourcePresent": true
         },
         {
           "index": 1,
           "sid": null,
           "effect": "Allow",
-          "actions": ["ec2:DescribeInstances", "ec2:DescribeTags"],
+          "actions": [
+            "ec2:DescribeInstances",
+            "ec2:DescribeTags"
+          ],
           "notActions": [],
-          "resources": ["*"],
+          "resources": [
+            "*"
+          ],
           "notResources": [],
-          "condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } },
+          "condition": {
+            "StringEquals": {
+              "aws:RequestedRegion": "us-east-1"
+            }
+          },
           "principal": null,
-          "notPrincipal": null
+          "notPrincipal": null,
+          "notActionPresent": false,
+          "notResourcePresent": false,
+          "resourcePresent": true
         }
       ]
     }

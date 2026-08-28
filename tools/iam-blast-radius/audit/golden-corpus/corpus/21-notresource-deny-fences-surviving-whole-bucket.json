@@ -1,0 +1,7 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Sid": "AllowReadBroad", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" },
+    { "Sid": "DenyButCompetitor", "Effect": "Deny", "Action": "s3:GetObject", "NotResource": "arn:aws:s3:::acme-competitor-bucket/*" }
+  ]
+}

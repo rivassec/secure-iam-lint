@@ -1,0 +1,169 @@
+{
+  "id": "crossaccount-bucket-read",
+  "klass": "risky",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 1,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "identity",
+      "threshold": "info",
+      "partitionAsserted": null,
+      "analysisStatus": "complete",
+      "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
+      "exitCode": 1,
+      "findingsCount": 1,
+      "blockingCount": 1,
+      "analysisStates": [],
+      "findings": [
+        {
+          "id": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+          "severity": "info",
+          "title": "Whole-container S3 read with an undeterminable owning account",
+          "statementSid": "ReadOtherCorpBucket",
+          "statementIndex": 0,
+          "actions": [
+            "s3:GetObject"
+          ],
+          "resources": [
+            "arn:aws:s3:::other-corp-bucket/*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "low",
+          "why": "Grants a whole-container read (bucket/* or a bucket list) on a canonical S3 bucket ARN that carries NO account field, and no aws:ResourceAccount / s3:ResourceAccount condition pins the owner. The bucket's owning account therefore cannot be determined from this policy, so the tool CANNOT clear it as a same-account read - it may be a cross-account read of another account's bucket. This does NOT prove the bucket is in another account (the crossing is undetermined, not confirmed); it means a \"no findings\" / \"complete\" verdict here is not a safety claim for this read.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+          "remediation": "Make the owning account explicit so the read can be cleared or flagged: pin it with an aws:ResourceAccount (or s3:ResourceAccount) condition, or use an account-bearing S3 access-point ARN. If the bucket is in another account, scope the read to the specific keys required and gate it with conditions; if it is your own, the condition removes this ambiguity.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-keys.html",
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        }
+      ]
+    }
+  },
+  "cliSarif": {
+    "exit": 1,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": [
+                {
+                  "id": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+                  "name": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+                  "shortDescription": {
+                    "text": "Whole-container S3 read with an undeterminable owning account"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type CROSS-ACCOUNT-DATA-READ-UNDETERMINED. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "note"
+                  },
+                  "properties": {
+                    "category": "security"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-keys.html"
+                }
+              ]
+            }
+          },
+          "properties": {
+            "analysisStatus": "complete",
+            "exitCode": 1,
+            "blockingCount": 1,
+            "findingsCount": 1
+          },
+          "results": [
+            {
+              "ruleId": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+              "level": "note",
+              "message": {
+                "text": "Whole-container S3 read with an undeterminable owning account [identity policy] at statement `ReadOtherCorpBucket`; actions: `s3:GetObject`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "0ee1a15b525bb909441987fcc8b3"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "info",
+                "policyFamily": "identity",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "low"
+                },
+                "jsonPointer": "/Statement/0",
+                "statementSid": "ReadOtherCorpBucket"
+              },
+              "ruleIndex": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": true,
+    "coverage": {
+      "incomplete": false,
+      "analysisAborted": false,
+      "codes": [],
+      "statements": {
+        "total": 1,
+        "accepted": 1,
+        "rejected": 0
+      },
+      "counts": {
+        "unrecognizedActions": 0,
+        "unsupportedConditions": 0,
+        "unsupportedElements": 0,
+        "actionResourceMismatches": 0,
+        "maskedGrants": 0,
+        "broadUndecidableUncovered": 0
+      }
+    },
+    "findings": [
+      {
+        "id": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+        "severity": "info",
+        "title": "Whole-container S3 read with an undeterminable owning account",
+        "statementIndex": 0,
+        "actions": [
+          "s3:GetObject"
+        ],
+        "resources": [
+          "arn:aws:s3:::other-corp-bucket/*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "c8cd2d69c1481ad6"
+      }
+    ]
+  }
+}

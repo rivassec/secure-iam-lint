@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublicAssumeWithMalformedPrincipalArnScope",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalArn": "arn:aws:iam"
+        }
+      }
+    }
+  ]
+}

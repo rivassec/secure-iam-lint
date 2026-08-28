@@ -1,0 +1,3041 @@
+{
+  "id": "admin-full",
+  "klass": "risky",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 1,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "identity",
+      "threshold": "high",
+      "partitionAsserted": null,
+      "analysisStatus": "complete",
+      "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
+      "exitCode": 1,
+      "findingsCount": 15,
+      "blockingCount": 15,
+      "analysisStates": [],
+      "findings": [
+        {
+          "id": "ASSUME-ROLE-EXPANSION",
+          "severity": "critical",
+          "title": "Broad AssumeRole (role assumption over a wildcard scope)",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants sts:AssumeRole over a wildcard / broad role scope. A principal can assume roles across arbitrary AWS accounts whose trust policies permit this principal, and operate with their permissions - a role ARN such as arn:aws:iam::*:role/* spans every account, not just this one. Which roles are reachable (and how privileged they are) depends on those roles' trust policies, which are not in scope here.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope sts:AssumeRole to the specific role ARNs the principal must assume; avoid wildcards in the role path, and ensure target roles' trust policies only trust the intended principals.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html",
+          "escalation": {
+            "technique": "assume-role-expansion",
+            "service": null,
+            "requiredActions": [
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "assume-role-expansion",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "primitive",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "broad role scope"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "PASSROLE-EC2",
+          "severity": "critical",
+          "title": "PassRole to EC2 + RunInstances",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "iam:PassRole",
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants iam:PassRole together with ec2 action(s) (*) that run code as the passed role. A principal can create/update a ec2 workload with a role it is allowed to pass, potentially obtaining execution under the passed role's credentials (whether execution is actually obtained still depends on instance-profile / service behavior). The PassRole grant does not use iam:PassedToService to restrict which supported AWS services may receive the role (AWS still enforces which services a role can be passed to).",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope iam:PassRole to the specific role ARNs that must be passed and pin iam:PassedToService to ec2.amazonaws.com; separate role-passing from ec2 workload-creation duties, and constrain the passable roles with a permission boundary.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html",
+          "escalation": {
+            "technique": "passrole-service-execution",
+            "service": "ec2",
+            "requiredActions": [
+              "iam:PassRole",
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "passrole-service-execution",
+                  "allOf": [
+                    {
+                      "role": "pass",
+                      "anyOf": [
+                        "iam:PassRole"
+                      ]
+                    },
+                    {
+                      "role": "execute",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": true,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "pass",
+              "actions": [
+                "iam:PassRole"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "PassRole is not pinned to a service (can pass to any service)"
+            },
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "execute",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "runs code as the passed role via ec2"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "iam:PassRole",
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": [
+            {
+              "key": "pass-role",
+              "label": "iam:PassRole granted",
+              "present": true
+            },
+            {
+              "key": "*",
+              "label": "ec2 execution action granted (*)",
+              "present": true
+            },
+            {
+              "key": "pass-role-resource-wildcard",
+              "label": "iam:PassRole resource is wildcard-scoped (reaches many roles)",
+              "present": true
+            },
+            {
+              "key": "exec-resource-wildcard",
+              "label": "ec2 action resource is \"*\" (unscoped)",
+              "present": true
+            },
+            {
+              "key": "passed-to-service-restriction",
+              "label": "iam:PassedToService restriction present",
+              "present": false
+            }
+          ],
+          "subsumed": [
+            {
+              "id": "WILDCARD-RESOURCE",
+              "title": "Wildcard / overly broad resource scope",
+              "severity": "high",
+              "statementSid": "GodMode",
+              "statementIndex": 0,
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "why": "Resource \"*\" leaves the granted action(s) broadly resource-scoped: they apply to every resource in the account rather than a specific ARN.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+              "remediation": "Scope Resource to the specific ARNs (or ARN prefixes) the principal must act on; avoid \"*\" and prefer Resource over NotResource.",
+              "reason": "Subordinate to a compound escalation path on the same statement: it broadens only the scope of a grant the path already uses (same-service breadth), so it is reported as a risk factor of that path rather than a separate row.",
+              "policyFamily": "identity"
+            }
+          ],
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "PASSROLE-LAMBDA",
+          "severity": "critical",
+          "title": "PassRole to Lambda + function create/update",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "iam:PassRole",
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants iam:PassRole together with lambda action(s) (*) that run code as the passed role. A principal can create/update a lambda workload with a role it is allowed to pass, potentially obtaining execution under the passed role's credentials (whether execution is actually obtained still depends on instance-profile / service behavior). The PassRole grant does not use iam:PassedToService to restrict which supported AWS services may receive the role (AWS still enforces which services a role can be passed to).",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope iam:PassRole to the specific role ARNs that must be passed and pin iam:PassedToService to lambda.amazonaws.com; separate role-passing from lambda workload-creation duties, and constrain the passable roles with a permission boundary.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html",
+          "escalation": {
+            "technique": "passrole-service-execution",
+            "service": "lambda",
+            "requiredActions": [
+              "iam:PassRole",
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "passrole-service-execution",
+                  "allOf": [
+                    {
+                      "role": "pass",
+                      "anyOf": [
+                        "iam:PassRole"
+                      ]
+                    },
+                    {
+                      "role": "execute",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": true,
+                  "note": null
+                },
+                {
+                  "technique": "replace-existing-function-code",
+                  "allOf": [
+                    {
+                      "role": "execute",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": "Replaces the code of an existing Lambda function, which runs under that function's existing execution role - this technique does not require iam:PassRole. The existing function's role and its invocation path are outside the supplied context."
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "pass",
+              "actions": [
+                "iam:PassRole"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "PassRole is not pinned to a service (can pass to any service)"
+            },
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "execute",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "runs code as the passed role via lambda"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "iam:PassRole",
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": [
+            {
+              "key": "pass-role",
+              "label": "iam:PassRole granted",
+              "present": true
+            },
+            {
+              "key": "*",
+              "label": "lambda execution action granted (*)",
+              "present": true
+            },
+            {
+              "key": "pass-role-resource-wildcard",
+              "label": "iam:PassRole resource is wildcard-scoped (reaches many roles)",
+              "present": true
+            },
+            {
+              "key": "exec-resource-wildcard",
+              "label": "lambda action resource is \"*\" (unscoped)",
+              "present": true
+            },
+            {
+              "key": "passed-to-service-restriction",
+              "label": "iam:PassedToService restriction present",
+              "present": false
+            }
+          ],
+          "subsumed": [
+            {
+              "id": "WILDCARD-RESOURCE",
+              "title": "Wildcard / overly broad resource scope",
+              "severity": "high",
+              "statementSid": "GodMode",
+              "statementIndex": 0,
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "why": "Resource \"*\" leaves the granted action(s) broadly resource-scoped: they apply to every resource in the account rather than a specific ARN.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+              "remediation": "Scope Resource to the specific ARNs (or ARN prefixes) the principal must act on; avoid \"*\" and prefer Resource over NotResource.",
+              "reason": "Subordinate to a compound escalation path on the same statement: it broadens only the scope of a grant the path already uses (same-service breadth), so it is reported as a risk factor of that path rather than a separate row.",
+              "policyFamily": "identity"
+            }
+          ],
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "PASSROLE-SERVICE",
+          "severity": "critical",
+          "title": "PassRole to a service + that service running code as the role",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "iam:PassRole",
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants iam:PassRole together with cloudformation action(s) (*) that run code as the passed role. A principal can create/update a cloudformation workload with a role it is allowed to pass, potentially obtaining execution under the passed role's credentials (whether execution is actually obtained still depends on instance-profile / service behavior). The PassRole grant does not use iam:PassedToService to restrict which supported AWS services may receive the role (AWS still enforces which services a role can be passed to).",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope iam:PassRole to the specific role ARNs that must be passed and pin iam:PassedToService to cloudformation.amazonaws.com; separate role-passing from cloudformation workload-creation duties, and constrain the passable roles with a permission boundary.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html",
+          "escalation": {
+            "technique": "passrole-service-execution",
+            "service": "cloudformation",
+            "requiredActions": [
+              "iam:PassRole",
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "passrole-service-execution",
+                  "allOf": [
+                    {
+                      "role": "pass",
+                      "anyOf": [
+                        "iam:PassRole"
+                      ]
+                    },
+                    {
+                      "role": "execute",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": true,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "pass",
+              "actions": [
+                "iam:PassRole"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "PassRole is not pinned to a service (can pass to any service)"
+            },
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "execute",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "runs code as the passed role via cloudformation"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "iam:PassRole",
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": [
+            {
+              "key": "pass-role",
+              "label": "iam:PassRole granted",
+              "present": true
+            },
+            {
+              "key": "*",
+              "label": "cloudformation execution action granted (*)",
+              "present": true
+            },
+            {
+              "key": "pass-role-resource-wildcard",
+              "label": "iam:PassRole resource is wildcard-scoped (reaches many roles)",
+              "present": true
+            },
+            {
+              "key": "exec-resource-wildcard",
+              "label": "cloudformation action resource is \"*\" (unscoped)",
+              "present": true
+            },
+            {
+              "key": "passed-to-service-restriction",
+              "label": "iam:PassedToService restriction present",
+              "present": false
+            }
+          ],
+          "subsumed": [
+            {
+              "id": "WILDCARD-RESOURCE",
+              "title": "Wildcard / overly broad resource scope",
+              "severity": "high",
+              "statementSid": "GodMode",
+              "statementIndex": 0,
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "why": "Resource \"*\" leaves the granted action(s) broadly resource-scoped: they apply to every resource in the account rather than a specific ARN.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+              "remediation": "Scope Resource to the specific ARNs (or ARN prefixes) the principal must act on; avoid \"*\" and prefer Resource over NotResource.",
+              "reason": "Subordinate to a compound escalation path on the same statement: it broadens only the scope of a grant the path already uses (same-service breadth), so it is reported as a risk factor of that path rather than a separate row.",
+              "policyFamily": "identity"
+            }
+          ],
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "PASSROLE-SERVICE",
+          "severity": "critical",
+          "title": "PassRole to a service + that service running code as the role",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "iam:PassRole",
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants iam:PassRole together with codebuild action(s) (*) that run code as the passed role. A principal can create/update a codebuild workload with a role it is allowed to pass, potentially obtaining execution under the passed role's credentials (whether execution is actually obtained still depends on instance-profile / service behavior). The PassRole grant does not use iam:PassedToService to restrict which supported AWS services may receive the role (AWS still enforces which services a role can be passed to).",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope iam:PassRole to the specific role ARNs that must be passed and pin iam:PassedToService to codebuild.amazonaws.com; separate role-passing from codebuild workload-creation duties, and constrain the passable roles with a permission boundary.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html",
+          "escalation": {
+            "technique": "passrole-service-execution",
+            "service": "codebuild",
+            "requiredActions": [
+              "iam:PassRole",
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "passrole-service-execution",
+                  "allOf": [
+                    {
+                      "role": "pass",
+                      "anyOf": [
+                        "iam:PassRole"
+                      ]
+                    },
+                    {
+                      "role": "execute",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": true,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "pass",
+              "actions": [
+                "iam:PassRole"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "PassRole is not pinned to a service (can pass to any service)"
+            },
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "execute",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "runs code as the passed role via codebuild"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "iam:PassRole",
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": [
+            {
+              "key": "pass-role",
+              "label": "iam:PassRole granted",
+              "present": true
+            },
+            {
+              "key": "*",
+              "label": "codebuild execution action granted (*)",
+              "present": true
+            },
+            {
+              "key": "pass-role-resource-wildcard",
+              "label": "iam:PassRole resource is wildcard-scoped (reaches many roles)",
+              "present": true
+            },
+            {
+              "key": "exec-resource-wildcard",
+              "label": "codebuild action resource is \"*\" (unscoped)",
+              "present": true
+            },
+            {
+              "key": "passed-to-service-restriction",
+              "label": "iam:PassedToService restriction present",
+              "present": false
+            }
+          ],
+          "subsumed": [
+            {
+              "id": "WILDCARD-RESOURCE",
+              "title": "Wildcard / overly broad resource scope",
+              "severity": "high",
+              "statementSid": "GodMode",
+              "statementIndex": 0,
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "why": "Resource \"*\" leaves the granted action(s) broadly resource-scoped: they apply to every resource in the account rather than a specific ARN.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+              "remediation": "Scope Resource to the specific ARNs (or ARN prefixes) the principal must act on; avoid \"*\" and prefer Resource over NotResource.",
+              "reason": "Subordinate to a compound escalation path on the same statement: it broadens only the scope of a grant the path already uses (same-service breadth), so it is reported as a risk factor of that path rather than a separate row.",
+              "policyFamily": "identity"
+            }
+          ],
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "PASSROLE-SERVICE",
+          "severity": "critical",
+          "title": "PassRole to a service + that service running code as the role",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "iam:PassRole",
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants iam:PassRole together with datapipeline action(s) (*) that run code as the passed role. A principal can create/update a datapipeline workload with a role it is allowed to pass, potentially obtaining execution under the passed role's credentials (whether execution is actually obtained still depends on instance-profile / service behavior). The PassRole grant does not use iam:PassedToService to restrict which supported AWS services may receive the role (AWS still enforces which services a role can be passed to).",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope iam:PassRole to the specific role ARNs that must be passed and pin iam:PassedToService to datapipeline.amazonaws.com; separate role-passing from datapipeline workload-creation duties, and constrain the passable roles with a permission boundary.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html",
+          "escalation": {
+            "technique": "passrole-service-execution",
+            "service": "datapipeline",
+            "requiredActions": [
+              "iam:PassRole",
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "passrole-service-execution",
+                  "allOf": [
+                    {
+                      "role": "pass",
+                      "anyOf": [
+                        "iam:PassRole"
+                      ]
+                    },
+                    {
+                      "role": "execute",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": true,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "pass",
+              "actions": [
+                "iam:PassRole"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "PassRole is not pinned to a service (can pass to any service)"
+            },
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "execute",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "runs code as the passed role via datapipeline"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "iam:PassRole",
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": [
+            {
+              "key": "pass-role",
+              "label": "iam:PassRole granted",
+              "present": true
+            },
+            {
+              "key": "*",
+              "label": "datapipeline execution action granted (*)",
+              "present": true
+            },
+            {
+              "key": "pass-role-resource-wildcard",
+              "label": "iam:PassRole resource is wildcard-scoped (reaches many roles)",
+              "present": true
+            },
+            {
+              "key": "exec-resource-wildcard",
+              "label": "datapipeline action resource is \"*\" (unscoped)",
+              "present": true
+            },
+            {
+              "key": "passed-to-service-restriction",
+              "label": "iam:PassedToService restriction present",
+              "present": false
+            }
+          ],
+          "subsumed": [
+            {
+              "id": "WILDCARD-RESOURCE",
+              "title": "Wildcard / overly broad resource scope",
+              "severity": "high",
+              "statementSid": "GodMode",
+              "statementIndex": 0,
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "why": "Resource \"*\" leaves the granted action(s) broadly resource-scoped: they apply to every resource in the account rather than a specific ARN.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+              "remediation": "Scope Resource to the specific ARNs (or ARN prefixes) the principal must act on; avoid \"*\" and prefer Resource over NotResource.",
+              "reason": "Subordinate to a compound escalation path on the same statement: it broadens only the scope of a grant the path already uses (same-service breadth), so it is reported as a risk factor of that path rather than a separate row.",
+              "policyFamily": "identity"
+            }
+          ],
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "PASSROLE-SERVICE",
+          "severity": "critical",
+          "title": "PassRole to a service + that service running code as the role",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "iam:PassRole",
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants iam:PassRole together with ecs action(s) (*) that run code as the passed role. A principal can create/update a ecs workload with a role it is allowed to pass, potentially obtaining execution under the passed role's credentials (whether execution is actually obtained still depends on instance-profile / service behavior). The PassRole grant does not use iam:PassedToService to restrict which supported AWS services may receive the role (AWS still enforces which services a role can be passed to). The application-credential path targets the ECS TASK role: container code obtains the task role's credentials via the task metadata endpoint; the role's actual permissions are unknown here.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope iam:PassRole to the specific role ARNs that must be passed and pin iam:PassedToService to ecs-tasks.amazonaws.com; separate role-passing from ecs workload-creation duties, and constrain the passable roles with a permission boundary.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html",
+          "escalation": {
+            "technique": "passrole-service-execution",
+            "service": "ecs",
+            "requiredActions": [
+              "iam:PassRole",
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "passrole-service-execution",
+                  "allOf": [
+                    {
+                      "role": "pass",
+                      "anyOf": [
+                        "iam:PassRole"
+                      ]
+                    },
+                    {
+                      "role": "execute",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": true,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown",
+            "ecs": {
+              "taskRoles": [],
+              "executionRoles": [],
+              "unknownRoles": [
+                "*"
+              ],
+              "hasLaunch": true
+            }
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "pass",
+              "actions": [
+                "iam:PassRole"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "PassRole is not pinned to a service (can pass to any service)"
+            },
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "execute",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "runs code as the passed role via ecs"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "iam:PassRole",
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": [
+            {
+              "key": "pass-role",
+              "label": "iam:PassRole granted",
+              "present": true
+            },
+            {
+              "key": "*",
+              "label": "ecs execution action granted (*)",
+              "present": true
+            },
+            {
+              "key": "pass-role-resource-wildcard",
+              "label": "iam:PassRole resource is wildcard-scoped (reaches many roles)",
+              "present": true
+            },
+            {
+              "key": "exec-resource-wildcard",
+              "label": "ecs action resource is \"*\" (unscoped)",
+              "present": true
+            },
+            {
+              "key": "passed-to-service-restriction",
+              "label": "iam:PassedToService restriction present",
+              "present": false
+            }
+          ],
+          "subsumed": [
+            {
+              "id": "WILDCARD-RESOURCE",
+              "title": "Wildcard / overly broad resource scope",
+              "severity": "high",
+              "statementSid": "GodMode",
+              "statementIndex": 0,
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "why": "Resource \"*\" leaves the granted action(s) broadly resource-scoped: they apply to every resource in the account rather than a specific ARN.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+              "remediation": "Scope Resource to the specific ARNs (or ARN prefixes) the principal must act on; avoid \"*\" and prefer Resource over NotResource.",
+              "reason": "Subordinate to a compound escalation path on the same statement: it broadens only the scope of a grant the path already uses (same-service breadth), so it is reported as a risk factor of that path rather than a separate row.",
+              "policyFamily": "identity"
+            }
+          ],
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "PASSROLE-SERVICE",
+          "severity": "critical",
+          "title": "PassRole to a service + that service running code as the role",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "iam:PassRole",
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants iam:PassRole together with glue action(s) (*) that run code as the passed role. A principal can create/update a glue workload with a role it is allowed to pass, potentially obtaining execution under the passed role's credentials (whether execution is actually obtained still depends on instance-profile / service behavior). The PassRole grant does not use iam:PassedToService to restrict which supported AWS services may receive the role (AWS still enforces which services a role can be passed to).",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope iam:PassRole to the specific role ARNs that must be passed and pin iam:PassedToService to glue.amazonaws.com; separate role-passing from glue workload-creation duties, and constrain the passable roles with a permission boundary.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html",
+          "escalation": {
+            "technique": "passrole-service-execution",
+            "service": "glue",
+            "requiredActions": [
+              "iam:PassRole",
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "passrole-service-execution",
+                  "allOf": [
+                    {
+                      "role": "pass",
+                      "anyOf": [
+                        "iam:PassRole"
+                      ]
+                    },
+                    {
+                      "role": "execute",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": true,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "pass",
+              "actions": [
+                "iam:PassRole"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "PassRole is not pinned to a service (can pass to any service)"
+            },
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "execute",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "runs code as the passed role via glue"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "iam:PassRole",
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": [
+            {
+              "key": "pass-role",
+              "label": "iam:PassRole granted",
+              "present": true
+            },
+            {
+              "key": "*",
+              "label": "glue execution action granted (*)",
+              "present": true
+            },
+            {
+              "key": "pass-role-resource-wildcard",
+              "label": "iam:PassRole resource is wildcard-scoped (reaches many roles)",
+              "present": true
+            },
+            {
+              "key": "exec-resource-wildcard",
+              "label": "glue action resource is \"*\" (unscoped)",
+              "present": true
+            },
+            {
+              "key": "passed-to-service-restriction",
+              "label": "iam:PassedToService restriction present",
+              "present": false
+            }
+          ],
+          "subsumed": [
+            {
+              "id": "WILDCARD-RESOURCE",
+              "title": "Wildcard / overly broad resource scope",
+              "severity": "high",
+              "statementSid": "GodMode",
+              "statementIndex": 0,
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "why": "Resource \"*\" leaves the granted action(s) broadly resource-scoped: they apply to every resource in the account rather than a specific ARN.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+              "remediation": "Scope Resource to the specific ARNs (or ARN prefixes) the principal must act on; avoid \"*\" and prefer Resource over NotResource.",
+              "reason": "Subordinate to a compound escalation path on the same statement: it broadens only the scope of a grant the path already uses (same-service breadth), so it is reported as a risk factor of that path rather than a separate row.",
+              "policyFamily": "identity"
+            }
+          ],
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "PASSROLE-SERVICE",
+          "severity": "critical",
+          "title": "PassRole to a service + that service running code as the role",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "iam:PassRole",
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants iam:PassRole together with sagemaker action(s) (*) that run code as the passed role. A principal can create/update a sagemaker workload with a role it is allowed to pass, potentially obtaining execution under the passed role's credentials (whether execution is actually obtained still depends on instance-profile / service behavior). The PassRole grant does not use iam:PassedToService to restrict which supported AWS services may receive the role (AWS still enforces which services a role can be passed to).",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope iam:PassRole to the specific role ARNs that must be passed and pin iam:PassedToService to sagemaker.amazonaws.com; separate role-passing from sagemaker workload-creation duties, and constrain the passable roles with a permission boundary.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html",
+          "escalation": {
+            "technique": "passrole-service-execution",
+            "service": "sagemaker",
+            "requiredActions": [
+              "iam:PassRole",
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "passrole-service-execution",
+                  "allOf": [
+                    {
+                      "role": "pass",
+                      "anyOf": [
+                        "iam:PassRole"
+                      ]
+                    },
+                    {
+                      "role": "execute",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": true,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "pass",
+              "actions": [
+                "iam:PassRole"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "PassRole is not pinned to a service (can pass to any service)"
+            },
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "execute",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": "runs code as the passed role via sagemaker"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "iam:PassRole",
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": [
+            {
+              "key": "pass-role",
+              "label": "iam:PassRole granted",
+              "present": true
+            },
+            {
+              "key": "*",
+              "label": "sagemaker execution action granted (*)",
+              "present": true
+            },
+            {
+              "key": "pass-role-resource-wildcard",
+              "label": "iam:PassRole resource is wildcard-scoped (reaches many roles)",
+              "present": true
+            },
+            {
+              "key": "exec-resource-wildcard",
+              "label": "sagemaker action resource is \"*\" (unscoped)",
+              "present": true
+            },
+            {
+              "key": "passed-to-service-restriction",
+              "label": "iam:PassedToService restriction present",
+              "present": false
+            }
+          ],
+          "subsumed": [
+            {
+              "id": "WILDCARD-RESOURCE",
+              "title": "Wildcard / overly broad resource scope",
+              "severity": "high",
+              "statementSid": "GodMode",
+              "statementIndex": 0,
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "why": "Resource \"*\" leaves the granted action(s) broadly resource-scoped: they apply to every resource in the account rather than a specific ARN.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+              "remediation": "Scope Resource to the specific ARNs (or ARN prefixes) the principal must act on; avoid \"*\" and prefer Resource over NotResource.",
+              "reason": "Subordinate to a compound escalation path on the same statement: it broadens only the scope of a grant the path already uses (same-service breadth), so it is reported as a risk factor of that path rather than a separate row.",
+              "policyFamily": "identity"
+            }
+          ],
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "ATTACH-POLICY",
+          "severity": "high",
+          "title": "Attach managed policy to self / a principal",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "high",
+          "why": "Grants iam:Attach{User,Role,Group}Policy. A principal that can attach a managed policy to itself (or a principal it controls) can attach AdministratorAccess and obtain full administrative access - a direct privilege-escalation path.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Remove self-service policy-attachment; if attachment is required, constrain the attachable policies with iam:PolicyARN Conditions and a permission boundary, and route changes through a reviewed pipeline.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html",
+          "escalation": {
+            "technique": "attach-policy",
+            "service": null,
+            "requiredActions": [
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "attach-policy",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "primitive",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "CREDENTIAL-CREATION",
+          "severity": "high",
+          "title": "Credential creation for a principal (access key / login profile)",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants credential creation (iam:CreateAccessKey / iam:CreateLoginProfile / iam:UpdateLoginProfile). A principal that can mint an access key or set a console password for another (more privileged) user can authenticate as that user - a lateral-movement / escalation primitive.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope credential actions to the principal's own identity where possible (e.g. an ${aws:username} Resource Condition), and restrict creation of credentials for other users to a dedicated admin role.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html",
+          "escalation": {
+            "technique": "credential-creation",
+            "service": null,
+            "requiredActions": [
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "credential-creation",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "primitive",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "POLICY-VERSION",
+          "severity": "high",
+          "title": "Managed-policy version manipulation",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "high",
+          "why": "Grants managed-policy version control (iam:CreatePolicyVersion / iam:SetDefaultPolicyVersion). A principal attached to (or able to target) a customer-managed policy can publish a new, more permissive version and set it as the default, escalating its own access without attaching a new policy.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Restrict policy-version actions to a dedicated policy-administration role, scope the Resource to specific policy ARNs, and require review (e.g. an MFA / approval Condition) for version changes.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html",
+          "escalation": {
+            "technique": "policy-version-manipulation",
+            "service": null,
+            "requiredActions": [
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "policy-version-manipulation",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "primitive",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "PUT-INLINE-POLICY",
+          "severity": "high",
+          "title": "Write inline policy on self / a principal",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "high",
+          "why": "Grants iam:Put{User,Role,Group}Policy. A principal that can write an inline policy on itself (or a principal it controls) can grant itself any permission, including full admin - a direct privilege-escalation path.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Remove self-service inline-policy writes; constrain with a permission boundary that caps the effective permissions, and route policy changes through a reviewed pipeline.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html",
+          "escalation": {
+            "technique": "put-inline-policy",
+            "service": null,
+            "requiredActions": [
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "put-inline-policy",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "primitive",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "TRUST-POLICY-MODIFY",
+          "severity": "high",
+          "title": "Role trust-policy modification (UpdateAssumeRolePolicy)",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants iam:UpdateAssumeRolePolicy. A principal can rewrite a role's trust policy to trust itself and then assume the role, taking on the role's permissions. Whether the target role is more privileged is not known from this policy, but the trust-then-assume primitive is present.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Restrict iam:UpdateAssumeRolePolicy to a dedicated role-administration identity, scope the Resource to specific role ARNs, and protect high-value roles with a permission boundary and change review.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/roles-managingrole-editing-console.html",
+          "escalation": {
+            "technique": "trust-policy-modification",
+            "service": null,
+            "requiredActions": [
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "trust-policy-modification",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "primitive",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "WILDCARD-ACTION",
+          "severity": "high",
+          "title": "Wildcard action grant",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "high",
+          "why": "Action \"*\" grants every action in every AWS service, including IAM administration, destructive operations, data reads, and disabling of CloudTrail/GuardDuty/Config. This is the widest possible grant.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+          "remediation": "Replace \"*\" with the specific actions the principal needs; start from CloudTrail/Access Analyzer usage and grant least privilege.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html",
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        }
+      ]
+    }
+  },
+  "cliSarif": {
+    "exit": 1,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": [
+                {
+                  "id": "ASSUME-ROLE-EXPANSION",
+                  "name": "ASSUME-ROLE-EXPANSION",
+                  "shortDescription": {
+                    "text": "Broad AssumeRole (role assumption over a wildcard scope)"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type ASSUME-ROLE-EXPANSION. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "9.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html"
+                },
+                {
+                  "id": "PASSROLE-EC2",
+                  "name": "PASSROLE-EC2",
+                  "shortDescription": {
+                    "text": "PassRole to EC2 + RunInstances"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type PASSROLE-EC2. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "9.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html"
+                },
+                {
+                  "id": "PASSROLE-LAMBDA",
+                  "name": "PASSROLE-LAMBDA",
+                  "shortDescription": {
+                    "text": "PassRole to Lambda + function create/update"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type PASSROLE-LAMBDA. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "9.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html"
+                },
+                {
+                  "id": "PASSROLE-SERVICE",
+                  "name": "PASSROLE-SERVICE",
+                  "shortDescription": {
+                    "text": "PassRole to a service + that service running code as the role"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type PASSROLE-SERVICE. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "9.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html"
+                },
+                {
+                  "id": "ATTACH-POLICY",
+                  "name": "ATTACH-POLICY",
+                  "shortDescription": {
+                    "text": "Attach managed policy to self / a principal"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type ATTACH-POLICY. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html"
+                },
+                {
+                  "id": "CREDENTIAL-CREATION",
+                  "name": "CREDENTIAL-CREATION",
+                  "shortDescription": {
+                    "text": "Credential creation for a principal (access key / login profile)"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type CREDENTIAL-CREATION. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html"
+                },
+                {
+                  "id": "POLICY-VERSION",
+                  "name": "POLICY-VERSION",
+                  "shortDescription": {
+                    "text": "Managed-policy version manipulation"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type POLICY-VERSION. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html"
+                },
+                {
+                  "id": "PUT-INLINE-POLICY",
+                  "name": "PUT-INLINE-POLICY",
+                  "shortDescription": {
+                    "text": "Write inline policy on self / a principal"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type PUT-INLINE-POLICY. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html"
+                },
+                {
+                  "id": "TRUST-POLICY-MODIFY",
+                  "name": "TRUST-POLICY-MODIFY",
+                  "shortDescription": {
+                    "text": "Role trust-policy modification (UpdateAssumeRolePolicy)"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type TRUST-POLICY-MODIFY. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/roles-managingrole-editing-console.html"
+                },
+                {
+                  "id": "WILDCARD-ACTION",
+                  "name": "WILDCARD-ACTION",
+                  "shortDescription": {
+                    "text": "Wildcard action grant"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type WILDCARD-ACTION. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html"
+                }
+              ]
+            }
+          },
+          "properties": {
+            "analysisStatus": "complete",
+            "exitCode": 1,
+            "blockingCount": 15,
+            "findingsCount": 15
+          },
+          "results": [
+            {
+              "ruleId": "ASSUME-ROLE-EXPANSION",
+              "level": "error",
+              "message": {
+                "text": "Broad AssumeRole (role assumption over a wildcard scope) [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "14062ee06a46d005af6e54d2e0b5"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "primitive",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "broad role scope"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 0
+            },
+            {
+              "ruleId": "PASSROLE-EC2",
+              "level": "error",
+              "message": {
+                "text": "PassRole to EC2 + RunInstances [identity policy] at statement `GodMode`; actions: `*`, `iam:PassRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "134021ada0595417efb599ab3ffb"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "pass",
+                    "actions": [
+                      "iam\\:PassRole"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "PassRole is not pinned to a service \\(can pass to any service\\)"
+                  },
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "execute",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "runs code as the passed role via ec2"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 1
+            },
+            {
+              "ruleId": "PASSROLE-LAMBDA",
+              "level": "error",
+              "message": {
+                "text": "PassRole to Lambda + function create/update [identity policy] at statement `GodMode`; actions: `*`, `iam:PassRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "14aa6c247a659e099bafa2cf8640"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "pass",
+                    "actions": [
+                      "iam\\:PassRole"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "PassRole is not pinned to a service \\(can pass to any service\\)"
+                  },
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "execute",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "runs code as the passed role via lambda"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 2
+            },
+            {
+              "ruleId": "PASSROLE-SERVICE",
+              "level": "error",
+              "message": {
+                "text": "PassRole to a service + that service running code as the role [identity policy] at statement `GodMode`; actions: `*`, `iam:PassRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "0b56bf233f7d0a1a1c2f384bd720"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "pass",
+                    "actions": [
+                      "iam\\:PassRole"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "PassRole is not pinned to a service \\(can pass to any service\\)"
+                  },
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "execute",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "runs code as the passed role via cloudformation"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 3
+            },
+            {
+              "ruleId": "PASSROLE-SERVICE",
+              "level": "error",
+              "message": {
+                "text": "PassRole to a service + that service running code as the role [identity policy] at statement `GodMode`; actions: `*`, `iam:PassRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "1f805863c4f64d0fcbacc8fab675"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "pass",
+                    "actions": [
+                      "iam\\:PassRole"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "PassRole is not pinned to a service \\(can pass to any service\\)"
+                  },
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "execute",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "runs code as the passed role via codebuild"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 3
+            },
+            {
+              "ruleId": "PASSROLE-SERVICE",
+              "level": "error",
+              "message": {
+                "text": "PassRole to a service + that service running code as the role [identity policy] at statement `GodMode`; actions: `*`, `iam:PassRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "179687797880650844beabe5ea34"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "pass",
+                    "actions": [
+                      "iam\\:PassRole"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "PassRole is not pinned to a service \\(can pass to any service\\)"
+                  },
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "execute",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "runs code as the passed role via datapipeline"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 3
+            },
+            {
+              "ruleId": "PASSROLE-SERVICE",
+              "level": "error",
+              "message": {
+                "text": "PassRole to a service + that service running code as the role [identity policy] at statement `GodMode`; actions: `*`, `iam:PassRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "0d4ddbaaaa6c4d1a00d813d713f6"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "pass",
+                    "actions": [
+                      "iam\\:PassRole"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "PassRole is not pinned to a service \\(can pass to any service\\)"
+                  },
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "execute",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "runs code as the passed role via ecs"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 3
+            },
+            {
+              "ruleId": "PASSROLE-SERVICE",
+              "level": "error",
+              "message": {
+                "text": "PassRole to a service + that service running code as the role [identity policy] at statement `GodMode`; actions: `*`, `iam:PassRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "17a2a984f468c00905dbdc70710a"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "pass",
+                    "actions": [
+                      "iam\\:PassRole"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "PassRole is not pinned to a service \\(can pass to any service\\)"
+                  },
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "execute",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "runs code as the passed role via glue"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 3
+            },
+            {
+              "ruleId": "PASSROLE-SERVICE",
+              "level": "error",
+              "message": {
+                "text": "PassRole to a service + that service running code as the role [identity policy] at statement `GodMode`; actions: `*`, `iam:PassRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "1cd2369380a54901639421d5fd7f"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "pass",
+                    "actions": [
+                      "iam\\:PassRole"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "PassRole is not pinned to a service \\(can pass to any service\\)"
+                  },
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "execute",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ],
+                    "note": "runs code as the passed role via sagemaker"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 3
+            },
+            {
+              "ruleId": "ATTACH-POLICY",
+              "level": "error",
+              "message": {
+                "text": "Attach managed policy to self / a principal [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "18b5efa2fe1c371b295874aa49be"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "high",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "primitive",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 4
+            },
+            {
+              "ruleId": "CREDENTIAL-CREATION",
+              "level": "error",
+              "message": {
+                "text": "Credential creation for a principal (access key / login profile) [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "12da52531440ea06bb1bb19579d5"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "primitive",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 5
+            },
+            {
+              "ruleId": "POLICY-VERSION",
+              "level": "error",
+              "message": {
+                "text": "Managed-policy version manipulation [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "0854b54992b364032185f55c0f61"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "high",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "primitive",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 6
+            },
+            {
+              "ruleId": "PUT-INLINE-POLICY",
+              "level": "error",
+              "message": {
+                "text": "Write inline policy on self / a principal [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "0e9f463210bf0209202a9930df72"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "high",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "primitive",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 7
+            },
+            {
+              "ruleId": "TRUST-POLICY-MODIFY",
+              "level": "error",
+              "message": {
+                "text": "Role trust-policy modification (UpdateAssumeRolePolicy) [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "1e26028f773e431a15cfd8e5079c"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "primitive",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 8
+            },
+            {
+              "ruleId": "WILDCARD-ACTION",
+              "level": "error",
+              "message": {
+                "text": "Wildcard action grant [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "02c41ca32f858200ffbd578fae07"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "high"
+                },
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode"
+              },
+              "ruleIndex": 9
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": true,
+    "coverage": {
+      "incomplete": false,
+      "analysisAborted": false,
+      "codes": [],
+      "statements": {
+        "total": 1,
+        "accepted": 1,
+        "rejected": 0
+      },
+      "counts": {
+        "unrecognizedActions": 0,
+        "unsupportedConditions": 0,
+        "unsupportedElements": 0,
+        "actionResourceMismatches": 0,
+        "maskedGrants": 0,
+        "broadUndecidableUncovered": 0
+      }
+    },
+    "findings": [
+      {
+        "id": "ASSUME-ROLE-EXPANSION",
+        "severity": "critical",
+        "title": "Broad AssumeRole (role assumption over a wildcard scope)",
+        "statementIndex": 0,
+        "actions": [
+          "*"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "e8be6e69a18ae4a1"
+      },
+      {
+        "id": "ATTACH-POLICY",
+        "severity": "high",
+        "title": "Attach managed policy to self / a principal",
+        "statementIndex": 0,
+        "actions": [
+          "*"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "b987dd601c3ab478"
+      },
+      {
+        "id": "CREDENTIAL-CREATION",
+        "severity": "high",
+        "title": "Credential creation for a principal (access key / login profile)",
+        "statementIndex": 0,
+        "actions": [
+          "*"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "f0ea8ad5c42510a0"
+      },
+      {
+        "id": "PASSROLE-EC2",
+        "severity": "critical",
+        "title": "PassRole to EC2 + RunInstances",
+        "statementIndex": 0,
+        "actions": [
+          "*",
+          "iam:PassRole"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "c5dc8e9f5dc847f7"
+      },
+      {
+        "id": "PASSROLE-LAMBDA",
+        "severity": "critical",
+        "title": "PassRole to Lambda + function create/update",
+        "statementIndex": 0,
+        "actions": [
+          "*",
+          "iam:PassRole"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "9f73d4252db0df99"
+      },
+      {
+        "id": "PASSROLE-SERVICE",
+        "severity": "critical",
+        "title": "PassRole to a service + that service running code as the role",
+        "statementIndex": 0,
+        "actions": [
+          "*",
+          "iam:PassRole"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "02762274a7744133"
+      },
+      {
+        "id": "PASSROLE-SERVICE",
+        "severity": "critical",
+        "title": "PassRole to a service + that service running code as the role",
+        "statementIndex": 0,
+        "actions": [
+          "*",
+          "iam:PassRole"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "2c56b4e1c69ba794"
+      },
+      {
+        "id": "PASSROLE-SERVICE",
+        "severity": "critical",
+        "title": "PassRole to a service + that service running code as the role",
+        "statementIndex": 0,
+        "actions": [
+          "*",
+          "iam:PassRole"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "369b55e2c5586df7"
+      },
+      {
+        "id": "PASSROLE-SERVICE",
+        "severity": "critical",
+        "title": "PassRole to a service + that service running code as the role",
+        "statementIndex": 0,
+        "actions": [
+          "*",
+          "iam:PassRole"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "7f7845e46a9f492c"
+      },
+      {
+        "id": "PASSROLE-SERVICE",
+        "severity": "critical",
+        "title": "PassRole to a service + that service running code as the role",
+        "statementIndex": 0,
+        "actions": [
+          "*",
+          "iam:PassRole"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "88dd55e8bcf114d7"
+      },
+      {
+        "id": "PASSROLE-SERVICE",
+        "severity": "critical",
+        "title": "PassRole to a service + that service running code as the role",
+        "statementIndex": 0,
+        "actions": [
+          "*",
+          "iam:PassRole"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "ac4ad626a323f8cd"
+      },
+      {
+        "id": "POLICY-VERSION",
+        "severity": "high",
+        "title": "Managed-policy version manipulation",
+        "statementIndex": 0,
+        "actions": [
+          "*"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "31be6209a903f4f3"
+      },
+      {
+        "id": "PUT-INLINE-POLICY",
+        "severity": "high",
+        "title": "Write inline policy on self / a principal",
+        "statementIndex": 0,
+        "actions": [
+          "*"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "0d4fe6a1722b921b"
+      },
+      {
+        "id": "TRUST-POLICY-MODIFY",
+        "severity": "high",
+        "title": "Role trust-policy modification (UpdateAssumeRolePolicy)",
+        "statementIndex": 0,
+        "actions": [
+          "*"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "a332952024beaa08"
+      },
+      {
+        "id": "WILDCARD-ACTION",
+        "severity": "high",
+        "title": "Wildcard action grant",
+        "statementIndex": 0,
+        "actions": [
+          "*"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "c37ad4b6cb94fd25"
+      }
+    ]
+  }
+}

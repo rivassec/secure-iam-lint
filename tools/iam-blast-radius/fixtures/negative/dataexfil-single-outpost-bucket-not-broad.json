@@ -1,0 +1,24 @@
+{
+  "name": "s3:GetObject via ONE named bucket on an outpost (arn:aws:s3-outposts:...:outpost/op-abc/bucket/my-bucket/object/*) is NOT broad exfil",
+  "note": "S1-dataexfil-arn iteration 4 over-correction guard. Making outpost/<id>/bucket/*/object/* (every bucket on the outpost) broad must NOT flag a grant scoped to ONE named bucket. Here idParts=[outpost,op-abc,bucket,my-bucket,object,*]: every collection identifier EXCEPT the leaf object key is a concrete name (op-abc, my-bucket); only the trailing object key is wildcarded. This reads one named bucket's objects on one named outpost - the scoped, least-privilege shape, exactly analogous to arn:aws:s3:::my-bucket/*. Only a leading wildcard on a NON-LEAF collection identifier is broad; a leaf-only object-key wildcard is not. DATA-EXFIL requires a BROAD resource; this is scoped, so it must stay quiet.",
+  "phase": 3,
+  "story": "S1-dataexfil-arn",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadOneOutpostBucketObjects",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3-outposts:us-east-1:123456789012:outpost/op-abc/bucket/my-bucket/object/*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["DATA-EXFIL", "WILDCARD-RESOURCE", "DATA-READ"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "arn:aws:s3-outposts:us-east-1:123456789012:outpost/op-abc/bucket/my-bucket/object/* targets objects in exactly one named bucket (my-bucket) on one named outpost (op-abc) - not every bucket on the outpost. S3 on Outposts nests collections as outpost/<id>/bucket/<id>/object/<key>; broadness is a leading wildcard on a NON-LEAF collection identifier (the outpost id or the bucket id), which would require outpost/*/... or outpost/op-abc/bucket/*/... Here both non-leaf identifiers are concrete and only the leaf object-key is wildcarded, narrowing WITHIN one bucket rather than widening the bucket set - the textbook least-privilege object-read shape - so no broad-scope bulk-read (DATA-EXFIL) or wildcard-resource (WILDCARD-RESOURCE) capability exists. The outpost and bucket names carry no sensitivity token and the ARN holds no policy variable, so DATA-READ also stays quiet. Ref: AWS S3 on Outposts ARN format arn:aws:s3-outposts:region:account:outpost/outpost-id/bucket/bucket-name and /object/ object-scoping."
+}

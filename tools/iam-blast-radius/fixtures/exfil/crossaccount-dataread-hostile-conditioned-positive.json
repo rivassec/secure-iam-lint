@@ -1,0 +1,23 @@
+{
+  "name": "Cross-account whole-container read (positive; conditioned; hostile ARN rides through inert)",
+  "note": "S2-crossaccount-scoped-surface (B): dynamodb:Scan is a whole-container (whole-table) read on a table in ANOTHER account (999999999999) than the analyzed principal (context.subjectAccount 123456789012). ruleDataReadScoped only fired name-inferred same-account reads before; a cross-account whole-container read now surfaces at LOW/INFO REGARDLESS of the resource NAME (the wordlist only RAISES severity, never gates reporting). A narrowing Condition is present (still fires, conditioned) and the table ARN embeds an HTML/JS payload that must survive verbatim in the finding's resources as inert DATA. Whether the data is reachable depends on the target account's table resource policy, out of scope.",
+  "context": { "subjectAccount": "123456789012", "partition": "aws" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ScanPartnerTable",
+        "Effect": "Allow",
+        "Action": "dynamodb:Scan",
+        "Resource": "arn:aws:dynamodb:us-east-1:999999999999:table/<script>alert(1)</script>",
+        "Condition": { "StringEquals": { "aws:SourceVpc": "vpc-0abc123" } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "hostile": true,
+    "hostileFor": ["CROSS-ACCOUNT-DATA-READ"],
+    "notFindingIds": ["DATA-EXFIL", "WILDCARD-RESOURCE"]
+  }
+}

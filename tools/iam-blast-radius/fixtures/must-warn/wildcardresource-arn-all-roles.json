@@ -1,0 +1,16 @@
+{
+  "name": "iam:PassRole on arn:aws:iam::123456789012:role/* (pass ANY role in the account) must warn",
+  "note": "S1-dataexfil-arn iteration 3 regression, WILDCARD-RESOURCE side. role/* is a resource-TYPE-prefixed ARN: concrete type head 'role' plus a leading-wildcard identifier, so it names EVERY role in the account. The old head-only broadness check saw head='role' (concrete) and returned isBroadArnResource=false, so resourceIsBroad=false and a non-read grant (iam:PassRole) on all-roles reported findings=[] exit 0 CLEAN - a WILDCARD-RESOURCE fail-open. PassRole is a non-read/mutating action, so a broad (account-wide) resource scope on it is a meaningful, remediable WILDCARD-RESOURCE (high). Contrast the negative passrole-specific-role-not-broad (role/app-worker-readonly, a concrete name) which must stay quiet.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PassAnyRole", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::123456789012:role/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["WILDCARD-RESOURCE"],
+    "mustNotFind": ["WILDCARD-ACTION"],
+    "minSeverity": { "WILDCARD-RESOURCE": "high" },
+    "nonZeroExit": true
+  }
+}

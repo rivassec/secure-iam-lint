@@ -1,0 +1,17 @@
+{
+  "name": "s3:GetObject on ' arn:aws:s3:::*' (leading whitespace before ARN) must warn",
+  "note": "S1-dataexfil-arn regression (iter2): a Resource with leading whitespace, ' arn:aws:s3:::*', previously missed the startsWith('arn:') gate in isBroadArnResource() (which bailed to false), so the same all-buckets bulk read as arn:aws:s3:::* returned CLEAN - a DATA-EXFIL fail-open (T8). AWS almost certainly rejects the whitespace outright, but the analyzer must fail CLOSED, not silently clean: broadness detection now trims leading/trailing whitespace before the ARN gate, so ' arn:aws:s3:::*' is treated exactly as arn:aws:s3:::* and DATA-EXFIL fires at high. CLI must exit non-zero.",
+  "policyRaw": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"ReadAllBucketsLeadingWs\",\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\" arn:aws:s3:::*\"}]}",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadAllBucketsLeadingWs", "Effect": "Allow", "Action": "s3:GetObject", "Resource": " arn:aws:s3:::*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

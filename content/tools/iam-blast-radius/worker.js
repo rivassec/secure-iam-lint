@@ -28,10 +28,19 @@ self.addEventListener('message', (event) => {
   const resourceContext = data && data.resourceContext && typeof data.resourceContext === 'object'
     ? data.resourceContext
     : undefined;
+  // S2-crossaccount-scoped-surface (iteration-2, finding #1): the optional analyzed-
+  // principal account id. Only a string is honored; anything else is dropped so the
+  // engine's own validation (CONCRETE_ACCOUNT_ID_RE) decides whether it is a usable
+  // subject. Without it the engine cannot tell same- from cross-account and stays
+  // conservatively quiet - so forwarding it is what lets the BROWSER surface the same
+  // cross-account findings the CLI/action already can (parity, no browser fail-open).
+  const subjectAccount = data && typeof data.subjectAccount === 'string'
+    ? data.subjectAccount
+    : undefined;
 
   let result;
   try {
-    result = analyze(text, { family, requireExplicitFamily, resourceContext });
+    result = analyze(text, { family, requireExplicitFamily, resourceContext, subjectAccount });
   } catch (e) {
     // analyze() already backstops, but never let the worker die silently.
     result = {

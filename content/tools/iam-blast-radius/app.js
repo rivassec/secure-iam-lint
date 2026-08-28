@@ -16,6 +16,7 @@ import { toJSON, toMarkdown, analysisStatus } from './engine/report.js';
 import { createGraphRenderer } from './engine/render-graph.js';
 import { noFindingsMessage } from './engine/coverage.js';
 import { checkVersionCoherence } from './engine/version.js';
+import { sanitizeTree } from './engine/format-control.js';
 import { SAMPLES } from './samples.js';
 
 // Wall-clock budget for a single worker run before we terminate it (T5).
@@ -61,6 +62,13 @@ function collectElements() {
     // IAM-1204: optional owning-account id (needed for S3 same-vs-cross-account,
     // since S3 ARNs carry no account).
     resourceAccount: byId('resource-account'),
+    // S2-crossaccount-scoped-surface (iteration-2): the analyzed-principal account
+    // context (shown for the identity / auto families). The optional subject-account
+    // field feeds analyzeOptions() so the browser can surface the SAME cross-account
+    // findings the CLI does; its wrapper `hidden` attribute is toggled by
+    // updateIdentityContextVisibility().
+    identityContextWrap: byId('identity-context'),
+    subjectAccount: byId('subject-account'),
     analyzeBtn: byId('analyze-btn'),
     clearBtn: byId('clear-btn'),
     samples: byId('samples'),
@@ -207,7 +215,26 @@ function analyzeOptions() {
   // it for other families is harmless (ignored) but we scope it to keep the
   // options minimal and the intent clear.
   if (v === 'resource') opts.resourceContext = resourceContextValue();
+  // S2-crossaccount-scoped-surface (iteration-2): for the identity / auto families
+  // (the ones the identity rules + escalation run on), forward the optional analyzed-
+  // principal account id so the browser can surface the SAME cross-account findings
+  // the CLI/action produce. The engine validates it (a non-12-digit value is treated
+  // as absent) and, when absent, stays conservatively quiet - so this NEVER adds a
+  // finding on its own; it only lets the engine tell same- from cross-account.
+  if (v === 'identity' || v === 'auto') {
+    const subject = subjectAccountValue();
+    if (subject.length > 0) opts.subjectAccount = subject;
+  }
   return opts;
+}
+
+// S2-crossaccount-scoped-surface (iteration-2): the current analyzed-principal
+// account id from the UI field, trimmed. Empty means "not supplied" (the engine then
+// cannot tell same- from cross-account and stays quiet). A non-12-digit value is
+// passed through and validated (and ignored) by the engine, mirroring resource-account.
+function subjectAccountValue() {
+  return els.subjectAccount && typeof els.subjectAccount.value === 'string'
+    ? els.subjectAccount.value.trim() : '';
 }
 
 // IAM-1201: the current attached-resource context from the two UI fields, as the
@@ -241,6 +268,37 @@ function clearResourceContextFields() {
   if (els.resourceType) els.resourceType.value = '';
   if (els.resourceArn) els.resourceArn.value = '';
   if (els.resourceAccount) els.resourceAccount.value = '';
+}
+
+// S2-crossaccount-scoped-surface (iteration-2): reveal the analyzed-principal
+// account control only for the identity / auto families (the ones that run identity
+// rules + escalation). Toggling the standard `hidden` attribute keeps this CSP-clean.
+// Idempotent; safe on init and on every family change.
+function updateIdentityContextVisibility() {
+  if (!els.identityContextWrap) return;
+  const v = familySelectionValue();
+  els.identityContextWrap.hidden = !(v === 'identity' || v === 'auto');
+}
+
+// S2-crossaccount-scoped-surface (iteration-2): clear the analyzed-principal account
+// field (Clear + when the family moves away from identity/auto) so a stale account id
+// never rides into a later run.
+function clearIdentityContextFields() {
+  if (els.subjectAccount) els.subjectAccount.value = '';
+}
+
+// S2-crossaccount-scoped-surface (iteration-2): editing the analyzed-principal account
+// re-runs the analysis under the new context (only for the identity/auto families, and
+// only with policy text present), so filling it in flips a cross-account capability
+// from unreported to surfaced. Uses 'change' (blur/enter) not 'input'.
+function onIdentityContextChange() {
+  if (versionBlock) return;
+  const v = familySelectionValue();
+  if (v !== 'identity' && v !== 'auto') return;
+  const text = els.input ? els.input.value : '';
+  if (typeof text === 'string' && text.trim().length > 0) {
+    analyzeText(text);
+  }
 }
 
 // IAM-1201: editing the attached-resource context re-runs the analysis under the
@@ -830,7 +888,22 @@ function renderGraph(graph, counts, findings) {
 
 // --- Result handling ---------------------------------------------------------
 
-function handleResult(result) {
+function handleResult(rawResult) {
+  // S4-unicode-spoof (sink defense-in-depth, threat-model T1/T8): the engine
+  // already de-spoofs policy strings at the model normalization boundary, but the
+  // browser render path is a DISTINCT human-facing trust surface (the findings
+  // table + SVG graph are the reviewer's PR-approval signal on fork-PR content),
+  // and textContent gives NO protection against the bidi algorithm. Re-neutralize
+  // BOTH visual-spoof mechanisms - the invisible/reordering format-control class AND
+  // (iteration 3) the strong-RTL / homograph-space / homograph-letter class (non-ASCII
+  // clamped to U+FFFD) - from EVERY string value and object key of the result at this
+  // single chokepoint (sanitizeTree -> neutralizeForDisplay), before any of it reaches
+  // the DOM or the SVG renderer. One pass here closes the class for all app.js sinks
+  // (findings cells, coverage codes/paths, error messages, detail prose, graph
+  // labels) instead of hunting every textContent assignment - sink-only
+  // enumeration is exactly the brittle pattern the fail-open hunter reopens. No-op
+  // on an already-clean engine result; deterministic; bounded by input limits.
+  const result = sanitizeTree(rawResult);
   state.lastAnalysis = result;
   // IAM-1001: publish the machine-readable status on the browser surface so it
   // agrees with the JSON/Markdown exports (test 71).
@@ -1032,12 +1105,17 @@ function runInWorker(text, options) {
   // IAM-1201: forward the attached-resource context (present only for the
   // resource family) so the worker's analyze() applies the same context gate as
   // the sync path. Structured-clone-safe (plain strings only); no policy text.
+  // S2-crossaccount-scoped-surface (iteration-2): forward the optional analyzed-
+  // principal account id (present only for the identity/auto families) so the worker's
+  // analyze() applies the same subject-account context as the sync path - the browser
+  // surfaces the same cross-account findings as the CLI. Structured-clone-safe string.
   worker.postMessage({
     id,
     text,
     family: opts.family,
     requireExplicitFamily: !!opts.requireExplicitFamily,
     resourceContext: opts.resourceContext,
+    subjectAccount: opts.subjectAccount,
   });
 }
 
@@ -1081,6 +1159,14 @@ function onFamilyChange() {
   // family, and drop any stale context when the family moves away from resource.
   updateResourceContextVisibility();
   if (familySelectionValue() !== 'resource') clearResourceContextFields();
+  // S2-crossaccount-scoped-surface (iteration-2): reveal/hide the analyzed-principal
+  // account control for the identity/auto families, and drop any stale account id when
+  // the family moves outside that set.
+  updateIdentityContextVisibility();
+  {
+    const fv = familySelectionValue();
+    if (fv !== 'identity' && fv !== 'auto') clearIdentityContextFields();
+  }
 
   if (versionBlock) return; // analysis is disabled entirely; nothing to invalidate
 
@@ -1132,6 +1218,11 @@ function loadSample(sample) {
   // hide it and clear any stale context (setting .value does not fire 'change').
   clearResourceContextFields();
   updateResourceContextVisibility();
+  // S2-crossaccount-scoped-surface (iteration-2): samples auto-detect and carry no
+  // subject-account; clear + reveal the identity-context control (visible under 'auto')
+  // so no stale account id rides into a sample run.
+  clearIdentityContextFields();
+  updateIdentityContextVisibility();
   updateAnalyzeEnabled();
   analyzeText(text);
 }
@@ -1244,6 +1335,10 @@ function clearAnalysis(announce) {
   // IAM-1201: also clear + hide the attached-resource context control.
   clearResourceContextFields();
   updateResourceContextVisibility();
+  // S2-crossaccount-scoped-surface (iteration-2): clear + hide the analyzed-principal
+  // account control too, so no stale account id survives a Clear.
+  clearIdentityContextFields();
+  updateIdentityContextVisibility();
   updateAnalyzeEnabled();
   if (els.status) els.status.removeAttribute('data-status');
   clearChildren(els.coverage);
@@ -1329,7 +1424,11 @@ function init() {
   if (els.resourceArn) els.resourceArn.addEventListener('change', onResourceContextChange);
   // IAM-1204: the optional owning-account field also re-analyzes on change.
   if (els.resourceAccount) els.resourceAccount.addEventListener('change', onResourceContextChange);
+  // S2-crossaccount-scoped-surface (iteration-2): the optional analyzed-principal
+  // account field re-analyzes on change, and its initial visibility follows the family.
+  if (els.subjectAccount) els.subjectAccount.addEventListener('change', onIdentityContextChange);
   updateResourceContextVisibility();
+  updateIdentityContextVisibility();
   updateAnalyzeEnabled();
 
   window.addEventListener('pagehide', onPageHide);

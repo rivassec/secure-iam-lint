@@ -990,6 +990,105 @@ test('analyzeResource: source-bound via aws:SourceOrgID -> negative control info
   assert.equal(cd.resource.sourceBinding.state, 'source-bound');
 });
 
+// --- Principal-scoping fail-open: a ...IfExists / ForAllValues principal condition
+// PASSES when the key is absent, so it does NOT restrict a Principal:"*" grant and
+// anonymous callers are NOT excluded. It must stay PUBLIC-ACCESS / critical and must
+// NEVER be credited as narrowing (adversarial-critic: principalScopingAnalysis missed
+// the bypass guard its source-binding + trust siblings already carry). --------------
+const bypassablePublic = (condition, ctx) => {
+  const model = {
+    statements: [{
+      index: 0, sid: 'Pub', effect: 'Allow', actions: ['s3:GetObject'],
+      resources: [ctx.arn], condition,
+      principal: { anyPrincipal: true, byType: {} },
+    }],
+  };
+  return analyzeResource(model, ctx).findings.find((f) => f.id === 'PUBLIC-ACCESS');
+};
+
+test('analyzeResource: StringEqualsIfExists on a principal key does NOT narrow "*" -> stays critical PUBLIC-ACCESS, no "anonymous excluded" claim', () => {
+  const f = bypassablePublic(
+    { StringEqualsIfExists: { 'aws:PrincipalOrgID': 'o-abc123' } },
+    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' });
+  assert.ok(f, 'a bypassable principal condition still surfaces a public-access finding');
+  assert.equal(f.severity, 'critical', 'IfExists is satisfied by omitting the key -> not a narrowing -> stays critical');
+  assert.doesNotMatch(f.why, /exactly what the condition excludes/, 'must NOT assert anonymous callers are excluded');
+  assert.match(f.why, /absent|bypassab|not\s+excluded/i, 'explains the condition passes when the key is absent');
+  assert.equal(f.pathExploitability, 'high', 'a bypassable condition is effectively unconditioned for anonymous');
+});
+
+test('analyzeResource: ForAllValues:StringEquals on a principal key does NOT narrow "*" -> stays critical', () => {
+  const f = bypassablePublic(
+    { 'ForAllValues:StringEquals': { 'aws:PrincipalOrgID': 'o-abc123' } },
+    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' });
+  assert.ok(f);
+  assert.equal(f.severity, 'critical', 'ForAllValues is vacuously true on an absent key -> not a narrowing');
+  assert.doesNotMatch(f.why, /exactly what the condition excludes/);
+});
+
+test('analyzeResource: a KMS "*" gated by a bypassable principal condition stays critical', () => {
+  const model = {
+    statements: [{
+      index: 0, sid: 'K', effect: 'Allow', actions: ['kms:Decrypt'],
+      resources: ['arn:aws:kms:us-east-1:111122223333:key/abc'],
+      condition: { StringEqualsIfExists: { 'aws:PrincipalOrgID': 'o-abc123' } },
+      principal: { anyPrincipal: true, byType: {} },
+    }],
+  };
+  const f = analyzeResource(model, { arn: 'arn:aws:kms:us-east-1:111122223333:key/abc' })
+    .findings.find((x) => x.id === 'PUBLIC-ACCESS');
+  assert.ok(f);
+  assert.equal(f.severity, 'critical');
+});
+
+test('analyzeResource: a GENUINE positive principal condition (StringEquals aws:PrincipalArn) still narrows "*" -> high (regression guard, not over-corrected)', () => {
+  const f = bypassablePublic(
+    { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::111122223333:role/app' } },
+    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' });
+  assert.ok(f);
+  assert.equal(f.severity, 'high', 'a non-bypassable positive scoping key genuinely narrows to authenticated principals');
+});
+
+test('analyzeResource: a genuine scoping key alongside a bypassable one still narrows -> high (the genuine key controls)', () => {
+  const f = bypassablePublic(
+    {
+      StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::111122223333:role/app' },
+      StringEqualsIfExists: { 'aws:PrincipalOrgID': 'o-abc123' },
+    },
+    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' });
+  assert.ok(f);
+  assert.equal(f.severity, 'high', 'the non-bypassable StringEquals still narrows; the bypassable key adds nothing');
+});
+
+// --- Federated (OIDC/SAML) principals on a RESOURCE policy are recognized-but-
+// unmodeled and MUST be surfaced fail-closed, never dropped to zero findings
+// (adversarial-critic: federated-oidc/federated-saml were classified then discarded,
+// unlike their federated-wildcard / canonical-user siblings). ------------------------
+const resourceUnsupported = (principal) => {
+  const policy = {
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Principal: principal, Action: 's3:GetObject', Resource: 'arn:aws:s3:::example-bucket/*' }],
+  };
+  const r = analyze(JSON.stringify(policy), {
+    family: 'resource', requireExplicitFamily: true,
+    resourceContext: { type: 's3-object', arn: 'arn:aws:s3:::example-bucket/*' },
+  });
+  return r.findings.filter((f) => f.id === 'RESOURCE-UNSUPPORTED-PRINCIPAL');
+};
+
+test('analyzeResource: a Federated SAML principal on a resource policy surfaces a fail-closed finding (not zero findings)', () => {
+  const fs = resourceUnsupported({ Federated: 'arn:aws:iam::123456789012:saml-provider/ExampleProvider' });
+  assert.equal(fs.length, 1, 'a Federated SAML grant must be surfaced, never silently dropped');
+  assert.equal(fs[0].severity, 'medium');
+  assert.match(fs[0].why, /role-trust|UNDETERMINED|unsupported != safe/i, 'explains it is recognized-but-unmodeled, not safe');
+});
+
+test('analyzeResource: a Federated OIDC principal on a resource policy surfaces a fail-closed finding (not zero findings)', () => {
+  const fs = resourceUnsupported({ Federated: 'arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com' });
+  assert.equal(fs.length, 1, 'a Federated OIDC grant must be surfaced, never silently dropped');
+  assert.equal(fs[0].severity, 'medium');
+});
+
 test('analyzeResource: confused-deputy graph origin is the SERVICE principal (test 26)', () => {
   const res = analyze(JSON.stringify({
     Version: '2012-10-17',

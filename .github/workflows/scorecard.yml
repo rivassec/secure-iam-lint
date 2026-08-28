@@ -1,0 +1,48 @@
+# OpenSSF Scorecard: automated grade of this repo's security posture (branch protection,
+# pinned dependencies, token permissions, signed/provenance releases, code scanning, etc.).
+# Results upload to the Code scanning tab and (publish_results) feed the public badge -
+# a credibility signal for a Marketplace security tool, and a check that the hardening in
+# this repo (SHA pins, least-priv permissions, branch protection, npm provenance) is real.
+name: Scorecard
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '19 4 * * 1'
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # upload the SARIF result to Code scanning
+      id-token: write          # publish results to the OpenSSF API for the badge
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+        with:
+          sarif_file: results.sarif

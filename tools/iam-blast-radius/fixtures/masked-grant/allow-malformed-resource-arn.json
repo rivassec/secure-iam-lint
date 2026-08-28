@@ -1,0 +1,23 @@
+{
+  "name": "Allow bulk read on a non-ARN, non-star Resource (suffix key glob '*.pem')",
+  "note": "S1-breadth-failclosed regression. A Resource value that is neither '*' nor arn:-shaped ('*.pem') is MALFORMED per the AWS IAM grammar (a Resource element must be '*' or an ARN). validate.js does no ARN-shape validation, so the value reaches the rules engine, whose semantic probe battery can only PROVE a value broad (>=2 probe accounts) and never NARROW; '*.pem' matches zero fixed-key probes, so it was read as NARROW and a bulk s3:GetObject returned findings=[] status complete exit 0 CLEAN - a DATA-EXFIL fail-OPEN (threat-model T8). The shared engine now routes the undecidable value to coverage.incomplete (MALFORMED_RESOURCE_ARN) so neither the browser nor the CLI reports a clean pass. It is a masked grant, not a fabricated confident finding, because the exact scope is genuinely undecidable.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*.pem" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": true,
+    "code": "MALFORMED_RESOURCE_ARN",
+    "kind": "malformed",
+    "path": "Statement[0].Resource",
+    "coverageIncomplete": true,
+    "scanExit": 3,
+    "scanReason": "MALFORMED_RESOURCE_ARN",
+    "scanStatus": "failed"
+  }
+}

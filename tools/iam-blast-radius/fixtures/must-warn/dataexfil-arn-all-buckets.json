@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObjectVersion on arn:aws:s3:::* (all buckets) must warn",
+  "note": "S1-dataexfil-arn regression: arn:aws:s3:::* names every bucket in the account (resource-id head is '*'), so a bulk read on it reaches all/nearly-all objects - as broad as Resource:'*'. Previously resourceIsBroad() saw only the bare '*' as broad and this returned CLEAN (DATA-EXFIL fail-open, T8). DATA-EXFIL must fire and the CLI must exit non-zero. Uses the s3:GetObjectVersion member of the bulk-read catalog.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadEveryBucket", "Effect": "Allow", "Action": "s3:GetObjectVersion", "Resource": "arn:aws:s3:::*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

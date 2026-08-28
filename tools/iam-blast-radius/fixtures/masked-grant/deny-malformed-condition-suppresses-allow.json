@@ -1,0 +1,29 @@
+{
+  "name": "Malformed Deny condition suppresses a real Allow finding (fail-open, both effects)",
+  "note": "S1-shape-failclosed regression. Condition-shape malformation is NOT only an Allow problem: statement 0 is a real DATA-EXFIL-class Allow (s3:GetObject on data/*), and statement 1 is a Deny of the same action/resource whose Condition operator block is a bare string. AWS rejects the block, and the engine drops it and reads the Deny as UNCONDITIONAL, which SUPPRESSES the Allow finding - leaving a silent CLEAN. An Allow-only masked-grant detector would miss this. Condition-shape detection must run on the Deny too, so the shared engine marks coverage INCOMPLETE (MALFORMED_CONDITION_BLOCK) and neither surface reports a clean pass.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": ["s3:GetObject"], "Resource": "arn:aws:s3:::data/*" },
+      {
+        "Effect": "Deny",
+        "Action": ["s3:GetObject"],
+        "Resource": "arn:aws:s3:::data/*",
+        "Condition": { "StringEquals": "x" }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": true,
+    "code": "MALFORMED_CONDITION_BLOCK",
+    "kind": "malformed",
+    "path": "Statement[1].Condition.StringEquals",
+    "coverageIncomplete": true,
+    "scanExit": 3,
+    "scanReason": "MALFORMED_CONDITION_BLOCK",
+    "scanStatus": "failed"
+  }
+}

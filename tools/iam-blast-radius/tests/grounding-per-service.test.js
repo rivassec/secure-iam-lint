@@ -72,7 +72,7 @@ test('all 11 cited AWS sources are present with resolvable docs.aws.amazon.com U
   const sources = doc.slice(sourcesIdx);
 
   for (const frag of SOURCE_URL_FRAGMENTS) {
-    const re = new RegExp(`https://docs\\.aws\\.amazon\\.com/[^\\s)]*${frag.replace(/[.]/g, '\\.')}`);
+    const re = new RegExp(`https://docs\\.aws\\.amazon\\.com/[^\\s)]*${frag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
     assert.match(sources, re, `Sources must cite an AWS docs URL ending in ${frag}`);
   }
 

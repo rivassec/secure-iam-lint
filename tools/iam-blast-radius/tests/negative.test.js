@@ -82,6 +82,23 @@ test('analyze() satisfies every frozen negative-fixture contract (present/absent
       assert.ok(!idSet.has(notWant), `${file}: MUST NOT find ${notWant}; got [${ids.join(', ')}]`);
     }
 
+    // S1-breadth-classify (iter 8): a fixture whose effective capability is fully
+    // resolved (denied / fenced-to-narrow) must analyze BARE CLEAN - not just free
+    // of the mustNotFind finding-ids, but with coverage NOT flipped incomplete.
+    // finding-ids alone are blind to a spurious `incomplete` flip (the exact gate
+    // blind spot the story flagged): the broad-uncovered net once marked a Deny-
+    // suppressed read on Resource "*" as BROAD_RESOURCE_UNDECIDABLE even though the
+    // same-policy Deny removed/fenced the whole capability. Assert cleanliness
+    // (no findings AND not incomplete) so that over-correction cannot slip again.
+    if (expect.expectClean === true) {
+      const summary = result.coverage && result.coverage.summary;
+      assert.equal(findings.length, 0, `${file}: expectClean requires zero findings; got [${ids.join(', ')}]`);
+      assert.ok(
+        !(summary && summary.incomplete),
+        `${file}: expectClean requires coverage NOT incomplete; got codes [${(summary && summary.codes || []).join(', ')}]`,
+      );
+    }
+
     // Severity must not be overstated: a present finding's severity is no MORE
     // severe (lower order index) than the fixture's cap.
     for (const [id, maxSev] of Object.entries(expect.maxSeverity || {})) {

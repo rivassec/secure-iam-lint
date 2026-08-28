@@ -54,6 +54,60 @@ inputs:
     description: Path to write the SARIF 2.1.0 output file.
     required: false
     default: iam-blast-radius.sarif
+  budget-ms:
+    description: >-
+      Per-policy wall-clock analysis budget in milliseconds (default 10000). If a
+      policy's analysis overruns this budget it FAILS CLOSED (exit 3,
+      RESOURCE_BUDGET_EXCEEDED) - it never reports a clean pass. A non-numeric value
+      falls back to the default.
+    required: false
+    default: "10000"
+  max-files:
+    description: >-
+      AGGREGATE ceiling on the NUMBER of matched files analyzed in one run (default
+      1000). Complements the per-file budgets: a fork PR matching thousands of
+      near-cap policy files would otherwise scale CI runtime linearly (an
+      availability/cost DoS). Files are analyzed in a stable sorted order; once this
+      many have been analyzed the run STOPS, emits the findings gathered so far, and
+      FAILS CLOSED (exit 3, AGGREGATE_CAP_EXCEEDED) with a SARIF analyzer-state
+      notification - the partial scan is NEVER reported clean. Raise it for a
+      legitimately large policy set. A non-positive/non-integer value falls back to
+      the default.
+    required: false
+    default: "1000"
+  max-total-bytes:
+    description: >-
+      AGGREGATE ceiling on the TOTAL UTF-8 bytes analyzed across all matched files in
+      one run (default 67108864, i.e. 64 MiB). Bounds cumulative parser work that the
+      file-count cap alone would miss (a few giant files). When analyzing the next file
+      would exceed this budget the run STOPS, emits the findings gathered so far, and
+      FAILS CLOSED (exit 3, AGGREGATE_CAP_EXCEEDED) with a SARIF analyzer-state
+      notification - never a clean pass. Raise it for a legitimately large policy set. A
+      non-positive/non-integer value falls back to the default.
+    required: false
+    default: "67108864"
+  max-sarif-results:
+    description: >-
+      DOCUMENT-level ceiling on the NUMBER of results in the aggregate SARIF (default 4500,
+      below GitHub's ~5000-results-per-upload cap, over which GitHub SILENTLY drops the
+      excess and Security-tab findings vanish). One run per scanned file is concatenated; if
+      the total exceeds this cap the results are TRUNCATED deterministically - highest-
+      severity/blocking findings and every fail-closed analyzer-state kept first - and a
+      visible SARIF_OUTPUT_TRUNCATED analyzer-state is appended so the truncation is never
+      silent. The exit code is UNAFFECTED (driven only by finding severity). Raise it for a
+      legitimately large aggregate. A non-positive/non-integer value falls back to the default.
+    required: false
+    default: "4500"
+  max-sarif-bytes:
+    description: >-
+      DOCUMENT-level ceiling on the aggregate SARIF size in UTF-8 bytes (default 9437184, i.e.
+      9 MiB - a safe uncompressed proxy below GitHub's ~10 MB gzip upload cap). When the
+      concatenated document would exceed this budget the results are TRUNCATED deterministically
+      (highest-severity/blocking + fail-closed analyzer-states first) with a visible
+      SARIF_OUTPUT_TRUNCATED analyzer-state; the exit code is UNAFFECTED. Raise it for a
+      legitimately large aggregate. A non-positive/non-integer value falls back to the default.
+    required: false
+    default: "9437184"
 
 outputs:
   sarif-path:
