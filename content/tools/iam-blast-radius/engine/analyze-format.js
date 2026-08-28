@@ -1,6 +1,9 @@
 // analyze-format.js - finding presentation + summary: severity ordering, sortFindings, findingToRow columns, summarize categories, service labels, family stamping. Extracted (behavior-preserving).
 import { classifyConditions } from './conditions.js';
 
+// Result-shape schema version stamped on every analyze() result (bumped on breaking result changes).
+export const CATALOG_VERSION = '1';
+
 export const SEVERITY_ORDER = Object.freeze({
   critical: 0,
   high: 1,
