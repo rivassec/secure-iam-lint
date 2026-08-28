@@ -1,5 +1,11 @@
 # Refactor progress ledger (overnight 2026-08-27 -> 28)
 
+
+## EXTENDED SCOPE (2026-08-28, user-approved "do A"): graph.js + analyze.js ALSO done
+- graph.js  1808 -> 321  modules: graph-catalogs/graph-helpers/graph-result/graph-trust/graph-resource/graph-edges
+- analyze.js 1138 -> 489 modules: analyze-format/analyze-results (CATALOG_VERSION relocated to analyze-format leaf)
+All 6 originally-large files decomposed. Remaining >500 LOC modules are either dominated by an intentionally-kept giant fn (resourceFindings/detectPassRolePaths/findingsForStatement per D3), newly-created cohesive modules (rules-detectors 991, graph-edges 722, escalation-reachability 570), or files never in scope (family/correlate/render-graph/conditions/report/validate/catalog).
+
 ## STATUS @ 90fd589 (2026-08-27 ~23:45) -- autonomous run paused for supervised handoff
 
 Tree GREEN: suite 2778 pass / 0 fail / 0 todo, release-gate 16/16, madge 0 cycles. wip @ 90fd589 pushed to backup (rivassec/secure-iam-lint-wip).
