@@ -57,11 +57,6 @@ export { EXIT };
 import { isNonEmptyString, toCount, positiveIntInput, utf8ByteLength } from './action-utils.mjs';
 export * from './action-utils.mjs';
 
-// Tagged-error code raised by the per-file statSync pre-guard when a file exceeds
-// LIMITS.MAX_BYTES. The scan loop recognizes it and fails THAT file closed to exit 3
-// (TOO_LARGE) - the same verdict the engine's validate() would produce - never exit 4
-// (an unreadable-file internal error) and never a clean pass.
-const INPUT_TOO_LARGE = 'INPUT_TOO_LARGE';
 
 // Does an on-disk size exceed the shared input byte cap? Pure (no fs), so the pre-guard
 // decision is unit-testable without touching the filesystem.
@@ -69,10 +64,6 @@ export function exceedsInputByteCap(size) {
   return Number.isFinite(size) && size > LIMITS.MAX_BYTES;
 }
 
-// The default SARIF output path (mirrors action.yml). Used as the fallback whenever a
-// caller-supplied sarif-output is rejected as unsafe, so a hostile path never
-// propagates to an output value or a file write.
-const DEFAULT_SARIF_OUTPUT = 'iam-blast-radius.sarif';
 
 // S4-action-hardening: is `rel` a SAFE sarif-output target - a RELATIVE path that
 // stays INSIDE the workspace? The Action's documented contract (ACTION.md) is that it
@@ -207,30 +198,6 @@ function budgetMsInput(raw) {
   return Number.isFinite(n) ? n : DEFAULT_BUDGET_MS;
 }
 
-// --- Aggregate resource ceiling (S6-action-aggregate-cap) ---------------------
-// resolveFiles + the per-file scan loop budget EACH file independently (the engine's
-// per-file 1 MiB byte cap; a per-file work/wall-clock budgetMs). Nothing bounded the
-// CUMULATIVE cost across MANY files beyond the static walkFiles MAX_FILES=200000: a fork
-// PR matching thousands of near-cap policy files scales CI runtime linearly into tens of
-// minutes (the plan's ~200 files ~= 20s -> thousands -> minutes). Each file still fails
-// CLOSED, so this is NOT a fail-OPEN - it is an availability/cost DoS on the fork-PR
-// surface. The ceiling is DETERMINISTIC on TWO axes measured in the loop:
-//   - a matched-file COUNT ceiling (bounds the fixed per-file parser/setup overhead of
-//     very many tiny files), AND
-//   - an aggregate UTF-8 BYTE ceiling (bounds parser work; count alone misses a few giant
-//     files, bytes alone misses the per-file overhead of a huge file count).
-// No wall-clock is consulted here: a wall-clock-primary cap makes tests flaky and CI
-// nondeterministic; the per-file budgetMs stays the ONLY time-based guard. Both ceilings
-// are CONFIGURABLE (max-files / max-total-bytes inputs) with GENEROUS defaults, because a
-// too-tight hardcoded cap would false-fail-closed on a legitimate large monorepo - an
-// adoption-killing false positive for a Marketplace security gate. Files are traversed in
-// the STABLE sorted order resolveFiles already produces, so which files fall under vs over
-// the cap is reproducible. On breach the loop STOPS, the findings gathered so far are still
-// emitted, and an explicit fail-closed 'incomplete' analyzer-state (exit 3) is appended -
-// the partial scan is NEVER reported as clean.
-export const DEFAULT_MAX_FILES = 1000;
-export const DEFAULT_MAX_TOTAL_BYTES = 64 * 1024 * 1024; // 64 MiB (67108864 bytes) aggregate
-export const AGGREGATE_CAP_REASON = 'AGGREGATE_CAP_EXCEEDED';
 
 // --- Aggregate SARIF DOCUMENT-level output budget (S2-NEW-SARIF-AGGREGATE) -----
 // GitHub code-scanning enforces upload caps on the SARIF DOCUMENT, not the individual
@@ -241,7 +208,7 @@ export const AGGREGATE_CAP_REASON = 'AGGREGATE_CAP_EXCEEDED';
 // within-caps fan-out (e.g. 100 files x 50 findings = 5000 results at only ~3.25 MB) hits the
 // RESULT cap far below the byte cap and silently loses findings. These DEFAULTS mirror the
 // per-run intent, kept comfortably BELOW GitHub's caps:
-import { DEFAULT_MAX_SARIF_RESULTS, DEFAULT_MAX_SARIF_BYTES, SARIF_OUTPUT_TRUNCATED_REASON } from './action-consts.mjs';
+import { DEFAULT_MAX_SARIF_RESULTS, DEFAULT_MAX_SARIF_BYTES, SARIF_OUTPUT_TRUNCATED_REASON, INPUT_TOO_LARGE, DEFAULT_SARIF_OUTPUT, DEFAULT_MAX_FILES, DEFAULT_MAX_TOTAL_BYTES, AGGREGATE_CAP_REASON, SYMLINK_EXCLUDED_REASON, ENUMERATION_UNREADABLE_REASON, ENUMERATION_TRUNCATED_REASON, ENUMERATION_MAX_FILES, ENUMERATION_MAX_DIRS } from './action-consts.mjs';
 export * from './action-consts.mjs';
 
 // --- paths / glob resolution --------------------------------------------------
@@ -446,18 +413,6 @@ function aggregateCapResult(reason, message, family) {
   });
 }
 
-// A synthetic fail-closed (exit 3) result appended when a SYMLINK whose path matches a
-// scan pattern was excluded from enumeration (S1-symlink-failclosed). walkFiles never
-// follows symlinks (traversal safety), so such a would-be policy file is invisible to the
-// scan; if the OTHER real files analyze clean, the aggregate would otherwise report
-// complete / exit 0 while a matching policy file quietly fell out - the exact drop the
-// threat model forbids. This carries an explicit 'incomplete' analyzer-state so the run is
-// surfaced as fail-closed (NEVER clean) and projects into SARIF as a kind:'fail' /
-// category:'analysis-state' notification with NO security-severity, exactly like every
-// other could-not-analyze state. analysisStatus is 'partial' (the OTHER files were
-// analyzed; this one was not) and the exit code is FAIL_CLOSED so the aggregate worst-code
-// is at least 3 and the check fails.
-export const SYMLINK_EXCLUDED_REASON = 'SYMLINK_EXCLUDED';
 function symlinkExcludedResult(message, family) {
   return Object.freeze({
     analysisStatus: 'partial',
@@ -550,7 +505,6 @@ function symlinkExcludedUnits(patterns, excludedSymlinks, family) {
 // 'partial' (some files WERE analyzed), analysisState 'incomplete', exitCode FAIL_CLOSED,
 // no security-severity - a tool-level could-not-analyze notification, never a policy finding.
 
-export const ENUMERATION_UNREADABLE_REASON = 'ENUMERATION_UNREADABLE';
 function enumerationUnreadableResult(message, family) {
   return Object.freeze({
     analysisStatus: 'partial',
@@ -566,7 +520,6 @@ function enumerationUnreadableResult(message, family) {
   });
 }
 
-export const ENUMERATION_TRUNCATED_REASON = 'ENUMERATION_TRUNCATED';
 function enumerationTruncatedResult(message, family) {
   return Object.freeze({
     analysisStatus: 'partial',
@@ -1024,25 +977,7 @@ export function emitArtifacts(final, env, sinks) {
 
 // --- Process entry point ------------------------------------------------------
 
-// The defensive enumeration ceiling: an upper bound on how many files (or excluded symlink
-// entries) walkFiles will record before it stops, so a pathological tree cannot make
-// enumeration run unbounded. Hitting it is a FAIL-CLOSED condition (S2-action-enumeration):
-// the walk sets `truncated` and runAction surfaces an ENUMERATION_TRUNCATED exit-3 unit, never
-// a silent clean pass. Configurable via the IAM_BR_ENUM_MAX_FILES env override (a positive
-// integer) for a legitimately huge tree; absent/invalid falls back to this default.
-export const ENUMERATION_MAX_FILES = 200000;
 
-// The defensive DIRECTORY ceiling (S4-R6-dirbomb): an upper bound on how many directories
-// walkFiles will POP+process before it stops, so a deep/wide tree of MANY directories but FEW
-// files (e.g. 1000 chains x 2000 deep = ~2M readdir ops, all well under MAX_FILES) cannot make
-// enumeration run unbounded - the file/symlink ceilings never trip because almost no files
-// exist, yet the walk does one readdir per directory. This is the CUMULATIVE dir-count twin of
-// ENUMERATION_MAX_FILES: hitting it is the same FAIL-CLOSED condition (sets `truncated`, so
-// runAction surfaces an exit-3 ENUMERATION_TRUNCATED unit, never a silent clean pass).
-// Configurable via the IAM_BR_ENUM_MAX_DIRS env override (a positive integer) for a
-// legitimately huge tree; absent/invalid falls back to this default. Sized generously so a
-// normal large monorepo is never forced fail-closed, while a directory bomb is bounded.
-export const ENUMERATION_MAX_DIRS = 500000;
 
 // A recursive file walk producing cwd-relative POSIX paths. Skips .git and
 // node_modules (never useful policy sources, and skipping them bounds the walk),
