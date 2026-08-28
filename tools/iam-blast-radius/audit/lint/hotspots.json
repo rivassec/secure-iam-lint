@@ -95,17 +95,10 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/graph.js",
-      "line": 1211,
+      "line": 1215,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
-    },
-    {
-      "file": "content/tools/iam-blast-radius/engine/graph.js",
-      "line": 1506,
-      "cls": "unbounded-walk",
-      "snippet": "function deepFreeze(value) {",
-      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/model.js",
