@@ -84,6 +84,12 @@ jobs:
           node-version: '22'
       - name: No circular dependencies (madge, pinned)
         run: npx --yes madge@8.0.0 --circular --extensions js,mjs content/tools/iam-blast-radius/engine cli action
+      # Zero-dep typecheck RATCHET: runs tsc --checkJs over the engine and fails only on a
+      # NEW type error over the committed baseline (58 pre-existing JSDoc frictions, no bugs).
+      # Catches type regressions in review without churning the frozen baseline.
+      - name: Typecheck ratchet (no new type errors)
+        working-directory: tools/iam-blast-radius
+        run: node audit/typecheck-ratchet.mjs
 
   csp:
     runs-on: ubuntu-latest
