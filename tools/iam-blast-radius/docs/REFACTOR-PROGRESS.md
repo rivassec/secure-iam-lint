@@ -27,7 +27,9 @@ RECOMMENDED NEXT (supervised session): (a) extract a canonical arn-util leaf (pa
 - [x] resource-source-binding.js (7 syms, imports parseArn+parseOperator/NEGATED_OPERATORS+chargeWork, export *) resource.js 2610->2445
 - [x] resource-conditions.js (9 syms: principal-scoping+selector+inventory+composition, export *) resource.js 2445->2247
 - [x] resource-principal-classification.js (4 syms: principalSubKind+fail-closed catalog, export *) resource.js 2247->2113
-- [ ] resource-service-rules (s3/kms/sns-sqs helpers) if cleanly separable; resourceFindings(~760 LOC) stays intact per D3
+- [x] resource-finding.js (makeResourceFinding factory leaf) + resource-shared.js (enumeratePrincipals/accountOfEntry/transport-deny leaf)
+- [x] resource-s3-rules.js (281) + resource-kms-rules.js (330) + resource-messaging-rules.js (268) -- all export *
+FILE 4 resource.js DONE: 2977 -> 1049 LOC (11 modules). resourceFindings ~760 LOC stays intact per D3. Remaining = resourceFindings + orchestration glue.
 - [ ] escalation-reachability.js (SCC: pins+role-targets+role-coverage together)
 
 ## Autonomous state machine (original)
