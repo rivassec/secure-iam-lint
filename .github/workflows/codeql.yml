@@ -34,6 +34,15 @@ jobs:
           languages: javascript-typescript
           # security-extended adds higher-recall security queries beyond the default set.
           queries: security-extended
+          # Scope analysis to the SHIPPED attack surface (engine + app + worker + CLI +
+          # Action). Test files and internal audit tooling are not attacker-reachable
+          # code; the URL/regex-validation queries only misfire on their assertions and
+          # fixtures (a test that checks a message CONTAINS a provider host is not URL
+          # validation), so exclude them rather than contort test code.
+          config: |
+            paths-ignore:
+              - tools/iam-blast-radius/tests
+              - tools/iam-blast-radius/audit
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
         with:
