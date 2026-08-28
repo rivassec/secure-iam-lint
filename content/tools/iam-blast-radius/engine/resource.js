@@ -177,7 +177,7 @@ function resourceFindings(model, ctx) {
     // this narrowing (section 5).
     if (c.anonymous) {
       const anonEntries = c.entries.filter((e) => e.type === 'anonymous');
-      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service);
+      const { scopingKeys, expansionKeys, bypassKeys } = principalScopingAnalysis(stmt.condition, service);
       // A KMS key policy's "*" is NOT anonymous/public: KMS has no unauthenticated
       // request path, so "*" = every AWS identity in every account (cross-account
       // still double-authorized). This service-scoped reframe changes ONLY the KMS
@@ -195,6 +195,14 @@ function resourceFindings(model, ctx) {
       const principalExpanded = expansionKeys.length > 0;
       const scopeKeys = principalExpanded ? [] : scopingKeys;
       const principalScoped = scopeKeys.length > 0;
+      // A principal condition that uses ...IfExists / ForAllValues on a positive
+      // operator is present but BYPASSABLE (it passes when the key is absent), so it
+      // does NOT narrow the "*" grant and anonymous callers are NOT excluded. It must
+      // never be credited as scoping (that would downgrade critical->high and assert
+      // "anonymous excluded"). Only when nothing genuinely scopes or expands does the
+      // bypassable condition drive the finding.
+      const principalBypassed =
+        !principalExpanded && !principalScoped && bypassKeys.length > 0;
       let title;
       let severity;
       let why;
@@ -251,6 +259,32 @@ function resourceFindings(model, ctx) {
           'pattern is broader and easier to get wrong than a named principal. Confirm ' +
           'the condition value (e.g. the aws:PrincipalArn pattern) scopes access to ' +
           'exactly the intended principals, and tighten it if it is broader than needed.';
+      } else if (principalBypassed && !isKms) {
+        // "*" gated ONLY by a positive principal condition that uses ...IfExists or a
+        // ForAllValues: qualifier. Such an operator PASSES when the key is absent, so a
+        // caller who omits the key satisfies it: it does NOT restrict access to
+        // authenticated principals and anonymous / unauthenticated callers are NOT
+        // excluded. Stays PUBLIC-ACCESS / critical - the present condition must never be
+        // read as a narrowing (adversarial-critic: principalScopingAnalysis fail-open;
+        // mirrors the source-binding bypass guard). KMS ("*" = every AWS identity, no
+        // anonymous path) is handled by the KMS branch below, also critical.
+        severity = 'critical';
+        title = 'Public resource access (principal condition is bypassable, not a restriction)';
+        why =
+          `The resource policy grants Principal "*" permission to ${stmt.actions.join(', ')} ` +
+          `on this ${serviceLabel}, gated by a principal condition (${bypassKeys.join(', ')}) ` +
+          'that uses an ...IfExists suffix or a ForAllValues: set qualifier. That operator ' +
+          'evaluates TRUE when the key is ABSENT from the request, so a caller who simply ' +
+          'omits the key satisfies it: the condition does NOT restrict access to ' +
+          'authenticated principals and anonymous / unauthenticated callers are NOT ' +
+          'excluded. This is public access - the present condition must NOT be read as ' +
+          'narrowing it or as excluding anonymous callers.';
+        remediation =
+          'Do not rely on a ...IfExists / ForAllValues principal condition to restrict a ' +
+          'Principal "*" Allow - it is satisfied by omitting the key. Name the specific ' +
+          'accounts, roles, or services in the Principal element, or use a POSITIVE, ' +
+          'non-IfExists match (e.g. StringEquals aws:PrincipalOrgID) that fails closed ' +
+          'when the key is absent.';
       } else if (isKms) {
         // KMS "*" is a severe over-grant but is NOT anonymous/public: KMS has no
         // unauthenticated path, so "*" = every AWS identity in every account. Drop the
@@ -343,7 +377,7 @@ function resourceFindings(model, ctx) {
         // A grant is literally in the policy; a same-policy transport Deny does not
         // lower it, but reachability still depends on the condition / BPA / other
         // layers, so a conditioned Allow caps path-exploitability at medium.
-        pathExploitability: conditioned ? 'medium' : 'high',
+        pathExploitability: (conditioned && !principalBypassed) ? 'medium' : 'high',
         service,
         attachedArn,
         transportOnlyDeny,

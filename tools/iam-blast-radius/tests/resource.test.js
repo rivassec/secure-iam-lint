@@ -990,6 +990,76 @@ test('analyzeResource: source-bound via aws:SourceOrgID -> negative control info
   assert.equal(cd.resource.sourceBinding.state, 'source-bound');
 });
 
+// --- Principal-scoping fail-open: a ...IfExists / ForAllValues principal condition
+// PASSES when the key is absent, so it does NOT restrict a Principal:"*" grant and
+// anonymous callers are NOT excluded. It must stay PUBLIC-ACCESS / critical and must
+// NEVER be credited as narrowing (adversarial-critic: principalScopingAnalysis missed
+// the bypass guard its source-binding + trust siblings already carry). --------------
+const bypassablePublic = (condition, ctx) => {
+  const model = {
+    statements: [{
+      index: 0, sid: 'Pub', effect: 'Allow', actions: ['s3:GetObject'],
+      resources: [ctx.arn], condition,
+      principal: { anyPrincipal: true, byType: {} },
+    }],
+  };
+  return analyzeResource(model, ctx).findings.find((f) => f.id === 'PUBLIC-ACCESS');
+};
+
+test('analyzeResource: StringEqualsIfExists on a principal key does NOT narrow "*" -> stays critical PUBLIC-ACCESS, no "anonymous excluded" claim', () => {
+  const f = bypassablePublic(
+    { StringEqualsIfExists: { 'aws:PrincipalOrgID': 'o-abc123' } },
+    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' });
+  assert.ok(f, 'a bypassable principal condition still surfaces a public-access finding');
+  assert.equal(f.severity, 'critical', 'IfExists is satisfied by omitting the key -> not a narrowing -> stays critical');
+  assert.doesNotMatch(f.why, /exactly what the condition excludes/, 'must NOT assert anonymous callers are excluded');
+  assert.match(f.why, /absent|bypassab|not\s+excluded/i, 'explains the condition passes when the key is absent');
+  assert.equal(f.pathExploitability, 'high', 'a bypassable condition is effectively unconditioned for anonymous');
+});
+
+test('analyzeResource: ForAllValues:StringEquals on a principal key does NOT narrow "*" -> stays critical', () => {
+  const f = bypassablePublic(
+    { 'ForAllValues:StringEquals': { 'aws:PrincipalOrgID': 'o-abc123' } },
+    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' });
+  assert.ok(f);
+  assert.equal(f.severity, 'critical', 'ForAllValues is vacuously true on an absent key -> not a narrowing');
+  assert.doesNotMatch(f.why, /exactly what the condition excludes/);
+});
+
+test('analyzeResource: a KMS "*" gated by a bypassable principal condition stays critical', () => {
+  const model = {
+    statements: [{
+      index: 0, sid: 'K', effect: 'Allow', actions: ['kms:Decrypt'],
+      resources: ['arn:aws:kms:us-east-1:111122223333:key/abc'],
+      condition: { StringEqualsIfExists: { 'aws:PrincipalOrgID': 'o-abc123' } },
+      principal: { anyPrincipal: true, byType: {} },
+    }],
+  };
+  const f = analyzeResource(model, { arn: 'arn:aws:kms:us-east-1:111122223333:key/abc' })
+    .findings.find((x) => x.id === 'PUBLIC-ACCESS');
+  assert.ok(f);
+  assert.equal(f.severity, 'critical');
+});
+
+test('analyzeResource: a GENUINE positive principal condition (StringEquals aws:PrincipalArn) still narrows "*" -> high (regression guard, not over-corrected)', () => {
+  const f = bypassablePublic(
+    { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::111122223333:role/app' } },
+    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' });
+  assert.ok(f);
+  assert.equal(f.severity, 'high', 'a non-bypassable positive scoping key genuinely narrows to authenticated principals');
+});
+
+test('analyzeResource: a genuine scoping key alongside a bypassable one still narrows -> high (the genuine key controls)', () => {
+  const f = bypassablePublic(
+    {
+      StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::111122223333:role/app' },
+      StringEqualsIfExists: { 'aws:PrincipalOrgID': 'o-abc123' },
+    },
+    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' });
+  assert.ok(f);
+  assert.equal(f.severity, 'high', 'the non-bypassable StringEquals still narrows; the bypassable key adds nothing');
+});
+
 test('analyzeResource: confused-deputy graph origin is the SERVICE principal (test 26)', () => {
   const res = analyze(JSON.stringify({
     Version: '2012-10-17',

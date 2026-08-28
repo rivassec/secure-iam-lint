@@ -72,8 +72,9 @@ export function operatorNegatesScope(operator, value) {
 export function principalScopingAnalysis(condition, service) {
   const scoping = new Set();
   const expanding = new Set();
+  const bypassing = new Set();
   if (!condition || typeof condition !== 'object' || Array.isArray(condition)) {
-    return { scopingKeys: [], expansionKeys: [] };
+    return { scopingKeys: [], expansionKeys: [], bypassKeys: [] };
   }
   for (const op of Object.keys(condition)) {
     const inner = condition[op];
@@ -83,15 +84,27 @@ export function principalScopingAnalysis(condition, service) {
     // linear-today scan participates in the cooperative work budget and a future
     // superlinear regression fails CLOSED rather than grinding uncharged (T5/T8).
     chargeWork(keys.length);
+    // A ...IfExists suffix or a ForAllValues: set qualifier PASSES when the key is
+    // ABSENT, so a POSITIVE principal match it carries is trivially bypassed by a
+    // caller who omits the key: it does NOT restrict anonymous/unauthenticated access
+    // and MUST NOT be credited as narrowing (mirrors the source-binding guard in
+    // resource-source-binding.js and the trust family). A NEGATED bypassable operator
+    // (e.g. StringNotEqualsIfExists) is already routed to expansion by
+    // operatorNegatesScope below - its parseOperator base is a NEGATED op - so it stays
+    // critical; only the positive-but-bypassable case is diverted here.
+    const lowerOp = String(op).toLowerCase();
+    const bypassable = lowerOp.includes('ifexists') || lowerOp.startsWith('forallvalues:');
     for (const key of keys) {
       if (!isPrincipalScopingKey(String(key).toLowerCase(), service)) continue;
       if (operatorNegatesScope(op, inner[key])) expanding.add(key);
+      else if (bypassable) bypassing.add(key);
       else scoping.add(key);
     }
   }
   return {
     scopingKeys: [...scoping].sort(),
     expansionKeys: [...expanding].sort(),
+    bypassKeys: [...bypassing].sort(),
   };
 }
 
