@@ -27,7 +27,18 @@
 // The output FORMAT never changes the exit code: a fail-closed run is exit 3 whether
 // it is printed as JSON or SARIF.
 
-import { writeFileSync, realpathSync, lstatSync, mkdirSync, openSync, readSync, closeSync } from 'node:fs';
+import { writeFileSync, realpathSync, lstatSync, fstatSync, mkdirSync, openSync, readSync, closeSync, constants as fsConstants } from 'node:fs';
+
+// TOCTOU-safe open flags (CodeQL js/file-system-race). O_NOFOLLOW: a symlink
+// swapped in at the final path component after our lstat fails the open (ELOOP)
+// instead of being followed. O_NONBLOCK: a FIFO swapped in cannot block the open
+// (O_RDONLY|O_NONBLOCK on a FIFO returns immediately even with no writer), so the
+// availability guard holds even under a race. Both are undefined on Windows -
+// `?? 0` degrades to O_RDONLY there (no atomic no-follow-open; that platform stays
+// on the lstat guard alone), which is inert since this CLI/Action runs on POSIX CI.
+const O_RDONLY = fsConstants.O_RDONLY ?? 0;
+const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+const O_NONBLOCK = fsConstants.O_NONBLOCK ?? 0;
 import * as nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -760,8 +771,34 @@ export function readFileCapped(path) {
   }
   // Bounded read: cap the bytes we will materialize regardless of the stat size.
   const cap = LIMITS.MAX_BYTES;
-  const fd = openSync(path, 'r');
+  // TOCTOU-closing open (CodeQL js/file-system-race). Between the lstat above and
+  // this open the path could be swapped. Open with O_NOFOLLOW | O_NONBLOCK (see the
+  // flag definitions) and then fstat the OPEN FD - not the path - so the type/size
+  // re-check and the read all bind to the exact inode we hold, with no check-then-use
+  // gap. The lstat above still rejects a STATIC special file WITHOUT opening it (the
+  // load-bearing availability guard); the fd re-check below catches a file that raced
+  // in AFTER the lstat.
+  let fd;
   try {
+    fd = openSync(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+  } catch (e) {
+    // A symlink swapped in after the lstat trips O_NOFOLLOW (ELOOP): report it as the
+    // same NON_REGULAR_FILE the static-symlink path returns. Any other open failure
+    // (missing / unreadable path) propagates unchanged so run() still maps it to exit 2.
+    if (e && e.code === 'ELOOP') throw nonRegularFileError(path);
+    throw e;
+  }
+  try {
+    // Re-check on the fd we actually hold: a device / FIFO / directory raced in after
+    // the lstat is rejected here (O_NONBLOCK guaranteed the open did not hang), and an
+    // oversized file is re-rejected on the fd's own size, all BEFORE any read.
+    const fst = fstatSync(fd);
+    if (!fst.isFile()) {
+      throw nonRegularFileError(path);
+    }
+    if (Number.isFinite(fst.size) && fst.size > cap) {
+      throw inputTooLargeError(fst.size);
+    }
     const buf = Buffer.allocUnsafe(cap + 1); // one extra byte detects an over-cap source
     let total = 0;
     // Read until EOF or until we have pulled cap+1 bytes (whichever comes first).

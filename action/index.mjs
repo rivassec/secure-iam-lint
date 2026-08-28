@@ -425,17 +425,32 @@ export async function main() {
     listExcludedSymlinks: () => walk().excludedSymlinks,
     listUnreadableDirs: () => walk().unreadableDirs,
     enumerationTruncated: () => walk().truncated === true,
-    // Enforce the MAX_BYTES cap via statSync BEFORE readFileSync (threat-model T5): an
-    // over-cap policy file is rejected with a tagged INPUT_TOO_LARGE error and is never
-    // read into memory. runAction routes that to a fail-closed exit-3 unit for the file.
+    // Enforce the MAX_BYTES cap BEFORE the read (threat-model T5): an over-cap policy
+    // file is rejected with a tagged INPUT_TOO_LARGE error and is never read into
+    // memory. runAction routes that to a fail-closed exit-3 unit for the file.
+    //
+    // TOCTOU-closing (CodeQL js/file-system-race): open with O_NOFOLLOW | O_NONBLOCK
+    // and fstat the OPEN FD - not the path - so the byte-cap check and the read bind
+    // to the exact inode we hold; a rename / symlink swap between a path-stat and a
+    // path-read cannot slip a different (or a blocking) file in. walkFiles already
+    // excludes symlinks + non-regular files during enumeration, so this is defense in
+    // depth on the read itself. O_NOFOLLOW/O_NONBLOCK are undefined on Windows -> 0
+    // (the Action runs on Linux runners).
     readFile: (rel) => {
       const abs = nodePath.join(baseDir, rel);
-      if (exceedsInputByteCap(nodeFs.statSync(abs).size)) {
-        const e = new Error('policy file exceeds the input byte limit');
-        e.code = INPUT_TOO_LARGE;
-        throw e;
+      const C = nodeFs.constants;
+      const flags = (C.O_RDONLY ?? 0) | (C.O_NOFOLLOW ?? 0) | (C.O_NONBLOCK ?? 0);
+      const fd = nodeFs.openSync(abs, flags);
+      try {
+        if (exceedsInputByteCap(nodeFs.fstatSync(fd).size)) {
+          const e = new Error('policy file exceeds the input byte limit');
+          e.code = INPUT_TOO_LARGE;
+          throw e;
+        }
+        return nodeFs.readFileSync(fd, 'utf8');
+      } finally {
+        nodeFs.closeSync(fd);
       }
-      return nodeFs.readFileSync(abs, 'utf8');
     },
     // S4-action-hardening (ROUND 2): the fs-aware half of sarif-output containment.
     // runAction folds this into its sarifSafe gate so a sarif-output that traverses (or
