@@ -6,7 +6,7 @@ Per-extraction protocol (MANDATORY every time): (1) re-grep exact CURRENT line n
 
 ## FILE 1: escalation.js (dependency root - do FIRST)
 - [x] escalation-action-grants.js (actionGrants, hasPolicyVariable, grantedPatternsFor) -- 47b9955
-- [ ] escalation-catalogs.js (classifyEcsRole, ecsRoleClasses, ESCALATIONS, ESCALATION_IDS, catalog consts, deepFreeze)
+- [x] escalation-catalogs.js (classifyEcsRole, ecsRoleClasses, ESCALATIONS, ESCALATION_IDS, catalog consts, deepFreeze)
 - [ ] escalation-scope.js (resourceScope, isStarResource, grantTokenIsBroad, resourceListIsBroadForAssume, assumeScopeIsAllRoles, assumeAccountReach)
 - [ ] escalation-statement.js (statementSid)
 - [ ] escalation-conditions.js (passedToServiceEntries, normalizeOperator, operatorPermitsService, passRolePermitsService, hasNonEmptyCondition, constraintContains, keyConstraintsSatisfiable)
