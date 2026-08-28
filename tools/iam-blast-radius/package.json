@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
-    "@stryker-mutator/core": "8.7.1"
+    "@stryker-mutator/core": "10.0.0"
   },
   "comment:overrides": "Force PATCHED versions of dev-only transitive deps with known CVEs (the shipped package has zero runtime deps, so these never reach a consumer; we patch rather than ignore). ajv/babel/tmp were flagged by OSV; qs is pinned >=6.15.2 defensively so a future dep bump cannot downgrade it back into GHSA-q8mj-m7cp-5q26. tmp 0.0.33->0.2.x reaches only external-editor's interactive-editor prompt (never triggered in CI or non-interactive mutation runs).",
   "overrides": {
