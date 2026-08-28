@@ -26,7 +26,8 @@ RECOMMENDED NEXT (supervised session): (a) extract a canonical arn-util leaf (pa
 - [x] arn-util.js (parseArn/serviceForArn/parseResourceContext, imports 3 catalogs, export *) resource.js 2760->2610
 - [x] resource-source-binding.js (7 syms, imports parseArn+parseOperator/NEGATED_OPERATORS+chargeWork, export *) resource.js 2610->2445
 - [x] resource-conditions.js (9 syms: principal-scoping+selector+inventory+composition, export *) resource.js 2445->2247
-- [ ] resource principal-classification (hasTransportOnlyDeny/principalSubKind/SUBKIND_LABELS/FAIL_CLOSED_*), resource-service-rules (s3/kms/sns-sqs)
+- [x] resource-principal-classification.js (4 syms: principalSubKind+fail-closed catalog, export *) resource.js 2247->2113
+- [ ] resource-service-rules (s3/kms/sns-sqs helpers) if cleanly separable; resourceFindings(~760 LOC) stays intact per D3
 - [ ] escalation-reachability.js (SCC: pins+role-targets+role-coverage together)
 
 ## Autonomous state machine (original)
