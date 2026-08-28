@@ -8,9 +8,9 @@
     "test": "node --test \"tests/**/*.test.js\"",
     "typecheck": "tsc --checkJs --noEmit --allowJs --target es2022 --module es2022 ../../content/tools/iam-blast-radius/engine/*.js",
     "gate:no-network": "! grep -rInE 'fetch\\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|import\\([\"'\\''`]https?:' ../../content/tools/iam-blast-radius/ || (echo 'NETWORK API FOUND' && exit 1)",
-    "gate:no-unsafe-dom": "! grep -rInE 'innerHTML|outerHTML|insertAdjacentHTML|\\beval\\(|new Function' ../../content/tools/iam-blast-radius/ || (echo 'UNSAFE DOM/EVAL FOUND' && exit 1)",
+    "gate:no-unsafe-dom": "! grep -rInE 'innerHTML|outerHTML|insertAdjacentHTML|\\beval\\(|new Function|WebAssembly|data:(text|application)/javascript|eval:\\s*true' ../../content/tools/iam-blast-radius/ || (echo 'UNSAFE DOM/EVAL FOUND' && exit 1)",
     "gate:no-network:node": "! grep -rInE 'fetch\\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|import\\([\"'\\''`]https?:|[\"'\\''`](node:)?(http|https|http2|net|tls|dgram|dns|inspector)[\"'\\''`]' ../../cli/ ../../action/ || (echo 'NETWORK API FOUND (cli/action)' && exit 1)",
-    "gate:no-unsafe:node": "! grep -rInE '\\beval\\(|new Function|innerHTML|outerHTML|insertAdjacentHTML|setTimeout\\(\\s*[\"'\\''`]|[\"'\\''`](node:)?(child_process|vm)[\"'\\''`]' ../../cli/ ../../action/ || (echo 'UNSAFE NODE API FOUND (cli/action)' && exit 1)",
+    "gate:no-unsafe:node": "! grep -rInE '\\beval\\(|new Function|WebAssembly|data:(text|application)/javascript|eval:\\s*true|innerHTML|outerHTML|insertAdjacentHTML|setTimeout\\(\\s*[\"'\\''`]|[\"'\\''`](node:)?(child_process|vm)[\"'\\''`]' ../../cli/ ../../action/ || (echo 'UNSAFE NODE API FOUND (cli/action)' && exit 1)",
     "e2e": "playwright test",
     "mutation": "stryker run"
   },
