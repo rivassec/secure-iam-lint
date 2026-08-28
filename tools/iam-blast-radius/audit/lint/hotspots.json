@@ -81,7 +81,7 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/escalation.js",
-      "line": 1280,
+      "line": 1079,
       "cls": "unbounded-walk",
       "snippet": "function deepFreeze(value) {",
       "note": "recursion (deepFreeze) with no visible depth/node/size cap"
