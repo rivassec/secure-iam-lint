@@ -80,3 +80,16 @@ jobs:
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Ship a CycloneDX SBOM alongside the provenance attestation. The package is
+      # zero-dependency, so this is a small, verifiable record of exactly that.
+      - name: Generate CycloneDX SBOM
+        if: github.event_name == 'push'
+        run: npm sbom --sbom-format cyclonedx > "sbom-${GITHUB_REF_NAME}.cdx.json"
+      - name: Upload SBOM artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom-*.cdx.json
+          retention-days: 90

@@ -60,3 +60,23 @@ jobs:
           echo "${SHA}  gitleaks.tgz" | sha256sum -c -
           tar -xzf gitleaks.tgz gitleaks
           ./gitleaks git . -c .gitleaks.toml --redact --no-banner
+
+  osv:
+    # The SHIPPED package is zero-dependency, but the DEV tree (@playwright/test,
+    # @stryker-mutator/core) pulls a large transitive tree. Scan every lockfile/manifest
+    # for known CVEs. The job exit gates. To accept a specific advisory (e.g. a dev-only,
+    # unreachable transitive), add an osv-scanner.toml [[IgnoredVulns]] entry - never widen.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: OSV-Scanner (pinned binary, checksum-verified; known-CVE scan of all lockfiles)
+        run: |
+          set -euo pipefail
+          VER=2.5.1
+          SHA=f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be
+          curl -fsSL -o osv-scanner "https://github.com/google/osv-scanner/releases/download/v${VER}/osv-scanner_linux_amd64"
+          echo "${SHA}  osv-scanner" | sha256sum -c -
+          chmod +x osv-scanner
+          ./osv-scanner scan source --recursive .
