@@ -1,0 +1,9 @@
+language: javascript
+# ClusterFuzzLite runs in "code-change" mode on PRs (see .github/workflows/cflite_pr.yml):
+# it fuzzes the analyze()==scan() safety-parity invariant for a bounded time on each PR
+# that touches the engine / CLI / fuzz target. Complements the deterministic nightly
+# differential fuzzer (tools/iam-blast-radius/.../parity-fuzz.mjs).
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - none

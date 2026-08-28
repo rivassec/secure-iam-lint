@@ -1,0 +1,9 @@
+# Jazzer.js / libFuzzer local-run artifacts - never commit these.
+# The seed corpus/ IS tracked (build.sh zips it as the fuzzer's seed corpus).
+crash-*
+timeout-*
+oom-*
+slow-unit-*
+leak-*
+/coverage/
+.jazzerjs/

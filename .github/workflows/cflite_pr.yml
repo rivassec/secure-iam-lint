@@ -1,0 +1,39 @@
+# ClusterFuzzLite: coverage-guided fuzzing of the analyze()==scan() safety-parity
+# invariant on pull requests that touch the engine / CLI / fuzz target. Runs in
+# "code-change" mode (bounded time per PR). The build + target live in
+# .clusterfuzzlite/ and tools/iam-blast-radius/tests/fuzz/. This complements the
+# deterministic nightly differential fuzzer (fuzz-parity.yml).
+name: ClusterFuzzLite PR fuzzing
+
+on:
+  pull_request:
+    paths:
+      - 'content/tools/iam-blast-radius/engine/**'
+      - 'cli/**'
+      - 'tools/iam-blast-radius/tests/fuzz/**'
+      - '.clusterfuzzlite/**'
+      - '.github/workflows/cflite_pr.yml'
+
+# Least privilege: the fuzzer only needs to read the code under test.
+permissions:
+  contents: read
+
+jobs:
+  Fuzzing:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: javascript
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 180
+          mode: 'code-change'
+          sanitizer: none
