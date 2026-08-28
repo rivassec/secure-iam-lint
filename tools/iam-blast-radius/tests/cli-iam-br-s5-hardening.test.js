@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
 import {
-  run, parseArgs, EXIT, outputIsContained, outputTargetContainedFs,
+  run, parseArgs, EXIT, outputIsContained, outputTargetContainedFs, writeFileContained,
 } from '../../../cli/iam-br.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -83,11 +83,7 @@ function makeRealIo(baseDir, stdin) {
     readFile: (p) => readFileSync(p, 'utf8'),
     async readStdin() { return stdin; },
     outputTargetContained: (rel) => outputTargetContainedFs(baseDir, rel),
-    writeFile: (p, data) => {
-      const abs = resolve(baseDir, p);
-      mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, data);
-    },
+    writeFile: (p, data) => writeFileContained(baseDir, p, data),
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
     stdinIsTTY: false,
@@ -105,6 +101,39 @@ async function withTempDirs(fn) {
     rmSync(outside, { recursive: true, force: true });
   }
 }
+
+// =============================================================================
+// writeFileContained: the WRITE-TIME symlink/overwrite guard (closes the TOCTOU race
+// the containment check cannot, because check and write are not atomic). O_EXCL ('wx')
+// refuses a symlinked or pre-existing leaf at open() time.
+// =============================================================================
+
+test('writeFileContained: fresh confined path -> writes the file', () => {
+  return withTempDirs((base) => {
+    writeFileContained(base, 'sub/out.sarif', 'DATA');
+    assert.equal(readFileSync(join(base, 'sub/out.sarif'), 'utf8'), 'DATA');
+  });
+});
+
+test('writeFileContained: a symlinked LEAF (TOCTOU race) is REFUSED, never written through', () => {
+  return withTempDirs((base, outside) => {
+    const target = join(outside, 'victim.txt');
+    writeFileSync(target, 'ORIGINAL');
+    // Attacker plants a symlink at the (previously absent) output leaf after the check.
+    symlinkSync(target, join(base, 'out.sarif'));
+    assert.throws(() => writeFileContained(base, 'out.sarif', 'MALICIOUS'),
+      /EEXIST|ELOOP/, 'O_EXCL must refuse a symlinked leaf');
+    assert.equal(readFileSync(target, 'utf8'), 'ORIGINAL', 'the outside file must NOT be clobbered through the symlink');
+  });
+});
+
+test('writeFileContained: a pre-existing regular leaf is REFUSED (no silent overwrite, matches the containment check)', () => {
+  return withTempDirs((base) => {
+    writeFileSync(join(base, 'out.sarif'), 'FIRST');
+    assert.throws(() => writeFileContained(base, 'out.sarif', 'SECOND'), /EEXIST/);
+    assert.equal(readFileSync(join(base, 'out.sarif'), 'utf8'), 'FIRST');
+  });
+});
 
 // =============================================================================
 // (1a)+(1b) LEXICAL escapes: absolute / drive / UNC / '..'-traversal / control.

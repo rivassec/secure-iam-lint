@@ -174,6 +174,23 @@ export function outputTargetContainedFs(baseDir, rel) {
   return true;
 }
 
+// Symlink-safe, no-overwrite write of a CONFINED --output target. outputTargetContainedFs()
+// is consulted in run() BEFORE this write and already rejects an existing leaf and any
+// symlink COMPONENT, but that check and this write are not atomic: a co-located same-user
+// attacker could, in the window between them, plant a symlink at the (previously absent)
+// leaf so a default 'w' open would FOLLOW it and clobber an arbitrary file outside the
+// workspace. Opening with O_EXCL ('wx') closes that race at open() time - POSIX requires
+// open(O_CREAT|O_EXCL) on a symlink to FAIL, and it also refuses a pre-existing regular
+// file, matching the no-overwrite policy the containment check already enforces. A
+// planted symlink / racing file therefore fails CLOSED to the caller's exit-4 write-error
+// path instead of redirecting the write. (Leaf only; a swapped ANCESTOR directory is a
+// documented residual needing per-component openat/O_NOFOLLOW - out of scope here.)
+export function writeFileContained(baseDir, rel, data) {
+  const abs = nodePath.resolve(baseDir, rel);
+  mkdirSync(nodePath.dirname(abs), { recursive: true });
+  writeFileSync(abs, data, { flag: 'wx' });
+}
+
 // A single, coherent version string from the canonical manifest (no build step;
 // what is committed is what runs, architecture invariant 2).
 export function versionString(manifest = VERSION_MANIFEST) {
@@ -780,11 +797,7 @@ export async function main(argv = process.argv.slice(2)) {
     // Resolve the (already-confined) relative path against the base, create any parent
     // directories, then write. Resolving against the explicit base is defense in depth:
     // the path is confined, so this stays inside cwd.
-    writeFile: (p, data) => {
-      const abs = nodePath.resolve(outputBase, p);
-      mkdirSync(nodePath.dirname(abs), { recursive: true });
-      writeFileSync(abs, data);
-    },
+    writeFile: (p, data) => writeFileContained(outputBase, p, data),
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),
     stdinIsTTY: Boolean(process.stdin && process.stdin.isTTY),
