@@ -19,6 +19,14 @@ WHAT REMAINS = SUPERVISED, not autonomous. The remaining size is in FUNCTION bod
 
 RECOMMENDED NEXT (supervised session): (a) extract a canonical arn-util leaf (parseArn/serviceForArn/parseResourceContext) + de-dupe resource-arn.js, then the resource conditions/source-binding/service-rule clusters fall out cleanly with export-*; (b) co-locate the escalation reachability trio into one module to break the cycle; (c) decompose the two giant functions per the in-repo plan. Each still gated by the per-extraction protocol below. v1.0.0 tag gate (refactored AND green) NOT yet met - files still 1727-2760 LOC.
 
+## AGREED DECISIONS (2026-08-28, owner + Openclaw) + progress
+- D1 parseArn: NEW leaf arn-util.js (DONE). The two parseArn copies are NOT dupes (drifted: .resource vs .resourceId, empty-seg handling) -> de-dup is OUT of v1.0.0; tracked in docs/POST-V1-ISSUES.md.
+- D2 escalation cycle: co-locate pins+role-targets+role-coverage into ONE escalation-reachability.js (SCC module), no interface seam.
+- D3 giant fns: LEAVE resourceFindings/detectPassRolePaths intact for v1.0.0 (file-level manageable only). Owner: file-level scope.
+- [x] arn-util.js (parseArn/serviceForArn/parseResourceContext, imports 3 catalogs, export *) resource.js 2760->2610
+- [ ] resource clusters now unblocked: resource-source-binding (imports parseArn from arn-util + parseOperator/NEGATED_OPERATORS from conditions), resource-conditions, resource-service-rules
+- [ ] escalation-reachability.js (SCC: pins+role-targets+role-coverage together)
+
 ## Autonomous state machine (original)
 
 State machine for the autonomous refactor. Each tick: do the NEXT unchecked item per REFACTOR-PLAN.md, gate, commit, push backup, check it off. On a stall: roll back the failed extraction (`git checkout -- <touched>`), mark the current file PARTIAL at its last green module, and SKIP to the next FILE (Oliver's directive). Hold public push / PR / tag.
