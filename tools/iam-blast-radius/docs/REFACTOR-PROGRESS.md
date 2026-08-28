@@ -30,7 +30,7 @@ RECOMMENDED NEXT (supervised session): (a) extract a canonical arn-util leaf (pa
 - [x] resource-finding.js (makeResourceFinding factory leaf) + resource-shared.js (enumeratePrincipals/accountOfEntry/transport-deny leaf)
 - [x] resource-s3-rules.js (281) + resource-kms-rules.js (330) + resource-messaging-rules.js (268) -- all export *
 FILE 4 resource.js DONE: 2977 -> 1049 LOC (11 modules). resourceFindings ~760 LOC stays intact per D3. Remaining = resourceFindings + orchestration glue.
-- [ ] escalation-reachability.js (SCC: pins+role-targets+role-coverage together)
+- [x] escalation-reachability.js (D2 SOLVED: 24 fns + 8 consts co-located, export *; CONCRETE_ACCOUNT_ID_RE pre-moved to catalogs) escalation.js 2545->1981, reachability 570 LOC. NO cycle.
 
 ## Autonomous state machine (original)
 
