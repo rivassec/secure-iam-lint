@@ -34,13 +34,25 @@ const fixturesDir = join(here, '..', '..', 'fixtures');
 const PAGE = '/tools/iam-blast-radius/index.html';
 const WORKER_URL = '/tools/iam-blast-radius/worker.js';
 
+// A fixture is a PARITY INPUT only if it carries raw policy text: a `policyRaw`
+// STRING, or a `policy` value we can JSON.stringify into one. Some fixtures are
+// instead test DESCRIPTORS (e.g. the order-invariance / noncanonical-ARN passrole
+// cases: `{ canonicalControl, variants, orderings, expect, ... }`) whose own tests
+// BUILD policies programmatically - they have neither field. Feeding one to the
+// engine sends the JS value `undefined` (JSON.stringify(undefined) === undefined),
+// which the two sides handle DIFFERENTLY (node analyze(undefined) -> NOT_A_STRING;
+// worker.js coerces a non-string to '' -> analyze('')), a spurious "divergence"
+// that is an artifact of the harness feeding a non-policy, not an engine gap.
+// Return null for such descriptors so loadCorpus() skips them.
 function fixtureText(fx) {
   if (typeof fx.policyRaw === 'string') return fx.policyRaw;
+  if (typeof fx.policy === 'undefined') return null;
   return JSON.stringify(fx.policy);
 }
 
-// Enumerate the full fixture corpus (every category), sorted for determinism -
-// the same corpus the node determinism gate walks.
+// Enumerate the fixture corpus (every category), sorted for determinism - the same
+// corpus the node determinism gate walks - keeping only fixtures that carry a real
+// policy (see fixtureText: descriptor-shaped fixtures with no policy are skipped).
 function loadCorpus() {
   const categories = readdirSync(fixturesDir, { withFileTypes: true })
     .filter((d) => d.isDirectory())
@@ -52,7 +64,9 @@ function loadCorpus() {
     if (!existsSync(dir)) continue;
     for (const f of readdirSync(dir).filter((n) => n.endsWith('.json')).sort()) {
       const data = JSON.parse(readFileSync(join(dir, f), 'utf8'));
-      out.push({ file: `${category}/${f}`, text: fixtureText(data) });
+      const text = fixtureText(data);
+      if (typeof text !== 'string') continue; // descriptor, not a policy fixture
+      out.push({ file: `${category}/${f}`, text });
     }
   }
   return out;
