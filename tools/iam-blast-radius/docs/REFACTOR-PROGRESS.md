@@ -24,7 +24,8 @@ RECOMMENDED NEXT (supervised session): (a) extract a canonical arn-util leaf (pa
 - D2 escalation cycle: co-locate pins+role-targets+role-coverage into ONE escalation-reachability.js (SCC module), no interface seam.
 - D3 giant fns: LEAVE resourceFindings/detectPassRolePaths intact for v1.0.0 (file-level manageable only). Owner: file-level scope.
 - [x] arn-util.js (parseArn/serviceForArn/parseResourceContext, imports 3 catalogs, export *) resource.js 2760->2610
-- [ ] resource clusters now unblocked: resource-source-binding (imports parseArn from arn-util + parseOperator/NEGATED_OPERATORS from conditions), resource-conditions, resource-service-rules
+- [x] resource-source-binding.js (7 syms, imports parseArn+parseOperator/NEGATED_OPERATORS+chargeWork, export *) resource.js 2610->2445
+- [ ] resource-conditions (scoping/selector/inventory helpers), resource-service-rules (s3/kms/sns-sqs)
 - [ ] escalation-reachability.js (SCC: pins+role-targets+role-coverage together)
 
 ## Autonomous state machine (original)
