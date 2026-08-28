@@ -108,6 +108,36 @@ const APPLICABILITY = Object.freeze({
   // applies (present, absent, at a boundary, Deny-interacting, Condition-narrowed,
   // hostile-string-bearing).
   'ROLE-TAKEOVER': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
+  // S2-crossaccount-scoped-surface (A): a scoped sts:AssumeRole into ANOTHER account.
+  // This is a CONTEXT-GATED finding - it fires only when the subject account is known
+  // (fixtures carry a `context.subjectAccount`, which buildCoverage passes to
+  // analyze()). notAction is excluded (an Allow-NotAction inversion is the broad
+  // ASSUME-ROLE-EXPANSION shape, not a scoped single-role assume); notResource is
+  // excluded (a NotResource complement is a broad scope, never a concrete cross-
+  // account role ARN); boundary is excluded (the decision boundary IS same- vs
+  // cross-account, covered by the positive/negative cells). deny/condition/hostile
+  // all apply.
+  'CROSS-ACCOUNT-ASSUME-ROLE': ['positive', 'negative', 'deny', 'condition', 'hostile'],
+  // S2-crossaccount-scoped-surface (B): a whole-container read on a resource in
+  // ANOTHER account. CONTEXT-GATED like CROSS-ACCOUNT-ASSUME-ROLE. notAction /
+  // notResource excluded for the same reasons as DATA-READ (an inversion / complement
+  // is the DATA-EXFIL/WILDCARD shape, not a concrete cross-account container ARN);
+  // boundary excluded (the boundary is same- vs cross-account + whole-container vs
+  // single-object, covered by positive/negative). deny/condition/hostile apply.
+  'CROSS-ACCOUNT-DATA-READ': ['positive', 'negative', 'deny', 'condition', 'hostile'],
+  // S2-crossaccount-scoped-surface (iteration-5, S3 fail-open close): a whole-
+  // container read on a CANONICAL S3 bucket ARN whose owning account is
+  // undeterminable (no account field, no aws:ResourceAccount/s3:ResourceAccount
+  // condition). CONTEXT-GATED like its siblings (fires only with a known subject
+  // account). notAction / notResource excluded for the same reasons as DATA-READ /
+  // CROSS-ACCOUNT-DATA-READ (an inversion / complement is the DATA-EXFIL/WILDCARD
+  // shape, not a concrete bare-bucket whole-container ARN). boundary excluded: the
+  // decision boundary is whole-container-vs-single-object and resolvable-vs-
+  // unresolvable owner, covered by the positive/negative cells. deny/condition/
+  // hostile apply (a Condition here is any account-orthogonal narrowing, e.g.
+  // aws:SourceVpc; a ResourceAccount condition instead RESOLVES the owner and routes
+  // out of this rule).
+  'CROSS-ACCOUNT-DATA-READ-UNDETERMINED': ['positive', 'negative', 'deny', 'condition', 'hostile'],
 });
 
 // A boundary witness is one of the curated `*-boundary.json` edge-case fixtures
@@ -159,7 +189,11 @@ function buildCoverage() {
 
   for (const { file, data } of loadAllFixtures()) {
     let res;
-    try { res = analyze(fixtureText(data)); } catch { continue; }
+    // A fixture may carry an analysis `context` (subjectAccount / partition) - the
+    // same convention the dedicated context tests use. Context-gated findings
+    // (S2-crossaccount-scoped-surface) fire only when it is supplied, so pass it
+    // through; fixtures without a context are analyzed exactly as before.
+    try { res = analyze(fixtureText(data), data.context || undefined); } catch { continue; }
     if (!res || !Array.isArray(res.findings)) continue;
 
     const producedIds = new Set(res.findings.map((f) => f.id));
@@ -244,7 +278,9 @@ test('hostile fixtures render every declared rule id with the payload inert', ()
   );
   assert.ok(hostileFixtures.length >= 2, 'expected at least two hostile fixtures');
   for (const { file, data } of hostileFixtures) {
-    const res = analyze(fixtureText(data));
+    // Honor a per-fixture analysis context so a context-gated hostile witness
+    // (S2-crossaccount-scoped-surface) fires; context-free fixtures are unchanged.
+    const res = analyze(fixtureText(data), data.context || undefined);
     assert.equal(res.ok, true, `${file}: hostile fixture must analyze ok`);
     const byId = new Map(res.findings.map((f) => [f.id, f]));
     for (const id of (data.expect.hostileFor || [])) {

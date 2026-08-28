@@ -1,0 +1,24 @@
+{
+  "name": "s3:GetObject via ONE named access point (arn:aws:s3:...:accesspoint/my-ap/object/*) is NOT broad exfil",
+  "note": "S1-dataexfil-arn iteration 3 over-correction guard. Making accesspoint/*/object/* (every access point) broad must NOT flag a grant scoped to ONE named access point. The identifier segment right after the concrete type head 'accesspoint' is 'my-ap' (a concrete access-point name); only the trailing object key is wildcarded. An access point fronts a single bucket, so this reads one access point's objects - the scoped, least-privilege shape, exactly analogous to arn:aws:s3:::my-bucket/*. DATA-EXFIL requires a BROAD resource; this is scoped, so it must stay quiet.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadOneAccessPointObjects",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:us-east-1:123456789012:accesspoint/my-ap/object/*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["DATA-EXFIL", "WILDCARD-RESOURCE", "DATA-READ"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "arn:aws:s3:us-east-1:123456789012:accesspoint/my-ap/object/* targets objects reachable through exactly one named access point (my-ap), which maps to a single bucket - not every access point in the account. The resource-id is type='accesspoint' then identifier 'my-ap/object/*': the first identifier segment ('my-ap') is a concrete name, so isBroadArnResource (which tests only the first identifier segment after a concrete type head) returns false and no broad-scope bulk-read exists. Broadness would require accesspoint/*/... (leading-wildcard identifier). The access-point name carries no sensitivity token, so DATA-READ also stays quiet. Ref: AWS S3 access point ARNs arn:aws:s3:region:account:accesspoint/name and /object/ object-scoping."
+}

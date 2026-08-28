@@ -1,0 +1,16 @@
+{
+  "name": "iam:PassRole on arn:aws:iam::*:role/deployment/* (pass any /deployment/ role in ANY account) must warn",
+  "note": "S1-dataexfil-arn iteration 4 BLOCKER regression: the account-wildcard fail-open. account='*' pairs with a CONCRETE-prefixed resource identifier ('role/deployment/*'). The old account-wildcard branch additionally required resourceId to be '' or itself leading-wildcard, so a wildcard account + concrete path/prefix slipped every broadness branch (the type-prefix branch inspects idParts[1]='deployment', a concrete path component, not a wildcard) and the finite probe battery, pinned to path /platform/, matched 0 probes - findings=[] exit 0 CLEAN. A wildcard ACCOUNT reaches across EVERY account in the partition, so this is pass-any-/deployment/-role-in-every-account, strictly broader than the single-account negative (arn:aws:iam::123456789012:role/deployment/*). isBroadArnResource now treats a leading-wildcard account as account-crossing/broad independent of the resource id. PassRole is non-read, so WILDCARD-RESOURCE (high) must fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PassAnyDeploymentRoleAnyAccount", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::*:role/deployment/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["WILDCARD-RESOURCE"],
+    "mustNotFind": ["WILDCARD-ACTION"],
+    "minSeverity": { "WILDCARD-RESOURCE": "high" },
+    "nonZeroExit": true
+  }
+}

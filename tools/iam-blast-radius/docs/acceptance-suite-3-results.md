@@ -148,7 +148,7 @@ No suite-3 test currently returns a false or overstated result.
 | 96 | ForAllValues with explicit Null protection | COMPLETE_WITH_WARNINGS | `WILDCARD-RESOURCE` on CreateTags; vacuous-truth warning suppressed vs test 41 (Null presence check); `aws:TagKeys` context-required (incomplete) |
 | 97 | Empty ForAnyValue never matches | COMPLETE_WITH_WARNINGS | no phantom capability / wildcard finding; unmatchable statement noted (incomplete) |
 | 98 | Dangerous-to-safe state isolation | procedure | `tests/phase10-parser-hardening.test.js` + `tests/e2e/ui-shell.spec.js`: re-analysis fully replaces prior state; no stale critical resurrected |
-| 99 | Rendering and export injection | COMPLETE | firing policy; hostile Sid/ARN render inert (safe DOM), Markdown neutralizes active links/HTML, JSON round-trips verbatim |
+| 99 | Rendering and export injection | COMPLETE_WITH_WARNINGS | firing policy (`WILDCARD-ACTION` on Action `*`); hostile Sid/ARN render inert (safe DOM), Markdown neutralizes active links/HTML, JSON round-trips verbatim; the non-ARN injection-witness Resource values (URLs) are MALFORMED per the IAM grammar and routed to `MALFORMED_RESOURCE_ARN` incomplete-coverage, so the witnesses still reach findings but the verdict carries a warning |
 | 100 | Exact limits, determinism, early-abort ordering | procedure | `tests/phase10-parser-hardening.test.js`: byte-cap precedes JSON parse; statement-count boundary (limit accepted, limit+1 `TOO_LARGE`); deterministic |
 
 ## Release gate (docs/acceptance-suite-3.md)

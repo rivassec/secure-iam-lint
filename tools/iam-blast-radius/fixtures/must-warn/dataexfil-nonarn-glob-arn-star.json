@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on the bare glob 'arn*' (every ARN) must warn",
+  "note": "S1-dataexfil-arn iteration 5 regression, NON-arn glob class. 'arn*' matches every string starting with 'arn' - i.e. every ARN - but it does NOT start with the literal 'arn:' (it is 'arn' then '*'), so the old r.startsWith('arn:') gate rejected it and the bulk read returned findings=[] exit 0 CLEAN (DATA-EXFIL fail-open, T8). Semantic probe matching flags it: 'arn*' matches probe ARNs across >=2 distinct accounts. GetObject is a read verb, so WILDCARD-RESOURCE must NOT fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadEveryArnStar", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

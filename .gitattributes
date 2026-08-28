@@ -1,0 +1,17 @@
+# export-ignore: keep dev-only trees OUT of `git archive` tarballs (e.g. an
+# npm-pack-from-archive or a source download). These directories are test,
+# fixture, docs, CI, and audit tooling - never part of the shipped static tool
+# (content/tools/iam-blast-radius/) or the published CLI/Action package.
+#
+# NOTE: GitHub Actions `actions/checkout` does a full working-tree checkout and
+# does NOT honor export-ignore, so this attribute is a convenience for archive
+# consumers, NOT a security control. The real control that keeps debris out of
+# the shipped/served tree is the hygiene gate in
+# tools/iam-blast-radius/tests/shipped-tree-hygiene.test.js.
+tools/iam-blast-radius/tests/          export-ignore
+tools/iam-blast-radius/fixtures/       export-ignore
+tools/iam-blast-radius/ralph/          export-ignore
+tools/iam-blast-radius/audit/          export-ignore
+tools/iam-blast-radius/docs/           export-ignore
+tools/iam-blast-radius/playwright.config.js export-ignore
+tools/iam-blast-radius/stryker.conf.js export-ignore

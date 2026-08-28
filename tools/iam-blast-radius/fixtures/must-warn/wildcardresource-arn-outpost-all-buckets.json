@@ -1,0 +1,16 @@
+{
+  "name": "s3:PutBucketAcl on arn:aws:s3-outposts:...:outpost/op-abc/bucket/* (ACL on EVERY bucket on the outpost) must warn",
+  "note": "S1-dataexfil-arn iteration 5 regression, WILDCARD-RESOURCE side. The S3-on-Outposts loop in isBroadArnResource() only iterated NON-LEAF identifiers (`i < idParts.length - 1`), so an ARN that TERMINATES at a wildcarded collection identifier - outpost/op-abc/bucket/* , idParts=[outpost,op-abc,bucket,*] - had its terminal '*' (index 3) skipped and resourceIsBroad returned false. That resource names EVERY bucket on outpost op-abc (the entire bucket collection), so a mutating grant on it - s3:PutBucketAcl, make-every-outpost-bucket-public - reported findings=[] status complete exit 0 CLEAN on both analyze() and scan(): a WILDCARD-RESOURCE fail-OPEN (T8). Attribution: the one-level-deeper NON-LEAF form outpost/op-abc/bucket/*/object/* and Resource:'*' both already fire WILDCARD-RESOURCE:high on this same action - only the terminal-collection broadness verdict leaked. FAIL CLOSED: a leading wildcard on a TERMINAL collection identifier (bucket/*, accesspoint/*) is broad, exactly as account-wide as bucket/*/object/*. PutBucketAcl is a non-read/mutating action, so a broad resource scope on it is a meaningful, remediable WILDCARD-RESOURCE. Contrast the negative dataexfil-single-outpost-bucket-not-broad (outpost/op-abc/bucket/my-bucket/object/*, one named bucket's objects) which must stay quiet.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PutAclEveryOutpostBucket", "Effect": "Allow", "Action": "s3:PutBucketAcl", "Resource": "arn:aws:s3-outposts:us-east-1:123456789012:outpost/op-abc/bucket/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["WILDCARD-RESOURCE"],
+    "mustNotFind": ["WILDCARD-ACTION"],
+    "minSeverity": { "WILDCARD-RESOURCE": "high" },
+    "nonZeroExit": true
+  }
+}

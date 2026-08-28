@@ -1,0 +1,74 @@
+name: Fuzz Parity
+
+# Nightly differential fuzzer for the analyze() == scan() SAFETY-PARITY invariant
+# (the browser engine may never be MORE permissive than the CLI - threat-model T8).
+# It runs a SEEDED, DETERMINISTIC generator over many mutated policies; a failure
+# prints the exact seed/index/text reproducer, which drops straight into a
+# regression fixture. Deferred from the S6-cigate-doc story and landed here.
+#
+# It is a nightly (not a per-PR) gate: the per-PR ci.yml already runs the bounded
+# parity suite (tests/parity-fuzz.test.js + browser-cli-parity.test.js); this
+# widens the search overnight without slowing PRs.
+
+on:
+  schedule:
+    # 07:17 UTC daily (off the top-of-hour rush). Deterministic run; the seeds
+    # below define the corpus, not the clock.
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: 'Space-separated seeds to sweep'
+        required: false
+        default: '1 2 3 7 42 1337'
+      count:
+        description: 'Policies generated per seed'
+        required: false
+        default: '20000'
+
+# Least privilege: the fuzzer only reads code and runs node. No writes anywhere.
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/iam-blast-radius
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      # Inputs are read via env (never interpolated into the script body) so a
+      # crafted dispatch value cannot inject shell - zizmor template-injection clean.
+      - name: Differential parity fuzz (seeded, deterministic)
+        env:
+          SEEDS: ${{ github.event.inputs.seeds || '1 2 3 7 42 1337' }}
+          COUNT: ${{ github.event.inputs.count || '20000' }}
+        run: |
+          set -euo pipefail
+          # Validate inputs are simple integers / integer lists - refuse anything else.
+          case "$COUNT" in
+            ''|*[!0-9]*) echo "invalid count: $COUNT" >&2; exit 2 ;;
+          esac
+          for s in $SEEDS; do
+            case "$s" in
+              ''|*[!0-9]*) echo "invalid seed: $s" >&2; exit 2 ;;
+            esac
+          done
+          rc=0
+          for s in $SEEDS; do
+            echo "::group::seed=$s count=$COUNT"
+            if ! node tests/fuzz/parity-fuzz.mjs --seed "$s" --count "$COUNT"; then
+              rc=1
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "PARITY FUZZ FAILED - see the reproducer(s) above (seed + index + text)." >&2
+            exit 1
+          fi

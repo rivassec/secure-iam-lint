@@ -1,0 +1,26 @@
+{
+  "name": "Cross-account whole-container read fully removed by an explicit Deny (negative; deny)",
+  "note": "S2-crossaccount-scoped-surface (B) Deny interaction: the Allow would be a cross-account whole-table read (table in 999999999999, subject 123456789012), but a same-policy unconditional Deny on dynamodb:Scan removes the capability (AWS explicit-Deny precedence). CROSS-ACCOUNT-DATA-READ must NOT survive in the authoritative table - a denied read is not a grant. Witnesses the negative and Deny cells.",
+  "context": { "subjectAccount": "123456789012", "partition": "aws" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowScanPartner",
+        "Effect": "Allow",
+        "Action": "dynamodb:Scan",
+        "Resource": "arn:aws:dynamodb:us-east-1:999999999999:table/orders"
+      },
+      {
+        "Sid": "DenyAllScan",
+        "Effect": "Deny",
+        "Action": "dynamodb:Scan",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["CROSS-ACCOUNT-DATA-READ", "DATA-EXFIL"]
+  }
+}

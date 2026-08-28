@@ -1,0 +1,40 @@
+{
+  "name": "PassRole viability is statement-ORDER-independent (S2-passrole-allstmts)",
+  "note": "Two SEPARATE iam:PassRole Allow statements feed the SAME service (ec2): one is a cross-account DECOY (foreign-account role -> not viable, would demote critical->medium), the other is a VIABLE same-account grant (a role in the subject's own account). Plus ec2:RunInstances to complete the compound path. subjectAccount is the same account as the viable role. Because detectPassRolePaths used to select ONE PassRole statement per service by lowest index and then run the T91 account-viability check on ONLY that one, putting the decoy first demoted the whole path to medium and slipped it under the 'high' exit gate (exit 0 CLEAN), HIDING the viable same-account pass in the other statement; putting the viable grant first reported critical (exit 1). Reordering byte-identical statements must NOT flip the verdict: PassRole viability is an ALL-STATEMENTS property, so a viable same-account grant in ANY statement keeps the path critical regardless of order. The two orderings are enumerated as `orderings`; every one MUST yield critical + exit 1.",
+  "context": { "subjectAccount": "123456789012", "partition": "aws" },
+  "runStatement": {
+    "Sid": "RunEc2",
+    "Effect": "Allow",
+    "Action": ["ec2:RunInstances"],
+    "Resource": "*"
+  },
+  "passStatements": {
+    "decoyCrossAccount": {
+      "Sid": "PassForeignDecoy",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::999900001111:role/ForeignRole"
+    },
+    "viableSameAccount": {
+      "Sid": "PassLocalViable",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::123456789012:role/LocalRole"
+    }
+  },
+  "orderings": [
+    ["decoyCrossAccount", "viableSameAccount", "run"],
+    ["viableSameAccount", "decoyCrossAccount", "run"],
+    ["decoyCrossAccount", "run", "viableSameAccount"],
+    ["run", "viableSameAccount", "decoyCrossAccount"]
+  ],
+  "expect": {
+    "everyOrdering": {
+      "findingId": "PASSROLE-EC2",
+      "severity": "critical",
+      "exitCode": 1,
+      "targetResources": ["arn:aws:iam::123456789012:role/LocalRole"],
+      "mustNotHaveWarningCode": "PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE"
+    }
+  }
+}

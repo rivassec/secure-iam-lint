@@ -1,0 +1,16 @@
+{
+  "name": "Benign: bulk read scoped to a CONCRETE bucket with a key-path wildcard",
+  "note": "S1-breadth-failclosed anti-over-correction control. arn:aws:s3:::my-bucket/prefix/* is arn:-shaped and pins a CONCRETE bucket name (head 'my-bucket', no wildcard); the wildcard scopes only the KEY path WITHIN that one named bucket - the least-privilege object-read shape. It must NOT be flagged MALFORMED_RESOURCE_ARN (it is a decided, narrow ARN, not an undecidable value) and must NOT read as broad. Neither surface may fire any masked grant.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::my-bucket/prefix/*" }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": false
+  }
+}

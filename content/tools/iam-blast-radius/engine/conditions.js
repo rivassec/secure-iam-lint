@@ -25,6 +25,17 @@
 // DOM. Same Condition object -> same classification, every run. Hostile keys and
 // values are only ever read as strings and compared; never interpreted as code.
 
+// S3-dos-budget-all (defense in depth): the classification loops are LINEAR today
+// (O(operators x keys) per statement, O(statements x keys) for unsupportedCondition-
+// Keys, both reached from analyze()'s coverage enrichment), and they never touch the
+// shared matcher, so they charged the cooperative work budget ZERO. That is the exact
+// shape of every DoS residual in this story: an uncharged policy-derived loop that a
+// FUTURE superlinear regression could ride to a multi-second COMPLETE verdict (T5/T8).
+// chargeWork is a no-op while no budget is armed, so charging per operator/key/value
+// inspected changes no verdict but makes these loops fail CLOSED if they ever blow up.
+// glob.js is a leaf module (no imports), so this introduces no import cycle.
+import { chargeWork } from './glob.js';
+
 // The four classes a condition entry can carry.
 export const CONDITION_CLASS = Object.freeze({
   CONSTRAINT: 'constraint', // narrows when / where / who
@@ -80,25 +91,59 @@ const KNOWN_KEYS = Object.freeze({
   'kms:viaservice': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'KMS calling service' },
 });
 
+// Recognized federation PROVIDER HOSTS (docs/trust-policy-semantics.md 4.4/4.5).
+// A federation claim key is `<provider-host>:<claim>`; the host must be one AWS
+// actually federates against - a built-in web-identity provider, GitHub Actions'
+// OIDC host, or the SAML pseudo-provider `saml`. Keys are compared lowercased.
+//
+// S2-airtight-incomplete fix (c): federationMeta previously matched ANY key ending
+// ":aud"/":sub" with NO host validation, so an attacker-named key like
+// `acme:customkey:sub` or `totally.made.up:aud` short-circuited the unknown-key
+// arm and was credited as a modeled federation constraint - suppressing the
+// incomplete backstop (it never reached contextRequiredKeys). An UNRECOGNIZED
+// provider host now falls through to context-required -> unsupportedConditions ->
+// coverage incomplete (unsupported does NOT mean safe). Real federation keys stay
+// understood. This is a curated allowlist by design: a "looks-like-a-domain"
+// heuristic cannot separate `token.actions.githubusercontent.com` (real) from
+// `totally.made.up` (fabricated), so only known provider hosts are modeled and
+// every other provider is honestly reported as unmodeled/incomplete.
+const RECOGNIZED_FEDERATION_HOSTS = Object.freeze(new Set([
+  'saml', // SAML pseudo-provider: saml:aud / saml:sub (4.5)
+  // The four built-in AWS web-identity providers (4.4).
+  'cognito-identity.amazonaws.com',
+  'www.amazon.com',
+  'graph.facebook.com',
+  'accounts.google.com',
+  // GitHub Actions OIDC (the worked example in 4.4).
+  'token.actions.githubusercontent.com',
+]));
+
 // OIDC / SAML federation claim keys (docs/trust-policy-semantics.md 4.4/4.5)
 // carry a provider-host prefix rather than a fixed name, so they cannot live in
-// the exact-match KNOWN_KEYS table: GitHub Actions uses
-// `token.actions.githubusercontent.com:aud` / `:sub`, other OIDC providers use
-// their own host, and SAML uses `saml:aud` / `saml:sub`. This resolver models
-// them so a federated trust policy's aud/sub keys are UNDERSTOOD (not reported as
-// unsupported). A positive `aud` (audience) check is a valid CONSTRAINT - AWS docs
-// say recognize it, do not flag it "missing". A `sub` (subject) check narrows WHICH
-// workload may assume the role; its breadth is value-driven and handled at
-// classification time (a wildcarded `repo:org/*` subject is broad, not a dependable
-// single-workload guardrail). Returns null for any non-federation key.
+// the exact-match KNOWN_KEYS table. This resolver models them - but ONLY for a
+// RECOGNIZED provider host (RECOGNIZED_FEDERATION_HOSTS) - so a federated trust
+// policy's aud/sub keys are UNDERSTOOD (not reported as unsupported), while an
+// unrecognized/attacker-named provider key returns null and is treated as an
+// unknown, context-required key that flips coverage incomplete. A positive `aud`
+// (audience) check is a valid CONSTRAINT - AWS docs say recognize it, do not flag
+// it "missing". A `sub` (subject) check narrows WHICH workload may assume the
+// role; its breadth is value-driven and handled at classification time (a
+// wildcarded `repo:org/*` subject is broad, not a dependable single-workload
+// guardrail). The claim is the LAST colon-delimited segment and the host is
+// everything before it, so a multi-colon attacker key (`acme:customkey:sub`) has
+// host `acme:customkey`, which is not recognized -> null. Returns null for any
+// non-federation or unrecognized-provider key.
 function federationMeta(keyLower) {
-  if (keyLower.endsWith(':aud')) {
+  const lastColon = keyLower.lastIndexOf(':');
+  if (lastColon <= 0 || lastColon === keyLower.length - 1) return null;
+  const claim = keyLower.slice(lastColon + 1);
+  if (claim !== 'aud' && claim !== 'sub') return null;
+  const host = keyLower.slice(0, lastColon);
+  if (!RECOGNIZED_FEDERATION_HOSTS.has(host)) return null;
+  if (claim === 'aud') {
     return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-audience', label: 'Federated audience (aud)', federation: 'aud' };
   }
-  if (keyLower.endsWith(':sub')) {
-    return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-subject', label: 'Federated subject (sub)', federation: 'sub' };
-  }
-  return null;
+  return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-subject', label: 'Federated subject (sub)', federation: 'sub' };
 }
 
 // Base operators (after stripping set qualifier + IfExists) whose match is
@@ -621,6 +666,18 @@ export function classifyConditions(condition) {
       if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
       const keys = Object.keys(block).sort();
       for (const key of keys) {
+        // Defense in depth (A-condition-budget): charge proportional to the PER-VALUE
+        // work this key costs, NOT a flat one-unit-per-KEY. classifyConditionEntry ->
+        // toValueArray/valueNarrowsKey inspect EVERY value in the key's value array
+        // (O(values)), so a key carrying a huge value array did O(values) UNCHARGED work
+        // under the old chargeWork(keys.length) - the exact uncharged-loop shape a future
+        // superlinear regression could ride to a multi-second COMPLETE verdict (T5/T8).
+        // Charging the value-array length (floored at 1 so an empty/scalar key still
+        // charges the prior per-key unit) makes that work participate in the cooperative
+        // budget - the same way the glob.js charge sites charge proportional to the
+        // characters they compare, not a flat per-call constant. chargeWork is a no-op
+        // while no budget is armed, so this changes NO verdict.
+        chargeWork(Math.max(1, toValueArray(block[key]).length));
         entries.push(classifyConditionEntry(op, key, block[key], presenceCheckedKeys));
       }
     }

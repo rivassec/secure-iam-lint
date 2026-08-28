@@ -1,0 +1,278 @@
+// analyze-format.js - finding presentation + summary: severity ordering, sortFindings, findingToRow columns, summarize categories, service labels, family stamping. Extracted (behavior-preserving).
+import { classifyConditions } from './conditions.js';
+
+// Result-shape schema version stamped on every analyze() result (bumped on breaking result changes).
+export const CATALOG_VERSION = '1';
+
+export const SEVERITY_ORDER = Object.freeze({
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4,
+});
+
+export function severityRank(sev) {
+  return Object.prototype.hasOwnProperty.call(SEVERITY_ORDER, sev)
+    ? SEVERITY_ORDER[sev]
+    : 99;
+}
+
+/**
+ * Deterministically order findings for presentation: most severe first, then
+ * by originating statement index, then by rule id, then by escalation service
+ * (stable tiebreak for multiple services anchored on one statement).
+ *
+ * Returns a new array; does not mutate the input.
+ *
+ * @param {Array<object>} findings
+ * @returns {Array<object>}
+ */
+export function sortFindings(findings) {
+  const list = Array.isArray(findings) ? findings.slice() : [];
+  list.sort((a, b) => {
+    const ra = severityRank(a && a.severity);
+    const rb = severityRank(b && b.severity);
+    if (ra !== rb) return ra - rb;
+    const ia = a && typeof a.statementIndex === 'number' ? a.statementIndex : Infinity;
+    const ib = b && typeof b.statementIndex === 'number' ? b.statementIndex : Infinity;
+    if (ia !== ib) return ia - ib;
+    const idA = (a && a.id) || '';
+    const idB = (b && b.id) || '';
+    if (idA !== idB) return idA < idB ? -1 : 1;
+    const sa = (a && a.escalation && a.escalation.service) || '';
+    const sb = (b && b.escalation && b.escalation.service) || '';
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
+  });
+  return list;
+}
+
+// Fixed column contract for the accessible findings table. The renderer
+// (app.js) walks these keys in order; keeping the contract here means the
+// column set is unit-testable without a DOM.
+//
+// IAM-101: the main table is limited to scannable fields only. The three prose
+// columns (why / limit / remediation) that used to sit in the row - and made
+// rows ~650px tall by wrapping - are moved OUT into a per-row expandable detail
+// (see renderDetailRow in app.js). They stay on the finding object (export +
+// detail still carry them); they are simply no longer table COLUMNS.
+export const FINDING_COLUMNS = Object.freeze([
+  { key: 'severity', label: 'Severity' },
+  { key: 'title', label: 'Finding' },
+  { key: 'statement', label: 'Statement' },
+  { key: 'actions', label: 'Actions' },
+  { key: 'resources', label: 'Resources' },
+  // IAM-104: the single 'Confidence' column is split into two orthogonal signals.
+  { key: 'policyEvidence', label: 'Policy evidence' },
+  { key: 'pathExploitability', label: 'Path exploitability' },
+]);
+
+// IAM-101: the prose fields that were table columns are now rendered in each
+// finding's expandable detail. Kept as a documented, ordered contract so the
+// detail renderer (app.js) and any future export stay in sync.
+export const FINDING_DETAIL_FIELDS = Object.freeze([
+  { key: 'why', label: 'Why it matters' },
+  { key: 'limit', label: 'What this does NOT prove' },
+  { key: 'remediation', label: 'Remediation' },
+]);
+
+export function textList(value) {
+  if (Array.isArray(value)) return value.map((v) => String(v)).join(', ');
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
+/**
+ * Project a finding into the ordered list of table cells (plain strings only).
+ * All values are stringified here; the renderer places each string via
+ * textContent, so hostile SIDs/ARNs/conditions ride through as inert text.
+ *
+ * @param {object} finding
+ * @returns {Array<{key:string,label:string,text:string}>}
+ */
+export function findingToRow(finding) {
+  const f = finding || {};
+  return FINDING_COLUMNS.map((col) => {
+    let text;
+    switch (col.key) {
+      case 'severity':
+        text = String(f.severity || 'info');
+        break;
+      case 'statement':
+        // IAM-701: a compound cross-statement finding is granted by MORE THAN
+        // ONE statement; showing only the anchor Sid next to the combined action
+        // list would imply that one statement granted everything. List every
+        // contributing statement's Sid so the cell never mis-attributes an
+        // action's origin (the per-action breakdown rides in contributingStatements
+        // / the export). Single-statement findings render their one Sid as before.
+        text = Array.isArray(f.contributingStatements) && f.contributingStatements.length > 1
+          ? f.contributingStatements
+            .map((s) => String(s.statementSid || `(index ${s.statementIndex})`))
+            .join(', ')
+          : String(f.statementSid || '');
+        break;
+      case 'actions':
+        text = textList(f.actions);
+        break;
+      case 'resources':
+        text = textList(f.resources);
+        break;
+      default:
+        text = textList(f[col.key]);
+    }
+    return { key: col.key, label: col.label, text };
+  });
+}
+
+// --- Risk summary (IAM-106) --------------------------------------------------
+// A scannable header rendered above the authoritative findings table: counts of
+// the four highlighted capability families plus the single highest-risk
+// escalation path in one line. Pure and deterministic (like findingToRow); the
+// app.js renderer walks this structure with createElement+textContent only.
+
+// Ordered category contract for the summary header. The renderer walks these in
+// order, so display order is fixed here (highest-leverage family first).
+export const SUMMARY_CATEGORIES = Object.freeze([
+  { key: 'privEscPaths', label: 'Privilege-escalation paths' },
+  { key: 'roleAssumption', label: 'Role-assumption capabilities' },
+  { key: 'sensitiveData', label: 'Sensitive-data access capabilities' },
+  // IAM-201: renamed - the count reflects only standalone WILDCARD-RESOURCE rows
+  // that survive correlation (same-statement capability subsumption folds the
+  // rest into their capability finding), so it is a count of STANDALONE broad-
+  // resource findings, not of every broad-resource grant in the policy.
+  { key: 'broadResource', label: 'Standalone broad-resource findings' },
+]);
+
+// Documented, deterministic mapping from finding id -> summary category. Findings
+// whose id is absent here (DIRECT-IAM-ADMIN, WILDCARD-ACTION, NOTACTION-ALLOW,
+// DESTRUCTIVE-ACTION, DETECTION-IMPAIRMENT) remain in the authoritative table but
+// are not part of these four highlighted families - the summary is a curated
+// risk overview, not a total. WILDCARD-ACTION is action breadth, not resource
+// breadth, so it is intentionally NOT counted under Standalone broad-resource findings.
+export const SUMMARY_CATEGORY_BY_ID = Object.freeze({
+  'PASSROLE-LAMBDA': 'privEscPaths',
+  'PASSROLE-EC2': 'privEscPaths',
+  'PASSROLE-SERVICE': 'privEscPaths',
+  'POLICY-VERSION': 'privEscPaths',
+  'ATTACH-POLICY': 'privEscPaths',
+  'PUT-INLINE-POLICY': 'privEscPaths',
+  'TRUST-POLICY-MODIFY': 'privEscPaths',
+  'CREDENTIAL-CREATION': 'privEscPaths',
+  'ASSUME-ROLE-EXPANSION': 'roleAssumption',
+  'DATA-EXFIL': 'sensitiveData',
+  'KMS-DECRYPT': 'sensitiveData',
+  // IAM-706: a resource/variable-scoped data-read capability is a sensitive-data
+  // access capability too (lower certainty than DATA-EXFIL, still counted here).
+  'DATA-READ': 'sensitiveData',
+  'WILDCARD-RESOURCE': 'broadResource',
+});
+
+// Human labels for the services a PassRole path can execute code under. Falls
+// back to the raw service token (inert data) so an unmapped service is still
+// rendered truthfully.
+export const SERVICE_LABELS = Object.freeze({
+  lambda: 'Lambda',
+  ec2: 'EC2',
+  ecs: 'ECS',
+  glue: 'Glue',
+  cloudformation: 'CloudFormation',
+  sagemaker: 'SageMaker',
+  codebuild: 'CodeBuild',
+  datapipeline: 'Data Pipeline',
+});
+
+export function serviceLabel(service) {
+  if (!service) return 'the target service';
+  return Object.prototype.hasOwnProperty.call(SERVICE_LABELS, service)
+    ? SERVICE_LABELS[service]
+    : String(service);
+}
+
+// A one-line "Principal -> ... -> ..." path for an escalation finding, or null
+// when the finding is not an escalation path. Wording stays capability-accurate
+// (target role privileges are "unknown"), consistent with IAM-103.
+export function pathLineFor(finding) {
+  const esc = finding && finding.escalation;
+  if (!esc || typeof esc.technique !== 'string') return null;
+  switch (esc.technique) {
+    case 'passrole-service-execution':
+      return `Principal -> iam:PassRole -> ${serviceLabel(esc.service)} ` +
+        '-> passed role (unknown privileges)';
+    case 'assume-role-expansion':
+      return 'Principal -> sts:AssumeRole -> assumed role (unknown privileges)';
+    case 'policy-version-manipulation':
+      return 'Principal -> iam:CreatePolicyVersion -> attacker-selected policy version';
+    case 'attach-policy':
+      return 'Principal -> iam:Attach*Policy -> attacker-chosen managed policy';
+    case 'put-inline-policy':
+      return 'Principal -> iam:Put*Policy -> attacker-authored inline policy';
+    case 'trust-policy-modification':
+      return 'Principal -> iam:UpdateAssumeRolePolicy -> re-trusted role (unknown privileges)';
+    case 'credential-creation':
+      return 'Principal -> iam:Create*/Update* credential -> new usable principal credentials';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Build the deterministic risk summary for a (already display-sorted) finding
+ * list. Counts are taken over the supplied findings as displayed - subsumed
+ * subordinate findings (IAM-105) are already folded out, so they never inflate a
+ * count. The highest-risk path is the first finding, in display order, that is an
+ * escalation path (has an `escalation` enrichment); since findings are sorted
+ * most-severe-first, that is the highest-severity path. null when none exists.
+ *
+ * @param {Array<object>} findings display-ordered findings
+ * @returns {{categories:Array<{key:string,label:string,count:number}>,
+ *            highestRisk:({id:string,severity:string,path:string}|null),
+ *            total:number}}
+ */
+export function summarize(findings) {
+  const list = Array.isArray(findings) ? findings : [];
+  const counts = { privEscPaths: 0, roleAssumption: 0, sensitiveData: 0, broadResource: 0 };
+  for (const f of list) {
+    const cat = f && SUMMARY_CATEGORY_BY_ID[f.id];
+    if (cat) counts[cat] += 1;
+  }
+  const categories = SUMMARY_CATEGORIES.map((c) => ({
+    key: c.key,
+    label: c.label,
+    count: counts[c.key],
+  }));
+
+  let highestRisk = null;
+  for (const f of list) {
+    const path = pathLineFor(f);
+    if (path) {
+      highestRisk = { id: String(f.id || ''), severity: String(f.severity || 'info'), path };
+      break;
+    }
+  }
+
+  return { categories, highestRisk, total: list.length };
+}
+
+// IAM-504: explainable evidence. Every finding must expose the policy FAMILY it
+// was evaluated under alongside the statement/action/resource/condition/rule-id/
+// certainty/limitation it already carries. The family is an analyze()-level fact
+// (rules.js / escalation.js do not know it), so it is stamped here. Findings are
+// deep-frozen at creation, so we return NEW objects with the field added rather
+// than mutating. Subsumed sub-findings (IAM-105/201) are findings too and get the
+// same stamp so a folded row is equally explainable in the export.
+export function stampFamily(finding, family) {
+  if (!finding || typeof finding !== 'object') return finding;
+  const subsumed = Array.isArray(finding.subsumed)
+    ? finding.subsumed.map((s) => Object.freeze({ ...s, policyFamily: family }))
+    : finding.subsumed;
+  const stamped = { ...finding, policyFamily: family };
+  if (subsumed !== finding.subsumed) stamped.subsumed = Object.freeze(subsumed);
+  // IAM-506: attach the condition classification for the condition block this
+  // finding carries. This makes the path-exploitability story explainable (why a
+  // condition does or does not read like a guardrail) without ever claiming a
+  // runtime allow/deny. `null` conditions classify to a stable "not present"
+  // shape. This is additive evidence; it does not change severity/exploitability
+  // (the escalation/rule engines already fold conditions into those numbers).
+  stamped.conditionClassification = classifyConditions(finding.conditions);
+  return Object.freeze(stamped);
+}

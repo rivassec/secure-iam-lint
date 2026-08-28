@@ -30,189 +30,50 @@
 //   4 internal invariant error
 // A CI gate treats 1,2,3,4 as FAILED. Code 3 is DISTINCT from 0 and from 1.
 
-import { scan, EXIT } from '../cli/scan.mjs';
+import { randomUUID } from 'node:crypto';
+import { resolveFiles, walkFiles } from './action-enumerate.mjs';
+export * from './action-enumerate.mjs';
+import {
+  formatOutputs, formatSummary,
+} from './action-output.mjs';
+export * from './action-output.mjs';
+import {
+  exceedsInputByteCap, sarifOutputIsContained, sarifTargetContainedFs, getInput, readInputs, budgetMsInput,
+} from './action-inputs.mjs';
+export * from './action-inputs.mjs';
+import {
+  exitRank, normalizeExitCode, worstExitCode, aggregateStatus, usageResult, internalFileResult, oversizeFileResult, aggregateCapResult, symlinkExcludedResult, matchedExcludedSymlinks, symlinkExcludedUnits, enumerationUnreadableResult, enumerationTruncatedResult, matchedUnreadableDirs, enumerationUnits,
+} from './action-results.mjs';
+export * from './action-results.mjs';
+import {
+  SARIF_KEEP_RANK, resultKeepPriority, aggEstBytes, aggEstResultBytes, aggEstRunBytes, aggEstRunScaffoldBytes, aggregateFamily, aggregateSarifTruncatedResult, truncationMessage, buildAggregateSarif, VALUE_CONTROL_CHAR_RE, KEY_CONTROL_CHAR_RE,
+} from './action-aggregate.mjs';
+export * from './action-aggregate.mjs';
+import {
+  splitPaths, hasMagic, normalizePattern, escapeRegexChar, MAX_GLOB_PATTERN_LENGTH, MAX_GLOB_WILDCARDS, countGlobWildcards, globPatternTooComplex, parseCharClass, TOK_STAR2SLASH, TOK_STAR2, TOK_STAR1, TOK_ONE, compileGlobTokens, globMatchPath, globCanMatchUnderDir, globToRegExp,
+} from './action-glob.mjs';
+export * from './action-glob.mjs';
+import { scan, EXIT, DEFAULT_BUDGET_MS } from '../cli/scan.mjs';
 import { buildSarifLog } from '../cli/sarif.mjs';
 // READ-ONLY canonical version manifest (browser-safe, no Node deps) so the SARIF
 // semanticVersion ties to the same identifiers the engine reports.
 import { VERSION_MANIFEST } from '../content/tools/iam-blast-radius/engine/version.js';
+// READ-ONLY: the SINGLE source of the input byte cap. The per-file statSync pre-guard
+// (main()'s io.readFile) rejects an over-cap file BEFORE reading it into memory
+// (threat-model T5), importing LIMITS.MAX_BYTES from the SAME module the engine's
+// validate() enforces so the pre-guard and the engine guard can never drift.
+import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 
 export { EXIT };
 
 // --- Small helpers ------------------------------------------------------------
 
-function isNonEmptyString(v) {
-  return typeof v === 'string' && v.trim().length > 0;
-}
+import { isNonEmptyString, toCount, positiveIntInput, utf8ByteLength } from './action-utils.mjs';
+export * from './action-utils.mjs';
+import { DEFAULT_MAX_SARIF_RESULTS, DEFAULT_MAX_SARIF_BYTES, SARIF_OUTPUT_TRUNCATED_REASON, INPUT_TOO_LARGE, DEFAULT_SARIF_OUTPUT, DEFAULT_MAX_FILES, DEFAULT_MAX_TOTAL_BYTES, AGGREGATE_CAP_REASON, SYMLINK_EXCLUDED_REASON, ENUMERATION_UNREADABLE_REASON, ENUMERATION_TRUNCATED_REASON, ENUMERATION_MAX_FILES, ENUMERATION_MAX_DIRS } from './action-consts.mjs';
+export * from './action-consts.mjs';
 
-function toCount(n) {
-  return Number.isFinite(n) ? n : 0;
-}
 
-// --- Input reading (zero-dep @actions/core replacement) -----------------------
-
-// GitHub sets an input named `foo-bar` into the env var `INPUT_FOO-BAR`
-// (uppercased, spaces -> underscores, hyphens PRESERVED) - the exact transform
-// @actions/core.getInput performs. We replicate it, then fall back to a
-// hyphen->underscore variant defensively. Leading/trailing whitespace is trimmed
-// (core trims by default); INTERNAL newlines are preserved so `paths` can be a
-// multi-line block.
-export function getInput(env, name) {
-  const e = env || {};
-  const primary = 'INPUT_' + String(name).replace(/ /g, '_').toUpperCase();
-  let v = e[primary];
-  if (v === undefined) {
-    const alt = 'INPUT_' + String(name).replace(/[ -]/g, '_').toUpperCase();
-    v = e[alt];
-  }
-  return v === undefined ? '' : String(v).trim();
-}
-
-// Read the whole action input set from the environment. Defaults mirror action.yml
-// (fail-on high, sarif-output iam-blast-radius.sarif) so a locally invoked wrapper
-// behaves identically to the runner-provided env.
-//
-// partition has NO DEFAULT on purpose: an OMITTED partition must stay "not
-// asserted" (empty string here -> undefined at the scan boundary), NOT be
-// collapsed to 'aws'. Collapsing it to 'aws' would make scan() treat a DEFAULTED
-// partition as a confident caller assertion, disabling scan's cross-partition
-// fail-closed guard: a critical PassRole finding demoted (critical->medium)
-// against a partition the consumer never vouched for would slip under a 'high'
-// threshold and report a green pass. This mirrors the CLI, which passes
-// `partition: undefined` when --partition is omitted.
-export function readInputs(env) {
-  return {
-    paths: getInput(env, 'paths'),
-    family: getInput(env, 'family'),
-    subjectAccount: getInput(env, 'subject-account'),
-    partition: getInput(env, 'partition'),
-    failOn: getInput(env, 'fail-on') || 'high',
-    sarifOutput: getInput(env, 'sarif-output') || 'iam-blast-radius.sarif',
-  };
-}
-
-// --- paths / glob resolution --------------------------------------------------
-
-// Split the newline-separated `paths` input into trimmed, non-empty pattern lines.
-export function splitPaths(raw) {
-  if (typeof raw !== 'string') return [];
-  return raw
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-
-// A pattern is a glob (not a literal path) iff it contains a glob magic character.
-export function hasMagic(pattern) {
-  return /[*?[]/.test(String(pattern));
-}
-
-// Strip a single leading "./" so "./a/b" and "a/b" resolve identically.
-function normalizePattern(pattern) {
-  let p = String(pattern);
-  if (p.startsWith('./')) p = p.slice(2);
-  return p;
-}
-
-// Escape a single literal character for embedding in a RegExp.
-function escapeRegexChar(c) {
-  return /[.+^${}()|\\]/.test(c) ? `\\${c}` : c;
-}
-
-// Translate a POSIX-style glob into an ANCHORED RegExp. Path-aware:
-//   **/ or trailing ** matches any number of path segments (incl. zero)
-//   *   matches any run of non-'/' characters
-//   ?   matches a single non-'/' character
-//   [..] is a character class (a leading ! is negation)
-// Deterministic; no external glob dependency.
-export function globToRegExp(pattern) {
-  const chars = [...String(pattern)];
-  let re = '';
-  for (let i = 0; i < chars.length; i++) {
-    const c = chars[i];
-    if (c === '*') {
-      if (chars[i + 1] === '*') {
-        const after = chars[i + 2];
-        if (after === '/') {
-          re += '(?:.*/)?'; // **/  -> any depth, including zero segments
-          i += 2;
-        } else if (after === undefined) {
-          re += '.*'; // trailing ** -> anything to end
-          i += 1;
-        } else {
-          re += '.*'; // ** not path-bounded -> anything
-          i += 1;
-        }
-      } else {
-        re += '[^/]*';
-      }
-    } else if (c === '?') {
-      re += '[^/]';
-    } else if (c === '[') {
-      // Character class: copy through the matching ']'.
-      let j = i + 1;
-      let cls = '[';
-      if (chars[j] === '!') { cls += '^'; j += 1; }
-      if (chars[j] === ']') { cls += '\\]'; j += 1; }
-      while (j < chars.length && chars[j] !== ']') {
-        cls += chars[j] === '\\' ? '\\\\' : chars[j];
-        j += 1;
-      }
-      if (j >= chars.length) {
-        // Unterminated class -> treat the '[' as a literal.
-        re += '\\[';
-      } else {
-        re += `${cls}]`;
-        i = j;
-      }
-    } else {
-      re += escapeRegexChar(c);
-    }
-  }
-  return new RegExp(`^${re}$`);
-}
-
-// Resolve the pattern list against a flat list of cwd-relative POSIX file paths.
-// Returns { files, error }. Fail-closed to a USAGE error (exit 2) when:
-//   - there are no patterns at all (MISSING_PATHS),
-//   - a LITERAL (non-glob) path names a file that is not present (MISSING_FILE),
-//   - nothing matches at all (NO_FILES_MATCHED) - an empty/missing glob is NOT a
-//     clean scan.
-// A single glob that matches nothing is tolerated ONLY if another pattern matched;
-// an all-empty result is still a usage error.
-export function resolveFiles(patterns, fileList) {
-  const list = Array.isArray(fileList) ? fileList : [];
-  if (!Array.isArray(patterns) || patterns.length === 0) {
-    return { files: [], error: { reason: 'MISSING_PATHS', message: 'No paths were supplied to scan.' } };
-  }
-  const listSet = new Set(list);
-  const matched = new Set();
-  for (const rawPattern of patterns) {
-    const pattern = normalizePattern(rawPattern);
-    if (hasMagic(pattern)) {
-      const re = globToRegExp(pattern);
-      for (const f of list) {
-        if (re.test(f)) matched.add(f);
-      }
-    } else if (listSet.has(pattern)) {
-      matched.add(pattern);
-    } else {
-      // An explicitly named file that does not exist is a config error, not a
-      // clean scan. Fail closed to exit 2.
-      return {
-        files: [],
-        error: { reason: 'MISSING_FILE', message: `A named policy path was not found: ${pattern}` },
-      };
-    }
-  }
-  const files = [...matched].sort();
-  if (files.length === 0) {
-    return {
-      files: [],
-      error: { reason: 'NO_FILES_MATCHED', message: 'No files matched the supplied paths/globs.' },
-    };
-  }
-  return { files, error: null };
-}
 
 // --- Aggregation (STRICT worst-exit-code semantics) ---------------------------
 
@@ -222,169 +83,41 @@ export function resolveFiles(patterns, fileList) {
 // dominates blocking findings (1), which dominate a clean scan (0). Any code
 // OUTSIDE 0..4 is treated as the internal-worst rank so a garbage code can never
 // masquerade as (or collapse to) a clean 0.
-function exitRank(code) {
-  switch (code) {
-    case EXIT.CLEAN: return 0;
-    case EXIT.FINDINGS: return 1;
-    case EXIT.USAGE: return 2;
-    case EXIT.FAIL_CLOSED: return 3;
-    case EXIT.INTERNAL: return 4;
-    default: return 4;
-  }
-}
-
-// Normalize any value to a code in the contract's range; anything unexpected
-// (non-integer, out of range) fails closed to INTERNAL - NEVER to CLEAN.
-function normalizeExitCode(code) {
-  if (code === EXIT.CLEAN || code === EXIT.FINDINGS || code === EXIT.USAGE
-    || code === EXIT.FAIL_CLOSED || code === EXIT.INTERNAL) {
-    return code;
-  }
-  return EXIT.INTERNAL;
-}
-
-// The worst (highest-rank) exit code across a list. Empty list -> USAGE (nothing
-// was scanned, which is itself a config problem), never CLEAN.
-export function worstExitCode(codes) {
-  const list = Array.isArray(codes) ? codes : [];
-  if (list.length === 0) return EXIT.USAGE;
-  let worst = EXIT.CLEAN;
-  for (const raw of list) {
-    const code = normalizeExitCode(raw);
-    if (exitRank(code) > exitRank(worst)) worst = code;
-  }
-  return worst;
-}
-
-// Aggregate analysis status: failed dominates partial dominates complete. Empty
-// -> 'failed' (nothing could be analyzed).
-export function aggregateStatus(statuses) {
-  const list = Array.isArray(statuses) ? statuses : [];
-  if (list.length === 0) return 'failed';
-  if (list.some((s) => s === 'failed')) return 'failed';
-  if (list.some((s) => s === 'partial')) return 'partial';
-  if (list.every((s) => s === 'complete')) return 'complete';
-  // Any unrecognized status fails closed.
-  return 'failed';
-}
-
-// --- Synthetic result shapes (for config errors + per-file internal errors) ---
-
-// A minimal scan()-compatible result for a config/usage error that never reached a
-// per-file scan (missing family, missing paths, unresolved glob). Shaped so
-// buildSarifLog can project it into an analyzer-state SARIF result.
-function usageResult(reason, message, family) {
-  return Object.freeze({
-    analysisStatus: 'failed',
-    analysisStates: Object.freeze([Object.freeze({
-      analysisState: 'malformed', code: reason, message, path: null,
-    })]),
-    findings: Object.freeze([]),
-    findingsCount: 0,
-    blockingCount: 0,
-    exitCode: EXIT.USAGE,
-    reason,
-    family: family != null ? family : null,
-  });
-}
-
-// A minimal internal-error result for a single file whose scan threw unexpectedly.
-// Fails that unit closed to INTERNAL (exit 4) - NEVER a clean 0 - so the aggregate
-// surfaces it as the worst code.
-function internalFileResult(family, note) {
-  return Object.freeze({
-    analysisStatus: 'failed',
-    analysisStates: Object.freeze([Object.freeze({
-      analysisState: 'internal', code: 'INTERNAL',
-      message: note || 'Scan threw unexpectedly for this file.', path: null,
-    })]),
-    findings: Object.freeze([]),
-    findingsCount: 0,
-    blockingCount: 0,
-    exitCode: EXIT.INTERNAL,
-    reason: 'INTERNAL',
-    family: family != null ? family : null,
-  });
-}
-
-// --- SARIF assembly -----------------------------------------------------------
-
-// Build one multi-run SARIF 2.1.0 log: one run per scanned unit (each carrying its
-// own file URI, rules, and results, including analyzer-state results for a
-// fail-closed file). Reuses the pure per-result SARIF adapter unchanged. For a
-// config error with no scanned files, a single run describes the usage error so
-// the SARIF is never a silent empty/clean document.
-export function buildAggregateSarif(units, manifest = VERSION_MANIFEST) {
-  const list = Array.isArray(units) ? units : [];
-  const runs = list.map((u) => {
-    const opts = isNonEmptyString(u && u.file) ? { file: u.file } : { artifactUri: 'action-inputs' };
-    return buildSarifLog(u.result, opts, manifest).runs[0];
-  });
-  return {
-    $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
-    version: '2.1.0',
-    runs,
-  };
-}
-
-// --- Output + summary rendering ----------------------------------------------
-
-// Render the GITHUB_OUTPUT file body for a { name: value } map. Single-line values
-// use `name=value`; a value containing a newline uses the heredoc delimiter form
-// (GitHub's multi-line output syntax). Our values are all single-line scalars.
-export function formatOutputs(outputs) {
-  let body = '';
-  for (const [k, v] of Object.entries(outputs || {})) {
-    const val = String(v);
-    if (val.includes('\n')) {
-      const delim = `ghadelim_${k}_EOF`;
-      body += `${k}<<${delim}\n${val}\n${delim}\n`;
-    } else {
-      body += `${k}=${val}\n`;
-    }
-  }
-  return body;
-}
-
-// A short, low-leakage markdown step summary. Carries ONLY verdict metadata - no
-// policy content, ARNs, or account ids (threat-model: do not leak policy text into
-// logs or the Security tab of a private repo).
-export function formatSummary(outputs, exitCode) {
-  const passed = exitCode === EXIT.CLEAN;
-  const verdict = passed ? 'PASS (no blocking findings)' : `FAIL (exit ${exitCode})`;
-  const o = outputs || {};
-  return [
-    '## IAM Blast Radius',
-    '',
-    `- Result: ${verdict}`,
-    `- Analysis status: ${o['analysis-status']}`,
-    `- Findings: ${o['findings-count']} (blocking: ${o['blocking-findings-count']})`,
-    `- SARIF: ${o['sarif-path']}`,
-    '',
-    'Reports POTENTIAL blast radius from the supplied policy context only; not effective permissions.',
-    '',
-  ].join('\n');
-}
-
-// --- Core (pure over an injected IO surface; NEVER touches the process) --------
-
-/**
- * Run the action's work and return a structured result WITHOUT writing anything or
- * touching the process. Deterministic given its inputs. Never throws: any
- * unexpected error fails CLOSED to exit 4 (INTERNAL), never 0.
- *
- * @param {object} args
- * @param {object} args.env       environment (INPUT_* map)
- * @param {object} args.io        { listFiles(): string[], readFile(rel): string }
- * @param {(input:object)=>object} [args.scanFn]  injectable scan (default: real scan)
- * @param {object} [args.manifest] injectable version manifest
- * @returns {{exitCode:number, reason:string, analysisStatus:string,
- *   findingsCount:number, blockingCount:number, sarifPath:string,
- *   outputs:object, sarifLog:object, units:Array}}
- */
 export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST } = {}) {
   try {
-    const inputs = readInputs(env);
+    const rawInputs = readInputs(env);
+
+    // --- sarif-output sanitization AT THE SOURCE (class-level, S4-action-hardening) --
+    // A hostile sarif-output (absolute, workspace-escaping via "..", or carrying a
+    // control char / newline) must NEVER survive into an output value or the file sink
+    // on ANY return path. Confining it only at its own usage-error branch left the
+    // class OPEN: an EARLIER early return (e.g. MISSING_FAMILY) carried the RAW hostile
+    // value straight into outputs['sarif-path'] and the SARIF write target. Neutralize
+    // it ONCE, before any early return, so every downstream path - usage error, scan,
+    // or the catch-all - reports and writes only the safe default. `inputs` below is
+    // the SANITIZED view used everywhere; `sarifSafe` records whether the caller's
+    // value was itself rejectable (its own exit-2 usage error, emitted below).
+    // Two-layer containment, folded into ONE gate so EVERY early return neutralizes a
+    // hostile value uniformly:
+    //   (a) LEXICAL - absolute / ".."-escape / control char (string-only, always run).
+    //   (b) FILESYSTEM - a relative, ".."-free path whose leading dir component or the
+    //       target file itself is a SYMLINK escaping the workspace. Only the real fs can
+    //       see this, so it runs through the injected io.sarifTargetContained() when the
+    //       caller provides one (main() does; unit tests with a pure in-memory io do not,
+    //       and correctly skip it - there is no filesystem to traverse). A resolver that
+    //       throws fails CLOSED (treated as an escape). This closes the CLASS: the lexical
+    //       spellings AND the symlink shape of "arbitrary write outside the workspace".
+    const lexicallySafe = sarifOutputIsContained(rawInputs.sarifOutput);
+    let realPathSafe = true;
+    if (lexicallySafe && io && typeof io.sarifTargetContained === 'function') {
+      try {
+        realPathSafe = io.sarifTargetContained(rawInputs.sarifOutput) === true;
+      } catch {
+        realPathSafe = false; // any resolver error -> cannot vouch -> fail closed
+      }
+    }
+    const sarifSafe = lexicallySafe && realPathSafe;
+    const inputs = sarifSafe ? rawInputs : { ...rawInputs, sarifOutput: DEFAULT_SARIF_OUTPUT };
 
     // --- Adapter-owned usage validation (exit 2), before any scanning. --------
     if (!isNonEmptyString(inputs.family)) {
@@ -399,21 +132,129 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
       }], inputs, manifest);
     }
 
+    // --- sarif-output confinement (exit 2), before any scanning or writing. ----
+    // The Action's contract is to write a SARIF FILE IN THE WORKSPACE. A caller-
+    // supplied absolute path or one escaping the workspace via ".." (or one carrying a
+    // control char) would be an arbitrary-file-write / output-forgery vector, so it
+    // fails CLOSED as a usage error. The hostile value was ALREADY swapped for the safe
+    // default in `inputs` above, so it never reaches an output line or the file sink.
+    if (!sarifSafe) {
+      return finalize([{
+        file: null,
+        result: usageResult(
+          'UNSAFE_SARIF_OUTPUT',
+          'The "sarif-output" input must be a RELATIVE path inside the workspace. '
+            + 'An absolute path, one escaping the workspace via "..", one containing '
+            + 'a control character, or one whose directory component or target file is a '
+            + 'symlink escaping the workspace is rejected.',
+          inputs.family,
+        ),
+      }], inputs, manifest);
+    }
+
     const patterns = splitPaths(inputs.paths);
+
+    // S1-symlink-failclosed: recover the symlink entries walkFiles excluded (it never
+    // follows a symlink, for traversal safety) and, for EACH one whose path matches a scan
+    // pattern, build an explicit fail-closed (exit 3) 'incomplete' unit. Without this, a
+    // symlinked policy file that matches the glob is silently dropped from enumeration and,
+    // if the other real files analyze clean, the aggregate would report complete / exit 0 -
+    // the exact "one file quietly falls out of the aggregate" the threat model forbids. An
+    // unrelated symlink (matching no pattern) contributes nothing, so a monorepo full of
+    // unrelated symlinks does not false-fail. These units are folded into EVERY downstream
+    // return path (usage-error resolveFiles branch AND the scan branch) so the exit-3 verdict
+    // can never be lost.
+    const excludedSymlinks = io && typeof io.listExcludedSymlinks === 'function'
+      ? io.listExcludedSymlinks() : [];
+    const symlinkUnits = symlinkExcludedUnits(patterns, excludedSymlinks, inputs.family);
+
+    // S2-action-enumeration: recover the enumeration fail-closed signals walkFiles records -
+    // directories that could not be read (their subtree invisible) and whether the walk was
+    // truncated at its file ceiling - and build fail-closed (exit 3) 'incomplete' units for
+    // them. Without this, a chmod-000 subtree holding an admin policy, or a truncated walk,
+    // would let the aggregate report complete / exit 0 with candidate files silently dropped -
+    // the exact "a candidate policy file quietly falls out of enumeration" the threat model
+    // forbids. An unreadable dir no scan pattern could descend into contributes nothing (parity
+    // with an unrelated directory symlink), so a monorepo with unrelated unreadable dirs does
+    // not false-fail. These units are folded into EVERY downstream return path (the usage-error
+    // resolveFiles branch AND the scan branch) so the exit-3 verdict can never be lost.
+    const unreadableDirs = io && typeof io.listUnreadableDirs === 'function'
+      ? io.listUnreadableDirs() : [];
+    const enumTruncated = io && typeof io.enumerationTruncated === 'function'
+      ? io.enumerationTruncated() === true : false;
+    const enumUnits = enumerationUnits(patterns, unreadableDirs, enumTruncated, inputs.family);
+
     const { files, error } = resolveFiles(patterns, io && typeof io.listFiles === 'function' ? io.listFiles() : []);
     if (error) {
       return finalize([{
         file: null,
         result: usageResult(error.reason, error.message, inputs.family),
-      }], inputs, manifest);
+      }, ...symlinkUnits, ...enumUnits], inputs, manifest);
     }
 
-    // --- Scan each resolved file READ-ONLY. -----------------------------------
+    // --- Scan each resolved file READ-ONLY, under the AGGREGATE ceiling. -------
+    // `files` is already in a STABLE sorted order (resolveFiles), so which files fall
+    // under vs over the cap is deterministic. Two cumulative counters bound the whole set:
+    // scannedCount (matched-file COUNT ceiling) and totalBytes (aggregate UTF-8 BYTE
+    // ceiling). On breach the loop STOPS and a fail-closed 'incomplete' unit is appended;
+    // the findings gathered so far are preserved. See the S6-action-aggregate-cap note.
     const units = [];
+    let scannedCount = 0;
+    let totalBytes = 0;
+    let capBreach = null;
     for (const rel of files) {
+      // COUNT ceiling: once maxFiles files have been fully analyzed, the NEXT file trips
+      // the cap. Checked before any read/scan so no further work is done past the ceiling.
+      if (scannedCount >= inputs.maxFiles) {
+        capBreach = {
+          message: `Aggregate file-count ceiling reached (max-files=${inputs.maxFiles}): `
+            + `${files.length} file(s) matched but only the first ${scannedCount} were analyzed `
+            + 'in a stable sorted order. The remaining '
+            + `${files.length - scannedCount} file(s) were NOT analyzed, so this run is INCOMPLETE `
+            + 'and FAILS CLOSED (exit 3) - it is never reported as a clean pass. Raise max-files '
+            + 'for a legitimately large policy set.',
+        };
+        break;
+      }
+
+      let text;
+      try {
+        text = io.readFile(rel);
+      } catch (e) {
+        if (e && e.code === INPUT_TOO_LARGE) {
+          // The statSync pre-guard rejected an over-cap file before reading it into
+          // memory (T5). Fail THAT file closed to exit 3 (TOO_LARGE) - the engine's own
+          // verdict - not exit 4, and never a clean pass.
+          units.push({ file: rel, result: oversizeFileResult(inputs.family) });
+        } else {
+          // Any other read throw fails THAT unit closed to INTERNAL (exit 4) - never 0.
+          units.push({ file: rel, result: internalFileResult(inputs.family, `Could not read a file: ${(e && e.message) || 'error'}`) });
+        }
+        // Either way the attempt consumes a count slot so the ceiling accounts for it.
+        scannedCount += 1;
+        continue;
+      }
+
+      // BYTE ceiling: if analyzing this file would push the cumulative UTF-8 byte total
+      // past maxTotalBytes, STOP before scanning it. (A single file larger than the ceiling
+      // trips here with zero prior scans - still a fail-closed exit 3, never a clean pass;
+      // the engine's per-file 1 MiB cap already fails a genuinely oversized file closed.)
+      const bytes = utf8ByteLength(text);
+      if (totalBytes + bytes > inputs.maxTotalBytes) {
+        capBreach = {
+          message: `Aggregate byte ceiling reached (max-total-bytes=${inputs.maxTotalBytes}): `
+            + `${scannedCount} of ${files.length} matched file(s), totalling ${totalBytes} bytes, `
+            + 'were analyzed before the next file would exceed the budget. The remaining file(s) '
+            + 'were NOT analyzed, so this run is INCOMPLETE and FAILS CLOSED (exit 3) - it is never '
+            + 'reported as a clean pass. Raise max-total-bytes for a legitimately large policy set.',
+        };
+        break;
+      }
+      totalBytes += bytes;
+      scannedCount += 1;
+
       let result;
       try {
-        const text = io.readFile(rel);
         if (!isNonEmptyString(text)) {
           // An empty/unreadable file is a usage error for that unit (exit 2), not a
           // clean scan.
@@ -429,6 +270,8 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
             // rather than trusting a defaulted 'aws'. Mirrors the CLI.
             partition: inputs.partition || undefined,
             threshold: inputs.failOn,
+            // Wall-clock budget (S3-dos-budget): overrun fails CLOSED, never clean.
+            budgetMs: inputs.budgetMs,
           });
         }
       } catch (e) {
@@ -438,6 +281,22 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
       }
       units.push({ file: rel, result });
     }
+
+    // On an aggregate-ceiling breach, append the explicit fail-closed 'incomplete' unit so
+    // the partial scan reports exit 3 + an analyzer-state SARIF notification - NEVER clean.
+    if (capBreach) {
+      units.push({ file: null, result: aggregateCapResult(AGGREGATE_CAP_REASON, capBreach.message, inputs.family) });
+    }
+
+    // Fold in the fail-closed units for any scan-pattern-matching excluded symlink so a
+    // clean set of real files can NEVER report exit 0 while a matching policy symlink was
+    // dropped (S1-symlink-failclosed).
+    for (const u of symlinkUnits) units.push(u);
+
+    // Fold in the enumeration fail-closed units (unreadable subtree / truncated walk) so a
+    // clean set of real files can NEVER report exit 0 while a candidate subtree was skipped or
+    // enumeration was cut short (S2-action-enumeration).
+    for (const u of enumUnits) units.push(u);
 
     return finalize(units, inputs, manifest);
   } catch (e) {
@@ -449,7 +308,12 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
 }
 
 function safeInputs(env) {
-  try { return readInputs(env); } catch { return { sarifOutput: 'iam-blast-radius.sarif', family: null }; }
+  try {
+    const inputs = readInputs(env);
+    // Never let a hostile sarif-output survive the catch-all fail-closed path either.
+    if (!sarifOutputIsContained(inputs.sarifOutput)) inputs.sarifOutput = DEFAULT_SARIF_OUTPUT;
+    return inputs;
+  } catch { return { sarifOutput: DEFAULT_SARIF_OUTPUT, family: null }; }
 }
 
 // Aggregate a list of scanned units into the final structured result + outputs.
@@ -476,7 +340,14 @@ function finalize(units, inputs, manifest) {
     'blocking-findings-count': String(blockingCount),
     'analysis-status': analysisStatus,
   };
-  const sarifLog = buildAggregateSarif(units, manifest);
+  // The exit code above is computed from the REAL units, BEFORE the SARIF is built - so the
+  // aggregate DOCUMENT-level truncation below can never downgrade (or inflate) it. The caps
+  // mirror the max-files / max-total-bytes inputs (S2-NEW-SARIF-AGGREGATE).
+  const sarifLog = buildAggregateSarif(units, manifest, {
+    maxResults: inputs.maxSarifResults,
+    maxBytes: inputs.maxSarifBytes,
+    family: inputs.family,
+  });
 
   return {
     exitCode, reason, analysisStatus, findingsCount, blockingCount,
@@ -527,37 +398,8 @@ export function emitArtifacts(final, env, sinks) {
 
 // --- Process entry point ------------------------------------------------------
 
-// A recursive file walk producing cwd-relative POSIX paths. Skips .git and
-// node_modules (never useful policy sources, and skipping them bounds the walk),
-// and never follows symlinks (avoids cycles + traversal out of the workspace).
-function walkFiles(nodeFs, nodePath, baseDir) {
-  const out = [];
-  const MAX_FILES = 200000; // defensive bound against a pathological tree
-  const SKIP_DIRS = new Set(['.git', 'node_modules']);
-  const stack = [''];
-  while (stack.length > 0) {
-    const relDir = stack.pop();
-    const absDir = relDir ? nodePath.join(baseDir, relDir) : baseDir;
-    let entries;
-    try {
-      entries = nodeFs.readdirSync(absDir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const ent of entries) {
-      if (ent.isSymbolicLink()) continue; // never follow symlinks
-      const rel = relDir ? `${relDir}/${ent.name}` : ent.name;
-      if (ent.isDirectory()) {
-        if (SKIP_DIRS.has(ent.name)) continue;
-        stack.push(rel);
-      } else if (ent.isFile()) {
-        out.push(rel);
-        if (out.length >= MAX_FILES) return out;
-      }
-    }
-  }
-  return out;
-}
+
+
 
 export async function main() {
   const nodeFs = await import('node:fs');
@@ -566,9 +408,40 @@ export async function main() {
   // The workspace base: the runner-provided workspace, else the process cwd.
   const baseDir = process.env.GITHUB_WORKSPACE || process.cwd();
 
+  // Walk the tree ONCE (memoized) and expose the real files, the excluded symlink entries,
+  // AND the enumeration fail-closed signals (unreadable directories + a truncation flag);
+  // walkFiles never follows a symlink but records it, and records an unreadable subtree /
+  // truncated walk, so no candidate policy file can silently drop from the aggregate.
+  // The enumeration ceilings are configurable via IAM_BR_ENUM_MAX_FILES / IAM_BR_ENUM_MAX_DIRS
+  // (positive integers) for a legitimately huge tree; absent/invalid each falls back to its
+  // default (ENUMERATION_MAX_FILES / ENUMERATION_MAX_DIRS). The DIRECTORY ceiling bounds a
+  // deep/wide many-directory-few-file tree the file ceiling would never catch (S4-R6-dirbomb).
+  const enumMaxFiles = positiveIntInput(process.env.IAM_BR_ENUM_MAX_FILES, ENUMERATION_MAX_FILES);
+  const enumMaxDirs = positiveIntInput(process.env.IAM_BR_ENUM_MAX_DIRS, ENUMERATION_MAX_DIRS);
+  let walkResult;
+  const walk = () => (walkResult || (walkResult = walkFiles(nodeFs, nodePath, baseDir, enumMaxFiles, enumMaxDirs)));
   const io = {
-    listFiles: () => walkFiles(nodeFs, nodePath, baseDir),
-    readFile: (rel) => nodeFs.readFileSync(nodePath.join(baseDir, rel), 'utf8'),
+    listFiles: () => walk().files,
+    listExcludedSymlinks: () => walk().excludedSymlinks,
+    listUnreadableDirs: () => walk().unreadableDirs,
+    enumerationTruncated: () => walk().truncated === true,
+    // Enforce the MAX_BYTES cap via statSync BEFORE readFileSync (threat-model T5): an
+    // over-cap policy file is rejected with a tagged INPUT_TOO_LARGE error and is never
+    // read into memory. runAction routes that to a fail-closed exit-3 unit for the file.
+    readFile: (rel) => {
+      const abs = nodePath.join(baseDir, rel);
+      if (exceedsInputByteCap(nodeFs.statSync(abs).size)) {
+        const e = new Error('policy file exceeds the input byte limit');
+        e.code = INPUT_TOO_LARGE;
+        throw e;
+      }
+      return nodeFs.readFileSync(abs, 'utf8');
+    },
+    // S4-action-hardening (ROUND 2): the fs-aware half of sarif-output containment.
+    // runAction folds this into its sarifSafe gate so a sarif-output that traverses (or
+    // is) a symlink escaping the workspace fails CLOSED (exit 2, UNSAFE_SARIF_OUTPUT) and
+    // is swapped for the safe default BEFORE any write - not just rejected at the sink.
+    sarifTargetContained: (rel) => sarifTargetContainedFs(nodeFs, nodePath, baseDir, rel),
   };
 
   let final;
@@ -584,7 +457,28 @@ export async function main() {
   // Write SARIF, then ALL outputs, then the summary - BEFORE failing the action.
   const sinks = {
     writeSarif: (rel, text) => {
-      const sarifAbs = nodePath.isAbsolute(rel) ? rel : nodePath.join(baseDir, rel);
+      // Defense in depth (S4-action-hardening): runAction already rejects an unsafe
+      // sarif-output as a usage error, so `rel` here is a confined relative path. The
+      // sink independently REFUSES to write outside the workspace - an absolute path or
+      // one that resolves above baseDir throws (captured as a writeError, never a clean
+      // pass) rather than performing an arbitrary-file-write. This is the last guard on
+      // the ACTION.md contract "writes a SARIF file in the workspace; nothing more".
+      const baseResolved = nodePath.resolve(baseDir);
+      const sarifAbs = nodePath.resolve(baseResolved, rel);
+      const within = sarifAbs === baseResolved
+        || sarifAbs.startsWith(baseResolved + nodePath.sep);
+      if (nodePath.isAbsolute(rel) || !within) {
+        throw new Error(`refusing to write SARIF outside the workspace: ${rel}`);
+      }
+      // Symlink-aware last guard (S4-action-hardening ROUND 2): the LEXICAL `within`
+      // check is TRUE for a path like `reports/x.sarif` even when `reports` is a symlink
+      // to an external dir - the write would then land outside the workspace. runAction
+      // already rejects such a value via io.sarifTargetContained, but the sink verifies
+      // independently (defense in depth) that no existing path component is a symlink
+      // escaping the workspace before writing anything.
+      if (!sarifTargetContainedFs(nodeFs, nodePath, baseResolved, rel)) {
+        throw new Error(`refusing to write SARIF through a symlink outside the workspace: ${rel}`);
+      }
       nodeFs.mkdirSync(nodePath.dirname(sarifAbs), { recursive: true });
       nodeFs.writeFileSync(sarifAbs, text);
     },
@@ -614,12 +508,30 @@ export async function main() {
 // Run only when invoked directly by the runner (`node action/index.mjs`), NOT when
 // imported by a test or another module. Compares this module's URL to the process
 // entry point exactly like cli/iam-br.mjs, so importing it here has no side effect.
+//
+// import.meta.url is REALPATH-resolved by Node's ESM loader, while process.argv[1] is
+// the RAW path. A symlink in the invocation path (an npm `.bin` shim, `npx`, a
+// self-hosted-runner checkout, a macOS `/tmp` -> `/private/tmp` link) makes a RAW-only
+// compare MISS - main() never runs and the process exits 0 having done ZERO analysis,
+// a false green check on a real-risk policy. FAIL CLOSED: run when EITHER the raw entry
+// OR its realpath-resolved form matches, with realpathSync in its OWN try so a resolve
+// failure can never silence a genuine direct invocation. An in-process import matches
+// NEITHER, so importing this module (test/wrapper) still does not auto-run main().
 const invokedDirectly = await (async () => {
   try {
     const entry = process.argv && process.argv[1];
     if (!entry) return false;
     const { pathToFileURL } = await import('node:url');
-    return import.meta.url === pathToFileURL(entry).href;
+    const rawHref = pathToFileURL(entry).href;
+    if (import.meta.url === rawHref) return true;
+    let realHref = null;
+    try {
+      const { realpathSync } = await import('node:fs');
+      realHref = pathToFileURL(realpathSync(entry)).href;
+    } catch {
+      realHref = null;
+    }
+    return realHref !== null && import.meta.url === realHref;
   } catch {
     return false;
   }

@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:aws:s3:...:*:accesspoint/*/object/* (all access points, ALL accounts) must warn",
+  "note": "S1-dataexfil-arn iteration 3 regression, account-wildcard variant. The account segment is '*' AND the resource-id is a resource-type-prefixed leading-wildcard identifier (accesspoint/*/object/*). The old account-wildcard branch only fired when the resource-id STRING itself was leading-wildcard, but here the resource-id string starts with the concrete type 'accesspoint', so that branch missed it and the head-only check missed the deeper wildcard: analyze() ok:true findings=[] and CLI exit 0 CLEAN. This grant reaches every object via every access point in EVERY account - strictly broader than the single-account case. FAIL CLOSED. GetObject is a read verb, so WILDCARD-RESOURCE must NOT fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadAllObjectsAllAccessPointsAllAccounts", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:us-east-1:*:accesspoint/*/object/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

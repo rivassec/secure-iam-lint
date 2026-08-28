@@ -9,9 +9,17 @@
 // round-trip), Markdown via mdEscape() which backslash-escapes every
 // Markdown/HTML metacharacter so an attacker-controlled policy value cannot
 // forge an active link or executable HTML in a downloaded .md (threat-model
-// T1/T6, suite-3 test 99).
+// T1/T6, suite-3 test 99). BOTH paths additionally strip the invisible /
+// reordering spoof class (INVISIBLE_SPOOF, below): bidi/zero-width/default-
+// ignorable format controls that neither backslash-escaping nor JSON.stringify
+// neutralize, so a downloaded/opened report cannot carry a Trojan-Source visual
+// spoof (threat-model T8) - values still round-trip modulo those width-less
+// controls, which have no legitimate rendering in a report.
 
 import { noFindingsMessage } from './coverage.js';
+import {
+  INVISIBLE_SPOOF, NON_ASCII_SPOOF, REPLACEMENT, stripFormatControls, sanitizeTree,
+} from './format-control.js';
 
 const REPORT_TITLE = 'IAM Blast Radius - analysis report';
 
@@ -66,6 +74,22 @@ function warningsOf(analysis) {
   return bc.map((b) => String(b && b.code ? b.code : '')).filter((c) => c.length > 0);
 }
 
+// IAM-S3 / S4-unicode-spoof (Trojan-Source defense, threat-model T1/T6/T8): a
+// policy-derived value can carry INVISIBLE / REORDERING format-control code points
+// (bidi overrides/isolates, zero-width, BOM, SOFT HYPHEN, default-ignorable, ...)
+// that occupy no width or reorder their neighbours, so a downloaded/shared/opened
+// .md or .json report can display a benign-looking grant that differs from the
+// real policy. mdEscape's backslash-escaping never touches them, and JSON.stringify
+// emits them verbatim (they are not control chars), so neither export path stops
+// them. The CLASS - matched by Unicode PROPERTY, never a hand-enumerated range - is
+// defined ONCE for the whole engine in ./format-control.js (INVISIBLE_SPOOF); the
+// same definition is the normalization-boundary strip in model.js and the browser
+// DOM/SVG sink strip, so the class is closed in one place. stripInvisible is the
+// local alias the Markdown path uses; sanitizeTree deep-strips keys AND values for
+// the JSON export (a hostile Condition operator rides through as an object KEY).
+const stripInvisible = stripFormatControls;
+const sanitizeJsonValue = sanitizeTree;
+
 // Fixed, prominent caveat mirrored from the UI disclaimer so an exported file
 // cannot be mistaken for an "effective permissions" statement.
 const CAVEAT =
@@ -105,7 +129,13 @@ export function toJSON(analysis) {
     model: a.model || null,
     graph: a.graph || { nodes: [], edges: [] },
   };
-  return JSON.stringify(payload, null, 2);
+  // IAM-S3 (Trojan-Source defense): strip invisible/reordering format-control
+  // code points from every string value AND object key in the payload before
+  // serializing, so a downloaded/opened .json report cannot carry a bidi/
+  // zero-width visual spoof (a hostile Condition operator surfaces as an object
+  // KEY, so keys are sanitized too). Control chars stay for JSON.stringify to
+  // escape verbatim; only the invisible spoof class is removed.
+  return JSON.stringify(sanitizeJsonValue(payload), null, 2);
 }
 
 function line(parts) {
@@ -120,10 +150,31 @@ function line(parts) {
 // item and forge document structure in a downloaded report. Collapse CR/LF, the
 // Unicode line/paragraph separators, and C0/C1 control chars to a single space
 // so every interpolated value stays on its own line as inert text. Used ONLY by
-// the Markdown serializer; JSON stays byte-verbatim.
+// the Markdown serializer; JSON strips only the invisible spoof class (below),
+// leaving control chars for JSON.stringify to escape verbatim.
+//
+// IAM-S3: after the control/line-separator collapse, also strip the invisible /
+// reordering spoof class (INVISIBLE_SPOOF: bidi controls, zero-width, BOM,
+// default-ignorable, Braille blank). These are REMOVED, not spaced: mdEscape's
+// backslash-escaping never reaches them, so left in they would ride into the
+// exported .md and let a hostile value render reordered/hidden (Trojan-Source).
+// The control collapse runs first so C0/C1/line-separators still become a single
+// space (the line-forge defense); the strip then removes the width-less spoof
+// code points that a space would only make noisier.
+// S4-unicode-spoof iteration 3: after the control collapse + invisible-spoof strip, clamp
+// the value to the AWS-grammar ASCII charset - replace every remaining VISIBLE non-ASCII
+// code point with U+FFFD (NON_ASCII_SPOOF). This closes the SECOND, code-point-free bidi
+// Trojan-Source mechanism (a strong-RTL letter reorders its neutral/numeric neighbours in
+// the rendered .md with no format-control char) AND the \p{Zs} homograph-space class, so a
+// hostile Sid/ARN/condition can neither reorder nor homograph-spoof a downloaded report.
+// Runs BEFORE mdEscape's autolink breaks: U+FFFD is >= 0x80, so it is treated exactly like
+// any other non-ASCII domain letter there (no autolink fail-open reintroduced).
 function mdSafe(value) {
   // eslint-disable-next-line no-control-regex
-  return String(value).replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, ' ');
+  return String(value)
+    .replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, ' ')
+    .replace(INVISIBLE_SPOOF, '')
+    .replace(NON_ASCII_SPOOF, REPLACEMENT);
 }
 
 // IAM-1002 / suite-3 test 99 (threat-model T1/T6): a policy-derived value can be
@@ -161,6 +212,109 @@ const SCHEME_CHAR = (code) =>
 const SCHEME_LETTER = (code) =>
   (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
 
+// IAM-S5 (threat-model T1/T6): a bare email address "local@domain.tld" embedded
+// in a policy-derived value - e.g. an IAM username inside an ARN
+// ("arn:aws:iam::123456789012:user/alice@evil.com"), or a hostile Sid /
+// condition value - is turned into an ACTIVE "mailto:" autolink by GFM,
+// CommonMark-with-autolink, and pandoc's bare-email autolink pass, handing an
+// attacker a clickable contact / tracking link out of a downloaded/shared
+// report. Punctuation-escaping the '@' ("local\@domain") is DEFEATED by
+// cmark-gfm's autolink post-pass for exactly the reason the scheme break above
+// documents: the inline parser CONSUMES a backslash before ASCII punctuation
+// ('@' is punctuation), re-exposing the address to the post-pass. Escaping a
+// char INSIDE the local part only shortens it ("alic\e@..." still autolinks
+// "e@..."), so it fails open. The robust break - mirroring the scheme/www
+// classes - inserts a backslash before the first LETTER/DIGIT of the DOMAIN
+// (immediately after '@'): a backslash before a non-punctuation char survives
+// inline parsing intact, and the email recognizer's forward domain scan then
+// begins on an invalid char, so no address is ever recognized. The address text
+// stays fully readable as inert text.
+//
+// GFM extended-email shape (matched here so we break exactly what would
+// autolink): a local part of [A-Za-z0-9._+-] immediately before '@', then a
+// domain of [A-Za-z0-9._-] that contains at least one '.'. GFM/cmark-gfm/pandoc
+// accept '_' as a domain char (the "no underscore in the last two labels" rule
+// only ever REMOVES an autolink, so ignoring it can never fail OPEN - it only
+// makes us break a few addresses those renderers would leave inert, which is
+// harmless) AND accept a domain that STARTS with '_' (e.g. "dave@_x.evil.com" is
+// autolinked by pandoc). So the domain start char is alnum OR '_', and '_' is a
+// domain-continuation char. Hand-written single left-to-right scan (no
+// backtracking regex) so a hostile no-match value stays O(n), consistent with
+// the scheme scan above.
+const EMAIL_LOCAL = (code) =>
+  (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a) || // A-Z a-z
+  (code >= 0x30 && code <= 0x39) || // 0-9
+  code === 0x2e || code === 0x5f || code === 0x2b || code === 0x2d; // . _ + -
+const ALNUM = (code) =>
+  (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a) ||
+  (code >= 0x30 && code <= 0x39);
+// GFM/pandoc autolink non-ASCII (Unicode) email domains too, so any code point
+// >= 0x80 counts as a domain LETTER for recognition AND break-placement - closes
+// the homograph/non-ASCII fail-open (e.g. admin@<cyrillic-e>vil.example.com). A
+// backslash before a non-ASCII letter survives inline parsing (it is not ASCII
+// punctuation, so cmark-gfm/pandoc do not consume it), invalidating the domain.
+const DOMAIN_LETTER = (code) => ALNUM(code) || code >= 0x80;
+const DOMAIN_CHAR = (code) => DOMAIN_LETTER(code) || code === 0x2e || code === 0x2d || code === 0x5f; // alnum/non-ascii . - _
+// A domain (or its first label) may START with alnum, '_' or '-'. A dot-leading
+// domain ("x@.evil") is genuinely inert (cmark-gfm/pandoc do NOT autolink it), so
+// '.' is correctly excluded. But a HYPHEN-leading domain ("x@-evil.example.com")
+// IS autolinked - cmark-gfm/pandoc's forward domain scan continues over a leading
+// '-' - so a '-' start must enter the break (S5 iteration-3 fail-open fix). The
+// break still lands on the first ALNUM char (a backslash before a non-punctuation
+// char survives inline parsing), so a leading '-'/'_' run stays attached to '@'
+// as inert text while the domain the recognizer sees is invalidated.
+const DOMAIN_START = (code) => DOMAIN_LETTER(code) || code === 0x5f || code === 0x2d; // alnum/non-ascii, _ or -
+
+function breakBareEmails(value) {
+  const str = String(value);
+  const n = str.length;
+  const parts = [];
+  let last = 0; // start of the not-yet-flushed slice
+  let i = 0;
+  while (i < n) {
+    if (str.charCodeAt(i) === 0x40) { // '@'
+      // Need at least one valid local-part char immediately before '@' and a
+      // domain that starts alnum, '_' or '-'. A dot-leading domain is inert so
+      // '.' is excluded, but GFM/pandoc DO autolink '_'-leading AND '-'-leading
+      // domains, so both are valid starts; the surviving backslash is still placed
+      // before the first ALNUM char in the run (never before the leading '_'/'-').
+      const hasLocal = i > 0 && EMAIL_LOCAL(str.charCodeAt(i - 1));
+      if (hasLocal && i + 1 < n && DOMAIN_START(str.charCodeAt(i + 1))) {
+        // Extend over the maximal domain run; require at least one '.' and note
+        // the first ALNUM char in the run. The surviving break is a backslash
+        // before that first alnum (a backslash before a non-punctuation char is
+        // NOT consumed by cmark-gfm's/pandoc's inline-parse escape pass, unlike a
+        // backslash before '_' or '@', which is consumed and re-exposes the
+        // address - fail-open). Any leading '_' stays attached to '@'; the
+        // contiguous domain the recognizer then sees has no alnum before the
+        // backslash, so no valid dotted domain remains and no mailto fires.
+        let e = i + 1; // first domain char (alnum or '_', never a dot)
+        let sawDot = false;
+        let firstAlnum = DOMAIN_LETTER(str.charCodeAt(i + 1)) ? i + 1 : -1;
+        while (e + 1 < n && DOMAIN_CHAR(str.charCodeAt(e + 1))) {
+          e++;
+          if (str.charCodeAt(e) === 0x2e) sawDot = true;
+          if (firstAlnum < 0 && DOMAIN_LETTER(str.charCodeAt(e))) firstAlnum = e;
+        }
+        // Only break a real autolink candidate: a dotted domain that carries at
+        // least one alnum char to place the surviving backslash before. A domain
+        // of pure '_'/'.'/'-' (no alnum) is not autolinked, so leave it inert.
+        if (sawDot && firstAlnum >= 0) {
+          // Emit up to (but not including) the first alnum domain char, then a
+          // literal backslash, then continue the scan from that alnum char.
+          parts.push(str.slice(last, firstAlnum), '\\');
+          last = firstAlnum;
+          i = firstAlnum;
+          continue;
+        }
+      }
+    }
+    i++;
+  }
+  parts.push(str.slice(last));
+  return parts.join('');
+}
+
 function breakAutolinks(value) {
   const str = String(value);
   const n = str.length;
@@ -196,9 +350,13 @@ function breakAutolinks(value) {
       i = j;
     }
   }
+  // Break bare "local@domain.tld" mailto autolinks BEFORE the "www." pass: an
+  // email whose domain is "www.*" (e.g. "a@www.evil.com") would still fire a
+  // "www." autolink after only the email break, so both breaks must stack.
+  const emailBroken = breakBareEmails(parts.join(''));
   // "www." host prefix - break the leading "www" so the www autolink cannot fire.
   // Linear (no unbounded quantifier), so it stays cheap; kept as a regex.
-  return parts.join('').replace(/(w)(ww\.)/gi, '$1\\$2');
+  return emailBroken.replace(/(w)(ww\.)/gi, '$1\\$2');
 }
 
 // IAM-1001 / suite-3 test 99 (threat-model T1/T6): mdSafe() only collapses
@@ -210,9 +368,10 @@ function breakAutolinks(value) {
 // (table cell). CommonMark/GFM/pandoc all render a backslash-escaped punctuation
 // char as inert literal text, so `[click](javascript:alert(1))` and
 // `<img src=x onerror=alert(1)>` render as visible text, never an active link or
-// executable HTML. Finally breakAutolinks() neutralizes the bare-URL/"www."
-// autolink vector that punctuation-escaping alone cannot reach (':' and '/' carry
-// no escape). It runs LAST so its literal backslashes are not themselves escaped.
+// executable HTML. Finally breakAutolinks() neutralizes the bare-URL/"www."/
+// bare-email ("mailto:") autolink vectors that punctuation-escaping alone cannot
+// reach (':' '/' and a re-exposed '@' carry no surviving escape). It runs LAST
+// so its literal backslashes are not themselves escaped.
 // Non-trigger ':' '/' '*' '_' still render unchanged, so ARNs, actions, and
 // wildcards read normally. Applied to EVERY policy-derived interpolation in the
 // Markdown serializer; JSON stays byte-verbatim via JSON.stringify.
@@ -251,11 +410,11 @@ export function toMarkdown(analysis) {
   // the browser) agree (test 71). A blocked report reads "blocked", never a
   // complete/authoritative status.
   out.push(`- Analysis status: ${analysisStatus(a)}`);
-  out.push(`- Selected family: ${selectedFamilyOf(a) || 'none'}`);
-  out.push(`- Rule catalog version: ${a.catalogVersion || '1'}`);
-  out.push(`- Policy family: ${a.family || 'unknown'}`);
+  out.push(`- Selected family: ${mdEscape(selectedFamilyOf(a) || 'none')}`);
+  out.push(`- Rule catalog version: ${mdEscape(a.catalogVersion || '1')}`);
+  out.push(`- Policy family: ${mdEscape(a.family || 'unknown')}`);
   const warnings = warningsOf(a);
-  out.push(`- Warnings: ${warnings.length > 0 ? warnings.join(', ') : '(none)'}`);
+  out.push(`- Warnings: ${warnings.length > 0 ? warnings.map((w) => mdEscape(w)).join(', ') : '(none)'}`);
   out.push(`- Findings: ${counts.findings}`);
   out.push(`- Graph nodes: ${counts.nodes}`);
   out.push(`- Graph edges: ${counts.edges}`);
@@ -272,8 +431,8 @@ export function toMarkdown(analysis) {
     out.push('A clean parse is NOT the same as complete coverage. Unsupported ' +
       'does NOT mean safe.');
     out.push('');
-    out.push(`- Detected family: ${coverage.detected || 'unknown'}`);
-    if (coverage.override) out.push(`- Manual family override: ${coverage.override}`);
+    out.push(`- Detected family: ${mdEscape(coverage.detected || 'unknown')}`);
+    if (coverage.override) out.push(`- Manual family override: ${mdEscape(coverage.override)}`);
     out.push(`- Supported for rule evaluation: ${coverage.supported ? 'yes' : 'no'}`);
     if (s) {
       out.push(`- Statements: ${s.statements.accepted} accepted, ` +
@@ -283,15 +442,15 @@ export function toMarkdown(analysis) {
       out.push('- Unsupported elements: ' +
         (Array.isArray(s.unsupportedElements) && s.unsupportedElements.length > 0
           ? s.unsupportedElements
-            .map((e) => `${String(e.element)}${e.path ? ` at ${String(e.path)}` : ''}`)
+            .map((e) => `${mdEscape(e.element)}${e.path ? ` at ${mdEscape(e.path)}` : ''}`)
             .join(', ')
           : '(none)'));
       out.push('- Evaluation layers NOT covered by this document: ' +
         (Array.isArray(s.missingLayers) && s.missingLayers.length > 0
-          ? s.missingLayers.map((l) => String(l.label)).join(', ')
+          ? s.missingLayers.map((l) => mdEscape(l.label)).join(', ')
           : '(none)'));
       if (s.trustDeny && s.trustDeny.present) {
-        out.push(`- Same-policy trust Deny: ${s.trustDeny.note}`);
+        out.push(`- Same-policy trust Deny: ${mdEscape(s.trustDeny.note)}`);
       }
       out.push(`- Attack-path graph: ${s.graph.truncated ? 'truncated (bounded; findings table stays authoritative)' : 'complete'}.`);
       out.push(`- Build SHA: ${s.versions.buildSha}`);
@@ -304,9 +463,9 @@ export function toMarkdown(analysis) {
       const codes = Array.isArray(coverage.blockingCodes) ? coverage.blockingCodes : [];
       for (const b of codes) {
         out.push(line([
-          '  - ', String(b.code || ''),
-          b.path ? ` at ${String(b.path)}` : '',
-          b.message ? `: ${String(b.message)}` : '',
+          '  - ', mdEscape(b.code || ''),
+          b.path ? ` at ${mdEscape(b.path)}` : '',
+          b.message ? `: ${mdEscape(b.message)}` : '',
         ]));
       }
     } else if (s && s.incomplete) {

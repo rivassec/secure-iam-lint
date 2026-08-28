@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on the bare glob '?*' (any non-empty resource) must warn",
+  "note": "S1-dataexfil-arn iteration 5 regression, NON-arn glob class. '?*' ( '?' = exactly one char, '*' = any run ) matches every resource string of length >=1 - i.e. every resource in every account/service - yet it carries no 'arn:' prefix, so the old arn:-prefix gate read it as NOT broad and the bulk read returned findings=[] exit 0 CLEAN (DATA-EXFIL fail-open, T8). Now decided semantically against the probe battery (matches probes across >=2 distinct accounts), so DATA-EXFIL fires. GetObject is a read verb, so WILDCARD-RESOURCE must NOT fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadEveryQmarkStar", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "?*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

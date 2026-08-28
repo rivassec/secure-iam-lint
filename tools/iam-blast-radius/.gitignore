@@ -1,10 +1,10 @@
 node_modules/
-package-lock.json
 test-results/
 playwright-report/
 .playwright/
 reports/
 .stryker-tmp/
 scratchpad/
+scratchpad-*/
 scratch-*.mjs
 scratch*.mjs

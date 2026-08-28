@@ -1,0 +1,28 @@
+{
+  "name": "Allow + malformed condition value (non-primitive array member)",
+  "note": "IAM-1508 / S2-guard-parity regression. A Condition value array carrying a non-primitive member ([{}]) is rejected by AWS as MalformedPolicyDocument, yet conditions.js toValueArray silently DROPS the member - so the engine evaluated a value set the author did not write. The shared engine must mark coverage INCOMPLETE (MALFORMED_CONDITION_VALUE) so neither surface reports a clean/faithful pass on an undeployable, un-faithfully-modeled grant.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "*",
+        "Resource": "*",
+        "Condition": { "ForAnyValue:StringEquals": { "aws:SourceVpc": [{}] } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": true,
+    "code": "MALFORMED_CONDITION_VALUE",
+    "kind": "malformed",
+    "path": "Statement[0].Condition.ForAnyValue:StringEquals.aws:SourceVpc",
+    "coverageIncomplete": true,
+    "scanExit": 3,
+    "scanReason": "MALFORMED_CONDITION_VALUE",
+    "scanStatus": "failed"
+  }
+}

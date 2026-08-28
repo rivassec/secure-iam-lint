@@ -28,6 +28,68 @@ jobs:
         run: npm run gate:no-network
       - name: Gate - no unsafe DOM / eval in shipped JS
         run: npm run gate:no-unsafe-dom
+      # The shipped CLI + Action run inside consumers' CI. They were UNGATED
+      # (the greps above scope only content/tools/). These extend the
+      # no-network + no-code-exec classes to cli/ + action/, allowing the
+      # legitimate node: fs/path/crypto/url the CLI needs but forbidding any
+      # network core module, remote import(), eval/Function, and child_process/vm.
+      - name: Gate - no network APIs in shipped CLI + Action
+        run: npm run gate:no-network:node
+      - name: Gate - no eval / child_process / unsafe API in shipped CLI + Action
+        run: npm run gate:no-unsafe:node
+      - name: Audit tooling tests
+        run: node --test "audit/**/*.test.js"
+      - name: Golden release-gate (fail-closed properties + npm-pack/npx packaging)
+        run: GOLDEN_RELEASE_GATE=1 node --test audit/golden-corpus/release-gate.test.js
+      # The fail-open lint always exits non-zero (known/suppressed hotspots exist); the
+      # security-meaningful signal is MISSING guard targets - a fail-open guard point that
+      # was removed. Fail the build only on that, not on the informational hotspot count.
+      - name: Gate - fail-open lint has zero MISSING guard targets
+        run: |
+          out="$(node audit/lint/lint.mjs 2>&1 || true)"
+          echo "$out"
+          echo "$out" | grep -qE '0 missing target' \
+            || { echo "::error::fail-open lint reports MISSING guard target(s)"; exit 1; }
+
+  # Obfuscation-proof no-eval / no-proto-mutation guard: the WHOLE suite runs with dynamic
+  # code generation (eval / new Function / vm string-compile) and __proto__ assignment
+  # DISABLED at the runtime level, so any exercised path that relied on them aborts - a
+  # tripwire the grep gates cannot be obfuscated past. Runs in parallel with `test`.
+  hardened-runtime:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/iam-blast-radius
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Full suite under --disallow-code-generation-from-strings --disable-proto=throw
+        run: node --disallow-code-generation-from-strings --disable-proto=throw --test "tests/**/*.test.js"
+
+  # Architectural invariant: the shipped engine/cli/action module graph has NO import
+  # cycles. Every refactor extraction preserves this; enforce it so a future change that
+  # introduces a cycle (a load-order/shared-state footgun) is caught in review.
+  graph:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: No circular dependencies (madge, pinned)
+        run: npx --yes madge@8.0.0 --circular --extensions js,mjs content/tools/iam-blast-radius/engine cli action
+      # Zero-dep typecheck RATCHET: runs tsc --checkJs over the engine and fails only on a
+      # NEW type error over the committed baseline (58 pre-existing JSDoc frictions, no bugs).
+      # Catches type regressions in review without churning the frozen baseline.
+      - name: Typecheck ratchet (no new type errors)
+        working-directory: tools/iam-blast-radius
+        run: node audit/typecheck-ratchet.mjs
 
   csp:
     runs-on: ubuntu-latest
@@ -85,7 +147,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install @playwright/test (pinned in package.json)
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       # Cache the browser BINARIES (~300-400 MB). Keyed on the dev package.json
       # (which pins the Playwright version), so a version bump re-downloads.
       # OS-level deps are apt packages on a fresh runner, so they are installed

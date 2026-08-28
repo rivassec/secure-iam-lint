@@ -1,0 +1,17 @@
+{
+  "name": "Broad s3:GetObject fenced by a VACUOUS Deny (NotResource arn:aws:s3:::*/*) must still warn DATA-EXFIL",
+  "note": "S3-rules-breadth (A) regression, deny-fence fail-open. A broad Allow (s3:GetObject on Resource:*) is 'fenced' by a Deny whose NotResource is arn:aws:s3:::*/* - which denies the action on every resource EXCEPT all S3 objects, i.e. it denies NOTHING. The old denyFencesToNarrow only rejected a spared set that was the literal '*'; a BROAD ARN-wildcard spared set (arn:aws:s3:::*/*) slipped through and was credited as a narrowing fence, so ruleFindingDenySuppressed dropped DATA-EXFIL and survivingBroadReadActions left coverage complete: analyze() ok:true findings=[] and CLI exit 0 CLEAN on the archetypal exfil primitive. The Deny's SPARED set is BROAD (classifyResource===BROAD), so it removes no part of the broad Allow's reach and must NOT suppress. Contrast the negative fixture notresource-deny-fences-exfil (spared set arn:aws:s3:::approved-data/* is NARROW), which genuinely fences and stays clean. FAIL CLOSED.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AllowReadBroad", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" },
+      { "Sid": "DenyNothingVacuous", "Effect": "Deny", "Action": "s3:GetObject", "NotResource": "arn:aws:s3:::*/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-ACTION", "WILDCARD-RESOURCE"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

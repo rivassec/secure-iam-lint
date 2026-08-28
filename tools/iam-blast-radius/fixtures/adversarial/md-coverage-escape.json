@@ -1,0 +1,18 @@
+{
+  "name": "Hostile policy value on the Markdown COVERAGE path (md-coverage-escape)",
+  "note": "S3-md-coverage-escape (threat-model T1/T6): toMarkdown() neutralizes hostile FINDING-path strings, but the DISJOINT coverage path (report.js: coverage.blockingCodes[].{code,path,message}, summary.unsupportedElements[].{element,path}, summary.trustDeny.note, and the family/warnings header lines) previously emitted policy-derived text as raw String(...), so a live Markdown link / bare URL / bare email / 'www.' autolink / pipe (forged table cell) / newline (forged heading) survived into the exported .md. The confirmed source is family.js UNSUPPORTED_POLICY_VERSION, which interpolates the attacker-supplied Version VERBATIM into the blocking-code message. This policy sets a Version carrying every autolink/link/table/heading vector; an unsupported Version fails closed (coverage.blocked) and the message rides onto the coverage/blockingCodes path. The fix routes ALL policy-derived coverage-path strings through the SAME mdEscape() renderer used on the finding path, so every vector renders inert. Not hostile:true because this fixture witnesses export-inertness of the coverage path (asserted in report.test.js), not the analyze()-time inert-rendering matrix.",
+  "policy": {
+    "Version": "2012-10-17 [click](https://evil.example/p) ![img](https://evil.example/i) https://evil.example/bare admin@evil.example www.evil.test | forged\n## forged-heading",
+    "Statement": [
+      {
+        "Sid": "s",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true
+  }
+}

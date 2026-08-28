@@ -1,0 +1,244 @@
+{
+  "id": "public-trust-malformed-principalarn-scope",
+  "klass": "risky",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 1,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "role-trust",
+      "threshold": "high",
+      "partitionAsserted": null,
+      "analysisStatus": "complete",
+      "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
+      "exitCode": 1,
+      "findingsCount": 1,
+      "blockingCount": 1,
+      "analysisStates": [],
+      "findings": [
+        {
+          "id": "TRUST-PUBLIC",
+          "severity": "high",
+          "title": "Wildcard-principal role trust narrowed by a scoping condition",
+          "statementSid": "PublicAssumeWithMalformedPrincipalArnScope",
+          "statementIndex": 0,
+          "actions": [
+            "sts:AssumeRole"
+          ],
+          "resources": [],
+          "conditions": {
+            "StringEquals": {
+              "aws:PrincipalArn": "arn:aws:iam"
+            }
+          },
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "The trust policy names Principal \"*\", but a positive scoping condition (aws:PrincipalArn) is present that limits which principals may assume the role. It therefore does NOT trust anonymous or arbitrary other-account principals - only principals matching the condition are trusted. AWS still recommends against a wildcard Principal on an Allow: narrowing a \"*\" with a condition is fragile, and removing or mis-scoping the condition would expose the role. The breadth of trust equals the breadth of the condition (a wildcarded set of principals within the scope).",
+          "limit": "This classifies the trust RELATIONSHIP from the policy text - who may assume the role - not effective access. A role trust policy never conveys the assumed role's permissions: the target role's actual privileges are OUT OF SCOPE and remain UNKNOWN from this document. AWS also evaluates the caller identity, session policies, and boundaries, none of which are present here, so no one inherits the role's power merely by being trusted to assume it.",
+          "remediation": "Replace Principal \"*\" with the explicit accounts, roles, or federated identities that must assume this role rather than relying on a condition to narrow a wildcard principal; keep the scoping condition as defense in depth.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_principal.html",
+          "trust": {
+            "principalTypes": [
+              "anonymous"
+            ],
+            "anonymous": true,
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "PublicAssumeWithMalformedPrincipalArnScope",
+              "role": "trust",
+              "actions": [
+                "sts:AssumeRole"
+              ],
+              "resources": [],
+              "condition": {
+                "StringEquals": {
+                  "aws:PrincipalArn": "arn:aws:iam"
+                }
+              },
+              "principals": [
+                {
+                  "type": "anonymous",
+                  "value": "*"
+                }
+              ],
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "PublicAssumeWithMalformedPrincipalArnScope",
+              "actions": [
+                "sts:AssumeRole"
+              ]
+            }
+          ],
+          "policyFamily": "role-trust",
+          "conditionClassification": {
+            "present": true,
+            "entries": [
+              {
+                "operator": "StringEquals",
+                "baseOperator": "stringequals",
+                "setOperator": null,
+                "ifExists": false,
+                "key": "aws:PrincipalArn",
+                "known": true,
+                "class": "constraint",
+                "role": "principal",
+                "label": "Principal ARN",
+                "negated": false,
+                "wildcardValue": false,
+                "nullTest": null,
+                "appears": "narrows",
+                "credited": true,
+                "note": "appears to narrow by Principal ARN"
+              }
+            ],
+            "classes": {
+              "constraint": 1,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": true,
+            "hasExpansion": false
+          }
+        }
+      ]
+    }
+  },
+  "cliSarif": {
+    "exit": 1,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": [
+                {
+                  "id": "TRUST-PUBLIC",
+                  "name": "TRUST-PUBLIC",
+                  "shortDescription": {
+                    "text": "Wildcard-principal role trust narrowed by a scoping condition"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type TRUST-PUBLIC. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_principal.html"
+                }
+              ]
+            }
+          },
+          "properties": {
+            "analysisStatus": "complete",
+            "exitCode": 1,
+            "blockingCount": 1,
+            "findingsCount": 1
+          },
+          "results": [
+            {
+              "ruleId": "TRUST-PUBLIC",
+              "level": "error",
+              "message": {
+                "text": "Wildcard-principal role trust narrowed by a scoping condition [role-trust policy] at statement `PublicAssumeWithMalformedPrincipalArnScope`; actions: `sts:AssumeRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "04324006509c3a03c754043b0368"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "role-trust",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "PublicAssumeWithMalformedPrincipalArnScope",
+                    "role": "trust",
+                    "actions": [
+                      "sts\\:AssumeRole"
+                    ],
+                    "resources": [],
+                    "condition": {
+                      "StringEquals": {
+                        "aws\\:PrincipalArn": "arn\\:aws\\:iam"
+                      }
+                    }
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "PublicAssumeWithMalformedPrincipalArnScope"
+              },
+              "ruleIndex": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": true,
+    "coverage": {
+      "incomplete": false,
+      "analysisAborted": false,
+      "codes": [],
+      "statements": {
+        "total": 1,
+        "accepted": 1,
+        "rejected": 0
+      },
+      "counts": {
+        "unrecognizedActions": 0,
+        "unsupportedConditions": 0,
+        "unsupportedElements": 0,
+        "actionResourceMismatches": 0,
+        "maskedGrants": 0,
+        "broadUndecidableUncovered": 0
+      }
+    },
+    "findings": [
+      {
+        "id": "TRUST-PUBLIC",
+        "severity": "high",
+        "title": "Wildcard-principal role trust narrowed by a scoping condition",
+        "statementIndex": 0,
+        "actions": [
+          "sts:AssumeRole"
+        ],
+        "resources": [],
+        "conditionsPresent": true,
+        "evidenceWhyHash": "d0365096b5d54cbb"
+      }
+    ]
+  }
+}

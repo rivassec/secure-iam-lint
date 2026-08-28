@@ -1,0 +1,1 @@
+{ "Version": "2012-10-17", "__proto__": { "polluted": true }, "Statement": [ { "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*", "constructor": { "x": 1 } } ] }

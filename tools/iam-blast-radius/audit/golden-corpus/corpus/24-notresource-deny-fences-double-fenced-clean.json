@@ -1,0 +1,8 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Sid": "AllowReadBroad", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" },
+    { "Sid": "FenceA", "Effect": "Deny", "Action": "s3:GetObject", "NotResource": "arn:aws:s3:::bucket-a/*" },
+    { "Sid": "FenceB", "Effect": "Deny", "Action": "s3:GetObject", "NotResource": "arn:aws:s3:::bucket-b/*" }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "Undeterminable-owner whole-bucket read fully removed by an explicit Deny (negative; deny)",
+  "note": "S2-crossaccount-scoped-surface iteration-5 Deny interaction: the Allow would be an account-undeterminable whole-bucket read (canonical bucket ARN, known subject 123456789012), but a same-policy unconditional Deny on s3:GetObject removes the capability (AWS explicit-Deny precedence). CROSS-ACCOUNT-DATA-READ-UNDETERMINED must NOT survive in the authoritative table - a denied read is not a grant. Witnesses the negative and Deny cells for the undetermined-owner rule.",
+  "context": { "subjectAccount": "123456789012", "partition": "aws" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowReadPartnerBucket",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::partner-data-bucket/*"
+      },
+      {
+        "Sid": "DenyAllGet",
+        "Effect": "Deny",
+        "Action": "s3:GetObject",
+        "Resource": "*"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "notFindingIds": ["CROSS-ACCOUNT-DATA-READ-UNDETERMINED", "CROSS-ACCOUNT-DATA-READ", "DATA-EXFIL"]
+  }
+}

@@ -1,0 +1,169 @@
+{
+  "id": "crossaccount-dynamodb-accountless-read",
+  "klass": "risky",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 1,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "identity",
+      "threshold": "info",
+      "partitionAsserted": null,
+      "analysisStatus": "complete",
+      "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
+      "exitCode": 1,
+      "findingsCount": 1,
+      "blockingCount": 1,
+      "analysisStates": [],
+      "findings": [
+        {
+          "id": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+          "severity": "info",
+          "title": "Whole-container read with an undeterminable owning account",
+          "statementSid": "ScanOrdersTable",
+          "statementIndex": 0,
+          "actions": [
+            "dynamodb:Scan"
+          ],
+          "resources": [
+            "arn:aws:dynamodb:us-east-1::table/orders"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "low",
+          "why": "Grants a whole-container read (bucket/*, a bucket list, or a table / stream / database bulk read) on a resource whose owning account cannot be determined from this policy: the resource ARN carries no concrete account field (a canonical S3 bucket ARN, or an empty/wildcard account segment on a table / stream / database ARN) and no aws:ResourceAccount / s3:ResourceAccount condition pins the owner. The tool therefore CANNOT clear it as a same-account read - it may be a cross-account read of another account's resource. This does NOT prove the resource is in another account (the crossing is undetermined, not confirmed); it means a \"no findings\" / \"complete\" verdict here is not a safety claim for this read.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+          "remediation": "Make the owning account explicit so the read can be cleared or flagged: pin it with an aws:ResourceAccount (or s3:ResourceAccount) condition, or use an account-bearing resource ARN (an S3 access-point ARN, or a table / stream / database ARN carrying the owning account). If the resource is in another account, scope the read to the specific keys/items required and gate it with conditions; if it is your own, the account-bearing ARN or condition removes this ambiguity.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-keys.html",
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        }
+      ]
+    }
+  },
+  "cliSarif": {
+    "exit": 1,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": [
+                {
+                  "id": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+                  "name": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+                  "shortDescription": {
+                    "text": "Whole-container read with an undeterminable owning account"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type CROSS-ACCOUNT-DATA-READ-UNDETERMINED. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "note"
+                  },
+                  "properties": {
+                    "category": "security"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-keys.html"
+                }
+              ]
+            }
+          },
+          "properties": {
+            "analysisStatus": "complete",
+            "exitCode": 1,
+            "blockingCount": 1,
+            "findingsCount": 1
+          },
+          "results": [
+            {
+              "ruleId": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+              "level": "note",
+              "message": {
+                "text": "Whole-container read with an undeterminable owning account [identity policy] at statement `ScanOrdersTable`; actions: `dynamodb:Scan`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "0cc030e8c2154b157f3ec9134056"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "info",
+                "policyFamily": "identity",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "low"
+                },
+                "jsonPointer": "/Statement/0",
+                "statementSid": "ScanOrdersTable"
+              },
+              "ruleIndex": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": true,
+    "coverage": {
+      "incomplete": false,
+      "analysisAborted": false,
+      "codes": [],
+      "statements": {
+        "total": 1,
+        "accepted": 1,
+        "rejected": 0
+      },
+      "counts": {
+        "unrecognizedActions": 0,
+        "unsupportedConditions": 0,
+        "unsupportedElements": 0,
+        "actionResourceMismatches": 0,
+        "maskedGrants": 0,
+        "broadUndecidableUncovered": 0
+      }
+    },
+    "findings": [
+      {
+        "id": "CROSS-ACCOUNT-DATA-READ-UNDETERMINED",
+        "severity": "info",
+        "title": "Whole-container read with an undeterminable owning account",
+        "statementIndex": 0,
+        "actions": [
+          "dynamodb:Scan"
+        ],
+        "resources": [
+          "arn:aws:dynamodb:us-east-1::table/orders"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "8852302b4dc50849"
+      }
+    ]
+  }
+}

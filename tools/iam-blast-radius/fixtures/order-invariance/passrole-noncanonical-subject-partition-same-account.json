@@ -1,0 +1,63 @@
+{
+  "name": "PassRole viability fails CLOSED on a non-canonical SUBJECT partition (S2-passrole-allstmts, SUBJECT axis)",
+  "note": "Same CLASS of fail-open as the ARN-spelling axis, reached through the OTHER side of the exact-equality partition compare: the SUBJECT partition (ctx.partition). The role-ARN partition/account tokens are validated against KNOWN_PARTITIONS / 12-digit, but the subject partition was trusted VERBATIM (only .trim()). A non-canonical spelling of the subject's OWN partition ('AWS', 'Aws', '*', 'aws-gov', 'AWS-US-GOV') therefore made a viable same-account, same-real-partition critical PassRole->service path read as cross-partition and get CONFIDENTLY demoted critical->medium (PARTITION_MISMATCH), so analyze() rated the path MEDIUM while scan() - which sanitizes the partition against KNOWN_PARTITIONS - kept it CRITICAL/exit 1: analyze() MORE permissive than scan() for byte-identical input (browser==CLI parity violation), and the sole medium finding slips under a high-threshold gate as CLEAN. FIX (in the shared engine, the single source of truth): validate ctx.partition with the SAME KNOWN_PARTITIONS rigor as role-ARN partitions; an unrecognized/non-canonical subject partition token is treated as NOT confidently known and NEVER drives a confident cross-partition demotion. viableSameAccount: a viable aws same-account path stays CRITICAL under every non-canonical partition (no demotion needed - the account reasoning defaults to 'aws' and the path is genuinely viable), matching scan() exit 1. crossPartitionSameAccount: an aws-us-gov same-account role under a non-canonical subject partition fails CLOSED as UNKNOWN viability (severity kept at critical, requiredUnknowns:['subjectPartition'], scan exit 3) rather than a confident PARTITION_MISMATCH medium; the canonical control (subject partition really 'aws-us-gov') is viable/critical/exit 1, proving no over-correction.",
+  "subjectAccount": "123456789012",
+  "nonCanonicalPartitions": ["AWS", "Aws", "*", "aws-gov", "AWS-US-GOV", "aws-govcloud", "banana"],
+  "viableSameAccount": {
+    "passStatement": {
+      "Sid": "PassLocal",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::123456789012:role/LocalRole"
+    },
+    "runStatement": {
+      "Sid": "RunEc2",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:us-east-1:123456789012:instance/i-1"
+    }
+  },
+  "crossPartitionSameAccount": {
+    "passStatement": {
+      "Sid": "PassGovLocal",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws-us-gov:iam::123456789012:role/LocalRole"
+    },
+    "runStatement": {
+      "Sid": "RunEc2Gov",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": "arn:aws-us-gov:ec2:us-gov-west-1:123456789012:instance/i-1"
+    }
+  },
+  "expect": {
+    "findingId": "PASSROLE-EC2",
+    "viableSameAccount": {
+      "canonicalPartition": "aws",
+      "everyNonCanonicalPartition": {
+        "analyzeSeverity": "critical",
+        "mustNotHaveWarningCode": ["PARTITION_MISMATCH", "PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE"],
+        "scanExitCode": 1
+      },
+      "canonicalControl": {
+        "analyzeSeverity": "critical",
+        "scanExitCode": 1
+      }
+    },
+    "crossPartitionSameAccount": {
+      "realPartition": "aws-us-gov",
+      "everyNonCanonicalPartition": {
+        "analyzeSeverity": "critical",
+        "mustNotHaveWarningCode": ["PARTITION_MISMATCH"],
+        "requiredUnknown": "subjectPartition",
+        "scanExitCodeNot": 0,
+        "scanExitCode": 3
+      },
+      "realPartitionControl": {
+        "analyzeSeverity": "critical",
+        "scanExitCode": 1
+      }
+    }
+  }
+}

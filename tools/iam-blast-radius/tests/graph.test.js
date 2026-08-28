@@ -362,6 +362,40 @@ test('IAM-202: a data-exfil read stays can-read, distinct from kms:Decrypt can-d
   assert.notEqual(read.type, EDGE_TYPES.CAN_DECRYPT);
 });
 
+// S5-graph-dataread-edge: a DATA-READ finding (IAM-706, resource-scoped read with
+// inferred sensitivity) must draw a data-access-lane can-read edge, not be silently
+// edgeless. The finding is authoritative either way, but the graph must mirror it.
+test('S5: a scoped sensitive-read policy yields BOTH the DATA-READ finding AND a data-access can-read edge', () => {
+  const policy = JSON.stringify({
+    Statement: [{
+      Sid: 'scopedRead',
+      Effect: 'Allow',
+      Action: 's3:GetObject',
+      Resource: 'arn:aws:s3:::customer-secrets-bucket/*',
+    }],
+  });
+  // 1. The DATA-READ finding fires.
+  const model = modelFromText(policy).model;
+  const findings = analyzeRules(model).findings;
+  const dataRead = findings.find((f) => f.id === 'DATA-READ');
+  assert.ok(dataRead, 'expected a DATA-READ finding for a scoped sensitive read');
+
+  // 2. The graph carries a corresponding data-access-lane can-read edge that
+  //    preserves the finding's resource scope and evidence.
+  const r = buildGraphFromText(policy);
+  assert.equal(r.ok, true);
+  const toId = `datastore:scoped-read:${dataRead.resources[0]}`;
+  const edge = findEdge(r.graph, { from: 'principal', to: toId, type: EDGE_TYPES.CAN_READ });
+  assert.ok(edge, 'expected a can-read edge for the DATA-READ finding');
+  assert.equal(edge.lane, LANES.DATA_ACCESS, 'edge lives in the data-access lane');
+  // Scoped/inferred read -> certainty stays context-required, never confirmed exfil.
+  assert.equal(edge.certainty, CERTAINTY.CONTEXT_REQUIRED);
+  // Evidence is grounded in the DATA-READ finding and preserves the resource scope.
+  assert.ok(edge.evidence.some((ev) => ev.findingId === 'DATA-READ'
+    && ev.resources.includes('arn:aws:s3:::customer-secrets-bucket/*')),
+    'edge evidence references the DATA-READ finding and its scoped resource');
+});
+
 // ---------------------------------------------------------------------------
 // IAM-401: every edge is assigned to a semantic lane, so the renderer can group
 // paths into labeled sections instead of a flat radial layout. The lane is a

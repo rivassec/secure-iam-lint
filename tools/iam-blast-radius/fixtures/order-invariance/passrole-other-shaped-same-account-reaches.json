@@ -1,0 +1,57 @@
+{
+  "name": "PassRole viability must keep CRITICAL for an {other}-shaped same-account role glob co-located with a concrete FOREIGN role (S2-passrole-allstmts iter-4, axis 1)",
+  "note": "Fail-open of the SAME class as the statement-ORDER / ARN-spelling demotions, reached through an {other}-shaped PassRole target. ROLE_ARN_PARTS_RE only pins a concrete arn:...:role/<name>; a same-account token WITHOUT the literal ':role/' - arn:<subjectAcct>:role* / :r* / :role?* / :* / a leading-wildcard - parsed as {other}, and resourceReachesSubject returned a flat false for {other}. So a co-located CONCRETE foreign role (concreteSpecific.length>0) drove a confident critical->medium PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE demotion and, because 'role*' also evades the WILDCARD-RESOURCE backstop (its head does not START with a wildcard), no high finding survived -> scan exit 0 CLEAN on a fully-viable, wildcard-scoped, same-account PassRole grant (threat-model T8). In AWS IAM 'arn:aws:iam::<acct>:role*' (and 'r*', 'role?*', ':*') glob-match every same-account role ARN. FIX: an {other} token now REACHES the subject when, read as an IAM wildcard glob, it COULD name a role ARN in the subject's own account+partition (a bounded, non-fixed-probe glob-produces-prefix decision) - so a viable same-account glob keeps the path CRITICAL and never lets a co-located foreign role demote it. Each `variant` is co-located IN THE SAME Pass statement with a concrete foreign role; analyze() must stay critical with NO confident demotion code and scan() must gate at exit 1 (never exit 0 CLEAN). `orderings` proves resource-order and statement-order independence; a canonical control confirms no over-correction.",
+  "context": { "subjectAccount": "123456789012", "partition": "aws" },
+  "foreignConcreteRole": "arn:aws:iam::999900001111:role/Foreign",
+  "runStatement": {
+    "Sid": "RunEc2",
+    "Effect": "Allow",
+    "Action": ["ec2:RunInstances"],
+    "Resource": "*"
+  },
+  "canonicalControl": "arn:aws:iam::123456789012:role/*",
+  "variants": {
+    "rolePrefixNoSlash": "arn:aws:iam::123456789012:role*",
+    "singleLetterPrefix": "arn:aws:iam::123456789012:r*",
+    "rolePrefixQuestionStar": "arn:aws:iam::123456789012:role?*",
+    "resourceStar": "arn:aws:iam::123456789012:*",
+    "questionInName": "arn:aws:iam::123456789012:ro?e*",
+    "leadingWildcard": "arn:aws:iam::123456789012:*Admin*",
+    "wildcardAccountRolePrefix": "arn:aws:iam::*:role*",
+    "wildcardPartitionRolePrefix": "arn:*:iam::123456789012:role*"
+  },
+  "unmodelableVariants": {
+    "uppercaseScaffold": "ARN:AWS:IAM::123456789012:role*",
+    "mixedCasePartition": "arn:AWS:iam::123456789012:role*",
+    "spaceBeforeAccount": "arn:aws:iam:: 123456789012:role*",
+    "tabInPartition": "arn:\taws:iam::123456789012:role*",
+    "shortAccountToken": "arn:aws:iam::12345:role*"
+  },
+  "orderings": [
+    ["run", "passOtherThenForeign"],
+    ["run", "passForeignThenOther"],
+    ["passOtherThenForeign", "run"],
+    ["passForeignThenOther", "run"]
+  ],
+  "expect": {
+    "findingId": "PASSROLE-EC2",
+    "everyVariant": {
+      "analyzeSeverity": "critical",
+      "mustNotHaveWarningCode": ["PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE", "PARTITION_MISMATCH"],
+      "scanExitCodeNot": 0,
+      "scanReasonNot": "CLEAN"
+    },
+    "unmodelableVariant": {
+      "analyzeSeverity": "critical",
+      "mustNotHaveWarningCode": ["PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE", "PARTITION_MISMATCH"],
+      "requiredUnknownsNonEmpty": true,
+      "scanExitCodeNot": 0,
+      "scanReasonNot": "CLEAN",
+      "scanFailClosed": true
+    },
+    "canonicalControl": {
+      "analyzeSeverity": "critical",
+      "scanExitCode": 1
+    }
+  }
+}

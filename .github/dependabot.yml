@@ -1,0 +1,26 @@
+# Keep dependencies + pinned GitHub Actions current so the SHA pins (enforced by zizmor)
+# do not rot into stale, unpatched versions. Dependabot bumps the SHA AND rewrites the
+# `# vX.Y.Z` comment, so pins stay both current and auditable.
+version: 2
+updates:
+  # The SHA-pinned actions across every workflow (checkout, setup-node, cache, codeql,
+  # scorecard, upload-artifact, osv/scorecard actions).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # The DEV tree only (the shipped package is zero-dependency). Grouped so a routine
+  # transitive bump is one reviewable PR, not many.
+  - package-ecosystem: npm
+    directory: /tools/iam-blast-radius
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        patterns: ["*"]

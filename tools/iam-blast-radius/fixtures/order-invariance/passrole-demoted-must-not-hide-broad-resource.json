@@ -1,0 +1,65 @@
+{
+  "name": "A demoted PassRole path must NEVER hide a co-located higher-severity broad-resource grant (S2-passrole-allstmts, iteration 5)",
+  "note": "correlate.js folds a same-service WILDCARD-RESOURCE (high) INTO the compound PassRole path as a `subsumed` sub-entry. That is safe only while the compound path is at least as severe as what it swallows. Once the T91/S2 cross-account (or cross-partition) viability check DEMOTES the compound path critical->medium (and an ECS staging path high->low), the subsumed HIGH broad-resource grant drops beneath the 'high' CLI exit gate and the shipped scan()/GitHub Action reports exit 0 CLEAN on a policy carrying a genuine HIGH over-broad-resource grant. The SAME broad grant alone gates at exit 1 (control), proving it is a real HIGH. And because detectPassRolePaths selected the exec statement by lowest INDEX, reordering the byte-content-identical statements swapped which exec the path consumed and flipped exit 0<->1. The fix: (1) a subsumption must never lower the effective gating severity below what it folds away - a subordinate whose severity OUTRANKS the (post-demotion) primary stays an independent top-level row; (2) exec-statement selection prefers the BROADEST resource scope by content, so it is order-invariant. Every enumerated ordering of every case MUST yield exit 1 with the WILDCARD-RESOURCE high row PRESENT at top level and the PassRole path correctly demoted.",
+  "context": { "subjectAccount": "111111111111", "partition": "aws" },
+  "cases": [
+    {
+      "label": "lambda: cross-account-demoted PassRole + broad vs narrow exec",
+      "passId": "PASSROLE-LAMBDA",
+      "passSeverity": "medium",
+      "statements": {
+        "pass": {
+          "Sid": "PassForeign",
+          "Effect": "Allow",
+          "Action": "iam:PassRole",
+          "Resource": "arn:aws:iam::999999999999:role/app"
+        },
+        "narrow": {
+          "Sid": "NarrowExec",
+          "Effect": "Allow",
+          "Action": "lambda:CreateFunction",
+          "Resource": "arn:aws:lambda:us-east-1:111111111111:function:harmless"
+        },
+        "broad": {
+          "Sid": "BroadExec",
+          "Effect": "Allow",
+          "Action": "lambda:CreateFunction",
+          "Resource": "*"
+        }
+      },
+      "controlBroadOnly": "broad",
+      "orderings": [
+        ["pass", "narrow", "broad"],
+        ["pass", "broad", "narrow"],
+        ["narrow", "broad", "pass"],
+        ["broad", "narrow", "pass"],
+        ["narrow", "pass", "broad"],
+        ["broad", "pass", "narrow"]
+      ]
+    },
+    {
+      "label": "ecs staging: cross-account-demoted PassRole (high->LOW staging) + broad exec",
+      "passId": "PASSROLE-SERVICE",
+      "passSeverity": "low",
+      "statements": {
+        "pass": {
+          "Sid": "PassForeignEcs",
+          "Effect": "Allow",
+          "Action": "iam:PassRole",
+          "Resource": "arn:aws:iam::999999999999:role/ecsTask"
+        },
+        "broad": {
+          "Sid": "StageBroad",
+          "Effect": "Allow",
+          "Action": "ecs:RegisterTaskDefinition",
+          "Resource": "*"
+        }
+      },
+      "controlBroadOnly": "broad",
+      "orderings": [
+        ["pass", "broad"],
+        ["broad", "pass"]
+      ]
+    }
+  ]
+}

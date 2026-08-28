@@ -1,0 +1,24 @@
+{
+  "name": "s3:GetObject on a concrete-bucket object ARN (arn:aws:s3:::my-bucket/prefix/*) is NOT broad exfil",
+  "note": "S1-dataexfil-arn over-correction guard. Closing the ARN-wildcard DATA-EXFIL fail-open must NOT start flagging genuinely-scoped ARNs as account-wide. Here the bucket-name head is a CONCRETE name (my-bucket) and only the trailing key is wildcarded (prefix/*), so the read is confined to one bucket's prefix - routine least privilege. DATA-EXFIL requires a BROAD resource (bare '*', NotResource, or an ARN whose partition/service/bucket-head is a leading wildcard); this is none of those.",
+  "phase": 3,
+  "story": "S1-dataexfil-arn",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadOneBucketPrefix",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::my-bucket/prefix/*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["DATA-EXFIL", "WILDCARD-RESOURCE", "DATA-READ"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "An S3 object ARN whose bucket segment is a concrete name (my-bucket) scopes the grant to exactly that bucket; the trailing 'prefix/*' wildcard narrows to a key prefix WITHIN that bucket - it does not widen the bucket set. This is the textbook least-privilege object-read shape and matches all/nearly-all ARNs of nothing beyond one bucket, so no broad-scope bulk-read (DATA-EXFIL) or wildcard-resource (WILDCARD-RESOURCE) capability exists. The bucket name (my-bucket) carries no sensitivity token and the ARN holds no policy variable, so DATA-READ (inferred-sensitivity / variable-scoped) also stays quiet. Broadness is a property of a LEADING wildcard on a high-order ARN segment (partition/service) or on the resource-id head (the bucket name), not of a trailing key wildcard. Ref: AWS S3 ARN format arn:aws:s3:::bucket_name/key_name and IAM least-privilege guidance."
+}

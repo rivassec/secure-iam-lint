@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:aws:s3:...:accesspoint/*/object/* (every object via every access point) must warn",
+  "note": "S1-dataexfil-arn iteration 3 regression: isBroadArnResource() previously judged broadness from the resource-id HEAD alone (head = resourceId.split('/')[0]) and only tested a LEADING wildcard on that head. For a resource-TYPE-prefixed ARN the head is a CONCRETE type keyword ('accesspoint') and the wildcard lives in the IDENTIFIER segment after it, so accesspoint/*/object/* returned isBroadArnResource=false -> resourceIsBroad=false -> DATA-EXFIL treated the bulk read as scoped/routine -> analyze() ok:true findings=[] and CLI exit 0 CLEAN. An S3 access-point object grant of accesspoint/*/object/* reaches EVERY object via EVERY access point in the account - just as account-wide as arn:aws:s3:::*/*, which the corpus already locks. FAIL CLOSED: a leading-wildcard identifier right after a concrete resource-type head is broad. GetObject is a read verb, so WILDCARD-RESOURCE must NOT fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadAllObjectsAllAccessPoints", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:us-east-1:123456789012:accesspoint/*/object/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

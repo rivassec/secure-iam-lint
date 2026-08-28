@@ -1,0 +1,20 @@
+{
+  "name": "Benign resource-based statement without Resource (must NOT be flagged)",
+  "note": "S1-shape-failclosed no-over-fire control. A resource-based / trust statement (Principal present) legitimately OMITS Resource - the resource is the attaching resource itself and is implied. UNSPECIFIED_RESOURCE_SCOPE must fire ONLY on identity-style statements (no Principal/NotPrincipal); a Principal-bearing statement is exempt. This fixture pins that the fail-closed resource-scope guard does not over-fire on the entire resource-policy family.",
+  "family": "trust",
+  "options": { "family": "trust" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::111122223333:root" },
+        "Action": ["sts:AssumeRole"]
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": false
+  }
+}

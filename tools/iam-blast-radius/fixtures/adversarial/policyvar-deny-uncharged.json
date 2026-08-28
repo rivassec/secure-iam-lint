@@ -1,0 +1,3089 @@
+{
+  "name": "Policy-variable-scoped Deny drives an UNCHARGED deny-coverage runaway (S3-dos-budget iter-3)",
+  "note": "Every string is well under LIMITS.MAX_STRING_LENGTH and the document is under MAX_BYTES / MAX_STATEMENTS / MAX_ACTIONS / MAX_RESOURCES, so validate() ACCEPTS it (validate.ok=true) - a per-string cap is no defense. Each Deny statement's Resource is entirely IAM policy variables (${aws:PrincipalTag/team}-...). denyResourceCoverage() in escalation.js short-circuits globMatch on a policy-variable Deny resource (!hasPolicyVariable(dr) && globMatch(dr, ar)), so BEFORE the iter-3 fix the whole O(ruleFindings x findingActions x denies x denyResources) deny-coverage scan charged ZERO work: analyze()'s deterministic work budget (sampled only inside the matcher via chargeWork) never tripped, and this within-caps policy drove analyze() to multiple seconds yet returned ok:true, incomplete:false, aborted:false with a full finding set - a COMPLETE verdict on an unbounded run (fail-OPEN; threat-model T5/T8). The identical shape with CONCRETE or wildcard Deny resources already failed closed in ~70ms because globMatch charged its compare cost; a single ${...} flipped a correctly-bounded analysis into an unbounded one. The fix charges the deny-coverage traversal (per deny, and per Deny-resource inspected at globMatch's own magnitude) INDEPENDENT of whether globMatch is reached, so the policy-variable path reaches the SAME aborted+incomplete state (~40ms) instead of a 2-11s COMPLETE pass. Boundary fixtures: fixtures/adversarial/interior-quadratic-glob.json (concrete wildcard Deny) already trips; this one locks the policy-variable branch.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "Allow0",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-0/object-0"
+        ]
+      },
+      {
+        "Sid": "Allow1",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-1/object-1"
+        ]
+      },
+      {
+        "Sid": "Allow2",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-2/object-2"
+        ]
+      },
+      {
+        "Sid": "Allow3",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-3/object-3"
+        ]
+      },
+      {
+        "Sid": "Allow4",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-4/object-4"
+        ]
+      },
+      {
+        "Sid": "Allow5",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-5/object-5"
+        ]
+      },
+      {
+        "Sid": "Allow6",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-6/object-6"
+        ]
+      },
+      {
+        "Sid": "Allow7",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-7/object-7"
+        ]
+      },
+      {
+        "Sid": "Allow8",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-8/object-8"
+        ]
+      },
+      {
+        "Sid": "Allow9",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-9/object-9"
+        ]
+      },
+      {
+        "Sid": "Allow10",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-10/object-10"
+        ]
+      },
+      {
+        "Sid": "Allow11",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-11/object-11"
+        ]
+      },
+      {
+        "Sid": "Allow12",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-12/object-12"
+        ]
+      },
+      {
+        "Sid": "Allow13",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-13/object-13"
+        ]
+      },
+      {
+        "Sid": "Allow14",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-14/object-14"
+        ]
+      },
+      {
+        "Sid": "Allow15",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-15/object-15"
+        ]
+      },
+      {
+        "Sid": "Allow16",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-16/object-16"
+        ]
+      },
+      {
+        "Sid": "Allow17",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-17/object-17"
+        ]
+      },
+      {
+        "Sid": "Allow18",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-18/object-18"
+        ]
+      },
+      {
+        "Sid": "Allow19",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-19/object-19"
+        ]
+      },
+      {
+        "Sid": "Allow20",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-20/object-20"
+        ]
+      },
+      {
+        "Sid": "Allow21",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-21/object-21"
+        ]
+      },
+      {
+        "Sid": "Allow22",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-22/object-22"
+        ]
+      },
+      {
+        "Sid": "Allow23",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-23/object-23"
+        ]
+      },
+      {
+        "Sid": "Allow24",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-24/object-24"
+        ]
+      },
+      {
+        "Sid": "Allow25",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-25/object-25"
+        ]
+      },
+      {
+        "Sid": "Allow26",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-26/object-26"
+        ]
+      },
+      {
+        "Sid": "Allow27",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-27/object-27"
+        ]
+      },
+      {
+        "Sid": "Allow28",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-28/object-28"
+        ]
+      },
+      {
+        "Sid": "Allow29",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-29/object-29"
+        ]
+      },
+      {
+        "Sid": "Allow30",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-30/object-30"
+        ]
+      },
+      {
+        "Sid": "Allow31",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-31/object-31"
+        ]
+      },
+      {
+        "Sid": "Allow32",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-32/object-32"
+        ]
+      },
+      {
+        "Sid": "Allow33",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-33/object-33"
+        ]
+      },
+      {
+        "Sid": "Allow34",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-34/object-34"
+        ]
+      },
+      {
+        "Sid": "Allow35",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-35/object-35"
+        ]
+      },
+      {
+        "Sid": "Allow36",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-36/object-36"
+        ]
+      },
+      {
+        "Sid": "Allow37",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-37/object-37"
+        ]
+      },
+      {
+        "Sid": "Allow38",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-38/object-38"
+        ]
+      },
+      {
+        "Sid": "Allow39",
+        "Effect": "Allow",
+        "Action": [
+          "s3:*",
+          "ec2:*",
+          "iam:*",
+          "lambda:*",
+          "sts:*",
+          "kms:*",
+          "sns:*",
+          "sqs:*",
+          "rds:*",
+          "dynamodb:*",
+          "logs:*",
+          "ssm:*",
+          "ecr:*",
+          "ecs:*",
+          "eks:*",
+          "glue:*",
+          "athena:*",
+          "sagemaker:*",
+          "cloudformation:*",
+          "cloudtrail:*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::bucket-39/object-39"
+        ]
+      },
+      {
+        "Sid": "Deny0",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny1",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny2",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny3",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny4",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny5",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny6",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny7",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny8",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny9",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny10",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny11",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny12",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny13",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny14",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny15",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny16",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny17",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny18",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny19",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny20",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny21",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny22",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny23",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny24",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny25",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny26",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny27",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny28",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny29",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny30",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny31",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny32",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny33",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny34",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny35",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny36",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny37",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny38",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny39",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny40",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny41",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny42",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny43",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny44",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny45",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny46",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny47",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny48",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny49",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny50",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny51",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny52",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny53",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny54",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny55",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny56",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny57",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny58",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny59",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny60",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny61",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny62",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny63",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny64",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny65",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny66",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny67",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny68",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny69",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny70",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny71",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny72",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny73",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny74",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny75",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny76",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny77",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny78",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      },
+      {
+        "Sid": "Deny79",
+        "Effect": "Deny",
+        "Action": [
+          "*"
+        ],
+        "Resource": [
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "arn:aws:s3:::${aws:PrincipalTag/team}-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        ]
+      }
+    ]
+  }
+}

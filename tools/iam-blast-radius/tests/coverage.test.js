@@ -217,6 +217,10 @@ test('Markdown zero-findings wording: complete for a clean identity policy', () 
 
 test('NotPrincipal markdown names the unsupported element + its path', () => {
   const md = toMarkdown(analyze(NOTPRINCIPAL));
-  assert.match(md, /Unsupported elements: NotPrincipal at Statement\[1\]\.NotPrincipal/);
+  // S3-md-coverage-escape: the element + its path are policy-derived coverage-path
+  // strings, now routed through mdEscape() like every other Markdown interpolation.
+  // The path's '[' ']' (link-reference metacharacters) are backslash-escaped so a
+  // hostile path cannot forge link syntax; they render as literal '[1]' inert text.
+  assert.match(md, /Unsupported elements: NotPrincipal at Statement\\\[1\\\]\.NotPrincipal/);
   assert.match(md, /No findings in the supported subset/);
 });

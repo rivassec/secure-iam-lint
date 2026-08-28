@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "IAM Blast Radius",
+          "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+          "semanticVersion": "1",
+          "rules": [
+            {
+              "id": "analysis.MISSING_FAMILY",
+              "name": "analysis.MISSING_FAMILY",
+              "shortDescription": {
+                "text": "Analyzer state (malformed): MISSING_FAMILY. Fail-closed \"could not analyze\"; this is NOT a vulnerability score."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "category": "analysis-state",
+                "failClosed": true,
+                "analysisState": "malformed"
+              }
+            }
+          ]
+        }
+      },
+      "properties": {
+        "analysisStatus": "failed",
+        "exitCode": 2,
+        "blockingCount": 0,
+        "findingsCount": 0
+      },
+      "results": [
+        {
+          "ruleId": "analysis.MISSING_FAMILY",
+          "kind": "fail",
+          "level": "error",
+          "message": {
+            "text": "The \\\"family\\\" input is required and is never auto\\-detected \\(identity \\| role\\-trust \\| resource \\| permissions\\-boundary \\| session \\| scp \\| rcp\\)\\."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "action-inputs"
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "iamBlastRadius/semanticIdentity/v1": "09597b52a3ca9b0fd7659deab7ed"
+          },
+          "properties": {
+            "category": "analysis-state",
+            "failClosed": true,
+            "analysisState": "malformed"
+          },
+          "ruleIndex": 0
+        }
+      ]
+    }
+  ]
+}

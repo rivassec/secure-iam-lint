@@ -1,8 +1,8 @@
 // IAM Blast Radius - privilege-escalation path engine (IAM-005).
 //
 // Fifth stage of the pipeline (see docs/architecture.md data-flow):
-//   text -> validate() -> parse() -> buildModel() -> [ evaluator, rules,
-//   escalation ] -> { findings[], graph }
+//   text -> validate() -> parse() -> buildModel() -> [ rules, escalation,
+//   family-aware analyzers ] -> { findings[], graph }
 //
 // analyzeEscalations() scans a normalized, frozen model (from buildModel()) and
 // emits deterministic escalation findings using the canonical finding shape
@@ -78,568 +78,119 @@
 // same model -> same findings, same order, every run (no Date/Math.random).
 
 import { modelFromText } from './model.js';
+import {
+  detectRoleTakeover,
+} from './escalation-takeover.js';
+export * from './escalation-takeover.js';
+import {
+  detectPolicyVersion, detectAttachPolicy, detectPutInlinePolicy, detectTrustModify, detectCredentialCreation, detectAssumeRoleExpansion, detectCrossAccountScopedAssume,
+} from './escalation-families.js';
+export * from './escalation-families.js';
+import {
+  makeEscalation, downgrade, evidenceOf, contributingStatementsFrom, prereqGroup, prereqTechnique, prerequisitesOf, survivingGrantedActions,
+} from './escalation-finding.js';
+export * from './escalation-finding.js';
+import {
+  denyActionApplies, denyResourcesCover, denyResourceCoverage, denyEffectOnAction, applyDenyToActions,
+} from './escalation-deny.js';
+export * from './escalation-deny.js';
+import {
+  CAPABILITY_LIMIT, TARGET_UNKNOWN_LIMIT, CONDITION_LIMIT, DENY_NARROW_LIMIT, PASSED_TO_SERVICE_UNCERTAIN_LIMIT,
+} from './escalation-consts.js';
+export * from './escalation-consts.js';
+import { concreteRoleTargetAccount, isConcreteRoleArn, resourceCoversRole, isAllRolesAssumeScope, specificAccountsInRoleArns, parsePassResource, partitionReaches, accountReaches, partitionModelable, subjectPartitionKnown, accountModelable, otherResourceIsUnmodelable, isUnmodelablePassResource, isConfidentPinnedResource, globCanProducePrefix, subjectRoleArnPrefix, resourceReachesSubject, rolePathIsWildcardEquivalent, principalPinsOf, constraintContains, keyConstraintsSatisfiable, principalPinsOfMemo, pinsJointlySatisfiable, principalConditionsSatisfiable, ROLE_ARN_PARTS_RE, KNOWN_PARTITIONS, IAM_ARN_LENIENT_RE, PRINCIPAL_INVARIANT_KEYS, EXACT_EQUALITY_PIN_OPERATORS, NEGATED_EQUALITY_PIN_OPERATORS, CASE_INSENSITIVE_PIN_OPERATORS, SATISFIABILITY_TRIPLE_WORK } from './escalation-reachability.js';
+export * from './escalation-reachability.js';
+import { passedToServiceEntries, normalizeOperator, operatorPermitsService, passRolePermitsService, hasNonEmptyCondition } from './escalation-conditions.js';
+export { hasNonEmptyCondition } from './escalation-conditions.js';
+import { statementSid } from './escalation-statement.js';
+import { resourceScope, isStarResource, grantTokenIsBroad, resourceListIsBroadForAssume, assumeScopeIsAllRoles, assumeAccountReach } from './escalation-scope.js';
 import { statementNeverMatches, parseOperator } from './conditions.js';
+// ONE shared, ReDoS-safe, linear wildcard matcher (S3-dos-budget). Replaces the
+// byte-identical globMatch copy this file used to carry; isGlobBudgetError lets the
+// analyzer re-throw the cooperative wall-clock budget sentinel instead of masking it
+// as a generic internal error (see the analyzeEscalations catch below).
+import { globMatch, isGlobBudgetError, chargeWork } from './glob.js';
+// Low-level action-pattern matchers extracted to their own leaf module
+// (behavior-preserving refactor). Imported for internal use AND re-exported so
+// external consumers (graph.js) keep importing them from './escalation.js'.
+import { actionGrants, hasPolicyVariable, grantedPatternsFor } from './escalation-action-grants.js';
+export { actionGrants, hasPolicyVariable } from './escalation-action-grants.js';
 
 // --- Shared caveat language --------------------------------------------------
 // One constant so every escalation's `limit` carries identical, non-overstated
 // wording about what a single policy can and cannot prove. Contains the phrase
 // "not effective access" that the truthfulness tests assert on.
-const CAPABILITY_LIMIT =
-  'Capability from this policy alone, not effective access. A single policy ' +
-  'cannot establish effective permissions: other identity policies, resource ' +
-  'policies, permission boundaries, SCPs, session policies, explicit Denies, ' +
-  'and Condition keys may narrow or block this path.';
 
-// The permissions of the role that is passed, assumed, or re-trusted are not in
-// scope here and are treated as UNKNOWN, never inferred.
-const TARGET_UNKNOWN_LIMIT =
-  ' The permissions of the target role (passed / assumed / re-trusted) are not ' +
-  'in scope and are treated as unknown; this finding does not claim what that ' +
-  'role can do, only that this policy would let the principal reach it.';
+// The linear, ReDoS-safe wildcard matcher (globMatch) now lives in ./glob.js and
+// is imported at the top of this module - one canonical matcher shared by every
+// engine file instead of three drifting copies (S3-dos-budget).
 
-const CONDITION_LIMIT =
-  ' One or more statements in this path carry a Condition block beyond what was ' +
-  'used to confirm it, so the path may be gated at runtime; confidence is ' +
-  'reduced accordingly.';
-
-// Applied when a Deny in the SAME policy touches an action in this path but does
-// not definitively remove it across the whole granted scope (a conditional Deny,
-// a Deny whose resource scope only partially overlaps, or a Deny match that
-// cannot be resolved from the policy text). An unconditional, in-scope, concrete
-// Deny suppresses the path entirely (no finding); this note covers the residual
-// "may be blocked" cases where suppression would overstate a false deny.
-const DENY_NARROW_LIMIT =
-  ' Another statement in this policy Denies one or more actions in this path. ' +
-  'Explicit Deny overrides Allow, so this Deny may block or narrow the path at ' +
-  'runtime; confidence is reduced accordingly.';
-
-// Applied when the PassRole grant carries an iam:PassedToService condition using
-// an operator whose effect cannot be resolved from the policy text (e.g. Null or
-// an unsupported operator). The path is kept but not asserted with certainty.
-const PASSED_TO_SERVICE_UNCERTAIN_LIMIT =
-  ' The iam:PassedToService condition on the PassRole grant uses an operator ' +
-  'that cannot be resolved from the policy text, so whether this service may ' +
-  'receive the role is uncertain; confidence is reduced accordingly.';
-
-// --- Linear glob matcher (ReDoS-safe) ----------------------------------------
-// Matches an IAM wildcard pattern ('*' = any run incl. empty, '?' = one char)
-// against a literal string using two-pointer scanning. O(n*m) worst case, NO
-// catastrophic backtracking (unlike a regex compiled from hostile input).
-function globMatch(pattern, text) {
-  const p = String(pattern);
-  const t = String(text);
-  let pi = 0;
-  let ti = 0;
-  let starIdx = -1;
-  let matchIdx = 0;
-  while (ti < t.length) {
-    if (pi < p.length && (p[pi] === '?' || p[pi] === t[ti])) {
-      pi++;
-      ti++;
-    } else if (pi < p.length && p[pi] === '*') {
-      starIdx = pi;
-      matchIdx = ti;
-      pi++;
-    } else if (starIdx !== -1) {
-      pi = starIdx + 1;
-      matchIdx++;
-      ti = matchIdx;
-    } else {
-      return false;
-    }
-  }
-  while (pi < p.length && p[pi] === '*') pi++;
-  return pi === p.length;
-}
-
-// IAM action matching is case-insensitive ("s3:getobject" == "s3:GetObject").
-// Exported so graph.js (IAM-006) can apply the SAME same-policy Deny precedence
-// to rule findings that this module already applies to escalation findings.
-export function actionGrants(pattern, concreteAction) {
-  return globMatch(String(pattern).toLowerCase(), String(concreteAction).toLowerCase());
-}
-
-// A bare "*" action grant (Action:"*") grants EVERY action in every service,
-// which necessarily includes iam:PassRole, sts:AssumeRole, and every direct-IAM
-// self-administration action. It is therefore a superset of every escalation
-// trigger this module recognizes, and MUST surface the paths it contains: an
-// Action:"*" policy is de-facto AdministratorAccess. (Earlier this module
-// skipped a bare "*" on the assumption that WILDCARD-ACTION "*" was already the
-// single widest CRITICAL finding, so re-listing the named paths would be noise.
-// IAM-102 removed that compensating critical - WILDCARD-ACTION is now `high` -
-// so skipping "*" here left the risk summary affirmatively reporting
-// "privilege-escalation paths: 0" for full admin, a strictly narrower iam:*
-// policy yielding more paths than "*". That is an inaccurate security claim
-// (threat-model T8: understating blast radius is as harmful as overstating it),
-// so a bare "*" is now matched like any other pattern via actionGrants().)
-
-// IAM policy variables (${...}) resolve only at runtime. A variable-bearing
-// pattern cannot be matched from the policy text; treat it as uncertain so we
-// never manufacture a false path (or hide one). Handled per-use below.
-export function hasPolicyVariable(pattern) {
-  return String(pattern).includes('${');
-}
-
-// Does statement `stmt` (an Allow) grant at least one action matching any of the
-// concrete actions in `catalog`? Returns the matching statement patterns. A bare
-// "*" glob-matches every catalog action (Action:"*" grants all of them), so it
-// is reported like any other matching pattern - see the note above on why a
-// full wildcard is no longer skipped here.
-function grantedPatternsFor(stmt, catalog) {
-  const matched = [];
-  for (const p of stmt.actions) {
-    if (hasPolicyVariable(p)) continue; // cannot resolve from text -> skip
-    if (catalog.some((concrete) => actionGrants(p, concrete))) matched.push(p);
-  }
-  // An Allow with NotAction grants everything EXCEPT the listed actions, so it
-  // grants these sensitive actions unless one is explicitly excluded. This is a
-  // genuine (broad) grant of the escalation action.
-  if (stmt.notActions.length > 0) {
-    for (const concrete of catalog) {
-      const excluded = stmt.notActions.some(
-        (p) => !hasPolicyVariable(p) && actionGrants(p, concrete),
-      );
-      // Not excluded => this NotAction-Allow grants the sensitive action. Report
-      // the concrete action it fails to exclude (guard against dupes).
-      if (!excluded && !matched.includes(concrete)) matched.push(concrete);
-    }
-  }
-  return matched;
-}
-
-// --- Service-execution catalog (PassRole targets) ----------------------------
-// Each entry: the AWS service, its service principal (matched against
-// iam:PassedToService), the finding id to emit, and the concrete role-consuming
-// actions that, combined with iam:PassRole, complete the path. Passing a role
-// to a service you can also make run code as = run code with that role.
-const PASS_ROLE_SERVICES = Object.freeze([
-  Object.freeze({
-    service: 'lambda',
-    principal: 'lambda.amazonaws.com',
-    id: 'PASSROLE-LAMBDA',
-    execActions: Object.freeze([
-      'lambda:CreateFunction',
-      'lambda:UpdateFunctionCode',
-      'lambda:UpdateFunctionConfiguration',
-    ]),
-  }),
-  Object.freeze({
-    service: 'ec2',
-    principal: 'ec2.amazonaws.com',
-    id: 'PASSROLE-EC2',
-    execActions: Object.freeze(['ec2:RunInstances']),
-  }),
-  Object.freeze({
-    service: 'ecs',
-    principal: 'ecs-tasks.amazonaws.com',
-    id: 'PASSROLE-SERVICE',
-    execActions: Object.freeze([
-      'ecs:RunTask',
-      'ecs:StartTask',
-      'ecs:RegisterTaskDefinition',
-    ]),
-  }),
-  Object.freeze({
-    service: 'glue',
-    principal: 'glue.amazonaws.com',
-    id: 'PASSROLE-SERVICE',
-    execActions: Object.freeze(['glue:CreateJob', 'glue:UpdateJob', 'glue:CreateDevEndpoint']),
-  }),
-  Object.freeze({
-    service: 'cloudformation',
-    principal: 'cloudformation.amazonaws.com',
-    id: 'PASSROLE-SERVICE',
-    execActions: Object.freeze(['cloudformation:CreateStack', 'cloudformation:UpdateStack']),
-  }),
-  Object.freeze({
-    service: 'sagemaker',
-    principal: 'sagemaker.amazonaws.com',
-    id: 'PASSROLE-SERVICE',
-    execActions: Object.freeze([
-      'sagemaker:CreateTrainingJob',
-      'sagemaker:CreateProcessingJob',
-      'sagemaker:CreateNotebookInstance',
-    ]),
-  }),
-  Object.freeze({
-    service: 'codebuild',
-    principal: 'codebuild.amazonaws.com',
-    id: 'PASSROLE-SERVICE',
-    execActions: Object.freeze(['codebuild:CreateProject', 'codebuild:UpdateProject']),
-  }),
-  Object.freeze({
-    service: 'datapipeline',
-    principal: 'datapipeline.amazonaws.com',
-    id: 'PASSROLE-SERVICE',
-    execActions: Object.freeze(['datapipeline:CreatePipeline', 'datapipeline:PutPipelineDefinition']),
-  }),
-]);
-
-const PASS_ROLE_ACTION = 'iam:PassRole';
-
-// IAM-1005: ECS distinguishes two roles a task can carry, and they must never be
-// merged (suite-2 test 38, suite-3 tests 87/88/89):
-//   - the TASK role is the application's own credentials (what the container's
-//     code obtains via the task metadata endpoint) - the credential-exposure path;
-//   - the EXECUTION role is what the ECS agent uses to pull images, write logs,
-//     and inject secrets at startup - infrastructure influence, NOT application
-//     credentials. Passing only the execution role must NOT be presented as the
-//     application obtaining that role's credentials.
-// Classification is inferred from the role NAME (medium confidence): a name that
-// says "task" is a task role, one that says "exec"/"execution" is an execution
-// role, anything else is unclassified (kept conservative).
-function classifyEcsRole(resource) {
-  const s = String(resource == null ? '' : resource).toLowerCase();
-  const name = /:role\/(.+)$/.exec(s);
-  const n = name ? name[1] : s;
-  const hasExec = n.includes('exec'); // covers "exec" and "execution"
-  const hasTask = n.includes('task');
-  if (hasTask && !hasExec) return 'task';
-  if (hasExec && !hasTask) return 'execution';
-  return 'unknown';
-}
-
-// IAM-1005: only ecs:RunTask / ecs:StartTask actually LAUNCH a task (run code);
-// ecs:RegisterTaskDefinition only STAGES a definition. PassRole + a launch action
-// is a confirmed code-execution path (critical); PassRole + staging ALONE is a
-// high staging capability (another actor/scheduler must still run it) - suite-3
-// test 90.
-const ECS_LAUNCH_ACTIONS = Object.freeze(['ecs:RunTask', 'ecs:StartTask']);
-
-// Bucket a set of passed role ARNs by ECS role class (task / execution / unknown),
-// preserving order within each bucket.
-function ecsRoleClasses(resources) {
-  const out = { task: [], execution: [], unknown: [] };
-  for (const r of Array.isArray(resources) ? resources : []) {
-    const cls = classifyEcsRole(r);
-    out[cls].push(String(r));
-  }
-  return out;
-}
-
-// --- Single-action / broad-scope escalation catalogs -------------------------
-
-const POLICY_VERSION_ACTIONS = Object.freeze([
-  'iam:CreatePolicyVersion',
-  'iam:SetDefaultPolicyVersion',
-]);
-
-const ATTACH_POLICY_ACTIONS = Object.freeze([
-  'iam:AttachUserPolicy',
-  'iam:AttachRolePolicy',
-  'iam:AttachGroupPolicy',
-]);
-
-const PUT_INLINE_POLICY_ACTIONS = Object.freeze([
-  'iam:PutUserPolicy',
-  'iam:PutRolePolicy',
-  'iam:PutGroupPolicy',
-]);
-
-const TRUST_MODIFY_ACTIONS = Object.freeze(['iam:UpdateAssumeRolePolicy']);
-
-const CREDENTIAL_ACTIONS = Object.freeze([
-  'iam:CreateAccessKey',
-  'iam:CreateLoginProfile',
-  'iam:UpdateLoginProfile',
-]);
-
-const ASSUME_ROLE_ACTIONS = Object.freeze(['sts:AssumeRole', 'sts:AssumeRoleWithSAML', 'sts:AssumeRoleWithWebIdentity']);
-
-// IAM-902 role-takeover chain (modify-then-assume, no PassRole required). Three
-// primitives that, when granted on the SAME role, let a principal take the role
-// over: give it permissions, rewrite its trust to trust the attacker, then assume
-// it. Each is scoped to a role, so all three are role-targeting actions.
-//   grant  - iam:PutRolePolicy / iam:AttachRolePolicy write/attach a permission
-//            policy onto the role (the user/group variants target a different
-//            principal type and are NOT part of a role takeover).
-//   trust  - iam:UpdateAssumeRolePolicy rewrites the role's trust policy.
-//   assume - sts:AssumeRole assumes the re-trusted role. The federated
-//            WithSAML / WithWebIdentity variants require an out-of-scope IdP
-//            trust and are deliberately excluded from this exact-role chain.
-const ROLE_TAKEOVER_GRANT_ACTIONS = Object.freeze(['iam:PutRolePolicy', 'iam:AttachRolePolicy']);
-const ROLE_TAKEOVER_ASSUME_ACTIONS = Object.freeze(['sts:AssumeRole']);
-
-// --- Catalog metadata --------------------------------------------------------
-// Ordering here defines the deterministic within-statement finding order.
-
-export const ESCALATIONS = Object.freeze({
-  'PASSROLE-LAMBDA': Object.freeze({
-    id: 'PASSROLE-LAMBDA',
-    order: 0,
-    title: 'PassRole to Lambda + function create/update',
-    ruleVersion: '1',
-    docRef:
-      'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html',
-  }),
-  'PASSROLE-EC2': Object.freeze({
-    id: 'PASSROLE-EC2',
-    order: 1,
-    title: 'PassRole to EC2 + RunInstances',
-    ruleVersion: '1',
-    docRef:
-      'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html',
-  }),
-  'PASSROLE-SERVICE': Object.freeze({
-    id: 'PASSROLE-SERVICE',
-    order: 2,
-    title: 'PassRole to a service + that service running code as the role',
-    ruleVersion: '1',
-    docRef:
-      'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html',
-  }),
-  'POLICY-VERSION': Object.freeze({
-    id: 'POLICY-VERSION',
-    order: 3,
-    title: 'Managed-policy version manipulation',
-    ruleVersion: '1',
-    docRef:
-      'https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html',
-  }),
-  'ATTACH-POLICY': Object.freeze({
-    id: 'ATTACH-POLICY',
-    order: 4,
-    title: 'Attach managed policy to self / a principal',
-    ruleVersion: '1',
-    docRef:
-      'https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html',
-  }),
-  'PUT-INLINE-POLICY': Object.freeze({
-    id: 'PUT-INLINE-POLICY',
-    order: 5,
-    title: 'Write inline policy on self / a principal',
-    ruleVersion: '1',
-    docRef:
-      'https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html',
-  }),
-  'TRUST-POLICY-MODIFY': Object.freeze({
-    id: 'TRUST-POLICY-MODIFY',
-    order: 6,
-    title: 'Role trust-policy modification (UpdateAssumeRolePolicy)',
-    ruleVersion: '1',
-    docRef:
-      'https://docs.aws.amazon.com/IAM/latest/UserGuide/roles-managingrole-editing-console.html',
-  }),
-  'CREDENTIAL-CREATION': Object.freeze({
-    id: 'CREDENTIAL-CREATION',
-    order: 7,
-    title: 'Credential creation for a principal (access key / login profile)',
-    ruleVersion: '1',
-    docRef:
-      'https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html',
-  }),
-  'ASSUME-ROLE-EXPANSION': Object.freeze({
-    id: 'ASSUME-ROLE-EXPANSION',
-    order: 8,
-    title: 'Broad AssumeRole (role assumption over a wildcard scope)',
-    ruleVersion: '1',
-    docRef:
-      'https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html',
-  }),
-  // IAM-902: compound role-takeover chain on a single role - grant permissions,
-  // rewrite trust, then assume - which crosses a privilege boundary without
-  // iam:PassRole. A critical compound path, distinct from the standalone
-  // TRUST-POLICY-MODIFY / PUT-INLINE-POLICY / ATTACH-POLICY primitives it correlates.
-  'ROLE-TAKEOVER': Object.freeze({
-    id: 'ROLE-TAKEOVER',
-    order: 9,
-    title: 'Role takeover chain (grant permissions + rewrite trust + assume, same role)',
-    ruleVersion: '1',
-    docRef:
-      'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_manage_modify.html',
-  }),
-});
-
-export const ESCALATION_IDS = Object.freeze(Object.keys(ESCALATIONS));
-
+// Escalation catalogs/metadata extracted to their own leaf module; imported
+// for internal use and ESCALATIONS/ESCALATION_IDS re-exported (public API).
+import {
+  PASS_ROLE_SERVICES, PASS_ROLE_ACTION, classifyEcsRole, ECS_LAUNCH_ACTIONS, ecsRoleClasses,
+  POLICY_VERSION_ACTIONS, ATTACH_POLICY_ACTIONS, PUT_INLINE_POLICY_ACTIONS, TRUST_MODIFY_ACTIONS,
+  CREDENTIAL_ACTIONS, ASSUME_ROLE_ACTIONS, ROLE_TAKEOVER_GRANT_ACTIONS, ROLE_TAKEOVER_ASSUME_ACTIONS,
+  ESCALATIONS, ESCALATION_IDS, CONCRETE_ACCOUNT_ID_RE,
+} from './escalation-catalogs.js';
+export { ESCALATIONS, ESCALATION_IDS } from './escalation-catalogs.js';
 // --- Condition helpers -------------------------------------------------------
 
-// Extract every Condition entry that binds iam:PassedToService (case-insensitive
-// key), preserving the OPERATOR it appears under - the operator decides whether
-// the values are an allowlist (StringEquals/StringLike) or a denylist
-// (StringNotEquals/StringNotLike). Returns [{ op, values[] }]. Values are inert
-// strings, only ever glob-compared to a service principal.
-function passedToServiceEntries(condition) {
-  const entries = [];
-  if (!condition || typeof condition !== 'object') return entries;
-  for (const op of Object.keys(condition)) {
-    const block = condition[op];
-    if (!block || typeof block !== 'object') continue;
-    for (const key of Object.keys(block)) {
-      if (key.toLowerCase() !== 'iam:passedtoservice') continue;
-      const values = [];
-      const v = block[key];
-      if (typeof v === 'string') values.push(v);
-      else if (Array.isArray(v)) {
-        for (const item of v) if (typeof item === 'string') values.push(item);
-      }
-      entries.push({ op, values });
-    }
-  }
-  return entries;
-}
 
-// Normalize a condition operator to its base form: drop the set qualifier
-// (ForAnyValue:/ForAllValues:) and the ...IfExists suffix so StringEquals,
-// ForAnyValue:StringEquals and StringEqualsIfExists all classify the same.
-function normalizeOperator(op) {
-  let o = String(op).toLowerCase();
-  o = o.replace(/^forany(value)?:/, '').replace(/^forall(values)?:/, '');
-  o = o.replace(/ifexists$/, '');
-  return o;
-}
 
-// Given one PassedToService condition entry (operator + values), does it permit
-// passing a role to `principal`? Returns 'permit' | 'deny' | 'uncertain'.
-//   - Allowlist operators (StringEquals/StringLike, case-insensitive variants):
-//     permit iff a value glob-matches the principal, else deny (only the listed
-//     services may receive the role).
-//   - Denylist operators (StringNotEquals/StringNotLike): permit iff NO value
-//     matches (may pass to any service EXCEPT the listed ones).
-//   - Null and any unrecognized operator: uncertain (cannot resolve from text;
-//     do NOT assume allowlist semantics, which would invert the meaning).
-function operatorPermitsService(op, values, principal) {
-  const base = normalizeOperator(op);
-  const p = String(principal).toLowerCase();
-  const matchAny = values.some((v) => globMatch(String(v).toLowerCase(), p));
-  switch (base) {
-    case 'stringequals':
-    case 'stringequalsignorecase':
-    case 'stringlike':
-    case 'arnequals':
-    case 'arnlike':
-      return matchAny ? 'permit' : 'deny';
-    case 'stringnotequals':
-    case 'stringnotequalsignorecase':
-    case 'stringnotlike':
-    case 'arnnotequals':
-    case 'arnnotlike':
-      return matchAny ? 'deny' : 'permit';
-    default:
-      // Null, Date*, Bool, and anything unrecognized: meaning cannot be
-      // determined from the policy text -> uncertain.
-      return 'uncertain';
-  }
-}
 
-// Does a PassRole statement's PassedToService condition permit passing a role to
-// service principal `principal`? AWS ANDs multiple condition operators together,
-// so a single operator that forbids this service blocks it. Returns:
-//   { permits: boolean, pinned: boolean, uncertain: boolean }
-//   - pinned=false  : no PassedToService condition -> can pass to ANY service
-//                     (subject to the role's own trust policy, unknown here).
-//   - pinned=true   : condition present; permits reflects allow/deny-list logic.
-//   - uncertain=true: an operator (e.g. Null / unsupported) could not be
-//                     resolved from the policy text; the path is kept but its
-//                     confidence is reduced rather than asserting a false result.
-function passRolePermitsService(condition, principal) {
-  const entries = passedToServiceEntries(condition);
-  if (entries.length === 0) return { permits: true, pinned: false, uncertain: false };
-  let uncertain = false;
-  for (const e of entries) {
-    const disp = operatorPermitsService(e.op, e.values, principal);
-    // A definitive deny under any AND-ed operator blocks this service outright.
-    if (disp === 'deny') return { permits: false, pinned: true, uncertain: false };
-    if (disp === 'uncertain') uncertain = true;
-  }
-  return { permits: true, pinned: true, uncertain };
-}
 
-export function hasNonEmptyCondition(stmt) {
-  return (
-    stmt.condition !== null &&
-    stmt.condition !== undefined &&
-    typeof stmt.condition === 'object' &&
-    Object.keys(stmt.condition).length > 0
-  );
-}
 
 // --- Resource-scope helpers --------------------------------------------------
 
-function resourceScope(stmt) {
-  if (stmt.resources.length > 0) return stmt.resources;
-  if (stmt.notResources.length > 0) return stmt.notResources;
-  return ['(no Resource/NotResource specified)'];
+
+
+// Order-invariant danger ranking of an exec statement's RESOURCE scope, used ONLY
+// as a tiebreak when several equally-un-denied service-execution statements exist
+// for one service (S2-passrole-allstmts iter5). Higher = broader/more dangerous.
+// The compound path must reflect the WORST-case exec grant, and its selection must
+// not depend on statement ORDER: a lowest-INDEX tiebreak let a reorder swap which
+// exec (broad "*" vs narrow) the path consumed, which - together with subsumption -
+// flipped the CLI exit 0<->1 on byte-content-identical statements. Ranking by
+// resource breadth (a content property) first makes the selected exec deterministic
+// across reorderings; the lowest-index tiebreak only settles equal-breadth ties.
+function execResourceBroadness(stmt) {
+  if (stmt.notResources.length > 0) return 2; // NotResource inverse - broad-except-a-few
+  if (stmt.resources.length === 0) return 2; // unspecified scope
+  if (stmt.resources.includes('*')) return 2; // bare "*"
+  if (stmt.resources.some((r) => r.includes('*') || r.includes('?'))) return 1; // glob ARN
+  return 0; // concrete ARN(s)
 }
 
-// Is a resource pattern "broad" for role assumption? True for a bare "*", a
-// NotResource inverse, an unspecified scope, or an ARN that wildcards the role
-// path (e.g. arn:aws:iam::*:role/*). A single concrete role ARN is NOT broad.
-function resourceListIsBroadForAssume(stmt) {
-  if (stmt.notResources.length > 0) return true;
-  if (stmt.resources.length === 0) return true; // unspecified scope
-  return stmt.resources.some((r) => {
-    if (r === '*') return true;
-    // A wildcard in the role-name portion of the ARN reaches many roles.
-    return r.includes('*') || r.includes('?');
-  });
-}
-
-// IAM-102 severity discriminator: does an AssumeRole grant reach "effectively
-// ALL roles" - i.e. all roles across ARBITRARY accounts? Critical is reserved
-// for that boundary-crossing scope. Two axes must BOTH be unconstrained:
-//   (1) account axis arbitrary   - the grant is not pinned to concrete
-//       account id(s): a NotResource inverse, an unspecified scope, a bare "*",
-//       a non-ARN pattern, or an ARN whose account field is wildcarded/empty
-//       (this is exactly assumeAccountReach().arbitrary).
-//   (2) role-name axis fully open - a NotResource inverse, an unspecified
-//       scope, a bare "*", the bare shorthand "role/*", or a role ARN whose
-//       role-name path segment is exactly "*".
-// A grant pinned to a CONCRETE account - even arn:aws:iam::111122223333:role/*
-// (all roles in ONE account) - is broad but BOUNDED to that account, so it is
-// NOT effectively-all-roles and stays `high`, never critical: asserting critical
-// would claim reach the account-pinned ARN does not support (threat-model T8,
-// IAM-301 negative corpus). A PARTIAL role-name wildcard (role/app-*, role/app-?)
-// reaches many roles but not all, so it too stays `high`.
-function assumeScopeIsAllRoles(stmt) {
-  // Account axis must be arbitrary first: a concrete-account grant is bounded.
-  if (!assumeAccountReach(stmt).arbitrary) return false;
-  if (stmt.notResources.length > 0) return true; // inverse: ~all roles
-  if (stmt.resources.length === 0) return true; // unspecified: unconstrained
-  return stmt.resources.some((r) => {
-    if (r === '*') return true;
-    if (r === 'role/*') return true; // bare shorthand
-    const marker = ':role/';
-    const idx = r.lastIndexOf(marker);
-    if (idx === -1) return false;
-    return r.slice(idx + marker.length) === '*'; // role-name segment is exactly "*"
-  });
-}
-
-// A broad-for-assume grant is not necessarily cross-account. Determine whether
-// the resource set can reach roles in accounts OTHER than ones it names.
-// Returns { arbitrary, accounts }:
-//   arbitrary=true  -> a NotResource inverse, an unspecified scope, a bare "*",
-//                      a non-ARN pattern, or an ARN whose account field is
-//                      wildcarded/empty is present -> reach is not confined to
-//                      named accounts (may span arbitrary AWS accounts).
-//   arbitrary=false -> every resource pins a concrete account; `accounts` lists
-//                      the distinct account IDs the grant is confined to.
-// Only the arbitrary case may carry the "arbitrary AWS accounts" claim; a grant
-// like arn:aws:iam::111122223333:role/* is broad within ONE account, not across.
-function assumeAccountReach(stmt) {
-  if (stmt.notResources.length > 0) return { arbitrary: true, accounts: [] };
-  if (stmt.resources.length === 0) return { arbitrary: true, accounts: [] };
-  const accounts = new Set();
-  for (const r of stmt.resources) {
-    if (r === '*') return { arbitrary: true, accounts: [] };
-    // ARN layout: arn:partition:service:region:account:resource
-    const parts = r.split(':');
-    if (parts.length < 6) return { arbitrary: true, accounts: [] }; // not a full ARN
-    const account = parts[4];
-    if (account === '' || account.includes('*') || account.includes('?')) {
-      return { arbitrary: true, accounts: [] };
-    }
-    accounts.add(account);
+// Order-invariant TECHNIQUE severity of an exec statement's SURVIVING (post-Deny)
+// actions for a pass-role service. The compound path's tier is a MOST-SEVERE-across-
+// statements property, mirroring the pass side: a co-located staging-only exec must
+// never mask a launch-capable exec in another statement - regardless of statement
+// ORDER, resource breadth, or index (S2-passrole-allstmts axis 2). Only ECS splits
+// launch (ecs:RunTask / ecs:StartTask -> runs code as the passed role, CRITICAL) from
+// staging (ecs:RegisterTaskDefinition -> only stages a definition, HIGH); every other
+// pass-role service's exec actions are each a full code-execution technique, so they
+// rank uniformly (1). Ranked ABOVE resource breadth and index in exec selection so a
+// launch grant in ANY statement keeps the path critical. `effectiveActions` are the
+// granted PATTERNS that survived Deny, so membership is tested with actionGrants (a
+// wildcard covering ecs:RunTask counts as launch), not string equality.
+function execTechniqueSeverity(svc, effectiveActions) {
+  if (svc.service === 'ecs') {
+    const hasLaunch = ECS_LAUNCH_ACTIONS.some(
+      (la) => (effectiveActions || []).some((p) => actionGrants(p, la)),
+    );
+    return hasLaunch ? 1 : 0;
   }
-  return { arbitrary: false, accounts: [...accounts] };
+  return 1; // every other service's exec actions are all full code-execution techniques
 }
+
+
 
 // --- Explicit-Deny analysis (same-policy precedence) -------------------------
 // AWS resolves access with explicit-Deny precedence: an in-scope, applicable
 // Deny overrides every Allow. The escalation engine builds paths from Allow
 // statements, but a same-policy Deny of a required action can remove or narrow
-// the path. Mirrors evaluator.js resolveDecision(): an unconditional, concrete,
+// the path. Applies AWS explicit-Deny precedence: an unconditional, concrete,
 // in-scope Deny is definitive; a conditional / variable / partial-scope Deny is
 // treated as "may block" (reduces confidence) rather than a false certainty.
 
@@ -647,333 +198,14 @@ function assumeAccountReach(stmt) {
 // Returns { applies, certain }. NotAction on a Deny denies everything EXCEPT the
 // listed actions. Variable-bearing patterns cannot be resolved from text -> the
 // match is possible but not certain.
-export function denyActionApplies(stmt, action) {
-  if (stmt.notActions.length > 0) {
-    let concreteExcluded = false;
-    let hasVar = false;
-    for (const p of stmt.notActions) {
-      if (hasPolicyVariable(p)) { hasVar = true; continue; }
-      if (actionGrants(p, action)) concreteExcluded = true;
-    }
-    if (concreteExcluded) return { applies: false, certain: true };
-    // Not concretely excluded: NotAction-Deny applies to (touches) this action. A
-    // variable in the exclusion list might exclude it at runtime -> uncertain.
-    // NOTE: `applies:true` here means the Deny narrows the grant, NOT that it
-    // fully covers it. Whether it can HARD-BLOCK is decided in denyEffectOnAction,
-    // which refuses full coverage for a NotAction-Deny against a broad/wildcard
-    // grant token (the preserved actions stay allowed) - do not "optimize" this to
-    // block a wildcard grant here, or false denies return (threat-model T8).
-    return { applies: true, certain: !hasVar };
-  }
-  let concreteMatch = false;
-  let hasVar = false;
-  for (const p of stmt.actions) {
-    if (hasPolicyVariable(p)) { hasVar = true; continue; }
-    if (actionGrants(p, action)) concreteMatch = true;
-  }
-  if (concreteMatch) return { applies: true, certain: true };
-  if (hasVar) return { applies: true, certain: false }; // might match at runtime
-  return { applies: false, certain: true };
-}
-
-// True if a resource pattern is a bare "*" (or the account/path-spanning
-// "arn:...:*" form is NOT treated as full here; only a literal "*" fully covers).
-function isStarResource(r) {
-  return r === '*';
-}
-
-// A grant token is "broad" when it is a wildcard pattern ('*', 'service:*', or
-// any pattern containing '*' / '?') - i.e. it matches more than one concrete
-// action. A NotAction-Deny ("deny everything EXCEPT the listed actions") can
-// NEVER fully cover a broad grant token: at least one NotAction-preserved action
-// falls within the broad grant and stays ALLOWED, so such a Deny can only NARROW
-// the grant, never remove it. (Reporting it as fully blocked would be a false
-// deny - it renders a still-reachable capability as definitively blocked, a
-// truthfulness harm; docs/architecture.md #6, threat-model T8.) A CONCRETE grant
-// token, by contrast, is either preserved by the NotAction list -> the Deny does
-// not apply -> or fully denied -> genuine full coverage.
-function grantTokenIsBroad(action) {
-  const a = String(action);
-  return a.includes('*') || a.includes('?');
-}
-
-// How completely does `denyStmt` cover the resource scope granted by `allowStmt`?
-// Returns 'full' | 'partial' | 'none'. Only 'full' (paired with an unconditional,
-// certain action match) suppresses a path; 'partial' reduces confidence.
-export function denyResourceCoverage(denyStmt, allowStmt) {
-  // A Deny scoped by NotResource, or with no Resource/NotResource, cannot be
-  // proven to fully cover the Allow scope from the policy text -> partial.
-  if (denyStmt.notResources.length > 0) return 'partial';
-  if (denyStmt.resources.length === 0) return 'partial';
-  // A Deny on "*" covers every resource the Allow could reach.
-  if (denyStmt.resources.some(isStarResource)) return 'full';
-
-  const allowRes = allowStmt.resources;
-  // Allow scoped by NotResource or unspecified is broad; a concrete Deny list
-  // cannot be shown to cover all of it -> partial overlap at most.
-  if (allowStmt.notResources.length > 0 || allowRes.length === 0) return 'partial';
-
-  // Both have concrete Resource lists. Full coverage requires every Allow
-  // resource to be a concrete literal (no wildcard / no policy variable) that
-  // some concrete Deny pattern matches. Otherwise the coverage is uncertain.
-  let anyOverlap = false;
-  const allCovered = allowRes.every((ar) => {
-    if (hasPolicyVariable(ar) || ar.includes('*') || ar.includes('?')) {
-      // Wildcarded / variable Allow scope: a concrete Deny may still overlap
-      // part of it, but cannot be proven to cover all -> not full.
-      if (denyStmt.resources.some((dr) => !hasPolicyVariable(dr) && globMatch(dr, ar))) {
-        anyOverlap = true;
-      }
-      return false;
-    }
-    const covered = denyStmt.resources.some(
-      (dr) => !hasPolicyVariable(dr) && globMatch(dr, ar),
-    );
-    if (covered) anyOverlap = true;
-    return covered;
-  });
-  if (allCovered) return 'full';
-  return anyOverlap ? 'partial' : 'none';
-}
-
-// Classify how the model's Deny statements affect one required `action` granted
-// by `allowStmt`. Returns 'blocked' | 'may-block' | 'clear'.
-function denyEffectOnAction(denies, action, allowStmt) {
-  let result = 'clear';
-  for (const deny of denies) {
-    const a = denyActionApplies(deny, action);
-    if (!a.applies) continue;
-    const coverage = denyResourceCoverage(deny, allowStmt);
-    if (coverage === 'none') continue;
-    const conditioned = hasNonEmptyCondition(deny);
-    // A NotAction-Deny cannot FULLY cover a broad/wildcard grant token (the
-    // NotAction-preserved action(s) remain allowed), so against such a grant it
-    // can only narrow, never block. Full action coverage - the precondition for
-    // a hard block - therefore requires either a positive-Action Deny (whose
-    // pattern demonstrably covers the grant token) or a concrete grant token.
-    const notActionVsBroadGrant = deny.notActions.length > 0 && grantTokenIsBroad(action);
-    if (!conditioned && a.certain && coverage === 'full' && !notActionVsBroadGrant) {
-      return 'blocked'; // definitive, in-scope explicit Deny -> path removed
-    }
-    result = 'may-block'; // conditional / partial / uncertain / narrowing -> narrows path
-  }
-  return result;
-}
-
-// Apply same-policy Deny precedence to a finding's matched concrete actions.
-// Returns { actions, blocked, narrowed }:
-//   - actions : matched actions with definitively-blocked ones removed
-//   - blocked : true if EVERY matched action was definitively blocked (suppress)
-//   - narrowed: true if any action was removed or may be blocked (downgrade)
-export function applyDenyToActions(denies, matchedActions, allowStmt) {
-  if (denies.length === 0) {
-    return { actions: matchedActions.slice(), blocked: false, narrowed: false };
-  }
-  const kept = [];
-  let narrowed = false;
-  for (const a of matchedActions) {
-    const e = denyEffectOnAction(denies, a, allowStmt);
-    if (e === 'blocked') { narrowed = true; continue; }
-    if (e === 'may-block') narrowed = true;
-    kept.push(a);
-  }
-  return { actions: kept, blocked: kept.length === 0, narrowed };
-}
 
 // --- Finding factory ---------------------------------------------------------
 
-function statementSid(stmt) {
-  return typeof stmt.sid === 'string' && stmt.sid.length > 0
-    ? stmt.sid
-    : `(index ${stmt.index})`;
-}
 
 // Build a canonical finding (docs/architecture.md shape) plus escalation-only
 // enrichment: `escalation` (technique/service/target-unknown) and `evidence`
 // (per-statement support for the graph builder in IAM-006). Extra fields are
 // permitted alongside the canonical shape.
-function makeEscalation(id, anchor, fields) {
-  const meta = ESCALATIONS[id];
-  // Split certainty (IAM-104): every finding carries TWO orthogonal signals in
-  // place of the old single `confidence`.
-  //   policyEvidence     - how strongly THIS policy text establishes that the
-  //                        required grants are present (both/all actions granted,
-  //                        in scope, not overridden). Drives graph edge certainty.
-  //   pathExploitability - how likely the path actually yields elevated privilege
-  //                        given what is NOT in scope here: the target role's
-  //                        (passed / assumed / re-trusted) unknown permissions,
-  //                        service/instance-profile runtime behavior, and other
-  //                        controls. A compound PassRole->service path has strong
-  //                        policy evidence yet only MEDIUM exploitability because
-  //                        the passable role's power is unknown.
-  // Each caller supplies a base for both. A Condition beyond the confirming one,
-  // a possibly-blocking same-policy Deny, and an unresolved iam:PassedToService
-  // operator are runtime gates: each reduces BOTH signals a notch (never below
-  // low, never auto-upgrade), since a gate weakens both the evidence that the
-  // grant holds and the likelihood the path is reachable.
-  let policyEvidence = fields.policyEvidence;
-  let pathExploitability = fields.pathExploitability;
-  let extraLimit = '';
-  if (fields.conditioned) {
-    policyEvidence = downgrade(policyEvidence);
-    pathExploitability = downgrade(pathExploitability);
-    extraLimit += CONDITION_LIMIT;
-  }
-  if (fields.denyNarrowed) {
-    policyEvidence = downgrade(policyEvidence);
-    pathExploitability = downgrade(pathExploitability);
-    extraLimit += DENY_NARROW_LIMIT;
-  }
-  if (fields.passUncertain) {
-    policyEvidence = downgrade(policyEvidence);
-    pathExploitability = downgrade(pathExploitability);
-    extraLimit += PASSED_TO_SERVICE_UNCERTAIN_LIMIT;
-  }
-  return {
-    id: meta.id,
-    severity: fields.severity,
-    title: meta.title,
-    statementSid: statementSid(anchor),
-    statementIndex: anchor.index,
-    actions: fields.actions.slice(),
-    resources: (fields.resources || []).slice(),
-    conditions: anchor.condition, // null when absent; inert data otherwise
-    policyEvidence,
-    pathExploitability,
-    why: fields.why,
-    limit: CAPABILITY_LIMIT + TARGET_UNKNOWN_LIMIT + extraLimit,
-    remediation: fields.remediation,
-    ruleVersion: meta.ruleVersion,
-    docRef: meta.docRef,
-    // --- escalation enrichment (beyond the canonical shape) ---
-    escalation: {
-      technique: fields.technique,
-      service: fields.service || null,
-      // IAM-703: `requiredActions` is a flat convenience list for the PRIMARY
-      // technique, and it is GROUNDED - every entry is an action the analyzed
-      // policy actually grants (never a catalog action the policy does not
-      // contain). The authoritative AND/OR structure lives in `prerequisites`.
-      requiredActions: (fields.requiredActions || []).slice(),
-      // IAM-703: explicit AND/OR prerequisites. `prerequisites.anyOf` lists the
-      // alternative TECHNIQUES that achieve this escalation (holding any ONE
-      // suffices - they are NOT jointly required). Each technique's `allOf` lists
-      // the grant groups it jointly needs; each group's `anyOf` lists the
-      // interchangeable actions that satisfy that group. This replaces the old
-      // flat requiredActions AND-list that wrongly implied unrelated alternative
-      // techniques were all jointly required. Every action named here is granted
-      // by the analyzed policy (grounded), never an absent catalog action.
-      prerequisites: fields.prerequisites || null,
-      targetPermissions: 'unknown',
-    },
-    evidence: fields.evidence.slice(),
-    // IAM-701: explicit per-statement provenance for the header. Every action is
-    // attributed ONLY to the statement that grants it, so a cross-statement
-    // compound finding never implies the anchor Sid granted the whole set.
-    contributingStatements: contributingStatementsFrom(fields.evidence),
-    // IAM-105: compound escalation paths expose a present/absent risk-factor
-    // checklist (the grants + scope conditions that constitute the path). null
-    // for single-action primitives, which are not compound paths.
-    riskFactors: Array.isArray(fields.riskFactors)
-      ? fields.riskFactors.map((rf) => ({
-          key: rf.key,
-          label: rf.label,
-          present: !!rf.present,
-        }))
-      : null,
-  };
-}
-
-function downgrade(confidence) {
-  if (confidence === 'high') return 'medium';
-  if (confidence === 'medium') return 'low';
-  return 'low';
-}
-
-// IAM-701: contributed actions are represented as an ARRAY, never a comma-joined
-// string. Where a statement contributes several actions (e.g. an exec statement
-// granting lambda:CreateFunction + lambda:UpdateFunctionCode) they ride as
-// distinct array elements so every downstream consumer (graph-edge evidence,
-// correlate, render, export) can reason per-action without re-splitting a
-// display string. `actions` accepts a string or an array and is normalized to an
-// array here.
-function evidenceOf(stmt, role, actions, note) {
-  const list = Array.isArray(actions) ? actions.slice() : [actions];
-  return {
-    statementIndex: stmt.index,
-    statementSid: statementSid(stmt),
-    role, // 'pass' | 'execute' | 'primitive'
-    actions: list,
-    resources: resourceScope(stmt),
-    condition: stmt.condition,
-    note: note || null,
-  };
-}
-
-// IAM-701: per-statement provenance for a finding HEADER. A compound path is
-// distributed across statements (PassRole in one, the service action in
-// another); the scalar statementSid/statementIndex names only the anchor, so on
-// its own it would attribute the whole combined action list to a single Sid.
-// contributingStatements makes the mapping explicit and correct: one entry per
-// contributing statement, each carrying ONLY the actions that statement grants
-// (deduped, ordered by statement index). Derived from the same per-statement
-// evidence[] records, so header and evidence[] can never drift.
-function contributingStatementsFrom(evidence) {
-  const byIndex = new Map();
-  for (const ev of Array.isArray(evidence) ? evidence : []) {
-    if (!ev || typeof ev.statementIndex !== 'number') continue;
-    let entry = byIndex.get(ev.statementIndex);
-    if (!entry) {
-      entry = {
-        statementIndex: ev.statementIndex,
-        statementSid: ev.statementSid,
-        actions: [],
-      };
-      byIndex.set(ev.statementIndex, entry);
-    }
-    for (const a of Array.isArray(ev.actions) ? ev.actions : []) {
-      if (!entry.actions.includes(a)) entry.actions.push(a);
-    }
-  }
-  return [...byIndex.keys()].sort((x, y) => x - y).map((i) => byIndex.get(i));
-}
-
-// --- Prerequisite (AND/OR) helpers (IAM-703) ---------------------------------
-// A `group` is an OR of interchangeable actions that satisfy one requirement of
-// a technique (e.g. "any lambda code-run action"). A `technique` ANDs its groups
-// together (allOf) and is one alternative way to achieve the escalation; the
-// finding's prerequisites OR the techniques together (anyOf). Every action here
-// must be one the policy actually grants - callers pass grounded action lists.
-function prereqGroup(anyOf, role) {
-  return { role: role || null, anyOf: (Array.isArray(anyOf) ? anyOf : [anyOf]).slice() };
-}
-
-function prereqTechnique(id, allOf, opts) {
-  return {
-    technique: id,
-    allOf: (Array.isArray(allOf) ? allOf : [allOf]).slice(),
-    requiresPassRole: !!(opts && opts.requiresPassRole),
-    note: (opts && opts.note) || null,
-  };
-}
-
-function prerequisitesOf(techniques) {
-  return { anyOf: (Array.isArray(techniques) ? techniques : [techniques]).slice() };
-}
-
-// Gather every concrete action in `catalog` that is granted by some Allow in
-// `allows` and SURVIVES same-policy explicit-Deny precedence (deny-filtered).
-// Deterministic order: statement order, then match order; deduped. Used to
-// ground a standalone technique's prerequisites in the policy's real grants.
-function survivingGrantedActions(allows, denies, catalog) {
-  const found = [];
-  for (const stmt of allows) {
-    const m = grantedPatternsFor(stmt, catalog);
-    if (m.length === 0) continue;
-    const d = applyDenyToActions(denies, m, stmt);
-    for (const a of d.actions) if (!found.includes(a)) found.push(a);
-  }
-  return found;
-}
 
 // Lambda: only role-SETTING actions (create a function with a role, or change an
 // existing function's execution role) require iam:PassRole. Replacing an existing
@@ -994,7 +226,6 @@ const LAMBDA_CODE_ONLY_ACTIONS = Object.freeze(['lambda:UpdateFunctionCode']);
 // fire (firing it would silently suppress a possibly-viable critical path - the
 // exact false negative threat-model T8 forbids). Normalize/validate here so the
 // passedRoleAccounts comparison downstream is only reached for a real account id.
-const CONCRETE_ACCOUNT_ID_RE = /^[0-9]{12}$/;
 
 function detectPassRolePaths(allows, out, denies, ctx) {
   const rawSubjectAccount = ctx && ctx.subjectAccount != null ? String(ctx.subjectAccount) : null;
@@ -1002,9 +233,42 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     ? rawSubjectAccount
     : null;
   // The subject's partition (aws / aws-us-gov / aws-cn / ...). Defaults to 'aws'.
-  const subjectPartition = ctx && typeof ctx.partition === 'string' && ctx.partition.trim()
-    ? ctx.partition.trim()
-    : 'aws';
+  // S2-passrole-allstmts (SUBJECT axis): the subject partition is validated with the
+  // SAME KNOWN_PARTITIONS rigor already applied to role-ARN partitions. It is fed into
+  // an EXACT-equality compare (partitionReaches), so a non-canonical spelling of the
+  // subject's OWN partition ('AWS', 'Aws', '*', 'aws-gov', 'AWS-US-GOV', ...) would make
+  // a viable same-account, same-real-partition critical PassRole->service path read as
+  // cross-partition and get CONFIDENTLY demoted critical->medium (PARTITION_MISMATCH) -
+  // the exact fail-open T8 forbids, and it makes analyze() MORE permissive than the
+  // partition-sanitizing scan() adapter for byte-identical input (browser==CLI parity
+  // violation). So an unrecognized SUBJECT partition token must fail CLOSED as
+  // unknown-viability, never drive a confident demotion. `partitionKnown` gates every
+  // pure-partition demotion below; a non-canonical token defaults to 'aws' ONLY for
+  // account-level reasoning (which never depends on the partition spelling).
+  //
+  // S5-partition-parity: an ABSENT partition is a DEFAULTED partition, NOT a
+  // confidently-supplied one, and must be treated EXACTLY like a non-canonical token -
+  // unknown-viability, never a confident cross-partition demotion. The browser (the
+  // primary UI) forwards subjectAccount but NO partition (app.js/worker.js ->
+  // analyze({ subjectAccount })), so if the absent case defaulted to partitionKnown=true
+  // the engine would CONFIDENTLY demote a same-account cross-partition PassRole to medium
+  // with a false "principal is in partition aws ... NOT a viable path" why and coverage
+  // complete - while the CLI scan() adapter's partitionProvided guard correctly reported
+  // partial/exit 3/requiredUnknowns:['subjectPartition']. That made analyze() (browser)
+  // MORE permissive than scan() (CLI) for byte-identical no-partition input (threat-model
+  // T8, browser==CLI parity). An account id does not encode a partition, so a DEFAULTED
+  // partition can never confidently establish same-vs-cross partition: it fails CLOSED.
+  // `partitionKnown` is therefore true ONLY for an EXPLICITLY-supplied CANONICAL token
+  // (an explicit 'aws' still legitimately demotes a cross-partition role); an absent OR
+  // non-canonical token is unknown. This folds the scan() adapter's partitionProvided
+  // guard into the shared engine (the single source of truth), so no direct/third-party
+  // analyze() consumer can reach the confident demotion the adapter used to compensate
+  // for. `subjectPartition` still defaults to 'aws' for the account-level reasoning that
+  // never depends on the partition spelling.
+  const rawSubjectPartition = ctx && typeof ctx.partition === 'string' ? ctx.partition.trim() : '';
+  const partitionExplicit = rawSubjectPartition !== '';
+  const partitionKnown = partitionExplicit && subjectPartitionKnown(rawSubjectPartition);
+  const subjectPartition = subjectPartitionKnown(rawSubjectPartition) ? rawSubjectPartition : 'aws';
   // Gather the Allow statements that grant iam:PassRole (concrete or via iam:*).
   const passStmts = [];
   for (const stmt of allows) {
@@ -1013,6 +277,19 @@ function detectPassRolePaths(allows, out, denies, ctx) {
   }
   if (passStmts.length === 0) return; // PassRole alone is never flagged, and
   // without any PassRole grant there is no pass path at all.
+
+  // S2-passrole-allstmts axis 3 (iter-5 DoS): the "does an unconditional in-scope Deny
+  // remove EVERY subject role?" verdict depends only on (denies, subjectAccount,
+  // subjectPartition) - all invariant for this call - so compute it EXACTLY ONCE here
+  // (charged against the work budget) and reuse it for every (svc x passStmt) selection
+  // iteration and the metadata block below. Previously it was recomputed 8 x nPassStmts
+  // times (a full scan of every Deny resource each time), an unbudgeted multiplicative
+  // scan that ran unbounded on a within-caps policy yet returned a COMPLETE verdict
+  // (fail-open DoS, threat-model T5/T8). The value is a pure function of these inputs,
+  // so hoisting it changes no verdict - only the cost.
+  const subjectDenied = subjectAccount
+    ? denyRemovesAllSubjectRoles(denies, subjectAccount, subjectPartition)
+    : false;
 
   for (const svc of PASS_ROLE_SERVICES) {
     // Gather EVERY Allow granting a role-consuming action for this service, then
@@ -1023,11 +300,17 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     // (docs/architecture.md #6, threat-model T8). We therefore keep a surviving
     // exec statement (not fully denied) and suppress only when EVERY exec
     // candidate is definitively, in-scope denied. Among survivors we prefer a
-    // fully-clear one over a merely narrowed one, then the lowest statement index
-    // (deterministic), so a live path is never reported as narrower than it is.
+    // fully-clear one over a merely narrowed one, then the BROADEST resource scope
+    // (order-invariant worst-case), then the lowest statement index as the final
+    // deterministic settle. Preferring the broadest exec by CONTENT (not by index)
+    // means reordering byte-content-identical statements cannot swap which exec the
+    // path consumes and so cannot flip the verdict (S2-passrole-allstmts iter5); a
+    // live path is also never reported as narrower than the broadest grant it holds.
     let execStmt = null;
     let effectiveExecActions = null;
     let execNarrowed = false;
+    let execBroad = -1;
+    let execTech = -1;
     let execAnyCandidate = false;
     for (const stmt of allows) {
       const m = grantedPatternsFor(stmt, svc.execActions);
@@ -1035,14 +318,25 @@ function detectPassRolePaths(allows, out, denies, ctx) {
       execAnyCandidate = true;
       const d = applyDenyToActions(denies, m, stmt);
       if (d.blocked) continue; // this exec statement is fully, in-scope denied
+      // MOST-SEVERE first: a launch-capable exec (critical) outranks a staging-only
+      // exec (high) no matter its order, resource breadth, or index (axis 2). Only
+      // within an equal technique tier do the not-narrowed / broadest / lowest-index
+      // settles apply. This mirrors the pass-side viability-tier ranking so a launch
+      // grant in ANY statement is never masked by a co-located broader staging grant.
+      const techHere = execTechniqueSeverity(svc, d.actions);
+      const broadHere = execResourceBroadness(stmt);
       const better =
         execStmt === null ||
-        (execNarrowed && !d.narrowed) ||
-        (execNarrowed === d.narrowed && stmt.index < execStmt.index);
+        (techHere > execTech) ||
+        (techHere === execTech && execNarrowed && !d.narrowed) ||
+        (techHere === execTech && execNarrowed === d.narrowed && broadHere > execBroad) ||
+        (techHere === execTech && execNarrowed === d.narrowed && broadHere === execBroad && stmt.index < execStmt.index);
       if (better) {
         execStmt = stmt;
         effectiveExecActions = d.actions;
         execNarrowed = d.narrowed;
+        execBroad = broadHere;
+        execTech = techHere;
       }
     }
     if (!execAnyCandidate) continue; // no service-execution action -> not this path
@@ -1053,10 +347,22 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     // then apply the SAME per-statement Deny precedence. As with the exec side, a
     // Deny that removes one PassRole grant must not suppress the path when another
     // permitting PassRole grant survives un-denied.
+    // PassRole VIABILITY is an ALL-STATEMENTS property (S2-passrole-allstmts),
+    // exactly like the DENY reasoning above. The T91 account/partition/deny-residual
+    // viability check downstream runs on the SINGLE selected passStmt; if selection
+    // ignored viability it could pick a cross-account decoy in a lower-indexed
+    // statement, demote the whole path critical->medium, and slip a VIABLE
+    // same-account PassRole in a DIFFERENT statement under the exit gate (a false
+    // negative, threat-model T8). Reordering byte-identical statements would then
+    // flip the verdict. To close the CLASS: rank a candidate that KEEPS the critical
+    // (viable same-account) outcome ABOVE one that would be demoted/capped, then keep
+    // the existing not-narrowed-then-lowest-index tiebreak within a viability tier.
+    // A path is only demoted when NO candidate statement yields a viable pass.
     let passStmt = null;
     let pinned = false;
     let passUncertain = false;
     let passNarrowed = false;
+    let passTier = -1;
     let passAnyPermits = false;
     for (const stmt of passStmts) {
       const p = passRolePermitsService(stmt.condition, svc.principal);
@@ -1065,15 +371,26 @@ function detectPassRolePaths(allows, out, denies, ctx) {
       const eff = denyEffectOnAction(denies, PASS_ROLE_ACTION, stmt);
       if (eff === 'blocked') continue; // this PassRole grant is fully, in-scope denied
       const narrowed = eff === 'may-block';
+      // Rank by viability TIER: 2 = confidently viable same-account (stays critical),
+      // 1 = UNKNOWN viability (unmodelable ARN token or concrete-account-unknown-subject
+      // -> fails closed, NOT demoted below threshold), 0 = confidently demoted
+      // cross-account/partition. Prefer the most-severe still-correct outcome so a
+      // viable (or unknown-but-fail-closed) grant in ANY statement is never hidden by a
+      // lower-indexed confidently-cross-account decoy - independent of statement ORDER
+      // and of ARN spelling. Within a tier keep the not-narrowed-then-lowest-index
+      // tiebreak. MIRRORS the downstream metadata demotion/cap exactly.
+      const tierHere = passStmtViabilityTier(stmt, subjectAccount, subjectPartition, partitionKnown, subjectDenied);
       const better =
         passStmt === null ||
-        (passNarrowed && !narrowed) ||
-        (passNarrowed === narrowed && stmt.index < passStmt.index);
+        (tierHere > passTier) || // a more-severe still-correct outcome wins over a decoy
+        (tierHere === passTier && passNarrowed && !narrowed) ||
+        (tierHere === passTier && passNarrowed === narrowed && stmt.index < passStmt.index);
       if (better) {
         passStmt = stmt;
         pinned = p.pinned;
         passUncertain = p.uncertain;
         passNarrowed = narrowed;
+        passTier = tierHere;
       }
     }
     if (!passAnyPermits) continue; // every PassRole forbids this service -> blocked
@@ -1197,11 +514,14 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     //     threat-model T8 forbids); we merely refuse to over-claim exploitability.
     //   otherwise (a "*" / account-wildcard reaches any account) -> viable, unchanged.
     const parsedPassResources = passStmt.resources.map(parsePassResource);
-    const concreteSpecific = parsedPassResources.filter(
-      (r) => !r.star && !r.other
-        && !String(r.account).includes('*')
-        && !String(r.partition).includes('*'),
-    );
+    // Only CONFIDENTLY-modelable pinned role ARNs (known partition + 12-digit account,
+    // no wildcard) may drive a confident cross-account/partition demotion. A role ARN
+    // whose partition/account token is non-canonical (uppercase partition, embedded
+    // whitespace, non-12-digit account) is UNMODELABLE: it could be a same-account role
+    // under a spelling we cannot compare, so demoting it critical->medium would be a
+    // fail-open (threat-model T8). Such targets fail CLOSED as unknown-viability instead.
+    const concreteSpecific = parsedPassResources.filter(isConfidentPinnedResource);
+    const unmodelableTargets = parsedPassResources.filter(isUnmodelablePassResource);
     let accountMismatch = false;
     let targetResources = [];
     let excludedTargets = [];
@@ -1216,12 +536,33 @@ function detectPassRolePaths(allows, out, denies, ctx) {
       const anyReaches = parsedPassResources.some(
         (r) => resourceReachesSubject(r, subjectAccount, subjectPartition),
       );
-      const subjectDenied = denyRemovesAllSubjectRoles(denies, subjectAccount, subjectPartition);
+      // subjectDenied hoisted+charged once at the top of detectPassRolePaths (axis 3
+      // iter-5 DoS); reuse it here rather than re-scanning every Deny resource per svc.
       const viable = anyReaches && !subjectDenied;
-      if (!viable && (concreteSpecific.length > 0 || subjectDenied)) {
-        accountMismatch = true;
-        severity = severity === 'critical' ? 'medium' : 'low';
-        pathExploitability = 'low';
+      if (!viable && unmodelableTargets.length > 0) {
+        // UNKNOWN viability (not a confident cross-account/partition verdict): a passed
+        // role ARN's partition/account token is not modelable, so we cannot establish
+        // same-vs-cross account. Keep the severity (do NOT demote below threshold) and
+        // fail CLOSED via requiredUnknowns, exactly like the subject-unknown
+        // concrete-account cap - scan() then reports partial/exit 3, never CLEAN. This
+        // is order-independent and needs no decoy: normalize/validate the ARN tokens
+        // with the same rigor as the subjectAccount/partition inputs before trusting a
+        // demotion.
+        pathExploitability = 'low'; // cap; never asserts a confident viable/critical path
+        const hasBadPartition = unmodelableTargets.some((r) => !partitionModelable(r.partition));
+        const hasBadAccount = unmodelableTargets.some((r) => !accountModelable(r.account));
+        if (hasBadPartition) requiredUnknowns.push('passRoleTargetPartition');
+        if (hasBadAccount) requiredUnknowns.push('passRoleTargetAccount');
+        if (requiredUnknowns.length === 0) requiredUnknowns.push('passRoleTargetArn');
+        extraWhy +=
+          ` PassRole target viability is UNKNOWN: a passed-role ARN carries a ` +
+          'non-canonical partition/account spelling (unrecognized partition, ' +
+          'non-12-digit account, or embedded case/whitespace) that cannot be compared ' +
+          `to the analyzed principal's account/partition, so whether this is a ` +
+          'same-account (viable) or cross-account (not viable) pass cannot be ' +
+          'established. Reported as unknown viability (fail closed), not a confident ' +
+          'not-viable demotion; supply canonical role ARNs to resolve it.';
+      } else if (!viable && (concreteSpecific.length > 0 || subjectDenied)) {
         // A pure partition mismatch: every pinned resource matches the subject
         // ACCOUNT but sits in a different partition (and no deny-residual involved).
         const partitionOnly = !subjectDenied
@@ -1229,7 +570,44 @@ function detectPassRolePaths(allows, out, denies, ctx) {
           && concreteSpecific.every(
             (r) => r.account === subjectAccount && !partitionReaches(r.partition, subjectPartition),
           );
-        if (partitionOnly) {
+        if (partitionOnly && !partitionKnown) {
+          // The mismatch is PURELY a partition difference, but the SUBJECT partition is
+          // NOT confidently known - either a non-canonical token was supplied (defaulted
+          // to 'aws' for account reasoning) OR no partition was supplied at all (the
+          // DEFAULTED case, S5-partition-parity: the browser forwards subjectAccount but
+          // never a partition). Neither a non-canonical NOR a defaulted subject partition
+          // can drive a confident cross-partition demotion: an account id does not encode
+          // a partition, so the path may be a same-partition, fully-viable critical pass
+          // we cannot compare, and demoting it critical->medium would be the exact
+          // fail-open T8 forbids and would make analyze() (the browser) more permissive
+          // than the partition-sanitizing scan() adapter for byte-identical input. Fail
+          // CLOSED as UNKNOWN viability instead: keep the severity, cap exploitability,
+          // and record the required-unknown so scan() reports partial/exit 3 (never
+          // CLEAN). This MIRRORS the unmodelable-target-ARN handling above and folds the
+          // scan.mjs unconfirmed-partition guard into the shared engine (the single source
+          // of truth), so no direct/third-party analyze() consumer can reach the demotion
+          // the adapter used to compensate for.
+          pathExploitability = 'low';
+          if (!requiredUnknowns.includes('subjectPartition')) requiredUnknowns.push('subjectPartition');
+          extraWhy += partitionExplicit
+            ? ' PassRole target viability is UNKNOWN: the analyzed principal\'s partition ' +
+              'was supplied in a non-canonical spelling that is not a recognized AWS ' +
+              'partition, so it cannot be compared to the passed role\'s partition. Whether ' +
+              'this is a same-partition (viable) or cross-partition (not viable) pass cannot ' +
+              'be established. Reported as unknown viability (fail closed), not a confident ' +
+              'not-viable demotion; supply a canonical partition (aws, aws-us-gov, aws-cn, ' +
+              'aws-iso...) to resolve it.'
+            : ' PassRole target viability is UNKNOWN: the analyzed principal\'s partition ' +
+              'was not supplied, so it cannot be compared to the passed role\'s partition ' +
+              '(an account id does not encode a partition). Whether this is a same-partition ' +
+              '(viable) or cross-partition (not viable) pass cannot be established. Reported ' +
+              'as unknown viability (fail closed), not a confident not-viable demotion; ' +
+              'supply the analyzed principal\'s partition (aws, aws-us-gov, aws-cn, ' +
+              'aws-iso...) to resolve it.';
+        } else if (partitionOnly) {
+          accountMismatch = true;
+          severity = severity === 'critical' ? 'medium' : 'low';
+          pathExploitability = 'low';
           warningCodes.push('PARTITION_MISMATCH');
           extraWhy +=
             ` Partition mismatch: the passed role(s) are in partition ` +
@@ -1238,6 +616,9 @@ function detectPassRolePaths(allows, out, denies, ctx) {
             'pass a role across partitions, so this is NOT a viable direct ' +
             `PassRole-to-${svc.service} path.`;
         } else {
+          accountMismatch = true;
+          severity = severity === 'critical' ? 'medium' : 'low';
+          pathExploitability = 'low';
           warningCodes.push('PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE');
           extraWhy += subjectDenied
             ? ` Deny residual: an explicit Deny removes every iam:PassRole target in the ` +
@@ -1429,416 +810,57 @@ function detectPassRolePaths(allows, out, denies, ctx) {
 
 // --- Single-action / broad-scope families ------------------------------------
 
-function detectPolicyVersion(allows, out, denies) {
-  for (const stmt of allows) {
-    const matched = grantedPatternsFor(stmt, POLICY_VERSION_ACTIONS);
-    if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
-    if (deny.blocked) continue; // same-policy explicit Deny removes the path
-    const actions = deny.actions;
-    out.push(
-      makeEscalation('POLICY-VERSION', stmt, {
-        severity: 'high',
-        // Direct self-administration: the grant is present (evidence high) and
-        // the principal can directly set a policy version it controls, so the
-        // capability is exploitable without any unknown target role gating it.
-        policyEvidence: 'high',
-        pathExploitability: 'high',
-        conditioned: hasNonEmptyCondition(stmt),
-        denyNarrowed: deny.narrowed,
-        technique: 'policy-version-manipulation',
-        // Grounded (IAM-703): only the policy-version action(s) actually granted,
-        // not the full catalog. These are interchangeable alternatives - holding
-        // either one satisfies the technique - so prerequisites is a single
-        // anyOf group, never an AND-list.
-        requiredActions: actions.slice(),
-        prerequisites: prerequisitesOf([
-          prereqTechnique('policy-version-manipulation', [prereqGroup(actions, 'primitive')], {}),
-        ]),
-        actions,
-        resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions)],
-        why:
-          'Grants managed-policy version control (iam:CreatePolicyVersion / ' +
-          'iam:SetDefaultPolicyVersion). A principal attached to (or able to ' +
-          'target) a customer-managed policy can publish a new, more permissive ' +
-          'version and set it as the default, escalating its own access without ' +
-          'attaching a new policy.',
-        remediation:
-          'Restrict policy-version actions to a dedicated policy-administration ' +
-          'role, scope the Resource to specific policy ARNs, and require review ' +
-          '(e.g. an MFA / approval Condition) for version changes.',
-      }),
-    );
-  }
-}
-
-function detectAttachPolicy(allows, out, denies) {
-  for (const stmt of allows) {
-    const matched = grantedPatternsFor(stmt, ATTACH_POLICY_ACTIONS);
-    if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
-    if (deny.blocked) continue; // same-policy explicit Deny removes the path
-    const actions = deny.actions;
-    out.push(
-      makeEscalation('ATTACH-POLICY', stmt, {
-        // High, not critical (IAM-102): attaching a managed policy to self is a
-        // standalone direct-IAM primitive, not a compound privilege-boundary
-        // crossing. Critical is reserved for compound escalation paths.
-        severity: 'high',
-        // Direct self-administration: grant present (evidence high); attaching a
-        // managed policy (e.g. AdministratorAccess) directly grants permissions,
-        // no unknown target role gates it -> exploitability high.
-        policyEvidence: 'high',
-        pathExploitability: 'high',
-        conditioned: hasNonEmptyCondition(stmt),
-        denyNarrowed: deny.narrowed,
-        technique: 'attach-policy',
-        // Grounded (IAM-703): only the attach action(s) granted; interchangeable
-        // alternatives -> a single anyOf group.
-        requiredActions: actions.slice(),
-        prerequisites: prerequisitesOf([
-          prereqTechnique('attach-policy', [prereqGroup(actions, 'primitive')], {}),
-        ]),
-        actions,
-        resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions)],
-        why:
-          'Grants iam:Attach{User,Role,Group}Policy. A principal that can attach ' +
-          'a managed policy to itself (or a principal it controls) can attach ' +
-          'AdministratorAccess and obtain full administrative access - a direct ' +
-          'privilege-escalation path.',
-        remediation:
-          'Remove self-service policy-attachment; if attachment is required, ' +
-          'constrain the attachable policies with iam:PolicyARN Conditions and a ' +
-          'permission boundary, and route changes through a reviewed pipeline.',
-      }),
-    );
-  }
-}
-
-function detectPutInlinePolicy(allows, out, denies) {
-  for (const stmt of allows) {
-    const matched = grantedPatternsFor(stmt, PUT_INLINE_POLICY_ACTIONS);
-    if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
-    if (deny.blocked) continue; // same-policy explicit Deny removes the path
-    const actions = deny.actions;
-    out.push(
-      makeEscalation('PUT-INLINE-POLICY', stmt, {
-        // High, not critical (IAM-102): writing an inline policy on self is a
-        // standalone direct-IAM primitive, not a compound privilege-boundary
-        // crossing. Critical is reserved for compound escalation paths.
-        severity: 'high',
-        // Direct self-administration: grant present (evidence high); writing an
-        // arbitrary inline Allow policy directly grants permissions with no
-        // unknown target role in the way -> exploitability high.
-        policyEvidence: 'high',
-        pathExploitability: 'high',
-        conditioned: hasNonEmptyCondition(stmt),
-        denyNarrowed: deny.narrowed,
-        technique: 'put-inline-policy',
-        // Grounded (IAM-703): only the put-inline action(s) granted;
-        // interchangeable alternatives -> a single anyOf group.
-        requiredActions: actions.slice(),
-        prerequisites: prerequisitesOf([
-          prereqTechnique('put-inline-policy', [prereqGroup(actions, 'primitive')], {}),
-        ]),
-        actions,
-        resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions)],
-        why:
-          'Grants iam:Put{User,Role,Group}Policy. A principal that can write an ' +
-          'inline policy on itself (or a principal it controls) can grant itself ' +
-          'any permission, including full admin - a direct privilege-escalation ' +
-          'path.',
-        remediation:
-          'Remove self-service inline-policy writes; constrain with a permission ' +
-          'boundary that caps the effective permissions, and route policy ' +
-          'changes through a reviewed pipeline.',
-      }),
-    );
-  }
-}
-
-function detectTrustModify(allows, out, denies) {
-  for (const stmt of allows) {
-    const matched = grantedPatternsFor(stmt, TRUST_MODIFY_ACTIONS);
-    if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
-    if (deny.blocked) continue; // same-policy explicit Deny removes the path
-    const actions = deny.actions;
-    out.push(
-      makeEscalation('TRUST-POLICY-MODIFY', stmt, {
-        severity: 'high',
-        // Grant present (evidence high). Rewriting a role's trust policy lets the
-        // principal make itself assumable, but reaching elevated privilege then
-        // depends on that role's UNKNOWN permissions -> exploitability medium.
-        policyEvidence: 'high',
-        pathExploitability: 'medium',
-        conditioned: hasNonEmptyCondition(stmt),
-        denyNarrowed: deny.narrowed,
-        technique: 'trust-policy-modification',
-        // Grounded (IAM-703): only the trust-modify action(s) granted.
-        requiredActions: actions.slice(),
-        prerequisites: prerequisitesOf([
-          prereqTechnique('trust-policy-modification', [prereqGroup(actions, 'primitive')], {}),
-        ]),
-        actions,
-        resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions)],
-        why:
-          'Grants iam:UpdateAssumeRolePolicy. A principal can rewrite a role\'s ' +
-          'trust policy to trust itself and then assume the role, taking on the ' +
-          'role\'s permissions. Whether the target role is more privileged is not ' +
-          'known from this policy, but the trust-then-assume primitive is present.',
-        remediation:
-          'Restrict iam:UpdateAssumeRolePolicy to a dedicated role-administration ' +
-          'identity, scope the Resource to specific role ARNs, and protect ' +
-          'high-value roles with a permission boundary and change review.',
-      }),
-    );
-  }
-}
-
-function detectCredentialCreation(allows, out, denies) {
-  for (const stmt of allows) {
-    const matched = grantedPatternsFor(stmt, CREDENTIAL_ACTIONS);
-    if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
-    if (deny.blocked) continue; // same-policy explicit Deny removes the path
-    const actions = deny.actions;
-    out.push(
-      makeEscalation('CREDENTIAL-CREATION', stmt, {
-        severity: 'high',
-        // Grant present (evidence high). Minting an access key / login profile
-        // yields working credentials, but ELEVATION requires that the target
-        // principal be MORE privileged than the caller - a target whose power is
-        // not in scope here (the ${aws:username} self-scoped case yields no
-        // elevation at all). This is the same unknown that caps
-        // TRUST-POLICY-MODIFY and ASSUME-ROLE-EXPANSION at medium, so the
-        // credential-minting path is likewise -> exploitability medium.
-        policyEvidence: 'high',
-        pathExploitability: 'medium',
-        conditioned: hasNonEmptyCondition(stmt),
-        denyNarrowed: deny.narrowed,
-        technique: 'credential-creation',
-        // Grounded (IAM-703, acceptance suite test 5): only the credential-
-        // creation action(s) this policy actually grants - NOT the full catalog.
-        // A policy granting only iam:CreateAccessKey must not list
-        // iam:CreateLoginProfile / iam:UpdateLoginProfile as prerequisites, since
-        // those are absent. The granted primitives are interchangeable
-        // alternatives -> a single anyOf group.
-        requiredActions: actions.slice(),
-        prerequisites: prerequisitesOf([
-          prereqTechnique('credential-creation', [prereqGroup(actions, 'primitive')], {}),
-        ]),
-        actions,
-        resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions)],
-        why:
-          'Grants credential creation (iam:CreateAccessKey / ' +
-          'iam:CreateLoginProfile / iam:UpdateLoginProfile). A principal that can ' +
-          'mint an access key or set a console password for another (more ' +
-          'privileged) user can authenticate as that user - a lateral-movement / ' +
-          'escalation primitive.',
-        remediation:
-          'Scope credential actions to the principal\'s own identity where ' +
-          'possible (e.g. an ${aws:username} Resource Condition), and restrict ' +
-          'creation of credentials for other users to a dedicated admin role.',
-      }),
-    );
-  }
-}
-
-function detectAssumeRoleExpansion(allows, out, denies) {
-  for (const stmt of allows) {
-    const matched = grantedPatternsFor(stmt, ASSUME_ROLE_ACTIONS);
-    if (matched.length === 0) continue;
-    // Only a broad / wildcard role scope is an expansion path; assuming one
-    // specific named role is the intended, routine use of AssumeRole.
-    if (!resourceListIsBroadForAssume(stmt)) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
-    if (deny.blocked) continue; // same-policy explicit Deny removes the path
-    const actions = deny.actions;
-    const reach = assumeAccountReach(stmt);
-    // Scope the cross-account claim to the evidence: only an account-wildcarded /
-    // NotResource / unspecified / bare-"*" grant can reach arbitrary accounts. A
-    // grant that pins a concrete account (e.g. arn:aws:iam::111122223333:role/*)
-    // is broad WITHIN that account, so we must not assert cross-account reach.
-    let why;
-    if (reach.arbitrary) {
-      why =
-        'Grants sts:AssumeRole over a wildcard / broad role scope. A principal ' +
-        'can assume roles across arbitrary AWS accounts whose trust policies ' +
-        'permit this principal, and operate with their permissions - a role ARN ' +
-        'such as arn:aws:iam::*:role/* spans every account, not just this one. ' +
-        'Which roles are reachable (and how privileged they are) depends on ' +
-        'those roles\' trust policies, which are not in scope here.';
-    } else {
-      const scope =
-        reach.accounts.length === 1
-          ? 'account ' + reach.accounts[0]
-          : 'accounts ' + reach.accounts.join(', ');
-      why =
-        'Grants sts:AssumeRole over a wildcard / broad role scope within ' +
-        scope + '. A principal can assume many roles within ' +
-        (reach.accounts.length === 1 ? 'that account' : 'those accounts') +
-        ' whose trust policies permit this principal, and operate with their ' +
-        'permissions - the role path is wildcarded, so it reaches many roles, ' +
-        'not one. Which roles are reachable (and how privileged they are) ' +
-        'depends on those roles\' trust policies, which are not in scope here.';
-    }
-    out.push(
-      makeEscalation('ASSUME-ROLE-EXPANSION', stmt, {
-        // Critical (IAM-102) ONLY when the scope is effectively all roles (an
-        // unconstrained role-name axis crosses into arbitrary target roles - a
-        // privilege-boundary crossing); a partial role-name wildcard reaches
-        // many-but-not-all roles and stays high. Severity (blast-radius scope)
-        // is orthogonal to both certainty signals below.
-        severity: assumeScopeIsAllRoles(stmt) ? 'critical' : 'high',
-        // IAM-104 split: the sts:AssumeRole grant and its wildcard role scope are
-        // plainly present in the policy text -> policy evidence HIGH. But which
-        // roles are reachable and how privileged they are is unknown (their trust
-        // policies are not in scope), so this is a POTENTIAL expansion, not a
-        // confirmed elevation -> path exploitability MEDIUM. This is exactly the
-        // "target roles' permissions are unknown" reasoning the old single
-        // confidence folded in; the split now names it as exploitability.
-        policyEvidence: 'high',
-        pathExploitability: 'medium',
-        conditioned: hasNonEmptyCondition(stmt),
-        denyNarrowed: deny.narrowed,
-        technique: 'assume-role-expansion',
-        // Grounded (IAM-703): the sts:AssumeRole* action(s) actually granted -
-        // never a hardcoded 'sts:AssumeRole' the policy may not contain (a policy
-        // may grant only sts:AssumeRoleWithWebIdentity). Interchangeable
-        // alternatives -> a single anyOf group.
-        requiredActions: actions.slice(),
-        prerequisites: prerequisitesOf([
-          prereqTechnique('assume-role-expansion', [prereqGroup(actions, 'primitive')], {}),
-        ]),
-        actions,
-        resources: resourceScope(stmt),
-        evidence: [evidenceOf(stmt, 'primitive', actions, 'broad role scope')],
-        why,
-        remediation:
-          'Scope sts:AssumeRole to the specific role ARNs the principal must ' +
-          'assume; avoid wildcards in the role path, and ensure target roles\' ' +
-          'trust policies only trust the intended principals.',
-      }),
-    );
-  }
-}
-
-// IAM-902: is `r` a CONCRETE role ARN (names one specific role, no wildcard)?
-// A takeover chain is only asserted when the three primitives target the exact
-// same named role. A wildcard role scope (arn:aws:iam::*:role/*, role/*, a bare
-// "*", or any partial wildcard) is a DIFFERENT, broader shape - it is the
-// province of ASSUME-ROLE-EXPANSION / the wildcard rules, not this same-role
-// correlation - so it is excluded here (never expand a wildcard into "the same
-// role"). Determinism: pure string test, no regex compiled from input.
-function isConcreteRoleArn(r) {
-  const s = String(r == null ? '' : r);
-  if (s.includes('*') || s.includes('?')) return false;
-  return s.includes(':role/');
-}
-
-// suite-3 test 74: does a modify-leg resource COVER the concrete assumable role
-// `role`? True for an exact match, or for a role-ARN wildcard pattern
-// (arn:...:role/deployment/*) that subsumes the concrete role
-// (arn:...:role/deployment/Prod). Only role-ARN patterns subsume roles - a bare
-// "*" or a non-role ARN pattern is NOT treated as a same-role modify grant here
-// (it stays the broader wildcard/expansion shape), so the takeover is never
-// generalized to roles the modify leg does not actually name. ARN matching is
-// case-sensitive (IAM resource ARNs are), so globMatch is used directly.
-function resourceCoversRole(resource, role) {
-  const s = String(resource == null ? '' : resource);
-  if (s === role) return true;
-  if (!s.includes(':role/')) return false;
-  if (!s.includes('*') && !s.includes('?')) return false;
-  return globMatch(s, role);
-}
-
-// role-takeover test 142: a MAXIMALLY-BROAD assume scope ("all roles across
-// arbitrary accounts") is the ASSUME-ROLE-EXPANSION shape, NOT a same-role
-// takeover confirmation - even though it glob-covers any concrete role. Both axes
-// must be fully open: the account field is arbitrary (wildcarded/empty) AND the
-// role-name segment is exactly "*" (or the bare "*" / "role/*" shorthands). A
-// scope pinned to a concrete account (arn:aws:iam::123456789012:role/deployment/*)
-// or a specific role-name path is BOUNDED and DOES confirm an anchor a
-// permission-grant/trust-modify leg names concretely (the C2 wildcard-assume
-// mirror of test 74). Mirrors assumeScopeIsAllRoles(), evaluated per-resource so a
-// concrete member in the same statement still confirms.
-function isAllRolesAssumeScope(resource) {
-  const s = String(resource == null ? '' : resource);
-  if (s === '*') return true;
-  if (s === 'role/*') return true; // bare shorthand
-  const marker = ':role/';
-  const idx = s.lastIndexOf(marker);
-  if (idx === -1) return false;
-  if (s.slice(idx + marker.length) !== '*') return false; // role-name not fully open
-  const parts = s.split(':');
-  if (parts.length < 6) return false;
-  const account = parts[4];
-  return account === '' || account.includes('*') || account.includes('?'); // arbitrary account
-}
-
-// suite-3 test 91: the specific (non-wildcard) AWS account IDs a set of role
-// ARNs pins in the account field of arn:aws:iam::<account>:role/... . Used to
-// caveat a PassRole path: iam:PassRole passes a role only to a service in the
-// SAME account as the role, so a path through an account-pinned role is viable
-// only when the workload/principal runs in that same account - which a single
-// identity policy does not establish. A wildcarded account segment yields no
-// specific account and no caveat.
-function specificAccountsInRoleArns(resources) {
-  const accts = [];
-  for (const r of Array.isArray(resources) ? resources : []) {
-    const s = String(r == null ? '' : r);
-    const m = /^arn:aws:iam::([0-9]{1,20}):role\//.exec(s);
-    if (m && !accts.includes(m[1])) accts.push(m[1]);
-  }
-  return accts.sort();
-}
 
 
-// --- Partition-aware PassRole target parsing (IAM-1102 / T91) -----------------
-// iam:PassRole passes a role only to a service in the SAME account AND the SAME
-// partition as the role; the service launch runs in the CALLER's account +
-// partition. Reasoning about cross-account/cross-partition viability therefore
-// needs the role ARN's partition and account, not just the account. Any partition
-// (aws / aws-us-gov / aws-cn / ...) is captured, unlike the aws-only helpers above.
-const ROLE_ARN_PARTS_RE = /^arn:([^:]*):iam::([^:]*):role\/(.*)$/i;
 
-// Classify one PassRole RESOURCE token. Returns exactly one shape:
-//   { star:true }                    -> "*" (reaches any account/partition)
-//   { other:true }                   -> not a role ARN we can pin (conservative)
-//   { partition, account, path, raw} -> a role ARN (account/partition may be "*")
-function parsePassResource(r) {
-  const s = String(r == null ? '' : r);
-  if (s === '*') return { star: true, raw: s };
-  const m = ROLE_ARN_PARTS_RE.exec(s);
-  if (!m) return { other: true, raw: s };
-  return { partition: m[1], account: m[2], path: m[3], raw: s };
-}
 
-function partitionReaches(resPartition, subjectPartition) {
-  return resPartition === subjectPartition || String(resPartition).includes('*');
-}
-function accountReaches(resAccount, subjectAccount) {
-  return String(resAccount).includes('*') || resAccount === subjectAccount;
-}
 
-// Could this passable-role RESOURCE reach a role in the subject's OWN account +
-// partition (i.e. could iam:PassRole hand a same-account role to a same-account
-// service)? A bare "*" reaches anything; a role ARN reaches the subject only when
-// BOTH its partition and account admit the subject's. A non-role-ARN we cannot pin
-// is treated as NOT a same-account reach (conservative - it never manufactures
-// viability). Requires a known subjectAccount.
-function resourceReachesSubject(res, subjectAccount, subjectPartition) {
-  if (res.star) return true;
-  if (res.other) return false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Does ONE Deny resource token PROVABLY remove EVERY role in the subject's
+// account+partition? Two forms qualify, both matching all subject-account role ARNs
+// with NO literal constraint on the role NAME:
+//   - a bare "*" (matches every ARN, including all subject role ARNs), or
+//   - a role ARN arn:<p>:iam::<a>:role/<path> whose partition reaches the subject,
+//     whose account reaches the subject, and whose <path> is wildcard-equivalent to
+//     "*" (rolePathIsWildcardEquivalent).
+// Anything not provably all-roles (a narrower role-path glob, a foreign/other token,
+// a different concrete account/partition) returns false so the viable same-account
+// path stays CRITICAL - never a confident demotion the Deny does not support.
+function denyResourceRemovesAllSubjectRoles(r, subjectAccount, subjectPartition) {
+  // S2-passrole-allstmts axis 3 (DoS, iter-5): CHARGE the deterministic work budget
+  // one unit per Deny-resource token inspected (proportional to its length, mirroring
+  // denyResourcesCover / denyResourceCoverage). Before this charge the per-Deny-resource
+  // scan below (parsePassResource regex + partition/account/rolePath compares) advanced
+  // the work counter ZERO times, so a within-caps policy whose cost is nDeny x
+  // resPerDeny (routed here, NOT through the charged denyResourceCoverage - e.g. a
+  // NotResource-shaped Allow that early-returns 'partial' before the charged scan) ran
+  // unbounded yet returned a COMPLETE verdict - a fail-OPEN DoS (threat-model T5/T8), and
+  // on the browser (no wall-clock watchdog) the sole participating ceiling is this work
+  // counter. With the charge the scan is sampled by analyze()'s work budget and fails
+  // CLOSED (RESOURCE_BUDGET_EXCEEDED -> coverage incomplete -> scan exit 3) if genuinely
+  // huge, instead of running unbounded. The multiplicative 8 x nPassStmts re-scan is
+  // separately removed by memoizing the result once per detectPassRolePaths call.
+  chargeWork(String(r).length + 1);
+  const res = parsePassResource(r);
+  if (res.star) return true; // bare "*" covers all subject role ARNs
+  if (res.other) return false; // not a role ARN we can pin - conservative (fail closed)
   return partitionReaches(res.partition, subjectPartition)
-    && accountReaches(res.account, subjectAccount);
+    && accountReaches(res.account, subjectAccount)
+    && rolePathIsWildcardEquivalent(res.path);
 }
 
 // T91-09 deny-residual: does an in-scope, UNCONDITIONAL Deny on iam:PassRole
@@ -1846,199 +868,87 @@ function resourceReachesSubject(res, subjectAccount, subjectPartition) {
 // so, even an Allow "*" cannot pass a same-account role, so the direct same-account
 // path is not viable. A conditional deny is NOT treated as a guaranteed removal
 // (it may not always apply) - being conservative here avoids a false negative.
+// The removal must be PROVABLE: only a Deny whose role-path imposes no literal
+// constraint (wildcard-equivalent to "*") counts; a narrow anchored decoy Deny does
+// not (S2-passrole-allstmts axis 3).
 function denyRemovesAllSubjectRoles(denies, subjectAccount, subjectPartition) {
   if (!subjectAccount) return false;
-  const base = `arn:${subjectPartition}:iam::${subjectAccount}:role/`;
-  const probeA = `${base}__probe_alpha__`;
-  const probeB = `${base}__probe_beta_9x__`;
   for (const d of Array.isArray(denies) ? denies : []) {
     const deniesPassRole = (d.actions || []).some((a) => actionGrants(a, PASS_ROLE_ACTION));
     if (!deniesPassRole) continue;
     if (hasNonEmptyCondition(d)) continue; // conditional deny may not always apply
     for (const r of (d.resources || [])) {
-      const pat = String(r);
-      // A pattern covers ALL subject-account roles iff it matches two DISTINCT
-      // role paths in that account+partition (so a single specific role ARN, which
-      // matches only its own path, does not qualify).
-      if (globMatch(pat, probeA) && globMatch(pat, probeB)) return true;
+      if (denyResourceRemovesAllSubjectRoles(r, subjectAccount, subjectPartition)) return true;
     }
   }
   return false;
 }
 
-// A single principal has ONE value for each principal-scoped request key for the
-// life of its credentials, so these keys are INVARIANT across the legs of a
-// takeover chain the same principal would execute (suite-3 test 75).
-const PRINCIPAL_INVARIANT_KEYS = new Set([
-  'aws:principalaccount',
-  'aws:principalorgid',
-  'aws:principalorgpaths',
-  'aws:principalarn',
-  'aws:userid',
-]);
-
-// Exact-equality operators that pin a principal-invariant key to a HARD literal
-// value (base form, after parseOperator). These are the operators for which a
-// single principal must carry exactly one of the listed values, so two legs that
-// pin the SAME key to disjoint values can never be satisfied by one principal.
-// This MUST mirror the exact-equality members of conditions.js
-// POSITIVE_STRING_MATCH_OPERATORS - crucially aws:PrincipalArn's idiomatic exact
-// operator is ArnEquals, NOT StringEquals (suite-3 test 75 ArnEquals twin /
-// release-gate #3). Like-family operators (StringLike / ArnLike) admit wildcards
-// and so do NOT pin a single literal - they are intentionally excluded, matching
-// the documented decision that wildcard-match operators create no hard
-// contradiction. StringEqualsIgnoreCase is exact but case-insensitive (tracked
-// per-pin so a case-only variance is not mistaken for a contradiction).
-const EXACT_EQUALITY_PIN_OPERATORS = new Set([
-  'stringequals',
-  'stringequalsignorecase',
-  'arnequals',
-]);
-// The exact-equality NEGATIONS of the operators above. StringNotEquals /
-// ArnNotEquals (and the IgnoreCase form) pin the principal-invariant key to
-// "anything EXCEPT the listed literal(s)". A single principal that must be == X
-// on one leg and != X on another leg cannot exist, so a negated pin is just as
-// load-bearing as a positive pin for the cross-leg satisfiability check (suite-3
-// test 75 negation twin / release-gate #3): ignoring it manufactures a false
-// critical takeover no single principal can execute. Like-family negations
-// (StringNotLike / ArnNotLike) admit wildcards and pin no single literal, so -
-// mirroring the positive-side exclusion of StringLike / ArnLike - they are
-// intentionally excluded and create no hard contradiction.
-const NEGATED_EQUALITY_PIN_OPERATORS = new Set([
-  'stringnotequals',
-  'stringnotequalsignorecase',
-  'arnnotequals',
-]);
-const CASE_INSENSITIVE_PIN_OPERATORS = new Set([
-  'stringequalsignorecase',
-  'stringnotequalsignorecase',
-]);
-
-// Extract the exact-equality pins a statement's Condition places on any
-// principal-invariant key: keyLower -> array of { values:Set, ci:boolean,
-// negated:boolean }, one entry per constraining operator block (AND-ed within the
-// statement). Only an exact-equality operator (positive == or its exact-negation
-// !=) with NO set-operator prefix and NO ...IfExists suffix pins a hard
-// constraint every principal must satisfy: an IfExists pin is skipped when the
-// key is absent, and a ForAllValues/ForAnyValue set qualifier changes the match
-// semantics, so neither creates a dependable cross-leg contradiction and both are
-// intentionally ignored. Like-family operators (StringLike / ArnLike and their
-// Not- forms) admit wildcards and pin no single literal, so they are ignored.
-// Condition keys are case-insensitive, so keys are lowercased.
-function principalPinsOf(stmt) {
-  const pins = new Map();
-  const cond = stmt && stmt.condition;
-  if (!cond || typeof cond !== 'object') return pins;
-  for (const op of Object.keys(cond)) {
-    const { base, setOperator, ifExists } = parseOperator(op);
-    if (setOperator !== null || ifExists) continue;
-    const positive = EXACT_EQUALITY_PIN_OPERATORS.has(base);
-    const negated = NEGATED_EQUALITY_PIN_OPERATORS.has(base);
-    if (!positive && !negated) continue;
-    const ci = CASE_INSENSITIVE_PIN_OPERATORS.has(base);
-    const block = cond[op];
-    if (!block || typeof block !== 'object') continue;
-    for (const key of Object.keys(block)) {
-      if (!PRINCIPAL_INVARIANT_KEYS.has(key.toLowerCase())) continue;
-      const raw = block[key];
-      const vals = Array.isArray(raw) ? raw.map((v) => String(v)) : [String(raw)];
-      const list = pins.get(key.toLowerCase()) || [];
-      list.push({ values: new Set(vals), ci, negated });
-      pins.set(key.toLowerCase(), list);
+// S2-passrole-allstmts: which VIABILITY TIER would selecting THIS PassRole statement
+// yield downstream? Evaluated per candidate so the passStmt selection prefers the
+// most-severe still-correct outcome and never lets a lower-indexed confidently
+// cross-account decoy hide a viable (or unknown-but-fail-closed) grant in a different
+// statement - making the verdict independent of statement ORDER and of ARN spelling.
+//   2 = confidently VIABLE same-account -> stays critical.
+//   1 = UNKNOWN viability -> fails CLOSED (requiredUnknowns) but NOT demoted below the
+//       threshold. Two sub-cases: (a) subject known but a passable role ARN's
+//       partition/account token is UNMODELABLE (non-canonical spelling), or (b) subject
+//       unknown and every passable resource pins a concrete 12-digit account.
+//   0 = confidently DEMOTED cross-account/partition (below threshold).
+// This MIRRORS EXACTLY the demotion/cap conditions in detectPassRolePaths, so the
+// selection and the metadata block can never disagree about a statement.
+// `subjectDenied` is the deny-removes-all-subject-roles verdict, computed ONCE per
+// detectPassRolePaths call and threaded in (S2-passrole-allstmts axis 3, iter-5 DoS): it
+// is invariant across all (svc x passStmt) selection iterations, so recomputing it here
+// - 8 x nPassStmts times, each a full scan of every Deny resource - was redundant
+// multiplicative work with no budget participation (fail-open DoS, T5/T8). The single
+// shared computation is now charged (denyResourceRemovesAllSubjectRoles) and reused.
+function passStmtViabilityTier(passStmt, subjectAccount, subjectPartition, partitionKnown, subjectDenied) {
+  const parsed = passStmt.resources.map(parsePassResource);
+  if (subjectAccount) {
+    const anyReaches = parsed.some((r) => resourceReachesSubject(r, subjectAccount, subjectPartition));
+    const viable = anyReaches && !subjectDenied;
+    if (viable) return 2;
+    // Not confidently viable: an unmodelable target ARN token makes the verdict UNKNOWN
+    // (fail closed, tier 1) and takes precedence over a confident demotion - it could be
+    // a same-account role under a spelling we cannot compare.
+    if (parsed.some(isUnmodelablePassResource)) return 1;
+    const concreteSpecific = parsed.filter(isConfidentPinnedResource);
+    // A demotion that is PURELY a partition mismatch, when the SUBJECT partition is not
+    // confidently known (a non-canonical token, OR an absent/defaulted partition -
+    // S5-partition-parity - both defaulted to 'aws'), is UNKNOWN viability
+    // (fail closed, tier 1), NOT a confident cross-partition demotion (tier 0): the path
+    // may be a same-partition, fully-viable pass under a spelling we cannot compare.
+    // MIRRORS the partitionOnly && !partitionKnown branch in detectPassRolePaths exactly,
+    // so selection and the metadata block can never disagree about a statement.
+    if (!partitionKnown && !subjectDenied && concreteSpecific.length > 0
+        && concreteSpecific.every(
+          (r) => r.account === subjectAccount && !partitionReaches(r.partition, subjectPartition),
+        )) {
+      return 1;
     }
+    const demoted = concreteSpecific.length > 0 || subjectDenied;
+    return demoted ? 0 : 2;
   }
-  return pins;
+  // Subject unknown: capped/fail-closed (tier 1) only when EVERY passable resource pins
+  // a concrete 12-digit account - so viability hinges entirely on an account we cannot
+  // confirm. A "*"/account-wildcard (or an unpinnable resource) reaches the subject
+  // whatever it is, so that statement keeps full viability (tier 2).
+  const allPinConcreteAccount = parsed.length > 0
+    && parsed.every(
+      (r) => !r.star && !r.other && CONCRETE_ACCOUNT_ID_RE.test(String(r.account)),
+    );
+  return allPinConcreteAccount ? 1 : 2;
 }
 
-// Does the constraint's value set contain `cand` (case-sensitively, or
-// case-insensitively for the IgnoreCase operators)?
-function constraintContains(c, cand, candLc) {
-  if (c.ci) {
-    for (const v of c.values) if (v.toLowerCase() === candLc) return true;
-    return false;
-  }
-  return c.values.has(cand);
-}
 
-// Can a single principal value satisfy EVERY constraint on one key at once?
-// A POSITIVE constraint (==) requires the principal's single value to be one of a
-// finite set; a NEGATED constraint (!=) requires it to be NONE of a finite set.
-//
-// A satisfying value must be a member of every positive set, so it can only be
-// one of the literals a positive constraint lists - that finite pool is the only
-// place a satisfying candidate can live. Each candidate is then checked against
-// ALL constraints (positive: must be in; negated: must be out).
-//
-// When there is NO positive constraint the domain is effectively unbounded (any
-// account id / ARN / userid), and a finite list of "!=" exclusions can always be
-// avoided by some other value, so an all-negated key is satisfiable. This keeps
-// the satisfiable control (both legs pin the SAME key with !=A) FIRING - only a
-// genuine == X / != X (or two disjoint ==) contradiction reads as unsatisfiable.
-// Kept conservative so a case-only variance is NOT mistaken for a contradiction.
-function keyConstraintsSatisfiable(constraints) {
-  const positives = constraints.filter((c) => !c.negated);
-  if (positives.length === 0) return true;
-  const candidates = new Set();
-  for (const c of positives) for (const v of c.values) candidates.add(v);
-  for (const cand of candidates) {
-    const candLc = cand.toLowerCase();
-    let ok = true;
-    for (const c of constraints) {
-      const inSet = constraintContains(c, cand, candLc);
-      // positive => must be in the set; negated => must be out of the set.
-      if (c.negated ? inSet : !inSet) { ok = false; break; }
-    }
-    if (ok) return true;
-  }
-  return false;
-}
 
-// Given a chosen SET of statements the one principal must satisfy jointly (an
-// AND across these statements), can a single principal meet every
-// principal-invariant pin at once? For each invariant key constrained by two or
-// more of the chosen statements, the principal's single value must satisfy every
-// one of those constraints simultaneously. An unsatisfiable key means no
-// principal can satisfy this exact combination.
-function pinsJointlySatisfiable(stmts) {
-  const perKey = new Map(); // keyLower -> array of { values:Set, ci:boolean }
-  for (const stmt of stmts) {
-    for (const [k, list] of principalPinsOf(stmt)) {
-      if (!perKey.has(k)) perKey.set(k, []);
-      for (const c of list) perKey.get(k).push(c);
-    }
-  }
-  for (const constraints of perKey.values()) {
-    if (constraints.length < 2) continue; // only one stmt constrains it -> no contradiction
-    if (!keyConstraintsSatisfiable(constraints)) return false;
-  }
-  return true;
-}
 
-// suite-3 test 75 (+ iteration-2 alternative-statement fix): can ONE principal
-// execute the whole modify-then-assume chain? The chain needs the principal to
-// satisfy SOME grant statement AND SOME trust statement AND SOME assume
-// statement - only ONE statement per leg-group is required to obtain that
-// capability. Statements WITHIN a group are therefore ALTERNATIVES (an OR), not
-// a conjunction: a principal in account A that satisfies grant-A, trust-A and
-// one of several assume statements (assume-A) executes a real takeover even
-// though a *different* assume statement pins account B. Satisfiability is thus
-// EXISTENTIAL across the choice of one statement per group: viable iff there
-// exists (grant, trust, assume) whose principal-invariant pins share a
-// non-empty intersection. It is unsatisfiable (test 75) only when NO such
-// combination exists - e.g. the single modify leg pins account 123456789012 and
-// the single assume leg pins 999900001111, so every triple contradicts.
-// Alternatives are never AND-ed together, which would fabricate a contradiction
-// out of statements the principal never needs to satisfy at the same time.
-function principalConditionsSatisfiable(grantLegs, trustLegs, assumeLegs) {
-  for (const g of grantLegs) {
-    for (const t of trustLegs) {
-      for (const a of assumeLegs) {
-        if (pinsJointlySatisfiable([g.stmt, t.stmt, a.stmt])) return true;
-      }
-    }
-  }
-  return false;
-}
+
+
+
+
+
 
 // IAM-902: correlate the modify-then-assume ROLE-TAKEOVER chain. A principal that,
 // on the SAME concrete role, is granted (a) a permission-grant primitive
@@ -2051,182 +961,6 @@ function principalConditionsSatisfiable(grantLegs, trustLegs, assumeLegs) {
 // explicit-Deny precedence applies to each leg (a fully-denied leg cannot
 // contribute). A PARTIAL set (only 2 of 3) or the actions spread across DIFFERENT
 // roles does NOT fire - that is the boundary the correlation must respect.
-function detectRoleTakeover(allows, out, denies) {
-  // Surviving contributing (stmt, actions, resources) for each leg. Resources are
-  // retained per statement so a WILDCARD modify grant can be matched against a
-  // concrete assumable role (suite-3 test 74) rather than requiring an exact
-  // per-role bucketing up front.
-  const grantLegsAll = [];
-  const trustLegsAll = [];
-  const assumeLegsAll = [];
-  const collect = (arr, stmt, actions) => arr.push({ stmt, actions, resources: stmt.resources });
-  for (const stmt of allows) {
-    const g = grantedPatternsFor(stmt, ROLE_TAKEOVER_GRANT_ACTIONS);
-    if (g.length > 0) {
-      const d = applyDenyToActions(denies, g, stmt);
-      if (!d.blocked) collect(grantLegsAll, stmt, d.actions);
-    }
-    const t = grantedPatternsFor(stmt, TRUST_MODIFY_ACTIONS);
-    if (t.length > 0) {
-      const d = applyDenyToActions(denies, t, stmt);
-      if (!d.blocked) collect(trustLegsAll, stmt, d.actions);
-    }
-    const a = grantedPatternsFor(stmt, ROLE_TAKEOVER_ASSUME_ACTIONS);
-    if (a.length > 0) {
-      const d = applyDenyToActions(denies, a, stmt);
-      if (!d.blocked) collect(assumeLegsAll, stmt, d.actions);
-    }
-  }
-
-  // A takeover is only ever asserted against a CONCRETE role the principal can
-  // assume. A concrete anchor role may be named by ANY contributing leg - the
-  // permission-grant, the trust-modify, OR the assume leg - because the compound
-  // is symmetric: whichever leg happens to be concrete pins the role, and the
-  // other legs may be wildcards that provably subsume it. Test 74 is the forward
-  // case (wildcard modify + concrete assume); its mirror (concrete modify/trust +
-  // a bounded wildcard assume such as role/deployment/*) reaches the SAME concrete
-  // role and must yield the SAME one takeover. Harvesting anchors only from assume
-  // legs missed that mirror (a false negative on a critical compound path). A
-  // WILDCARD assume scope still names no concrete role itself; the anchor comes
-  // from the concrete modify/trust leg and is CONFIRMED below only if an assume leg
-  // covers it. Deterministic order.
-  const anchorRoles = [];
-  for (const leg of [...grantLegsAll, ...trustLegsAll, ...assumeLegsAll]) {
-    for (const r of leg.resources) {
-      if (isConcreteRoleArn(r) && !anchorRoles.includes(r)) anchorRoles.push(r);
-    }
-  }
-  anchorRoles.sort();
-
-  for (const role of anchorRoles) {
-    // A leg contributes to THIS role when one of its resources covers the
-    // concrete role (exact, or a role-ARN wildcard that subsumes it).
-    const grantLegs = grantLegsAll.filter((l) => l.resources.some((r) => resourceCoversRole(r, role)));
-    const trustLegs = trustLegsAll.filter((l) => l.resources.some((r) => resourceCoversRole(r, role)));
-    // The assume leg CONFIRMS the anchor: the principal must actually be able to
-    // assume this concrete role. A bounded wildcard (account-pinned or path-scoped)
-    // that covers the role confirms it; a MAXIMALLY-BROAD "*"/"*:role/*" assume
-    // scope does NOT - it stays the ASSUME-ROLE-EXPANSION shape (test 142), never a
-    // same-role takeover, even though it glob-covers the role.
-    const assumeLegs = assumeLegsAll.filter((l) => l.resources.some(
-      (r) => resourceCoversRole(r, role) && !isAllRolesAssumeScope(r),
-    ));
-    // All three legs must reach the same concrete role, or there is no chain.
-    if (grantLegs.length === 0 || trustLegs.length === 0 || assumeLegs.length === 0) continue;
-
-    // suite-3 test 75: reject the correlation when the legs carry mutually
-    // exclusive same-key conditions on a principal-invariant key - no single
-    // principal could execute the whole chain. The standalone modify capability
-    // findings (PUT-INLINE-POLICY / TRUST-POLICY-MODIFY) remain, un-subsumed.
-    if (!principalConditionsSatisfiable(grantLegs, trustLegs, assumeLegs)) continue;
-
-    // Per-statement evidence: one record per contributing statement/leg, each
-    // carrying ONLY the actions that statement grants toward this chain (IAM-701
-    // provenance - never attribute all three actions to one statement).
-    const evidence = [];
-    for (const { stmt, actions } of grantLegs) {
-      evidence.push(
-        evidenceOf(stmt, 'grant-permissions', actions, `can attach/write a permission policy onto ${role}`),
-      );
-    }
-    for (const { stmt, actions } of trustLegs) {
-      evidence.push(
-        evidenceOf(stmt, 'modify-trust', actions, `can rewrite the trust policy of ${role} to trust an attacker-controlled principal`),
-      );
-    }
-    for (const { stmt, actions } of assumeLegs) {
-      evidence.push(
-        evidenceOf(stmt, 'assume', actions, `can assume ${role} once its trust policy permits it`),
-      );
-    }
-
-    // Grounded action lists per leg (deduped, statement order preserved).
-    const dedupe = (arr) => {
-      const seen = [];
-      for (const x of arr) if (!seen.includes(x)) seen.push(x);
-      return seen;
-    };
-    const grantActions = dedupe(grantLegs.flatMap((l) => l.actions));
-    const trustActions = dedupe(trustLegs.flatMap((l) => l.actions));
-    const assumeActions = dedupe(assumeLegs.flatMap((l) => l.actions));
-    const combinedActions = dedupe([...grantActions, ...trustActions, ...assumeActions]);
-
-    // Anchor = lowest contributing statement index (deterministic header anchor).
-    let anchor = null;
-    for (const { stmt } of [...grantLegs, ...trustLegs, ...assumeLegs]) {
-      if (anchor === null || stmt.index < anchor.index) anchor = stmt;
-    }
-
-    // Any contributing leg carrying a Condition gates the chain (lower confidence).
-    const conditioned = [...grantLegs, ...trustLegs, ...assumeLegs].some(
-      ({ stmt }) => hasNonEmptyCondition(stmt),
-    );
-    const denyNarrowed = [...grantLegs, ...trustLegs, ...assumeLegs].some(
-      ({ stmt, actions }) => applyDenyToActions(denies, actions, stmt).narrowed,
-    );
-
-    // AND semantics (IAM-703): all three prerequisite groups are jointly required.
-    const prerequisites = prerequisitesOf([
-      prereqTechnique(
-        'role-takeover-chain',
-        [
-          prereqGroup(grantActions, 'grant-permissions'),
-          prereqGroup(trustActions, 'modify-trust'),
-          prereqGroup(assumeActions, 'assume'),
-        ],
-        { requiresPassRole: false },
-      ),
-    ]);
-
-    const riskFactors = [
-      { key: 'grant-permissions', label: `Permission-grant primitive on ${role} (${grantActions.join(' / ')})`, present: true },
-      { key: 'modify-trust', label: `Trust-policy rewrite on ${role} (${trustActions.join(' / ')})`, present: true },
-      { key: 'assume', label: `Role assumption of ${role} (${assumeActions.join(' / ')})`, present: true },
-      { key: 'same-role', label: 'All three primitives target the same role ARN', present: true },
-    ];
-
-    out.push(
-      makeEscalation('ROLE-TAKEOVER', anchor, {
-        // Critical (IAM-102/902): a compound chain that grants a role permissions,
-        // re-trusts it, and assumes it plausibly crosses a privilege boundary - the
-        // reserved-critical bar - and does so without iam:PassRole.
-        severity: 'critical',
-        // All three grants are literally present in the policy text -> policy
-        // evidence HIGH. Whether the assumption actually elevates depends on what
-        // the permission-grant leg then writes onto the role and any permission
-        // boundary / SCP capping it (out of scope) -> exploitability MEDIUM.
-        policyEvidence: 'high',
-        pathExploitability: 'medium',
-        conditioned,
-        denyNarrowed,
-        technique: 'role-takeover-chain',
-        service: null,
-        requiredActions: combinedActions,
-        prerequisites,
-        actions: combinedActions,
-        resources: [role],
-        evidence,
-        riskFactors,
-        why:
-          `Grants a compound role-takeover chain on ${role}: a permission-grant ` +
-          `primitive (${grantActions.join(' / ')}) to give the role permissions, ` +
-          `iam:UpdateAssumeRolePolicy to rewrite its trust policy so the principal ` +
-          `may assume it, and sts:AssumeRole to then assume it. Together these let ` +
-          `the principal take the role over - grant it permissions, make it ` +
-          `assumable, and assume it - WITHOUT needing iam:PassRole. The role's ` +
-          `current permissions and any permission boundary on it are not in scope.`,
-        remediation:
-          'Separate role-permission management (iam:PutRolePolicy / ' +
-          'iam:AttachRolePolicy), trust-policy management ' +
-          '(iam:UpdateAssumeRolePolicy), and role assumption (sts:AssumeRole) ' +
-          'across distinct administrative identities so no single principal can ' +
-          'grant, re-trust, and assume the same role; scope each to specific role ' +
-          'ARNs and protect high-value roles with a permission boundary and change ' +
-          'review.',
-      }),
-    );
-  }
-}
 
 const DETECTORS = [
   detectPassRolePaths,
@@ -2236,6 +970,7 @@ const DETECTORS = [
   detectTrustModify,
   detectCredentialCreation,
   detectAssumeRoleExpansion,
+  detectCrossAccountScopedAssume,
   detectRoleTakeover,
 ];
 
@@ -2280,12 +1015,22 @@ export function analyzeEscalations(model, options) {
     const findings = [];
     // IAM-1005 / IAM-1102 (11B): an optional analysis context (subjectAccount +
     // partition) flows to the detectors; only detectPassRolePaths reads it
-    // (cross-account / cross-partition PassRole viability). partition defaults to
-    // 'aws' when unspecified.
+    // (cross-account / cross-partition PassRole viability).
+    //
+    // S5-partition-parity: the partition is forwarded RAW - an ABSENT partition stays
+    // absent (empty string), it is NOT defaulted to 'aws' here. Defaulting it to 'aws'
+    // upstream erased the "not supplied" state, so detectPassRolePaths could not tell a
+    // DEFAULTED partition from an EXPLICIT 'aws' and CONFIDENTLY demoted a same-account
+    // cross-partition PassRole to medium - making analyze() (the browser) MORE permissive
+    // than the scan() adapter, which never lost that distinction (threat-model T8,
+    // browser==CLI parity). detectPassRolePaths owns the distinction now: it treats an
+    // absent/non-canonical partition as unknown-viability (fail closed) and defaults to
+    // 'aws' ONLY for account-level reasoning (which never depends on the partition
+    // spelling). An explicit canonical partition still drives a confident demotion.
     const ctx = {
       subjectAccount: (options && options.subjectAccount) || null,
-      partition: (options && typeof options.partition === 'string' && options.partition.trim())
-        ? options.partition.trim() : 'aws',
+      partition: (options && typeof options.partition === 'string')
+        ? options.partition.trim() : '',
     };
     for (const detect of DETECTORS) detect(allows, findings, denies, ctx);
 
@@ -2307,6 +1052,10 @@ export function analyzeEscalations(model, options) {
     for (const f of findings) deepFreeze(f);
     return Object.freeze({ ok: true, errors: Object.freeze(errors), findings: Object.freeze(findings) });
   } catch (e) {
+    // The cooperative wall-clock budget sentinel must PROPAGATE, not be masked as a
+    // generic internal error, so scan() can report the specific fail-closed
+    // "analysis aborted (resource budget)" verdict (S3-dos-budget).
+    if (isGlobBudgetError(e)) throw e;
     errors.push({ code: 'INTERNAL', message: 'Escalation analysis failed unexpectedly.', path: null });
     return Object.freeze({ ok: false, errors: Object.freeze(errors), findings: Object.freeze([]) });
   }
@@ -2319,12 +1068,12 @@ export function analyzeEscalations(model, options) {
  * @param {string} text raw pasted/imported policy text
  * @returns {{ok:boolean, errors:Array, findings:Array<object>}}
  */
-export function analyzeEscalationsFromText(text) {
+export function analyzeEscalationsFromText(text, options) {
   const m = modelFromText(text);
   if (!m.ok) {
     return Object.freeze({ ok: false, errors: m.errors, findings: Object.freeze([]) });
   }
-  return analyzeEscalations(m.model);
+  return analyzeEscalations(m.model, options);
 }
 
 function deepFreeze(value) {

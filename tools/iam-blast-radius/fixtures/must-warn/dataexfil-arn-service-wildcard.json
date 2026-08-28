@@ -1,0 +1,16 @@
+{
+  "name": "s3:GetObject on arn:aws:* (wildcard service segment) must warn",
+  "note": "S1-dataexfil-arn regression: arn:aws:* wildcards the SERVICE segment, so the Resource matches essentially every ARN in the partition. A bulk read granted on it is account-wide. Previously resourceIsBroad() saw only the bare '*' as broad and this returned CLEAN (DATA-EXFIL fail-open, T8). DATA-EXFIL must fire; CLI must exit non-zero.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadAcrossAllServices", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["DATA-EXFIL"],
+    "mustNotFind": ["WILDCARD-RESOURCE", "WILDCARD-ACTION", "DESTRUCTIVE-ACTION", "DATA-READ"],
+    "minSeverity": { "DATA-EXFIL": "high" },
+    "nonZeroExit": true
+  }
+}

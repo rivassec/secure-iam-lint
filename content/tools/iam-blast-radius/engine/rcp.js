@@ -38,6 +38,15 @@
 // Pure, deterministic, dependency-free. No network APIs. No eval/Function. No DOM.
 // Same model (+ same family) -> same findings, same order, every run.
 
+// parseOperator strips the set-operator qualifier (ForAllValues:/ForAnyValue:) and
+// the ...IfExists suffix, returning the lowercased BASE comparator. Operator
+// POLARITY must be judged on that base form: `ForAnyValue:StringEquals` is a valid
+// AWS spelling of a POSITIVE string comparator, but a naive startsWith('string')
+// on the raw key would miss the qualifier prefix and credit an inverted org-scope
+// fence as protective. Reuse the canonical parser so every polarity check sees
+// through the qualifier prefix.
+import { parseOperator } from './conditions.js';
+
 // Finding ids emitted by this evaluator. Kept distinct from the identity RULE_IDS
 // / ESCALATION_IDS, the trust TRUST_IDS, the envelope ENVELOPE_IDS, and the SCP
 // SCP_IDS: an RCP finding is a different kind of observation (an org resource-
@@ -129,14 +138,22 @@ function inspectRcpConditions(condition) {
     const inner = condition[op];
     if (!inner || typeof inner !== 'object') continue;
     const opLower = String(op).toLowerCase();
-    const negatedOp = opLower.indexOf('not') !== -1;
-    const negatedIfExists = negatedOp && opLower.endsWith('ifexists');
+    // Judge polarity on the BASE comparator, with the set-operator qualifier
+    // (ForAllValues:/ForAnyValue:) and ...IfExists suffix stripped. A raw key such
+    // as `ForAnyValue:StringEquals` is a valid AWS spelling of a POSITIVE string
+    // comparator; testing the raw key with startsWith('string') would miss the
+    // qualifier prefix and credit an inverted org-scope fence as protective.
+    const { base, ifExists } = parseOperator(op);
+    const negatedOp = base.indexOf('not') !== -1;
+    const negatedIfExists = negatedOp && ifExists;
     // Operator POLARITY for an org-scope Deny (evidence, never a grant): a POSITIVE
     // string comparator (StringEquals / StringLike, no 'Not') fires the Deny WHEN
     // the org key MATCHES - the INVERSE of the intended "deny unless the org
     // matches" guardrail. Only string comparators carry this polarity (org ids are
     // string-typed); a Null existence check is not a polarity and is read below.
-    const positiveStringOp = opLower.startsWith('string') && !negatedOp;
+    // The set-operator qualifier is stripped above, so a ForAnyValue:/ForAllValues:-
+    // qualified positive comparator is caught too.
+    const positiveStringOp = base.startsWith('string') && !negatedOp;
     const recordOrgScope = (key) => {
       out.orgScopeKeys.push(String(key));
       if (negatedIfExists) out.orgScopeNegatedIfExists = true;

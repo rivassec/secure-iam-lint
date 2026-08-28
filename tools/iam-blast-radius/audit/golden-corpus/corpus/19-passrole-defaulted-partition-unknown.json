@@ -1,0 +1,1 @@
+{ "Version": "2012-10-17", "Statement": [ { "Sid": "PassGovRole", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws-us-gov:iam::111122223333:role/app" }, { "Sid": "RunGov", "Effect": "Allow", "Action": ["ec2:RunInstances"], "Resource": "arn:aws-us-gov:ec2:us-gov-west-1:111122223333:instance/i-1" } ] }

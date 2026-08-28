@@ -1,0 +1,23 @@
+{
+  "name": "Allow + empty NotResource complement (masked broad-resource)",
+  "note": "IAM-1508 / S2-guard-parity regression. An Allow whose only resource element is a present-but-empty NotResource ([]) excludes NOTHING, so it applies to EVERY resource - the byte-equivalent of Resource:\"*\". The engine reads it as no resource scope and never fires WILDCARD-RESOURCE; the shared engine must mark coverage INCOMPLETE (EMPTY_NOTRESOURCE_COMPLEMENT) so neither surface reports a clean pass while the identical Resource:\"*\" policy blocks.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow", "Action": "s3:GetObject", "NotResource": [] }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": true,
+    "code": "EMPTY_NOTRESOURCE_COMPLEMENT",
+    "kind": "malformed",
+    "path": "Statement[0].NotResource",
+    "coverageIncomplete": true,
+    "scanExit": 3,
+    "scanReason": "EMPTY_NOTRESOURCE_COMPLEMENT",
+    "scanStatus": "failed"
+  }
+}

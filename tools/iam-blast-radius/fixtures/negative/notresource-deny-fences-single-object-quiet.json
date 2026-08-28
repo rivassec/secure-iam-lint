@@ -1,0 +1,31 @@
+{
+  "name": "Allow s3:GetObject on * fenced by a Deny with NotResource to a single concrete OBJECT (genuinely clean)",
+  "note": "The over-correction guard for S1-R1-deny-fence-surviving. Surfacing the SURVIVING spared scope of a NotResource-Deny fence must NOT start flagging a single concrete OBJECT read. Here the Deny spares exactly one object key (approved-data/report.csv), so the effective read is a single object - routine least privilege - and stays CLEAN, exactly like a directly-granted single-object read.",
+  "phase": 3,
+  "story": "S1-R1-deny-fence-surviving",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowReadBroad",
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "*"
+      },
+      {
+        "Sid": "DenyEverythingButOneObject",
+        "Effect": "Deny",
+        "Action": "s3:GetObject",
+        "NotResource": "arn:aws:s3:::approved-data/report.csv"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["DATA-EXFIL", "CROSS-ACCOUNT-DATA-READ-UNDETERMINED", "CROSS-ACCOUNT-DATA-READ"],
+    "maxSeverity": {},
+    "maxPathExploitability": {},
+    "expectClean": true
+  },
+  "rationale": "The Deny denies s3:GetObject on every resource except the single concrete object arn:aws:s3:::approved-data/report.csv (a bucket/key with no wildcard in the key), so the broad Allow is fenced down to reading ONE object. A single concrete object read is not a whole-container read (isWholeContainerRead is false for a wildcard-free key), so it is deliberately QUIET by the HYBRID design - the same rule that keeps a directly-granted single-object read quiet. DATA-EXFIL is correctly removed by the fence, and the surviving-spared surfacing must not over-fire on a single object: no CROSS-ACCOUNT-DATA-READ[-UNDETERMINED] either. The analysis is genuinely CLEAN (zero findings, coverage not incomplete). Ref: AWS S3 ARN format arn:aws:s3:::bucket_name/key_name; a wildcard-free key names one object."
+}

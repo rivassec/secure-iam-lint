@@ -1,0 +1,44 @@
+{
+  "id": "scp-inverted-region-hazard",
+  "title": "SCP region Deny with INVERTED operator polarity (positive StringEquals footgun)",
+  "note": "S4-guardrail-polarity: a region-guardrail SCP Deny whose aws:RequestedRegion condition uses a POSITIVE comparator (StringEquals) instead of the intended negated StringNotEquals. In a Deny a positive comparator fires WHEN the requested Region matches, so this policy denies actions ONLY inside {ap-south-1} and PERMITS every other region - the INVERSE of a region lock, the exact StringEquals/StringNotEquals footgun. Byte-for-byte this looked identical to a correct StringNotEquals lock before the fix and was credited as protective (appears:narrows). The evaluator must inspect operator polarity, narrate the inverted effect ('permits every region except...'), record the listed set as DENIED (never as allowedRegions), and flag it as a misconfiguration hazard (severity medium, hazard=true, regionPositiveOperator=true), just as rcp.js raises the inverted-org-scope hazard. The ceiling-not-grant invariant still holds: zero capability edges, no escalation, states SCPs set ceilings and do not grant.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyRequestedRegionInverted",
+        "Effect": "Deny",
+        "Action": "*",
+        "Resource": "*",
+        "Condition": {
+          "StringEquals": {
+            "aws:RequestedRegion": [
+              "ap-south-1"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "options": {
+    "family": "scp",
+    "requireExplicitFamily": true
+  },
+  "scpExpect": {
+    "ok": true,
+    "blocked": false,
+    "family": "scp-rcp",
+    "override": "scp-rcp",
+    "status": "ok",
+    "findingIds": [
+      "SCP-GUARDRAIL"
+    ],
+    "severities": {
+      "SCP-GUARDRAIL": "medium"
+    },
+    "zeroCapabilityEdges": true,
+    "noEscalation": true,
+    "statesCeilingNotGrant": true,
+    "guardrailKinds": ["region"]
+  }
+}

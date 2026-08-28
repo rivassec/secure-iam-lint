@@ -1,0 +1,16 @@
+{
+  "name": "iam:PassRole on arn:aws:iam::?:role/deployment/* ('?' account wildcard) must warn",
+  "note": "S1-dataexfil-arn iteration 4 BLOCKER regression: the '?' spelling of the account-wildcard fail-open. AWS honors BOTH ARN wildcards; a leading '?' account segment is just as account-crossing as '*' (it matches any single-character account and, combined with the account glob, reaches beyond one pinned account). startsWithArnWildcard() already tests '*' OR '?', so the account-crossing broadness must hold for the '?' spelling too or the same fail-open reopens under a new spelling (threat-model T8). WILDCARD-RESOURCE (high) must fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PassDeploymentRoleQmarkAccount", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::?:role/deployment/*" }
+    ]
+  },
+  "mustWarnExpect": {
+    "mustFind": ["WILDCARD-RESOURCE"],
+    "mustNotFind": ["WILDCARD-ACTION"],
+    "minSeverity": { "WILDCARD-RESOURCE": "high" },
+    "nonZeroExit": true
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "name": "PassRole viability fails CLOSED on a DEFAULTED (absent) SUBJECT partition (S5-partition-parity)",
+  "note": "Same CLASS of browser>CLI parity break as the non-canonical SUBJECT partition axis, reached through the ABSENT case: the operator supplies subjectAccount but NEVER supplies a partition. The browser path (app.js/worker.js -> analyze({ subjectAccount }) with NO partition) defaulted ctx.partition to 'aws' and treated that DEFAULT as a CONFIDENTLY-KNOWN partition (partitionKnown=true when rawSubjectPartition===''), so a same-account aws-us-gov role read as cross-partition and got CONFIDENTLY demoted critical->medium (PARTITION_MISMATCH) with coverage complete/confident; meanwhile the CLI scan() adapter's partitionProvided guard correctly reported analysisStatus=partial / exit 3 / requiredUnknowns:['subjectPartition']. analyze() was therefore MORE permissive than scan() for byte-identical no-partition input (browser==CLI parity violation, threat-model T8): a false 'principal is in partition aws ... NOT a viable path' conclusion. FIX (in the shared engine, the single source of truth): an ABSENT partition is a DEFAULTED partition, not a confidently-supplied one - it must fail CLOSED as unknown-viability EXACTLY like a non-canonical token, never drive a confident cross-partition demotion. An EXPLICIT canonical partition ('aws') still demotes confidently (legitimate). viableSameAccount: a viable aws same-account path with NO partition stays CRITICAL (account reasoning defaults to 'aws'; the path is genuinely viable), matching scan() exit 1. crossPartitionSameAccount: an aws-us-gov same-account role with NO partition fails CLOSED as UNKNOWN viability (severity kept at critical, requiredUnknowns:['subjectPartition'], scan exit 3) rather than a confident PARTITION_MISMATCH medium; the explicit-partition controls (subject partition EXPLICITLY 'aws' -> confident medium demotion; EXPLICITLY 'aws-us-gov' -> viable critical) prove no over-correction.",
+  "subjectAccount": "123456789012",
+  "viableSameAccount": {
+    "passStatement": {
+      "Sid": "PassLocal",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::123456789012:role/LocalRole"
+    },
+    "runStatement": {
+      "Sid": "RunEc2",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": "arn:aws:ec2:us-east-1:123456789012:instance/i-1"
+    }
+  },
+  "crossPartitionSameAccount": {
+    "passStatement": {
+      "Sid": "PassGovLocal",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws-us-gov:iam::123456789012:role/LocalRole"
+    },
+    "runStatement": {
+      "Sid": "RunEc2Gov",
+      "Effect": "Allow",
+      "Action": ["ec2:RunInstances"],
+      "Resource": "arn:aws-us-gov:ec2:us-gov-west-1:123456789012:instance/i-1"
+    }
+  },
+  "expect": {
+    "findingId": "PASSROLE-EC2",
+    "viableSameAccount": {
+      "defaultedPartition": {
+        "analyzeSeverity": "critical",
+        "mustNotHaveWarningCode": ["PARTITION_MISMATCH", "PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE"],
+        "scanExitCode": 1
+      }
+    },
+    "crossPartitionSameAccount": {
+      "defaultedPartition": {
+        "analyzeSeverity": "critical",
+        "mustNotHaveWarningCode": ["PARTITION_MISMATCH"],
+        "requiredUnknown": "subjectPartition",
+        "scanExitCodeNot": 0,
+        "scanExitCode": 3
+      },
+      "explicitAwsControl": {
+        "partition": "aws",
+        "analyzeSeverity": "medium",
+        "mustHaveWarningCode": ["PARTITION_MISMATCH"],
+        "scanExitCode": 0
+      },
+      "explicitRealPartitionControl": {
+        "partition": "aws-us-gov",
+        "analyzeSeverity": "critical",
+        "scanExitCode": 1
+      }
+    }
+  }
+}

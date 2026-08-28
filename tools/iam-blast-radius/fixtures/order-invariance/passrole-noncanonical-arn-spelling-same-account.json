@@ -1,0 +1,56 @@
+{
+  "name": "PassRole viability fails CLOSED on non-canonical same-account ARN spellings (S2-passrole-allstmts, ARN-spelling axis)",
+  "note": "Same CLASS of fail-open as the statement-ORDER demotion, reached through ARN SPELLING instead of ordering. A PassRole target ARN's partition/account tokens are extracted with a lenient case-insensitive regex but were compared for same-vs-cross account with EXACT string equality. So a role in the subject's OWN account written with a non-canonical spelling - uppercase/mixed-case partition, embedded whitespace/tab, a space after a colon, or a non-12-digit account token - failed the exact match, was judged cross-account/cross-partition NOT-viable, demoted critical->medium (PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE / PARTITION_MISMATCH) and slipped under the default 'high' exit gate to exit 0 CLEAN - order-independent, no decoy needed. FIX: an unmodelable partition/account token (partition not a recognized AWS partition, account not a bare 12-digit id, once wildcards are excluded) yields UNKNOWN viability that fails CLOSED via requiredUnknowns (scan -> exit 3), and the engine keeps the finding at critical (never a below-threshold medium). Each `variant` is a single-Pass policy; scan() must NEVER return exit 0 CLEAN and analyze() must NOT emit a confident cross-account/partition demotion. The `orderings` block additionally proves the fix is statement-ORDER-independent: a canonical cross-account decoy sorted before OR after an unmodelable same-account grant must still fail closed in every permutation.",
+  "context": { "subjectAccount": "123456789012", "partition": "aws" },
+  "runStatement": {
+    "Sid": "RunEc2",
+    "Effect": "Allow",
+    "Action": ["ec2:RunInstances"],
+    "Resource": "*"
+  },
+  "canonicalControl": {
+    "Sid": "PassCanonicalLocal",
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::123456789012:role/Local"
+  },
+  "variants": {
+    "uppercasePartition": "ARN:AWS:IAM::123456789012:role/Local",
+    "mixedCasePartition": "arn:AWS:iam::123456789012:role/Local",
+    "spaceBeforeAccount": "arn:aws:iam:: 123456789012:role/Local",
+    "spaceAfterArnColon": "arn: aws:iam::123456789012:role/Local",
+    "tabInPartition": "arn:\taws:iam::123456789012:role/Local",
+    "shortAccountToken": "arn:aws:iam::12345:role/Local"
+  },
+  "decoyCanonicalCrossAccount": {
+    "Sid": "PassForeignDecoy",
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::999900001111:role/ForeignRole"
+  },
+  "unmodelableSameAccount": {
+    "Sid": "PassUppercaseLocal",
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:AWS:iam::123456789012:role/Local"
+  },
+  "orderings": [
+    ["run", "decoyCanonicalCrossAccount", "unmodelableSameAccount"],
+    ["run", "unmodelableSameAccount", "decoyCanonicalCrossAccount"],
+    ["decoyCanonicalCrossAccount", "run", "unmodelableSameAccount"],
+    ["unmodelableSameAccount", "decoyCanonicalCrossAccount", "run"]
+  ],
+  "expect": {
+    "findingId": "PASSROLE-EC2",
+    "everyVariant": {
+      "scanExitCodeNot": 0,
+      "scanReasonNot": "CLEAN",
+      "analyzeSeverity": "critical",
+      "mustNotHaveWarningCode": ["PASSROLE_CROSS_ACCOUNT_INCOMPATIBLE", "PARTITION_MISMATCH"]
+    },
+    "canonicalControl": {
+      "scanExitCode": 1,
+      "analyzeSeverity": "critical"
+    }
+  }
+}

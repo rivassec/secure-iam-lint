@@ -1,0 +1,28 @@
+{
+  "name": "Allow + non-scalar condition value (bare object where a scalar belongs)",
+  "note": "S1-shape-failclosed regression (the audit's exact case). A Condition value that is DIRECTLY a non-scalar - here aws:PrincipalOrgID:{} - is not a primitive scalar nor an array of scalars. AWS rejects it as MalformedPolicyDocument; the engine's value normalizer keeps only scalars, so it models a value set the author did not write. The prior detector inspected only value ARRAYS and skipped a bare-object value (a fail-OPEN). The shared engine must mark coverage INCOMPLETE (MALFORMED_CONDITION_VALUE) so neither surface reports a clean pass.",
+  "family": "identity",
+  "options": { "family": "identity" },
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["s3:GetObject"],
+        "Resource": "arn:aws:s3:::b/k",
+        "Condition": { "StringEquals": { "aws:PrincipalOrgID": {} } }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "maskedGrant": true,
+    "code": "MALFORMED_CONDITION_VALUE",
+    "kind": "malformed",
+    "path": "Statement[0].Condition.StringEquals.aws:PrincipalOrgID",
+    "coverageIncomplete": true,
+    "scanExit": 3,
+    "scanReason": "MALFORMED_CONDITION_VALUE",
+    "scanStatus": "failed"
+  }
+}

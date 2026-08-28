@@ -9,14 +9,27 @@
 # with exit-code 3 (could-not-analyze), NEVER 0 / a green check. A fail-closed state
 # collapsing to success is the top fail-open bug this whole tool exists to prevent.
 #
-# Cases:
+# Cases (uses: ./):
 #   known-good     -> action succeeds, exit-code 0, SARIF generated.
 #   known-bad      -> step outcome failure, exit-code 1, SARIF has ruleId DIRECT-IAM-ADMIN.
 #   malformed      -> step outcome failure, exit-code 3, an analysis-state SARIF result exists.
 #   usage-error    -> step outcome failure, exit-code 2 (family omitted; never auto-detected).
+#   vacuous-deny   -> step outcome failure, exit-code 1, status complete, a REAL DATA-EXFIL
+#                     result (R1: a vacuous NotResource Deny must NOT suppress DATA-EXFIL).
 #
-# The bad/malformed/usage steps use continue-on-error so the job can inspect their
+# The bad/malformed/usage/vacuous steps use continue-on-error so the job can inspect their
 # outcome; the good case does NOT (a failure there is a real regression that fails CI).
+#
+# RUNNER-level fail-open classes (story S6-R4; direct `node "$ACTION"`, NOT uses: ./ - they
+# need a symlinked argv[1], a chmod-000 subtree, or the real IAM_BR_ENUM_* hooks against a
+# staged workspace, which uses: ./ cannot reproduce). Each was a real fail-open proven only by
+# node --test units before; each fails the JOB on regression (no green-skip):
+#   symlinked-entrypoint  -> analysis must RUN through a symlinked launch (bin-shim/npx shape),
+#                            never a zero-analysis false-clean exit 0.
+#   unreadable-subtree    -> a chmod-000 subtree hiding an admin policy FAILS CLOSED (exit 3),
+#                            never exit 0 complete. Asserts unreadability first (non-root runner).
+#   max-files-truncation  -> a truncated enumeration (real IAM_BR_ENUM_MAX_FILES hook) exit 3.
+#   dir-cap-truncation    -> the R6 directory-cap trip (real IAM_BR_ENUM_MAX_DIRS hook) exit 3.
 
 name: Action self-test
 
@@ -150,6 +163,158 @@ jobs:
           test "$outcome" = "failure" || { echo "usage-error: expected step outcome failure, got '$outcome'"; exit 1; }
           test "$code" = "2" || { echo "usage-error: expected exit-code 2, got '$code'"; exit 1; }
 
+      # --- vacuous NotResource Deny: NON-clean with a REAL finding (R1, exit 1) --
+      # R1: a vacuous NotResource Deny (arn:aws:s3:::*/* = denies nothing) must NOT suppress
+      # the broad DATA-EXFIL read. Unlike malformed (a fail-closed could-not-analyze, exit 3),
+      # this is a REAL finding on a COMPLETE analysis - so the assertion below keys on analysis
+      # OUTPUT + STATUS (exit 1, analysis-status complete, a DATA-EXFIL security result), not
+      # merely a non-zero code. Runs via `uses: ./` exactly like the admin case.
+      - name: 'vacuous-notresource-deny (R1: vacuous Deny must NOT suppress DATA-EXFIL)'
+        id: vacuous
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/vacuous-notresource-deny.json
+          family: identity
+          fail-on: high
+          sarif-output: selftest-vacuous.sarif
+
+      - name: assert vacuous-notresource-deny is NON-clean with a REAL DATA-EXFIL finding
+        env:
+          OUTCOME: ${{ steps.vacuous.outcome }}
+          CODE: ${{ steps.vacuous.outputs.exit-code }}
+          STATUS: ${{ steps.vacuous.outputs.analysis-status }}
+        run: |
+          set -euo pipefail
+          outcome="$OUTCOME"
+          code="$CODE"
+          status="$STATUS"
+          test "$outcome" = "failure" || { echo "vacuous: expected step outcome failure, got '$outcome'"; exit 1; }
+          # R1 fail-open guard: the exfil primitive must NEVER read clean behind a vacuous Deny.
+          test "$code" != "0" || { echo "vacuous: FAIL-OPEN - vacuous Deny suppressed DATA-EXFIL to exit 0"; exit 1; }
+          # It is a REAL finding (exit 1) on a COMPLETE analysis - not a fail-closed exit-3 state.
+          test "$code" = "1" || { echo "vacuous: expected exit-code 1 (findings), got '$code'"; exit 1; }
+          test "$status" = "complete" || { echo "vacuous: expected analysis-status complete (real finding), got '$status'"; exit 1; }
+          # A genuine DATA-EXFIL SECURITY result must exist (category security, with a
+          # security-severity) - the actual analysis output, not just a non-zero exit.
+          jq -e '[.runs[].results[] | select(.ruleId == "DATA-EXFIL" and .properties.category == "security")] | length > 0' selftest-vacuous.sarif > /dev/null \
+            || { echo "vacuous: SARIF missing a real DATA-EXFIL security result"; exit 1; }
+          # ...and NOT an analysis-state (could-not-analyze) result - this is a real finding.
+          jq -e '[.runs[].results[] | select(.properties.category == "analysis-state")] | length == 0' selftest-vacuous.sarif > /dev/null \
+            || { echo "vacuous: a vacuous Deny must be a real finding, not a could-not-analyze state"; exit 1; }
+
+      # --- RUNNER-level fail-open classes (symlink entrypoint + enumeration caps) -
+      # These five classes previously had NO runner-level coverage - only node --test units.
+      # Each is where a REAL fail-open lived; each MUST be exercised inside the runner and MUST
+      # NOT be an optional/skipped green case (green-skips were the original bug class). They
+      # are driven by DIRECT `node "$ACTION"` invocations (not `uses: ./`) because they need a
+      # symlinked argv[1], a chmod-000 subtree, or the real IAM_BR_ENUM_* env hooks against a
+      # STAGED workspace - shapes `uses: ./` (a real path, default env, the repo root as
+      # GITHUB_WORKSPACE) cannot reproduce. `$ACTION` is the checked-out action module.
+
+      - name: symlinked-entrypoint (bin-shim/npx shape; analysis must RUN, never a false-clean exit 0)
+        run: |
+          set -euo pipefail
+          action="${{ github.workspace }}/action/index.mjs"
+          ws="$(mktemp -d)"
+          outdir="$(mktemp -d)"
+          linkdir="$(mktemp -d)"
+          cp .github/action-selftest-fixtures/admin-identity.json "$ws/admin.json"
+          # The action is normally invoked via `uses: ./` (a REAL path). Model the npm .bin
+          # shim / npx / self-hosted-runner-checkout launch: argv[1] routed through a SYMLINK
+          # whose realpath differs from the raw path. Pre-fix this made the entrypoint guard
+          # MISS, main() never ran, and the process exited 0 having analyzed nothing.
+          ln -s "$action" "$linkdir/index-shim.mjs"
+          code=0
+          GITHUB_WORKSPACE="$ws" GITHUB_OUTPUT="$outdir/out" \
+            INPUT_PATHS='**/*.json' INPUT_FAMILY='identity' \
+            node "$linkdir/index-shim.mjs" || code=$?
+          test "$code" != "0" || { echo "symlink-entry: FAIL-OPEN - symlinked launch exited 0 with zero analysis"; exit 1; }
+          test "$code" = "1" || { echo "symlink-entry: expected exit 1 (admin policy analyzed), got '$code'"; exit 1; }
+          # Proof analysis actually RAN through the symlink (a real finding), not that the
+          # process merely failed for some unrelated reason.
+          grep -q 'DIRECT-IAM-ADMIN' "$ws/iam-blast-radius.sarif" \
+            || { echo "symlink-entry: SARIF missing DIRECT-IAM-ADMIN - analysis did not run"; exit 1; }
+          grep -q 'exit-code=1' "$outdir/out" || { echo "symlink-entry: exit-code output not 1"; exit 1; }
+
+      - name: unreadable-subtree (chmod-000 hiding an admin policy; must FAIL CLOSED exit 3, never exit 0 complete)
+        run: |
+          set -euo pipefail
+          action="${{ github.workspace }}/action/index.mjs"
+          ws="$(mktemp -d)"
+          outdir="$(mktemp -d)"
+          cp .github/action-selftest-fixtures/clean-identity.json "$ws/clean.json"
+          mkdir "$ws/secret"
+          cp .github/action-selftest-fixtures/admin-identity.json "$ws/secret/danger.json"
+          chmod 000 "$ws/secret"
+          # ASSERT UNREADABILITY FIRST: chmod-000 only produces EACCES for a NON-root owner.
+          # GitHub-hosted ubuntu runs as non-root, so this MUST hold; a readable dir would make
+          # the reproduction vacuous, so fail loudly rather than green-pass a no-op.
+          if ls "$ws/secret" >/dev/null 2>&1; then
+            chmod 755 "$ws/secret"
+            echo "unreadable: runner does not enforce chmod-000 (running as root?) - cannot stage reproduction"
+            exit 1
+          fi
+          code=0
+          GITHUB_WORKSPACE="$ws" GITHUB_OUTPUT="$outdir/out" \
+            INPUT_PATHS='**/*.json' INPUT_FAMILY='identity' \
+            node "$action" || code=$?
+          chmod 755 "$ws/secret" || true
+          test "$code" != "0" || { echo "unreadable: FAIL-OPEN - unreadable subtree read clean (exit 0)"; exit 1; }
+          test "$code" = "3" || { echo "unreadable: expected fail-closed exit 3, got '$code'"; exit 1; }
+          grep -q 'exit-code=3' "$outdir/out" || { echo "unreadable: exit-code output not 3"; exit 1; }
+          grep -q 'analysis-status=partial' "$outdir/out" || { echo "unreadable: analysis-status not partial"; exit 1; }
+          grep -q 'ENUMERATION_UNREADABLE' "$ws/iam-blast-radius.sarif" \
+            || { echo "unreadable: SARIF missing ENUMERATION_UNREADABLE analyzer-state"; exit 1; }
+
+      - name: max-files-truncation (real IAM_BR_ENUM_MAX_FILES hook; must FAIL CLOSED exit 3, never clean)
+        run: |
+          set -euo pipefail
+          action="${{ github.workspace }}/action/index.mjs"
+          ws="$(mktemp -d)"
+          outdir="$(mktemp -d)"
+          # More files than the (lowered) enumeration ceiling. Every file is individually clean;
+          # the ONLY thing that must fail the run is the truncation itself. GITHUB_OUTPUT lives
+          # OUTSIDE the workspace so it does not inflate the walked file count.
+          for i in 0 1 2 3 4 5; do cp .github/action-selftest-fixtures/clean-identity.json "$ws/p$i.json"; done
+          code=0
+          GITHUB_WORKSPACE="$ws" GITHUB_OUTPUT="$outdir/out" \
+            INPUT_PATHS='**/*.json' INPUT_FAMILY='identity' \
+            IAM_BR_ENUM_MAX_FILES='2' \
+            node "$action" || code=$?
+          test "$code" != "0" || { echo "max-files: FAIL-OPEN - truncated walk read clean (exit 0)"; exit 1; }
+          test "$code" = "3" || { echo "max-files: expected fail-closed exit 3, got '$code'"; exit 1; }
+          grep -q 'exit-code=3' "$outdir/out" || { echo "max-files: exit-code output not 3"; exit 1; }
+          grep -q 'analysis-status=partial' "$outdir/out" || { echo "max-files: analysis-status not partial"; exit 1; }
+          grep -q 'ENUMERATION_TRUNCATED' "$ws/iam-blast-radius.sarif" \
+            || { echo "max-files: SARIF missing ENUMERATION_TRUNCATED analyzer-state"; exit 1; }
+
+      - name: dir-cap-truncation (R6, real IAM_BR_ENUM_MAX_DIRS hook; must FAIL CLOSED exit 3, never clean)
+        run: |
+          set -euo pipefail
+          action="${{ github.workspace }}/action/index.mjs"
+          ws="$(mktemp -d)"
+          outdir="$(mktemp -d)"
+          # Deep+wide "dir bomb": 3 chains x 4 dirs deep = 13 dirs but only 3 files, all far
+          # below any FILE ceiling - so ONLY the DIRECTORY ceiling (R6) can trip. Proves the
+          # dir-count guard, not the file-count guard, is what fails the run here.
+          for c in 0 1 2; do
+            d="$ws/c${c}_0/c${c}_1/c${c}_2/c${c}_3"
+            mkdir -p "$d"
+            cp .github/action-selftest-fixtures/clean-identity.json "$d/leaf.json"
+          done
+          code=0
+          GITHUB_WORKSPACE="$ws" GITHUB_OUTPUT="$outdir/out" \
+            INPUT_PATHS='**/*.json' INPUT_FAMILY='identity' \
+            IAM_BR_ENUM_MAX_DIRS='5' \
+            node "$action" || code=$?
+          test "$code" != "0" || { echo "dir-cap: FAIL-OPEN - dir-truncated walk read clean (exit 0)"; exit 1; }
+          test "$code" = "3" || { echo "dir-cap: expected fail-closed exit 3, got '$code'"; exit 1; }
+          grep -q 'exit-code=3' "$outdir/out" || { echo "dir-cap: exit-code output not 3"; exit 1; }
+          grep -q 'analysis-status=partial' "$outdir/out" || { echo "dir-cap: analysis-status not partial"; exit 1; }
+          grep -q 'ENUMERATION_TRUNCATED' "$ws/iam-blast-radius.sarif" \
+            || { echo "dir-cap: SARIF missing ENUMERATION_TRUNCATED analyzer-state"; exit 1; }
+
       - name: self-test summary
         if: always()
         env:
@@ -161,6 +326,8 @@ jobs:
           MAL_CODE: ${{ steps.malformed.outputs.exit-code }}
           USAGE_OUTCOME: ${{ steps.usage.outcome }}
           USAGE_CODE: ${{ steps.usage.outputs.exit-code }}
+          VACUOUS_OUTCOME: ${{ steps.vacuous.outcome }}
+          VACUOUS_CODE: ${{ steps.vacuous.outputs.exit-code }}
         run: |
           {
             echo "## IAM Blast Radius action self-test"
@@ -171,4 +338,9 @@ jobs:
             echo "| known-bad | $BAD_OUTCOME | $BAD_CODE |"
             echo "| malformed | $MAL_OUTCOME | $MAL_CODE |"
             echo "| usage-error | $USAGE_OUTCOME | $USAGE_CODE |"
+            echo "| vacuous-notresource-deny | $VACUOUS_OUTCOME | $VACUOUS_CODE |"
+            echo "| symlinked-entrypoint | (run-step) | asserted in step |"
+            echo "| unreadable-subtree | (run-step) | asserted in step |"
+            echo "| max-files-truncation | (run-step) | asserted in step |"
+            echo "| dir-cap-truncation | (run-step) | asserted in step |"
           } >> "$GITHUB_STEP_SUMMARY"
