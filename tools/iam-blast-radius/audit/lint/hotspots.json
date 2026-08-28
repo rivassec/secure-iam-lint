@@ -192,13 +192,6 @@
       "note": "recursion (deepFreeze) with no visible depth/node/size cap"
     },
     {
-      "file": "content/tools/iam-blast-radius/engine/trust.js",
-      "line": 146,
-      "cls": "unbounded-walk",
-      "snippet": "function add(out, type, value, key, index) {",
-      "note": "recursion (add) with no visible depth/node/size cap"
-    },
-    {
       "file": "content/tools/iam-blast-radius/engine/validate.js",
       "line": 258,
       "cls": "silent-catch-clean",
