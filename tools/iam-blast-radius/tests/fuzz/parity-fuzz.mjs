@@ -36,6 +36,7 @@
 
 import { analyze } from '../../../../content/tools/iam-blast-radius/engine/analyze.js';
 import { scan, EXIT, ANALYSIS_STATUS } from '../../../../cli/scan.mjs';
+import { runAllProperties } from '../lib/metamorphic.mjs';
 
 // --- Deterministic PRNG (mulberry32): pure, seedable, no global state --------
 export function makeRng(seed) {
@@ -214,12 +215,19 @@ export function generateCase(rng) {
 export function checkParity(text, family, opts) {
   const budgetMs = (opts && opts.budgetMs) || 5000;
   const ceilingMs = (opts && opts.ceilingMs) || 8000;
+  // B4: the OPTIONAL subject-account axis. Left undefined by default (the pre-field
+  // browser behaviour); a fuzz sweep varies it across undefined / same / cross-account
+  // so the HYBRID cross-account surfacing branches - which neither the byte-parity test
+  // nor the old fuzzer exercised - are driven.
+  const subjectAccount = opts && opts.subjectAccount;
+  const aopts = { family, requireExplicitFamily: true };
+  if (subjectAccount !== undefined) aopts.subjectAccount = subjectAccount;
 
   // Both surfaces must FAIL CLOSED, never throw, on hostile input.
   let ar; let sr; let arMs; let srMs;
   let t0 = process.hrtime.bigint();
   try {
-    ar = analyze(text, { family, requireExplicitFamily: true });
+    ar = analyze(text, aopts);
   } catch (e) {
     return { kind: 'throw', surface: 'analyze', detail: (e && e.message) || String(e) };
   }
@@ -227,7 +235,7 @@ export function checkParity(text, family, opts) {
 
   t0 = process.hrtime.bigint();
   try {
-    sr = scan({ text, family, budgetMs });
+    sr = scan(subjectAccount !== undefined ? { text, family, budgetMs, subjectAccount } : { text, family, budgetMs });
   } catch (e) {
     return { kind: 'throw', surface: 'scan', detail: (e && e.message) || String(e) };
   }
@@ -246,6 +254,23 @@ export function checkParity(text, family, opts) {
         + `incomplete:${!!(ar.coverage && ar.coverage.summary && ar.coverage.summary.incomplete)}}`,
     };
   }
+
+  // B1/B4 metamorphic properties: a SHARED-engine semantic error (both surfaces wrong
+  // the same way, e.g. the A1 spoof erasure) is invisible to the cross-surface parity
+  // check above. Run the security-monotonic invariants on any well-formed policy object
+  // (malformed input is already covered by the throw/parity checks). Cheap: a handful of
+  // extra analyze() calls per structured case.
+  let policyObj = null;
+  try {
+    const p = JSON.parse(text);
+    if (p && typeof p === 'object' && !Array.isArray(p) && p.Statement !== undefined) policyObj = p;
+  } catch { /* malformed - metamorphic mutations do not apply */ }
+  if (policyObj) {
+    const mopts = { family, requireExplicitFamily: true };
+    if (subjectAccount !== undefined) mopts.subjectAccount = subjectAccount;
+    const fails = runAllProperties((t, o) => analyze(t, o), policyObj, mopts);
+    if (fails.length) return { kind: 'metamorphic', detail: fails.join(' | ') };
+  }
   return null;
 }
 
@@ -260,11 +285,14 @@ export function runFuzz(config) {
   const violations = [];
   let maxCallMs = 0;
 
+  // B4: subject-account axis swept deterministically across the run.
+  const SUBJECT_AXIS = [undefined, '123456789012', '999999999999'];
   for (let i = 0; i < count; i += 1) {
     const c = generateCase(rng);
-    const v = checkParity(c.text, c.family, { budgetMs, ceilingMs });
+    const subjectAccount = rng.pick(SUBJECT_AXIS);
+    const v = checkParity(c.text, c.family, { budgetMs, ceilingMs, subjectAccount });
     if (v) {
-      violations.push({ index: i, seed, family: c.family, label: c.label, text: c.text, ...v });
+      violations.push({ index: i, seed, family: c.family, label: c.label, subjectAccount, text: c.text, ...v });
       // Cap stored reproducers so a systemic break does not exhaust memory.
       if (violations.length >= 25) break;
     }
