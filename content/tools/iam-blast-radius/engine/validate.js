@@ -52,6 +52,12 @@ export const LIMITS = Object.freeze({
 });
 
 // Keys that enable prototype pollution. Rejected at ANY depth, as object keys.
+// NOTE: no positive key-charset guard here, deliberately. validate() runs BEFORE
+// the model's de-spoof pass (model.js stripModelSpoof), which legitimately expects
+// keys carrying format-control / homograph code points to arrive intact so it can
+// clean them; rejecting them on charset here would break de-spoofing. The computed
+// write below is into an Object.create(null) map and is DANGEROUS_KEYS-guarded, so
+// it is safe despite the untrusted key name.
 const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 // --- Error helper ------------------------------------------------------------

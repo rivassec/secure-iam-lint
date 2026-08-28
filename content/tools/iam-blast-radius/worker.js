@@ -12,6 +12,11 @@
 import { analyze, CATALOG_VERSION } from './engine/analyze.js';
 
 self.addEventListener('message', (event) => {
+  // A dedicated module Worker is same-origin by construction (its MessageEvent
+  // origin is the empty string / falsy); reject only a present, foreign origin.
+  // The truthiness short-circuit keeps this inert for the empty-origin worker case
+  // (and for harnesses that post an origin-less event).
+  if (event.origin && event.origin !== self.location.origin) return;
   const data = event && event.data;
   const id = data && typeof data.id !== 'undefined' ? data.id : null;
   const text = data && typeof data.text === 'string' ? data.text : '';
