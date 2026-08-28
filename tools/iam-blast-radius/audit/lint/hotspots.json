@@ -1,5 +1,5 @@
 {
-  "scanned": 30,
+  "scanned": 0,
   "missing": [],
   "active": [
     {
@@ -81,7 +81,7 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/escalation.js",
-      "line": 2744,
+      "line": 2651,
       "cls": "unbounded-walk",
       "snippet": "function deepFreeze(value) {",
       "note": "recursion (deepFreeze) with no visible depth/node/size cap"

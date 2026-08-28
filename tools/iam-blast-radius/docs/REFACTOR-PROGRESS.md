@@ -9,8 +9,8 @@ Per-extraction protocol (MANDATORY every time): (1) re-grep exact CURRENT line n
 - [x] escalation-catalogs.js (classifyEcsRole, ecsRoleClasses, ESCALATIONS, ESCALATION_IDS, catalog consts, deepFreeze)
 - [x] escalation-scope.js (resourceScope, isStarResource, grantTokenIsBroad, resourceListIsBroadForAssume, assumeScopeIsAllRoles, assumeAccountReach)
 - [x] escalation-statement.js (statementSid)
-- [ ] escalation-conditions.js (passedToServiceEntries, normalizeOperator, operatorPermitsService, passRolePermitsService, hasNonEmptyCondition, constraintContains, keyConstraintsSatisfiable)
-- [ ] escalation-principal-pins.js (principalPinsOf, principalPinsOfMemo, pinsJointlySatisfiable, principalConditionsSatisfiable) -- memo is a PARAM, safe
+- [x] escalation-conditions.js (5 clean helpers; constraintContains+keyConstraintsSatisfiable moved to principal-pins to avoid a cycle) (passedToServiceEntries, normalizeOperator, operatorPermitsService, passRolePermitsService, hasNonEmptyCondition, constraintContains, keyConstraintsSatisfiable)
+- [ ] escalation-principal-pins.js (principalPinsOf, principalPinsOfMemo, pinsJointlySatisfiable, principalConditionsSatisfiable, constraintContains, keyConstraintsSatisfiable) -- memo is a PARAM, safe
 - [ ] escalation-role-targets.js (parsePassResource, concreteRoleTargetAccount, isConcreteRoleArn, resourceCoversRole, isAllRolesAssumeScope, specificAccountsInRoleArns)
 - [ ] escalation-role-coverage.js (partitionReaches, accountReaches, resourceReachesSubject, subjectRoleArnPrefix, globCanProducePrefix, rolePathIsWildcardEquivalent, partitionModelable, subjectPartitionKnown, accountModelable, otherResourceIsUnmodelable, isUnmodelablePassResource, isConfidentPinnedResource) -- CYCLE FIX: deny + passrole/partition both import this
 - [ ] escalation-finding.js (makeEscalation, downgrade, evidenceOf, contributingStatementsFrom, prereqGroup, prereqTechnique, prerequisitesOf, survivingGrantedActions)
