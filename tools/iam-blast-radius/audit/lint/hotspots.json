@@ -193,21 +193,7 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/trust.js",
-      "line": 266,
-      "cls": "candidate-drop",
-      "snippet": "const beforeAccount = segs.slice(0, 4); // arn, partition, service, region",
-      "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
-    },
-    {
-      "file": "content/tools/iam-blast-radius/engine/trust.js",
-      "line": 307,
-      "cls": "unbounded-walk",
-      "snippet": "function deepFreeze(value) {",
-      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
-    },
-    {
-      "file": "content/tools/iam-blast-radius/engine/trust.js",
-      "line": 385,
+      "line": 146,
       "cls": "unbounded-walk",
       "snippet": "function add(out, type, value, key, index) {",
       "note": "recursion (add) with no visible depth/node/size cap"
