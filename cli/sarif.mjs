@@ -73,8 +73,15 @@ function isNonEmptyString(v) {
 }
 
 function sevMap(severity) {
-  const key = String(severity == null ? 'info' : severity).toLowerCase();
-  return SARIF_SEVERITY[key] || SARIF_SEVERITY.info;
+  const key = String(severity == null ? '' : severity).toLowerCase();
+  // Fail CLOSED on a MISSING or UNRECOGNIZED severity: map to the HIGHEST band
+  // (critical -> level 'error', security-severity 9.0), never the lowest (info -> note,
+  // no security-severity). A reporting-layer downgrade would push a real finding below a
+  // code-scanning severity threshold and hide it, and a hidden finding is a fail-open in
+  // the reporting layer just as much as in the engine. NOT reachable today - every engine
+  // producer emits exactly one of the five valid literals - so this is defense in depth;
+  // the raw token is still preserved verbatim in properties.severity for the record.
+  return SARIF_SEVERITY[key] || SARIF_SEVERITY.critical;
 }
 
 // The artifact URI recorded for every result's location: an explicit --artifact-uri
@@ -832,7 +839,11 @@ function buildRules(result) {
     const prevRank = prev ? SEVERITY_RANK.indexOf(prev.severity) : Infinity;
     if (!prev || (rank !== -1 && rank < prevRank)) {
       typeMax.set(id, {
-        severity: rank === -1 ? (prev ? prev.severity : 'info') : sev,
+        // Fail CLOSED on an unrecognized/out-of-enum severity: the rule descriptor
+        // takes the HIGHEST band (critical) rather than the lowest (info), mirroring
+        // sevMap(), so an out-of-enum token can never pin a rule below a code-scanning
+        // threshold. (Defense in depth; not reachable with the five valid literals.)
+        severity: rank === -1 ? (prev ? prev.severity : 'critical') : sev,
         title: isNonEmptyString(f && f.title) ? f.title.trim() : id,
         docRef: isNonEmptyString(f && f.docRef) ? f.docRef.trim() : null,
       });

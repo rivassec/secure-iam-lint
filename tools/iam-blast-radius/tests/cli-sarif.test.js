@@ -211,6 +211,23 @@ test('severity maps to the documented level + security-severity; info omits it',
   }
 });
 
+test('an UNRECOGNIZED severity token FAILS CLOSED to the highest band (error/critical), never note/info (defense in depth)', () => {
+  // Not reachable today (every engine producer emits one of the five valid literals),
+  // but a producer bug or a future out-of-enum token must NEVER be silently downgraded
+  // below a code-scanning severity threshold - an under-reported finding is a hidden
+  // risk. The raw token is still preserved verbatim in properties.severity.
+  for (const bad of ['definitely-not-a-severity', 'SEVERE', 'urgent']) {
+    const log = buildSarifLog(syntheticResult({ severity: bad }), {}, MANIFEST);
+    const res = log.runs[0].results[0];
+    assert.equal(res.level, 'error', `unrecognized "${bad}" -> error, not note`);
+    assert.equal(res.properties['security-severity'], '9.0', `unrecognized "${bad}" -> critical band`);
+    assert.equal(res.properties.severity, String(bad).toLowerCase(), 'raw token preserved for the record');
+    const rule = log.runs[0].tool.driver.rules[0];
+    assert.equal(rule.defaultConfiguration.level, 'error', 'the rule descriptor also fails closed to error');
+    assert.equal(rule.properties['security-severity'], '9.0');
+  }
+});
+
 test('SARIF_SEVERITY table exactly matches the design doc mapping', () => {
   assert.deepEqual(SARIF_SEVERITY.critical, { level: 'error', securitySeverity: '9.0' });
   assert.deepEqual(SARIF_SEVERITY.high, { level: 'error', securitySeverity: '7.0' });
