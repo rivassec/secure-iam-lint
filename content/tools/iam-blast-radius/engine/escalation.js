@@ -78,6 +78,7 @@
 // same model -> same findings, same order, every run (no Date/Math.random).
 
 import { modelFromText } from './model.js';
+import { statementSid } from './escalation-statement.js';
 import { resourceScope, isStarResource, grantTokenIsBroad, resourceListIsBroadForAssume, assumeScopeIsAllRoles, assumeAccountReach } from './escalation-scope.js';
 import { statementNeverMatches, parseOperator } from './conditions.js';
 // ONE shared, ReDoS-safe, linear wildcard matcher (S3-dos-budget). Replaces the
@@ -489,11 +490,6 @@ export function applyDenyToActions(denies, matchedActions, allowStmt) {
 
 // --- Finding factory ---------------------------------------------------------
 
-function statementSid(stmt) {
-  return typeof stmt.sid === 'string' && stmt.sid.length > 0
-    ? stmt.sid
-    : `(index ${stmt.index})`;
-}
 
 // Build a canonical finding (docs/architecture.md shape) plus escalation-only
 // enrichment: `escalation` (technique/service/target-unknown) and `evidence`

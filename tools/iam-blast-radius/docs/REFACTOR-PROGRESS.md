@@ -8,7 +8,7 @@ Per-extraction protocol (MANDATORY every time): (1) re-grep exact CURRENT line n
 - [x] escalation-action-grants.js (actionGrants, hasPolicyVariable, grantedPatternsFor) -- 47b9955
 - [x] escalation-catalogs.js (classifyEcsRole, ecsRoleClasses, ESCALATIONS, ESCALATION_IDS, catalog consts, deepFreeze)
 - [x] escalation-scope.js (resourceScope, isStarResource, grantTokenIsBroad, resourceListIsBroadForAssume, assumeScopeIsAllRoles, assumeAccountReach)
-- [ ] escalation-statement.js (statementSid)
+- [x] escalation-statement.js (statementSid)
 - [ ] escalation-conditions.js (passedToServiceEntries, normalizeOperator, operatorPermitsService, passRolePermitsService, hasNonEmptyCondition, constraintContains, keyConstraintsSatisfiable)
 - [ ] escalation-principal-pins.js (principalPinsOf, principalPinsOfMemo, pinsJointlySatisfiable, principalConditionsSatisfiable) -- memo is a PARAM, safe
 - [ ] escalation-role-targets.js (parsePassResource, concreteRoleTargetAccount, isConcreteRoleArn, resourceCoversRole, isAllRolesAssumeScope, specificAccountsInRoleArns)
