@@ -81,14 +81,7 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/escalation.js",
-      "line": 168,
-      "cls": "budget-bypass",
-      "snippet": "for (const p of stmt.actions) {",
-      "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
-    },
-    {
-      "file": "content/tools/iam-blast-radius/engine/escalation.js",
-      "line": 3142,
+      "line": 3092,
       "cls": "unbounded-walk",
       "snippet": "function deepFreeze(value) {",
       "note": "recursion (deepFreeze) with no visible depth/node/size cap"
