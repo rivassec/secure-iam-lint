@@ -1,0 +1,40 @@
+# CodeQL static analysis (taint/dataflow) for the shipped JS/mjs - the one class of check
+# the grep gates + unit tests cannot do: it follows attacker-controlled data (policy JSON,
+# filenames, Action inputs) through the code to sinks (path building, output/SARIF emission,
+# regex construction) and flags injection / traversal / ReDoS. Free for public repos.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so a newly-published CodeQL query catches a latent issue even without a push.
+    - cron: '27 3 * * 1'
+
+# Least privilege at the workflow level; the analyze job elevates only what it needs.
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # upload findings to the repo's Code scanning tab
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+        with:
+          languages: javascript-typescript
+          # security-extended adds higher-recall security queries beyond the default set.
+          queries: security-extended
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+        with:
+          category: "/language:javascript-typescript"
