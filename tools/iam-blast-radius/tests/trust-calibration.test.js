@@ -152,9 +152,9 @@ test('(2) mixed lambda + events(unbound): lambda stays info, events raises high 
   const high = svc.find((f) => f.severity === 'high');
   const info = svc.find((f) => f.severity === 'info');
   assert.ok(high, 'events raises a high confused-deputy finding');
-  assert.match(high.why, /events\.amazonaws\.com/);
+  assert.ok(high.why.includes('events.amazonaws.com'), 'high finding names the service principal');
   assert.ok(info, 'lambda stays an info finding');
-  assert.match(info.why, /lambda\.amazonaws\.com/);
+  assert.ok(info.why.includes('lambda.amazonaws.com'), 'info finding names the service principal');
 });
 
 // ---------------------------------------------------------------------------

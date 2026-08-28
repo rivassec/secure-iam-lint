@@ -509,10 +509,12 @@ test('co-present Federated + external AWS account: BOTH findings emitted; graph 
 
   // Attribution is clean: the federated finding names only the provider; the
   // cross-account finding names only the account.
-  assert.match(fed.why, /githubusercontent\.com/);
-  assert.doesNotMatch(fed.why, /999999999999/, 'federated finding must not claim the external account');
-  assert.match(cross.why, /999999999999/);
-  assert.doesNotMatch(cross.why, /githubusercontent\.com/, 'cross-account finding must not claim the federated provider');
+  // Substring-presence checks on the human-readable why-text (not URL validation),
+  // so use includes() rather than an unanchored host regex.
+  assert.ok(fed.why.includes('githubusercontent.com'), 'federated finding names the provider');
+  assert.ok(!fed.why.includes('999999999999'), 'federated finding must not claim the external account');
+  assert.ok(cross.why.includes('999999999999'), 'cross-account finding names the account');
+  assert.ok(!cross.why.includes('githubusercontent.com'), 'cross-account finding must not claim the federated provider');
 
   // The graph draws a can-assume edge for BOTH origins; the table now matches.
   const assumeEdges = r.graph.edges.filter((e) => e.type === 'can-assume');

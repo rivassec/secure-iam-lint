@@ -178,7 +178,7 @@ function testTouchIndex(shipped) {
   const byModule = {};
   for (const abs of shipped) {
     const base = path.basename(abs);
-    const anchored = new RegExp(`[/'"]${base.replace(/[.]/g, '\\.')}['"]`);
+    const anchored = new RegExp(`[/'"]${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`);
     const hits = [];
     for (const { p, src } of contents) {
       if (anchored.test(src)) hits.push(rel(p));

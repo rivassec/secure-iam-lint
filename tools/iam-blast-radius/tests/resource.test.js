@@ -782,7 +782,7 @@ test('analyzeResource: service principal without source binding -> RESOURCE-CONF
   assert.equal(cd.policyEvidence, 'high');
   assert.ok(/not effective access/i.test(cd.limit), 'carries the not-effective caveat');
   assert.ok(/NO source binding/.test(cd.why), 'names the missing source binding');
-  assert.ok(/events\.amazonaws\.com/.test(cd.why), 'names the service principal');
+  assert.ok(cd.why.includes('events.amazonaws.com'), 'names the service principal');
   assert.ok(/NOT public/i.test(cd.why), 'explicitly not public write');
   assert.ok(!res.findings.some((f) => f.id === 'PUBLIC-ACCESS'), 'a service principal is not "*"');
   assert.equal(cd.resource.sourceBinding.state, 'unbound');

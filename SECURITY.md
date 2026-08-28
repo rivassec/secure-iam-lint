@@ -21,9 +21,10 @@ supported line. Pin to a commit SHA if you need reproducibility.
 Please report suspected vulnerabilities privately, NOT via a public issue or
 pull request.
 
-- Preferred: GitHub private vulnerability reporting. Open the repository's
-  "Security" tab and choose "Report a vulnerability". This opens a private
-  advisory visible only to the maintainer.
+- Preferred: GitHub private vulnerability reporting. Open a private advisory at
+  <https://github.com/rivassec/secure-iam-lint/security/advisories/new> (or the
+  repository's "Security" tab -> "Report a vulnerability"). This is visible only
+  to the maintainer.
 
 Include a description, the affected file or component, reproduction steps or a
 proof of concept, and the impact you observed. A minimal IAM policy that
