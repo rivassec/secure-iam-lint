@@ -64,8 +64,10 @@ jobs:
   osv:
     # The SHIPPED package is zero-dependency, but the DEV tree (@playwright/test,
     # @stryker-mutator/core) pulls a large transitive tree. Scan every lockfile/manifest
-    # for known CVEs. The job exit gates. To accept a specific advisory (e.g. a dev-only,
-    # unreachable transitive), add an osv-scanner.toml [[IgnoredVulns]] entry - never widen.
+    # for known CVEs. The job exit gates. PREFER PATCHING over ignoring: pin a fixed
+    # version of a flagged transitive via a package.json `overrides` entry (the dev tree
+    # never ships, so an override cannot affect a consumer). Only if no fix exists should
+    # you add an osv-scanner.toml [[IgnoredVulns]] entry - and never widen the scan scope.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,4 +81,4 @@ jobs:
           curl -fsSL -o osv-scanner "https://github.com/google/osv-scanner/releases/download/v${VER}/osv-scanner_linux_amd64"
           echo "${SHA}  osv-scanner" | sha256sum -c -
           chmod +x osv-scanner
-          ./osv-scanner scan source --recursive --config=osv-scanner.toml .
+          ./osv-scanner scan source --recursive .
