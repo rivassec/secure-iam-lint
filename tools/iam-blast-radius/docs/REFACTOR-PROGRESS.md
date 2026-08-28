@@ -60,7 +60,7 @@ Per-extraction protocol (MANDATORY every time): (1) re-grep exact CURRENT line n
 ## FILE 2: rules.js (after escalation) - run step-0 grep first
 - [x] rules-catalog.js (RULES + RULE_IDS pure data, export *) -- the earlier "3 subtle fails" were just tests importing RULES from rules.js; export * fixed it / rules-finding-factory.js / rules-deny-precedence.js / rules-eval-*.js (see REFACTOR-PLAN.md sec 6)
 
-## FILE 3: trust.js - run step-0 grep first
+## FILE 3: trust.js -- DONE 1853->780 (principal-helpers/classify/deny/conditions/findings + catalogs; findingsForStatement ~640 LOC stays per D3)
 - [x] trust-catalogs.js (pure-const, export *) -- FIRST trust module
 - [ ] trust-principals.js (classifyPrincipals + front-matter, imported by resource.js) / trust-conditions.js / trust-findings.js / trust-deny.js
 
