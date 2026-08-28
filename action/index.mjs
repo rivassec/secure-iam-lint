@@ -50,9 +50,8 @@ export { EXIT };
 
 // --- Small helpers ------------------------------------------------------------
 
-function isNonEmptyString(v) {
-  return typeof v === 'string' && v.trim().length > 0;
-}
+import { isNonEmptyString, toCount, positiveIntInput, utf8ByteLength } from './action-utils.mjs';
+export * from './action-utils.mjs';
 
 // Tagged-error code raised by the per-file statSync pre-guard when a file exceeds
 // LIMITS.MAX_BYTES. The scan loop recognizes it and fails THAT file closed to exit 3
@@ -138,10 +137,6 @@ export function sarifTargetContainedFs(nodeFs, nodePath, baseDir, rel) {
     cur = next; // real dir/file confirmed; descend into it
   }
   return true;
-}
-
-function toCount(n) {
-  return Number.isFinite(n) ? n : 0;
 }
 
 // --- Input reading (zero-dep @actions/core replacement) -----------------------
@@ -254,22 +249,6 @@ export const DEFAULT_MAX_SARIF_BYTES = 9 * 1024 * 1024; // 9 MiB (9437184 bytes)
 // emits (cli/sarif.mjs truncationState) so a consumer recognizes ONE "output was truncated"
 // signal on either surface.
 export const SARIF_OUTPUT_TRUNCATED_REASON = 'SARIF_OUTPUT_TRUNCATED';
-
-// Coerce a positive-integer input, defaulting when absent / non-numeric / non-integer /
-// <= 0. A zero or negative ceiling is nonsensical (it would fail-closed on the very first
-// file); such a value falls back to the sane default rather than bricking the Action.
-function positiveIntInput(raw, dflt) {
-  if (!isNonEmptyString(raw)) return dflt;
-  const n = Number(String(raw).trim());
-  return Number.isInteger(n) && n > 0 ? n : dflt;
-}
-
-// UTF-8 byte length of a string, for the aggregate BYTE ceiling. TextEncoder is a Node +
-// Web global (no import, pure, deterministic); String.prototype.length UNDER-counts
-// multibyte content, so bytes - not UTF-16 code units - are what the ceiling measures. One
-// shared instance avoids per-file churn.
-const AGG_UTF8 = new TextEncoder();
-function utf8ByteLength(s) { return AGG_UTF8.encode(String(s)).length; }
 
 // --- paths / glob resolution --------------------------------------------------
 
