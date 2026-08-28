@@ -23,7 +23,7 @@ Per-extraction protocol (MANDATORY every time): (1) re-grep exact CURRENT line n
 - [ ] escalation.js orchestrator: DETECTORS array (~:2999) MOVES here + build from imports; keep analyzeEscalations/analyzeEscalationsFromText + all re-exports. VERIFY final escalation.js < ~400 LOC.
 
 ## FILE 2: rules.js (after escalation) - run step-0 grep first
-- [~] rules-catalogs.js DEFERRED (3 full-suite fails: evidence/fixture-matrix/rules - a subtle cross-region behavioral coupling; madge+node-c clean; needs supervised diagnosis) / rules-finding-factory.js / rules-deny-precedence.js / rules-eval-*.js (see REFACTOR-PLAN.md sec 6)
+- [x] rules-catalog.js (RULES + RULE_IDS pure data, export *) -- the earlier "3 subtle fails" were just tests importing RULES from rules.js; export * fixed it / rules-finding-factory.js / rules-deny-precedence.js / rules-eval-*.js (see REFACTOR-PLAN.md sec 6)
 
 ## FILE 3: trust.js - run step-0 grep first
 - [x] trust-catalogs.js (pure-const, export *) -- FIRST trust module
