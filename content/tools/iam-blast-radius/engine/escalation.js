@@ -78,6 +78,10 @@
 // same model -> same findings, same order, every run (no Date/Math.random).
 
 import { modelFromText } from './model.js';
+import {
+  CAPABILITY_LIMIT, TARGET_UNKNOWN_LIMIT, CONDITION_LIMIT, DENY_NARROW_LIMIT, PASSED_TO_SERVICE_UNCERTAIN_LIMIT,
+} from './escalation-consts.js';
+export * from './escalation-consts.js';
 import { concreteRoleTargetAccount, isConcreteRoleArn, resourceCoversRole, isAllRolesAssumeScope, specificAccountsInRoleArns, parsePassResource, partitionReaches, accountReaches, partitionModelable, subjectPartitionKnown, accountModelable, otherResourceIsUnmodelable, isUnmodelablePassResource, isConfidentPinnedResource, globCanProducePrefix, subjectRoleArnPrefix, resourceReachesSubject, rolePathIsWildcardEquivalent, principalPinsOf, constraintContains, keyConstraintsSatisfiable, principalPinsOfMemo, pinsJointlySatisfiable, principalConditionsSatisfiable, ROLE_ARN_PARTS_RE, KNOWN_PARTITIONS, IAM_ARN_LENIENT_RE, PRINCIPAL_INVARIANT_KEYS, EXACT_EQUALITY_PIN_OPERATORS, NEGATED_EQUALITY_PIN_OPERATORS, CASE_INSENSITIVE_PIN_OPERATORS, SATISFIABILITY_TRIPLE_WORK } from './escalation-reachability.js';
 export * from './escalation-reachability.js';
 import { passedToServiceEntries, normalizeOperator, operatorPermitsService, passRolePermitsService, hasNonEmptyCondition } from './escalation-conditions.js';
@@ -100,42 +104,6 @@ export { actionGrants, hasPolicyVariable } from './escalation-action-grants.js';
 // One constant so every escalation's `limit` carries identical, non-overstated
 // wording about what a single policy can and cannot prove. Contains the phrase
 // "not effective access" that the truthfulness tests assert on.
-const CAPABILITY_LIMIT =
-  'Capability from this policy alone, not effective access. A single policy ' +
-  'cannot establish effective permissions: other identity policies, resource ' +
-  'policies, permission boundaries, SCPs, session policies, explicit Denies, ' +
-  'and Condition keys may narrow or block this path.';
-
-// The permissions of the role that is passed, assumed, or re-trusted are not in
-// scope here and are treated as UNKNOWN, never inferred.
-const TARGET_UNKNOWN_LIMIT =
-  ' The permissions of the target role (passed / assumed / re-trusted) are not ' +
-  'in scope and are treated as unknown; this finding does not claim what that ' +
-  'role can do, only that this policy would let the principal reach it.';
-
-const CONDITION_LIMIT =
-  ' One or more statements in this path carry a Condition block beyond what was ' +
-  'used to confirm it, so the path may be gated at runtime; confidence is ' +
-  'reduced accordingly.';
-
-// Applied when a Deny in the SAME policy touches an action in this path but does
-// not definitively remove it across the whole granted scope (a conditional Deny,
-// a Deny whose resource scope only partially overlaps, or a Deny match that
-// cannot be resolved from the policy text). An unconditional, in-scope, concrete
-// Deny suppresses the path entirely (no finding); this note covers the residual
-// "may be blocked" cases where suppression would overstate a false deny.
-const DENY_NARROW_LIMIT =
-  ' Another statement in this policy Denies one or more actions in this path. ' +
-  'Explicit Deny overrides Allow, so this Deny may block or narrow the path at ' +
-  'runtime; confidence is reduced accordingly.';
-
-// Applied when the PassRole grant carries an iam:PassedToService condition using
-// an operator whose effect cannot be resolved from the policy text (e.g. Null or
-// an unsupported operator). The path is kept but not asserted with certainty.
-const PASSED_TO_SERVICE_UNCERTAIN_LIMIT =
-  ' The iam:PassedToService condition on the PassRole grant uses an operator ' +
-  'that cannot be resolved from the policy text, so whether this service may ' +
-  'receive the role is uncertain; confidence is reduced accordingly.';
 
 // The linear, ReDoS-safe wildcard matcher (globMatch) now lives in ./glob.js and
 // is imported at the top of this module - one canonical matcher shared by every
