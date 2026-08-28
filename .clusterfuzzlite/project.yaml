@@ -6,4 +6,4 @@ language: javascript
 fuzzing_engines:
   - libfuzzer
 sanitizers:
-  - none
+  - coverage

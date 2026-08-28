@@ -30,13 +30,14 @@ jobs:
         uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           language: javascript
-          # JavaScript projects cannot build with a sanitizer (the action otherwise
-          # defaults to 'address'); Jazzer.js needs 'none'. Must match the run step.
-          sanitizer: none
+          # JS/Jazzer.js builds use the 'coverage' build - the only valid value here
+          # that is not a C/C++ memory sanitizer (the action defaults to 'address',
+          # which the JS build rejects). Must match the run step.
+          sanitizer: coverage
       - name: Run fuzzers
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fuzz-seconds: 180
           mode: 'code-change'
-          sanitizer: none
+          sanitizer: coverage
