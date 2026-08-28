@@ -1,5 +1,26 @@
 # Refactor progress ledger (overnight 2026-08-27 -> 28)
 
+## STATUS @ 90fd589 (2026-08-27 ~23:45) -- autonomous run paused for supervised handoff
+
+Tree GREEN: suite 2778 pass / 0 fail / 0 todo, release-gate 16/16, madge 0 cycles. wip @ 90fd589 pushed to backup (rivassec/secure-iam-lint-wip).
+
+KEY FINDING (the whole overnight unlock): the earlier "coupled cores" (pins 50-fail, role-coverage 962-fail, rules-catalogs 3-fail) were NEVER deep coupling. The tests import engine internals DIRECTLY from each engine file; moving a symbol out without re-exporting it broke those test imports. FIX = add `export * from './<newmod>.js';` to the orchestrator after every extraction. Proven on 3 previously-"impossible" data modules this session.
+
+CLEAN DATA MODULES extracted this session (all export-* , all gated green + committed + pushed):
+- trust-catalogs.js       (131 LOC)  trust.js   1853 -> 1727   -- bc364f3
+- rules-catalog.js        (127 LOC)  rules.js   2002 -> 1880   -- 334791b
+- resource-catalogs.js    (222 LOC)  resource.js 2977 -> 2760  -- 90fd589
+(earlier session, escalation.js 3016 -> 2545: action-grants/catalogs/scope/statement/conditions leaves.)
+
+WHAT REMAINS = SUPERVISED, not autonomous. The remaining size is in FUNCTION bodies, and mechanical extraction of function clusters hits real architectural decisions that need Oliver's call:
+1. parseArn OWNERSHIP: source-binding (and much of resource.js) calls parseArn, which is defined in resource.js AND duplicated in resource-arn.js:175 (two copies, imported by rules.js+analyze.js). A functional split needs parseArn moved to ONE canonical leaf FIRST, then everyone imports it. Deciding the canonical home + de-duping is an architecture call. (source-binding extraction was attempted + cleanly rolled back for exactly this reason.)
+2. pins/role-coverage/role-targets CYCLE: rolePathIsWildcardEquivalent (coverage) -> parsePassResource (targets) -> accountReaches/partitionReaches (coverage) is a genuine mutual dependency. export-* fixes the test-import half, but the cycle itself needs these co-located in ONE reachability module (or an interface seam). Needs supervised design.
+3. Giant single functions (resourceFindings ~760 LOC, detectPassRolePaths) cannot be split by moving - they need real decomposition (judgment on seams), which is the separate in-repo REFACTOR-PLAN sub-split work.
+
+RECOMMENDED NEXT (supervised session): (a) extract a canonical arn-util leaf (parseArn/serviceForArn/parseResourceContext) + de-dupe resource-arn.js, then the resource conditions/source-binding/service-rule clusters fall out cleanly with export-*; (b) co-locate the escalation reachability trio into one module to break the cycle; (c) decompose the two giant functions per the in-repo plan. Each still gated by the per-extraction protocol below. v1.0.0 tag gate (refactored AND green) NOT yet met - files still 1727-2760 LOC.
+
+## Autonomous state machine (original)
+
 State machine for the autonomous refactor. Each tick: do the NEXT unchecked item per REFACTOR-PLAN.md, gate, commit, push backup, check it off. On a stall: roll back the failed extraction (`git checkout -- <touched>`), mark the current file PARTIAL at its last green module, and SKIP to the next FILE (Oliver's directive). Hold public push / PR / tag.
 
 ROOT CAUSE of the earlier defers (SOLVED): TESTS import engine internals directly from the file (step-0 grep must include tools/iam-blast-radius/tests). FIX: after every extraction add `export * from './<newmod>.js';` to the orchestrator - preserves ALL exports for tests + external importers. This makes the previously-deferred pins/role-coverage/rules-catalogs extractable too (re-attempt them).
