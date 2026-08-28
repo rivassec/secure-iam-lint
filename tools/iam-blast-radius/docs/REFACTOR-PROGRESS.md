@@ -30,6 +30,7 @@ Per-extraction protocol (MANDATORY every time): (1) re-grep exact CURRENT line n
 - [ ] trust-principals.js (classifyPrincipals + front-matter, imported by resource.js) / trust-conditions.js / trust-findings.js / trust-deny.js
 
 ## FILE 4: resource.js - run step-0 grep first
+- [x] resource-catalogs.js (RESOURCE_CODES/SERVICES/IDS/LABELS + DOC_* strings, 20 syms, export *) -- 45-272, 222 LOC out
 - [ ] resource-principals.js (lines 1-520 + 1935-1963 gap) / resource-conditions.js / resource-s3-typing.js / resource-service-rules/{s3-bucket-policy,kms-key-policy,sns-sqs}.js
 
 ## AFTER all files: final RC validation (every-file scan + release-gate + suite) on the refactored tree, then present a resumable morning summary. HOLD public push/PR/tag.
