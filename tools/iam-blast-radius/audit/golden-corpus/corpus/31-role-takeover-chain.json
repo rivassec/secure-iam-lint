@@ -1,0 +1,1 @@
+{ "Version": "2012-10-17", "Statement": [ { "Sid": "GrantRewriteAssume", "Effect": "Allow", "Action": [ "iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy", "sts:AssumeRole" ], "Resource": [ "arn:aws:iam::111122223333:role/target" ] } ] }

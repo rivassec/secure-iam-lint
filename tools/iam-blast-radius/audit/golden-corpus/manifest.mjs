@@ -528,6 +528,33 @@ export const CASES = Object.freeze([
       + 'engine budgets (~40s). Must fail closed (aborts under the work/wall-clock budget), never '
       + 'a clean exit-0 having "analyzed" a runaway.',
   },
+  {
+    id: 'crossaccount-assume-role',
+    file: '30-crossaccount-assume-role.json',
+    family: 'identity',
+    klass: CLASS.RISKY,
+    threshold: 'low',
+    subjectAccount: '111122223333',
+    surfacesFinding: true,
+    expectedExit: 1,
+    note: 'sts:AssumeRole SCOPED to a named role in a DIFFERENT account (999999999999) than the '
+      + 'KNOWN subject (111122223333) = the CROSS-ACCOUNT-ASSUME-ROLE capability at LOW; surfaced, '
+      + 'NEVER silently cleared. Pinned to threshold low because that is where it gates. (Golden '
+      + 'release-gate coverage for CROSS-ACCOUNT-ASSUME-ROLE - review finding B7.)',
+  },
+  {
+    id: 'role-takeover-chain',
+    file: '31-role-takeover-chain.json',
+    family: 'identity',
+    subjectAccount: '111122223333',
+    klass: CLASS.RISKY,
+    surfacesFinding: true,
+    expectedExit: 1,
+    note: 'iam:PutRolePolicy + iam:UpdateAssumeRolePolicy + sts:AssumeRole on the SAME role = the '
+      + 'grant-permissions + rewrite-trust + assume ROLE-TAKEOVER chain (critical, compound '
+      + 'correlated finding). Must fire and block; never clean. (Golden release-gate coverage for '
+      + 'ROLE-TAKEOVER - review finding B7.)',
+  },
 ]);
 
 // The four selectable severities the CLI threshold gate ranks (most severe first),
