@@ -48,7 +48,20 @@ export function normalizeOperator(op) {
 export function operatorPermitsService(op, values, principal) {
   const base = normalizeOperator(op);
   const p = String(principal).toLowerCase();
-  const matchAny = values.some((v) => globMatch(String(v).toLowerCase(), p));
+  // Stage-14 CRITICAL: AWS folds the VALUE only for the *IgnoreCase base operators.
+  // The plain and negated operators (StringEquals/StringNotEquals/StringLike/
+  // StringNotLike/Arn(Not)Equals/Arn(Not)Like) are CASE-SENSITIVE on the value. Folding
+  // the value for the NEGATED operators was a critical fail-open: an UPPERCASE denylist
+  // value ("LAMBDA.AMAZONAWS.COM") over-matched the canonical lowercase principal, was
+  // misread as a real deny, and SUPPRESSED a genuine PassRole escalation (read CLEAN).
+  // The service principal `p` is itself canonical lowercase, so a case-sensitive value
+  // match against it is exactly AWS's comparison. (Folding the value for the ALLOWLIST
+  // operators only ever OVER-reported a permit -> fail-closed/safe; only the denylist
+  // direction was fail-open. We fold exactly where AWS folds.)
+  const ignoreCase = base === 'stringequalsignorecase' || base === 'stringnotequalsignorecase';
+  const matchAny = values.some(
+    (v) => globMatch(ignoreCase ? String(v).toLowerCase() : String(v), p),
+  );
   switch (base) {
     case 'stringequals':
     case 'stringequalsignorecase':
