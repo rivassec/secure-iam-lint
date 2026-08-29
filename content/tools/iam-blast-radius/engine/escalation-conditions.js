@@ -85,6 +85,14 @@ export function operatorPermitsService(op, values, principal) {
     case 'stringnotlike':
     case 'arnnotequals':
     case 'arnnotlike':
+      // Stage-18: the denylist arm deliberately does NOT consult `bypassable`. Its `deny`
+      // fires ONLY when a value glob-matches the tested service principal `p` - i.e. only for
+      // the exact service named in the denylist. A real iam:PassRole to THAT service has AWS
+      // populate iam:PassedToService=that-service (key PRESENT, single-valued), so the deny is
+      // a genuine AWS deny, and the bypassable (key-absent / empty-set) case never applies to a
+      // reachable same-service pass. Degrading this `deny` to `uncertain` (as the allowlist arm
+      // does) would OVER-report - firing PASSROLE-* on a policy AWS genuinely denies (a false
+      // positive), verified in Stage-18. The asymmetry is correct; do not "symmetrize" it.
       return matchAny ? 'deny' : 'permit';
     default:
       // Null, Date*, Bool, and anything unrecognized: meaning cannot be
