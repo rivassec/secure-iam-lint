@@ -126,6 +126,9 @@ run the Action **multiple times** with different `paths` globs and a different
 | `paths` | yes | - | Newline-separated files or globs to scan (e.g. `policies/**/*.json`). An empty match is a usage error (exit `2`), not a clean scan. |
 | `family` | yes | - | Policy family, declared explicitly and never auto-detected: `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp`. |
 | `subject-account` | no | - | AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). |
+| `resource-arn` | no | - | For `family: resource`: the ARN of the resource the policy is attached to (e.g. `arn:aws:s3:::my-bucket`). Required to analyze a resource policy; without it the resource family fails closed (`RESOURCE_CONTEXT_REQUIRED`, exit `3`). |
+| `resource-type` | no | - | For `family: resource`: the resource type (e.g. `s3-bucket`). |
+| `resource-account` | no | - | For `family: resource`: the owning account id, when known. |
 | `partition` | no | - | AWS partition (`aws`, `aws-us-gov`, `aws-cn`, `aws-iso*`). No default on purpose: an omitted partition is "not asserted", not `aws`. A cross-partition role-viability verdict is trusted only when you supply a real partition; otherwise it is treated as unknown and fails closed (exit `3`). |
 | `fail-on` | no | `high` | Minimum severity that fails the check: `critical`, `high`, `medium`, `low`, `info`, `none`. `none` does not turn a fail-closed `3` into `0`. |
 | `sarif-output` | no | `iam-blast-radius.sarif` | Relative path (inside the workspace) to write the SARIF 2.1.0 output file. An absolute path, one escaping the workspace via `..`, one containing a control character, or one whose directory component or target file is a symlink escaping the workspace is rejected as a usage error (exit `2`) and nothing is written outside the workspace. |

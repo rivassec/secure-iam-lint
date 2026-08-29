@@ -238,6 +238,11 @@ OPTIONS
   --subject-account <id>  AWS account id (12 digits) for account-aware checks
                           (e.g. PassRole viability). An invalid id is ignored
                           (the dependent finding stays UNKNOWN and fails closed).
+  --resource-arn <arn>    For --family resource: the ARN of the resource the policy
+  --resource-type <t>     is ATTACHED to (e.g. --resource-type s3-bucket
+  --resource-account <id> --resource-arn arn:aws:s3:::my-bucket). Required to analyze
+                          a resource policy; without it the resource family fails
+                          closed (RESOURCE_CONTEXT_REQUIRED, exit 3).
   --partition <p>         AWS partition (aws | aws-us-gov | aws-cn | aws-iso*).
                           When OMITTED the policy is evaluated as 'aws', but any
                           cross-partition role viability that depends on the
@@ -351,6 +356,9 @@ export function parseArgs(argv) {
         case '--output': opts.output = value; break;
         case '--artifact-uri': opts.artifactUri = value; break;
         case '--budget-ms': opts.budgetMs = value; break;
+        case '--resource-type': opts.resourceType = value; break;
+        case '--resource-arn': opts.resourceArn = value; break;
+        case '--resource-account': opts.resourceAccount = value; break;
         default: return usage(`unknown option '${name}'`);
       }
       continue;
@@ -616,6 +624,13 @@ export async function run(argv, io) {
       // Wall-clock budget (S3-dos-budget): analysis that overruns fails CLOSED
       // (exit 3, RESOURCE_BUDGET_EXCEEDED), never a clean pass.
       budgetMs: opts.budgetMs,
+      // The resource family's attached-resource context (review finding D1): built from
+      // --resource-type / --resource-arn (+ optional --resource-account). Omitted entirely
+      // when neither is given, so non-resource families are unaffected and a resource
+      // policy WITHOUT context still fails closed (RESOURCE_CONTEXT_REQUIRED).
+      resourceContext: (opts.resourceArn || opts.resourceType)
+        ? { type: opts.resourceType, arn: opts.resourceArn, account: opts.resourceAccount }
+        : undefined,
     });
 
     // Defensive: the code must be an integer in the contract's range. Anything
@@ -687,8 +702,10 @@ export function readStdin(stream = process.stdin) {
     const chunks = [];
     let bytes = 0;
     let done = false;
+    let idleTimer = null;
 
     const cleanup = () => {
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
       try {
         stream.removeListener('data', onData);
         stream.removeListener('end', onEnd);
@@ -696,8 +713,32 @@ export function readStdin(stream = process.stdin) {
       } catch { /* best effort */ }
     };
 
+    // Idle guard (review finding E3): --budget-ms wraps analyze(), NOT input acquisition,
+    // so a producer that streams a few under-cap bytes and then never sends EOF would keep
+    // this promise pending forever. Fail CLOSED if no data arrives for STDIN_IDLE_MS; the
+    // timer re-arms on every chunk so a slow-but-progressing pipe is fine, and unref() lets
+    // the process exit naturally.
+    const STDIN_IDLE_MS = Number(process.env.IAM_BR_STDIN_IDLE_MS) || 60000;
+    function onIdle() {
+      if (done) return;
+      done = true;
+      chunks.length = 0;
+      cleanup();
+      try { stream.pause(); } catch { /* best effort */ }
+      try { if (typeof stream.destroy === 'function') stream.destroy(); } catch { /* best effort */ }
+      const e = new Error(`timed out waiting for stdin (no data for ${STDIN_IDLE_MS}ms)`);
+      e.code = 'STDIN_IDLE_TIMEOUT';
+      reject(e);
+    }
+    const armIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(onIdle, STDIN_IDLE_MS);
+      if (typeof idleTimer.unref === 'function') idleTimer.unref();
+    };
+
     function onData(chunk) {
       if (done) return;
+      armIdle();
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       bytes += buf.length;
       if (bytes > LIMITS.MAX_BYTES) {
@@ -732,6 +773,7 @@ export function readStdin(stream = process.stdin) {
     stream.on('data', onData);
     stream.on('end', onEnd);
     stream.on('error', onErr);
+    armIdle(); // start the idle countdown even if the first byte never arrives
   });
 }
 

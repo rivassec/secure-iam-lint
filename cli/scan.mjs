@@ -499,6 +499,13 @@ export function scan(input) {
       // Pass only a VALIDATED partition; an unrecognized token is dropped (engine
       // defaults to 'aws') so it cannot masquerade as a confident assertion.
       partition: validPartition || undefined,
+      // Forward the attached-resource context (review finding D1): the resource family
+      // is advertised but was UNUSABLE via scan()/CLI/Action because this was never
+      // threaded, so a resource policy always failed closed with RESOURCE_CONTEXT_REQUIRED.
+      // The engine validates it (recognized type + parseable ARN, else it stays
+      // RESOURCE_CONTEXT_REQUIRED - fail closed), so an object is safe to pass through.
+      resourceContext: (inp.resourceContext && typeof inp.resourceContext === 'object' && !Array.isArray(inp.resourceContext))
+        ? inp.resourceContext : undefined,
     });
   } catch (e) {
     // The armed wall-clock budget was exceeded: report a graceful, fail-closed

@@ -114,6 +114,17 @@ export function readInputs(env) {
     paths: getInput(env, 'paths'),
     family: getInput(env, 'family'),
     subjectAccount: getInput(env, 'subject-account'),
+    // The resource family's attached-resource context (review finding D1): built from
+    // resource-arn / resource-type (+ optional resource-account). Omitted entirely when
+    // neither is given, so a resource policy WITHOUT context still fails closed.
+    resourceContext: (() => {
+      const arn = getInput(env, 'resource-arn');
+      const type = getInput(env, 'resource-type');
+      const account = getInput(env, 'resource-account');
+      return (arn || type)
+        ? { type: type || undefined, arn: arn || undefined, account: account || undefined }
+        : undefined;
+    })(),
     partition: getInput(env, 'partition'),
     failOn: getInput(env, 'fail-on') || 'high',
     sarifOutput: getInput(env, 'sarif-output') || DEFAULT_SARIF_OUTPUT,

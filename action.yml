@@ -37,6 +37,18 @@ inputs:
   subject-account:
     description: AWS account id (12 digits) for account-aware checks (e.g. PassRole viability).
     required: false
+  resource-arn:
+    description: >-
+      For family=resource: the ARN of the resource the policy is ATTACHED to (e.g.
+      arn:aws:s3:::my-bucket). Required to analyze a resource policy; without it the
+      resource family fails closed (RESOURCE_CONTEXT_REQUIRED, exit 3).
+    required: false
+  resource-type:
+    description: 'For family=resource: the resource type (e.g. s3-bucket).'
+    required: false
+  resource-account:
+    description: 'For family=resource: the owning account id, when known.'
+    required: false
   partition:
     description: >-
       AWS partition (aws | aws-us-gov | aws-cn | aws-iso*). NO DEFAULT ON PURPOSE:

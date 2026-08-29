@@ -264,6 +264,8 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
             text,
             family: inputs.family,
             subjectAccount: inputs.subjectAccount || undefined,
+            // Attached-resource context for the resource family (review finding D1).
+            resourceContext: inputs.resourceContext,
             // Forward partition ONLY when the consumer EXPLICITLY supplied one. An
             // omitted partition is '' here and maps to undefined -> "not asserted"
             // in scan(), keeping cross-partition role viability fail-closed (exit 3)
@@ -442,7 +444,17 @@ export async function main() {
       const flags = (C.O_RDONLY ?? 0) | (C.O_NOFOLLOW ?? 0) | (C.O_NONBLOCK ?? 0);
       const fd = nodeFs.openSync(abs, flags);
       try {
-        if (exceedsInputByteCap(nodeFs.fstatSync(fd).size)) {
+        const st = nodeFs.fstatSync(fd);
+        // Re-check on the fd we hold (review finding E1): walkFiles already excludes
+        // non-regular files, but never read a device/FIFO/dir on the open fd - O_NONBLOCK
+        // stopped a FIFO from blocking the open, and this rejects it before any read so a
+        // non-regular fd can never be read unbounded. Fail closed.
+        if (!st.isFile()) {
+          const e = new Error('refusing to read a non-regular file');
+          e.code = INPUT_TOO_LARGE;
+          throw e;
+        }
+        if (exceedsInputByteCap(st.size)) {
           const e = new Error('policy file exceeds the input byte limit');
           e.code = INPUT_TOO_LARGE;
           throw e;

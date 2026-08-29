@@ -178,12 +178,19 @@ export function stripModelSpoof(value) {
 // spelling of the class open. Fresh objects only (never mutates a frozen input); non-
 // string primitives pass through untouched. O(n) over an already size-capped tree
 // (validate.js input limits). Deterministic.
+const SANITIZE_DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function sanitizeTree(value) {
   if (typeof value === 'string') return neutralizeForDisplay(value);
   if (Array.isArray(value)) return value.map(sanitizeTree);
   if (value && typeof value === 'object') {
     const out = {};
     for (const key of Object.keys(value)) {
+      // Defense in depth (review finding E2): the analyzed-policy pipeline rejects
+      // __proto__/constructor/prototype long before this display sanitizer, but a future
+      // caller could hand sanitizeTree() a raw JSON.parse'd object that skipped validate.js.
+      // Never reparent the output via a dangerous key.
+      if (SANITIZE_DANGEROUS_KEYS.has(key)) continue;
       out[neutralizeForDisplay(key)] = sanitizeTree(value[key]);
     }
     return out;
