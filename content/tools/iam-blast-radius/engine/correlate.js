@@ -48,6 +48,8 @@
 // Its findings draw grants from >1 statement (pass + exec) and expose a
 // riskFactors checklist. Single-action primitives (policy-version, attach,
 // credential-creation, ...) are NOT compound and never subsume anything.
+import { chargeWork } from './glob.js';
+
 const COMPOUND_TECHNIQUE = 'passrole-service-execution';
 
 // --- IAM-201: same-statement capability subsumption --------------------------
@@ -299,6 +301,12 @@ function correlateCompoundPaths(findings) {
   const list = Array.isArray(findings) ? findings.slice() : [];
   const primaries = list.filter(isCompoundPrimary);
   if (primaries.length === 0) return list;
+  // Fold this correlation pass into the engine's deterministic work budget (review
+  // finding F2): the consuming-primary scan below is O(findings x primaries). Bounded by
+  // MAX_BYTES today (~39ms at the cap), but charging it keeps the "work budget bounds every
+  // run" invariant true so a future finding-count blowup fails CLOSED instead of running
+  // uncharged. chargeWork throws the GlobBudget sentinel on overrun; analyze() catches it.
+  chargeWork(list.length * (primaries.length + 1));
 
   // Precompute each primary's consumed-statement set and used-service set once.
   const primaryStmts = new Map(); // primary -> Set<statementIndex>

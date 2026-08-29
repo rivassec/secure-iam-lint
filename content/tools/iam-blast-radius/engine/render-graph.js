@@ -556,8 +556,8 @@ export function createGraphRenderer(doc) {
     // Node type is our vocabulary; annotate the unknown-privileges pivot so the
     // KNOWN/UNKNOWN split is legible in text (not only by color/border).
     typeText.textContent = node.unknownPrivileges
-      ? `${String(node.type)} - privileges unknown`
-      : String(node.type);
+      ? `${neutralizeForDisplay(String(node.type))} - privileges unknown`
+      : neutralizeForDisplay(String(node.type));
     g.appendChild(typeText);
 
     const labelText = svgEl('text', {

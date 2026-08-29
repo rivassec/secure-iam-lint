@@ -30,10 +30,12 @@
 //     with a service action that runs code as the passed role - the principal
 //     reaches execution under a DIFFERENT role's credentials (boundary crossing).
 //   - ASSUME-ROLE-EXPANSION when, and ONLY when, the resource scope is
-//     effectively ALL roles (a bare "*", or a role ARN whose role-name segment
-//     is exactly "*" such as arn:aws:iam::*:role/* or arn:aws:iam::123:role/*,
-//     or a NotResource inverse, or an unspecified scope). A PARTIAL role-name
-//     wildcard (role/app-*) reaches many roles but not all -> stays `high`.
+//     effectively ALL roles across an ARBITRARY account (a bare "*", or a role
+//     ARN whose account AND role-name segments are both wildcards, such as
+//     arn:aws:iam::*:role/*, or a NotResource inverse, or an unspecified scope) ->
+//     `critical`. A CONCRETE-account all-roles wildcard (arn:aws:iam::123:role/*)
+//     is account-confined -> `high`. A PARTIAL role-name wildcard (role/app-*)
+//     reaches many roles but not all -> also `high`.
 // Every other escalation here is a standalone single-action self-administration
 // primitive (policy-version manipulation, attach/put policy, trust-policy
 // modification, credential creation) or a scoped AssumeRole expansion. These are
