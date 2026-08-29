@@ -62,13 +62,24 @@ export function operatorPermitsService(op, values, principal) {
   const matchAny = values.some(
     (v) => globMatch(ignoreCase ? String(v).toLowerCase() : String(v), p),
   );
+  // Stage-17: a BYPASSABLE qualifier - an `...IfExists` suffix or a `ForAllValues:` set prefix -
+  // makes the condition TRUE when the request key is ABSENT (IfExists) or the request set is
+  // EMPTY (ForAllValues, vacuous truth). AWS therefore does NOT honor it as a real restriction:
+  // the role can still be passed to a service that never populates iam:PassedToService. So an
+  // ALLOWLIST operator carrying such a qualifier can never yield a definitive `deny` - crediting
+  // it as one dropped the only permitting PassRole statement and read a real escalation CLEAN
+  // (fail-open). Degrade the would-be `deny` to `uncertain`, matching how conditions.js /
+  // trust-conditions.js / resource-conditions.js already refuse to credit these as narrowing.
+  // (ForAnyValue: is NOT bypassable - vacuously FALSE over an empty set - and plain operators are
+  // unaffected, so both keep their real `deny`.)
+  const bypassable = /ifexists$/i.test(String(op)) || /^forall(values)?:/i.test(String(op));
   switch (base) {
     case 'stringequals':
     case 'stringequalsignorecase':
     case 'stringlike':
     case 'arnequals':
     case 'arnlike':
-      return matchAny ? 'permit' : 'deny';
+      return matchAny ? 'permit' : (bypassable ? 'uncertain' : 'deny');
     case 'stringnotequals':
     case 'stringnotequalsignorecase':
     case 'stringnotlike':
