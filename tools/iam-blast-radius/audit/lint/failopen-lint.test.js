@@ -24,7 +24,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { runLint, scanFile, exitCodeFor } from './lint.mjs';
@@ -62,6 +62,37 @@ test('the fail-open lint scans EVERY engine module (coverage == tree)', () => {
   const treeEngine = readdirSync(ENGINE_DIR_ABS).filter((f) => f.endsWith('.js') && !f.endsWith('.test.js'));
   const unscanned = treeEngine.filter((f) => !scannedEngine.has(f));
   assert.equal(unscanned.length, 0, `engine modules NOT scanned by the fail-open lint: ${unscanned.join(', ')}`);
+});
+
+// Stage-12 #2: the committed engine-manifest.json is the DELETION tripwire. It must
+// match the on-disk tree EXACTLY - a module added without listing it here (or a manifest
+// entry with no file) fails this test, so the manifest cannot silently drift out of sync
+// with the directory. Without this lockstep the union in lint.mjs could not restore
+// deletion detection (a removed module would be gone from BOTH the readdir listing and,
+// eventually, an un-maintained manifest).
+test('#2: engine-manifest.json matches the on-disk engine tree EXACTLY (deletion tripwire in sync)', () => {
+  const manifest = JSON.parse(readFileSync(resolve(HERE, 'engine-manifest.json'), 'utf8'));
+  const tree = readdirSync(ENGINE_DIR_ABS)
+    .filter((f) => f.endsWith('.js') && !f.endsWith('.test.js'))
+    .sort();
+  assert.deepEqual([...manifest].sort(), tree,
+    'engine-manifest.json must equal the engine directory (added/removed a module? update the manifest)');
+});
+
+// Stage-12 #2: prove the gate now DETECTS deletion. Every required (manifest) engine
+// module is in the missing-check universe, so a removed module becomes a `missing`
+// target and forces a non-zero --check-targets exit (was silently dropped before).
+test('#2: a deleted engine module is reported as a MISSING target (fail closed)', () => {
+  const manifest = JSON.parse(readFileSync(resolve(HERE, 'engine-manifest.json'), 'utf8'));
+  const { scanned } = runLint();
+  for (const m of manifest) {
+    const rel = `${ENGINE_REL}${m}`;
+    assert.ok(scanned.includes(rel), `${rel} must be in the scanned/target set so its deletion becomes 'missing'`);
+  }
+  // Functional check of the missing mechanism: a required file absent from disk is reported.
+  const gone = `${ENGINE_REL}__manifest_probe_absent__.js`;
+  const { missing } = runLint({ files: [gone] });
+  assert.ok(missing.includes(gone), 'an absent required target must be reported missing (non-zero exit)');
 });
 
 // (1) raw-realpath-mismatch is FIXED (story S1-entrypoint-guard): the lint must find

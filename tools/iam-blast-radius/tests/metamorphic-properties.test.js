@@ -108,6 +108,22 @@ test('new property holds on the real engine and would CATCH a spoofed-Deny suppr
   const verdict = checkSpoofedDenyInert(vulnerable, poc, opts);
   assert.equal(verdict.ok, false, 'the property MUST catch a spoofed-Deny suppressor (else it is vacuous)');
   assert.match(verdict.msg, /T8 #1 fail-open/);
+
+  // Stage-12 #1: the CONTENT branch is an INDEPENDENT failure mode (not just a tripwire
+  // for the incomplete flag). A stub that de-spoofs and drops the finding while keeping
+  // the SAME max severity via a swap AND reading COMPLETE (incomplete:false) is caught by
+  // the findingKeySet comparison, even though maxSevRank did not drop.
+  const contentSuppressor = (t) => {
+    const p = JSON.parse(t);
+    const hasSpoofedDeny = (p.Statement || []).some((s) => s.Effect === 'Deny' && String(s.Action).includes('​'));
+    // base: the real finding; variant: a DIFFERENT finding at the same severity (the base
+    // capability was suppressed, a decoy of equal rank swapped in) - maxSevRank unchanged.
+    if (hasSpoofedDeny) return { ok: true, findings: [{ id: 'DECOY', severity: 'high' }], coverage: { summary: { incomplete: false } } };
+    return { ok: true, findings: [{ id: 'PUT-INLINE-POLICY', severity: 'high' }], coverage: { summary: { incomplete: false } } };
+  };
+  const contentVerdict = checkSpoofedDenyInert(contentSuppressor, poc, opts);
+  assert.equal(contentVerdict.ok, false, 'the content branch MUST catch an equal-severity finding swap');
+  assert.match(contentVerdict.msg, /content fail-open/);
 });
 
 test('spoofTwinKey overwrites with a DISTINCT decoy (a copy would not guard the A1 fix)', () => {

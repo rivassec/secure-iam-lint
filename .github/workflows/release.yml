@@ -60,7 +60,11 @@ jobs:
       # that never went green could be published. Require the tagged commit to be reachable
       # from origin/main.
       - name: Verify the tagged commit is on origin/main
-        if: github.event_name == 'push'
+        # Stage-12 #3: also enforce on a non-dry-run dispatch. A workflow_dispatch on
+        # a tag ref reaches the publish step (push || (dispatch && !dry_run)); without
+        # this the ancestry check was push-only and a dispatch could publish an
+        # off-main commit with only the npm environment's human approval as a backstop.
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
         run: |
           git fetch --no-tags origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then

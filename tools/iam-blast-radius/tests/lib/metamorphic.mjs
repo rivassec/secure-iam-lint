@@ -215,6 +215,23 @@ export function checkSpoofedDenyInert(analyze, policy, opts) {
   if (maxSevRank(withDeny) < maxSevRank(base)) {
     return { ok: false, msg: `AWS-inert spoofed Deny lowered reported risk ${maxSevRank(base)}->${maxSevRank(withDeny)} (T8 #1 fail-open)` };
   }
+  // Stage-12 #1: a CONTENT-level check independent of the incomplete flag, so this
+  // property is not merely a tripwire for RC-A's incomplete verdict. If the variant read
+  // COMPLETE (did not fail closed) yet DROPPED a finding the base surfaced, the spoofed
+  // Deny suppressed real coverage even when the max severity happened to be unchanged
+  // (a swap-with-equal-severity content fail-open). On the shipped engine this branch is
+  // inert (the spoofed Deny flips the verdict to incomplete -> maxSevRank Infinity, caught
+  // above), so it adds an INDEPENDENT failure mode without any false positive: it guards a
+  // future engine that de-spoofs and suppresses WITHOUT setting incomplete.
+  if (!isClean(withDeny) && maxSevRank(withDeny) !== Infinity) {
+    const baseKeys = findingKeySet(base);
+    const varKeys = findingKeySet(withDeny);
+    for (const k of baseKeys) {
+      if (!varKeys.has(k)) {
+        return { ok: false, msg: `AWS-inert spoofed Deny suppressed finding ${k} while reading COMPLETE (T8 #1 content fail-open)` };
+      }
+    }
+  }
   return { ok: true, msg: 'spoofed-deny-inert ok' };
 }
 

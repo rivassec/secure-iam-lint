@@ -24,15 +24,30 @@ const REPO_ROOT = resolve(HERE, '../../../../');
 // Target files: the SHIPPED surface that must fail closed.
 // ---------------------------------------------------------------------------
 const ENGINE_DIR = 'content/tools/iam-blast-radius/engine';
-// Derived from the engine directory itself, NOT a hand-maintained list: a decomposition
-// that adds/renames a module is scanned automatically. A stale hardcoded list previously
-// scanned 24 of 63 files, leaving 62% of the engine outside the fail-open tripwire. The
-// coverage==tree property is asserted by failopen-lint.test.js so this cannot silently
-// drift again.
-const ENGINE_FILES = readdirSync(resolve(REPO_ROOT, ENGINE_DIR))
+// Scanned engine modules are derived from the directory itself, NOT a hand-maintained
+// list: a decomposition that adds/renames a module is scanned automatically. A stale
+// hardcoded list previously scanned 24 of 63 files, leaving 62% of the engine outside
+// the fail-open tripwire. The coverage==tree property is asserted by failopen-lint.test.js
+// so this cannot silently drift again.
+const ENGINE_FILES_ON_DISK = readdirSync(resolve(REPO_ROOT, ENGINE_DIR))
   .filter((f) => f.endsWith('.js') && !f.endsWith('.test.js'))
   .sort()
   .map((f) => `${ENGINE_DIR}/${f}`);
+
+// Stage-12 #2: deriving the target list SOLELY from readdir made --check-targets blind to
+// DELETION - a removed engine module simply vanishes from the listing, so it can never be
+// `missing`, and the whole 63-module guard surface could be gutted with the gate still
+// green. The committed manifest is the deletion tripwire: TARGET_FILES is the UNION of
+// what is on disk (so a NEW module is still auto-scanned) and what the manifest REQUIRES
+// (so a DELETED module is existsSync-checked -> `missing` -> non-zero exit). The manifest
+// is kept in lockstep with the directory by failopen-lint.test.js (coverage==tree in BOTH
+// directions), so adding a module without listing it fails CI - it cannot silently drift.
+const ENGINE_MANIFEST = JSON.parse(
+  readFileSync(resolve(HERE, 'engine-manifest.json'), 'utf8'),
+);
+const ENGINE_FILES_REQUIRED = ENGINE_MANIFEST
+  .map((f) => `${ENGINE_DIR}/${f}`);
+const ENGINE_FILES = [...new Set([...ENGINE_FILES_ON_DISK, ...ENGINE_FILES_REQUIRED])].sort();
 
 const TARGET_FILES = [
   ...ENGINE_FILES,
