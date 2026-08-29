@@ -83,20 +83,73 @@ export function permuteStatements(policy) {
   if (Array.isArray(p.Statement)) p.Statement = p.Statement.slice().reverse();
   return p;
 }
+// A benign, NARROWER decoy for the spoof-twin overwrite (Stage-11 #5).
+const DECOY_ACCOUNT = 'arn:aws:iam::111111111111:root';
+
 // OBFUSCATION (A1 class): add a zero-width twin of the first Principal-type /
 // Condition-operator key. Must never make the policy read cleaner.
+//
+// Stage-11 #5: the twin key carries a DISTINCT, risk-LOWERING decoy value, not a
+// copy of the real value. On a hypothetical UNGUARDED engine the ZW-twin key
+// collapses onto k and (last-key-wins) OVERWRITES the real value with this benign
+// decoy - erasing the risky grant (a public/broad Principal becomes one specific
+// account). The shipped engine fails closed (SPOOFED_DUPLICATE_KEY), so the
+// property holds; but if the A1 collision guard were ever removed, the decoy would
+// LOWER the reported risk and checkSpoofMonotonic would CATCH the regression. An
+// identical-value copy (the old behavior) is a no-op even on an unguarded engine,
+// so it certified the guard as present without ever exercising it.
 export function spoofTwinKey(policy) {
   const p = clone(policy);
   for (const s of statements(p)) {
     if (!s) continue;
-    for (const container of [s.Principal, s.NotPrincipal, s.Condition]) {
+    for (const [container, kind] of [[s.Principal, 'principal'], [s.NotPrincipal, 'principal'], [s.Condition, 'condition']]) {
       if (container && typeof container === 'object' && !Array.isArray(container)) {
         const k = Object.keys(container)[0];
-        if (k !== undefined && !(k + ZW in container)) { container[k + ZW] = container[k]; return p; }
+        if (k !== undefined && !(k + ZW in container)) {
+          container[k + ZW] = kind === 'principal' ? DECOY_ACCOUNT : { 'aws:PrincipalAccount': '111111111111' };
+          return p;
+        }
       }
     }
   }
   return p; // nothing to twin (e.g. Principal:"*"): unchanged, property trivially holds
+}
+
+// OBFUSCATION (Stage-11 #1 class): for each Allow statement that grants a concrete
+// Action, ADD a Deny statement whose Action is that same action with a zero-width
+// space inserted. Such a Deny is AWS-INERT - AWS matches the literal requested
+// action against the Deny pattern that still carries the code point and does NOT
+// match, so the Allow stays live. The engine must therefore NOT let this spoofed
+// Deny suppress the finding into a clean pass. Models the reproduced critical
+// fail-open directly, on ONE surface (no second surface needed).
+export function addSpoofedDeny(policy) {
+  const p = clone(policy);
+  const stmts = statements(p);
+  const extra = [];
+  for (const s of stmts) {
+    if (!isAllow(s) || !('Action' in s)) continue;
+    const acts = Array.isArray(s.Action) ? s.Action : [s.Action];
+    let changed = false;
+    const spoofed = acts.map((a) => {
+      // Only a multi-char token that does not already carry the code point can be
+      // given an AWS-INERT spoofed twin. A wildcard "*" (or single char) cannot: a
+      // Deny "*" is a REAL deny-all that legitimately clears the finding, which is
+      // not the #1 attack - skip such statements rather than model a false positive.
+      if (typeof a === 'string' && a.length > 1 && !a.includes(ZW)) {
+        changed = true;
+        return a.slice(0, 1) + ZW + a.slice(1);
+      }
+      return a;
+    });
+    if (!changed) continue;
+    extra.push({
+      Effect: 'Deny',
+      Action: spoofed.length === 1 ? spoofed[0] : spoofed,
+      Resource: s.Resource !== undefined ? s.Resource : '*',
+    });
+  }
+  if (extra.length) p.Statement = stmts.concat(extra);
+  return p;
 }
 
 // ---- Property checks: each returns { ok, msg } ----
@@ -149,6 +202,22 @@ export function checkSpoofMonotonic(analyze, policy, opts) {
   return { ok: true, msg: 'spoof-monotonic ok' };
 }
 
+// An AWS-INERT spoofed Deny (a Deny whose action carries a zero-width space, so AWS
+// never matches it) must never LOWER the reported risk of a policy that had a
+// concrete finding. This is the direct metamorphic guard for the Stage-11 #1
+// critical fail-open: an engine that de-spoofs the Deny and credits it as coverage
+// would suppress the finding here; maxSevRank (Infinity for the fail-closed
+// incomplete verdict) makes the fixed engine pass and a regressed one fail.
+export function checkSpoofedDenyInert(analyze, policy, opts) {
+  const base = analyze(JSON.stringify(policy), opts);
+  if (!hasConcreteFinding(base)) return { ok: true, msg: 'spoofed-deny: base not concrete, n/a' };
+  const withDeny = analyze(JSON.stringify(addSpoofedDeny(policy)), opts);
+  if (maxSevRank(withDeny) < maxSevRank(base)) {
+    return { ok: false, msg: `AWS-inert spoofed Deny lowered reported risk ${maxSevRank(base)}->${maxSevRank(withDeny)} (T8 #1 fail-open)` };
+  }
+  return { ok: true, msg: 'spoofed-deny-inert ok' };
+}
+
 // Run every applicable property over one policy; returns array of failures (empty = pass).
 export function runAllProperties(analyze, policy, opts) {
   const fails = [];
@@ -160,5 +229,7 @@ export function runAllProperties(analyze, policy, opts) {
   if (!o.ok) fails.push(o.msg);
   const s = checkSpoofMonotonic(analyze, policy, opts);
   if (!s.ok) fails.push(s.msg);
+  const d = checkSpoofedDenyInert(analyze, policy, opts);
+  if (!d.ok) fails.push(d.msg);
   return fails;
 }
