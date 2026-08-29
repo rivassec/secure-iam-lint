@@ -1,0 +1,25 @@
+{
+  "name": "conditioned lambda:UpdateFunctionCode still fires LAMBDA-CODE-OVERWRITE (downgraded, no PassRole)",
+  "note": "Stage-13 EFO-3 condition witness: a Condition on the code-overwrite grant is a runtime gate that downgrades confidence but does not remove the standalone code-execution primitive, so LAMBDA-CODE-OVERWRITE still fires; iam:PassRole is absent so no PASSROLE path.",
+  "phase": 3,
+  "story": "IAM-301",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "UpdateCodeIfTagged",
+        "Effect": "Allow",
+        "Action": "lambda:UpdateFunctionCode",
+        "Resource": "arn:aws:lambda:us-east-1:111122223333:function:prod-*",
+        "Condition": { "StringEquals": { "aws:RequestTag/team": "platform" } }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["LAMBDA-CODE-OVERWRITE"],
+    "mustNotFind": ["PASSROLE-LAMBDA"],
+    "maxSeverity": { "LAMBDA-CODE-OVERWRITE": "high" },
+    "maxPathExploitability": {}
+  },
+  "rationale": "A Condition on lambda:UpdateFunctionCode is a runtime gate that lowers the confidence signals but does not eliminate the standalone code-execution primitive: when the condition holds the caller can still overwrite the function's code and run it under the existing execution role. The finding still fires (evidence/exploitability downgraded by the Condition) and no PassRole path exists (iam:PassRole absent)."
+}

@@ -260,6 +260,24 @@ export const ESCALATIONS = Object.freeze({
     docRef:
       'https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html',
   }),
+  // Stage-13 EFO-3: overwriting an EXISTING Lambda function's code runs attacker
+  // code under that function's already-bound execution role, so it needs NO
+  // iam:PassRole - a self-contained code-exec / lateral-movement primitive (Rhino
+  // "UpdateExistingLambdaFunctionCode"). The engine already models this technique
+  // ('replace-existing-function-code', requiresPassRole:false) but only credited it
+  // on the PassRole-paired path; a standalone grant used to read CLEAN. Emitted at
+  // HIGH (elevation depends on the existing function's role power, which is out of
+  // scope here - the same unknown-target cap as CREDENTIAL-CREATION / TRUST-POLICY
+  // -MODIFY). The PassRole-PAIRED case still fires PASSROLE-LAMBDA (critical) and
+  // this standalone finding is deduped away there.
+  'LAMBDA-CODE-OVERWRITE': Object.freeze({
+    id: 'LAMBDA-CODE-OVERWRITE',
+    order: 11,
+    title: 'Overwrite an existing Lambda function\'s code (runs under its existing role, no PassRole)',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/lambda/latest/api/API_UpdateFunctionCode.html',
+  }),
 });
 
 export const ESCALATION_IDS = Object.freeze(Object.keys(ESCALATIONS));

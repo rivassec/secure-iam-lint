@@ -229,6 +229,70 @@ export function detectCredentialCreation(allows, out, denies) {
   }
 }
 
+// Stage-13 EFO-3: lambda:UpdateFunctionCode overwrites an EXISTING function's code,
+// which then runs under that function's already-bound execution role - a standalone
+// code-exec / lateral-movement primitive that needs NO iam:PassRole (Rhino
+// "UpdateExistingLambdaFunctionCode"). This is the SAME technique the PassRole path
+// models as 'replace-existing-function-code' (requiresPassRole:false); detecting it
+// here surfaces it when NO iam:PassRole->lambda path exists (where detectPassRolePaths
+// returns early and never credited it, a T8 fail-open).
+const LAMBDA_CODE_OVERWRITE_ACTIONS = Object.freeze(['lambda:UpdateFunctionCode']);
+
+export function detectLambdaCodeOverwrite(allows, out, denies) {
+  for (const stmt of allows) {
+    const matched = grantedPatternsFor(stmt, LAMBDA_CODE_OVERWRITE_ACTIONS);
+    if (matched.length === 0) continue;
+    const deny = applyDenyToActions(denies, matched, stmt);
+    if (deny.blocked) continue; // same-policy explicit Deny removes the path
+    // Dedup: when a viable iam:PassRole->lambda path already credited THIS statement's
+    // code grant, detectPassRolePaths (which runs first) has emitted PASSROLE-LAMBDA
+    // (critical) covering it. Do not also emit the standalone HIGH finding there - the
+    // paired case stays critical-only. When no such path exists (no PassRole, or a
+    // PassRole that does not permit lambda), PASSROLE-LAMBDA is absent and this fires.
+    const alreadyPaired = out.some((f) =>
+      f.id === 'PASSROLE-LAMBDA'
+      && (f.statementIndex === stmt.index
+        || (f.contributingStatements || []).some((cs) => cs.statementIndex === stmt.index)));
+    if (alreadyPaired) continue;
+    const actions = deny.actions;
+    out.push(
+      makeEscalation('LAMBDA-CODE-OVERWRITE', stmt, {
+        // High, not critical (mirrors IAM-102): a standalone direct primitive, not a
+        // compound privilege-boundary crossing. Critical is reserved for the compound
+        // PassRole->service path (execution under a DIFFERENT role).
+        severity: 'high',
+        // Grant present (evidence high). ELEVATION requires the existing function's
+        // execution role to be more privileged than the caller - a target whose power
+        // is not in scope here (same unknown-target cap as CREDENTIAL-CREATION /
+        // TRUST-POLICY-MODIFY) -> exploitability medium.
+        policyEvidence: 'high',
+        pathExploitability: 'medium',
+        conditioned: hasNonEmptyCondition(stmt),
+        denyNarrowed: deny.narrowed,
+        technique: 'replace-existing-function-code',
+        service: 'lambda',
+        requiredActions: actions.slice(),
+        prerequisites: prerequisitesOf([
+          prereqTechnique('replace-existing-function-code', [prereqGroup(actions, 'primitive')], {}),
+        ]),
+        actions,
+        resources: resourceScope(stmt),
+        evidence: [evidenceOf(stmt, 'primitive', actions)],
+        why:
+          'Grants lambda:UpdateFunctionCode. Overwriting an existing function\'s code ' +
+          'runs attacker-supplied code under that function\'s already-bound execution ' +
+          'role - no iam:PassRole is required. Whether that role is more privileged than ' +
+          'the caller is not known from this policy, but the code-execution primitive ' +
+          'is present.',
+        remediation:
+          'Scope lambda:UpdateFunctionCode to specific function ARNs, restrict it to a ' +
+          'dedicated deployment role, and protect high-value functions (whose execution ' +
+          'roles are privileged) with change review and a permission boundary.',
+      }),
+    );
+  }
+}
+
 export function detectAssumeRoleExpansion(allows, out, denies) {
   for (const stmt of allows) {
     const matched = grantedPatternsFor(stmt, ASSUME_ROLE_ACTIONS);

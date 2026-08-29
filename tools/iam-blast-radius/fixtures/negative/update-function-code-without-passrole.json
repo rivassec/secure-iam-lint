@@ -1,6 +1,6 @@
 {
-  "name": "lambda:UpdateFunctionCode WITHOUT iam:PassRole - not a PassRole escalation",
-  "note": "Updating an existing function's code runs under the function's already-attached role. Without iam:PassRole the principal cannot attach a more-privileged role.",
+  "name": "lambda:UpdateFunctionCode WITHOUT iam:PassRole - standalone code-overwrite primitive, NOT a PassRole path",
+  "note": "Updating an existing function's code runs under the function's already-attached execution role. Without iam:PassRole the principal cannot attach a MORE-privileged role, so no PASSROLE-* path fires - but overwriting the code of an existing (possibly privileged) function is itself a standalone code-execution / lateral-movement primitive (Stage-13 EFO-3), so LAMBDA-CODE-OVERWRITE fires at high.",
   "phase": 3,
   "story": "IAM-301",
   "policy": {
@@ -15,10 +15,10 @@
     ]
   },
   "negativeExpect": {
-    "mustFind": [],
+    "mustFind": ["LAMBDA-CODE-OVERWRITE"],
     "mustNotFind": ["PASSROLE-LAMBDA", "PASSROLE-SERVICE", "PASSROLE-EC2"],
-    "maxSeverity": {},
+    "maxSeverity": { "LAMBDA-CODE-OVERWRITE": "high" },
     "maxPathExploitability": {}
   },
-  "rationale": "lambda:UpdateFunctionCode changes the code of an EXISTING function, which executes under the execution role already attached to that function; it does not let the caller choose or attach a role. The PassRole family of escalations requires iam:PassRole (to assign a privileged role to a new/updated workload), which is absent here. Therefore this is not a PassRole privilege-escalation and the PASSROLE-* findings must not fire. (Whether editing an already-privileged function is risky depends on that function's existing role - unknown target privileges - and is a separate, lower-confidence concern, not a PassRole path.) Ref: AWS docs, 'iam:PassRole' requirement for assigning execution roles; Lambda execution-role model."
+  "rationale": "lambda:UpdateFunctionCode changes the code of an EXISTING function, which executes under the execution role already attached to that function; it does not let the caller choose or attach a role. The PassRole family (which requires iam:PassRole to assign a privileged role to a new/updated workload) therefore must NOT fire. It is however a real standalone privilege-escalation / lateral-movement primitive on its own: attacker-supplied code runs under the existing function's role (Rhino 'UpdateExistingLambdaFunctionCode'). Whether that role is more privileged than the caller is unknown from this policy (out-of-scope target), which is why it is HIGH (evidence high, exploitability medium) rather than the compound critical PassRole path. Stage-13 EFO-3 reversed the earlier assumption that this was merely a lower-confidence non-finding: reading fully CLEAN on it was a T8 fail-open. Ref: AWS Lambda UpdateFunctionCode API; Lambda execution-role model."
 }

@@ -13,8 +13,8 @@
       "analysisStatus": "complete",
       "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
       "exitCode": 1,
-      "findingsCount": 3,
-      "blockingCount": 3,
+      "findingsCount": 4,
+      "blockingCount": 4,
       "analysisStates": [],
       "findings": [
         {
@@ -93,6 +93,91 @@
                 "sts:AssumeRole",
                 "sts:AssumeRoleWithSAML",
                 "sts:AssumeRoleWithWebIdentity"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "LAMBDA-CODE-OVERWRITE",
+          "severity": "high",
+          "title": "Overwrite an existing Lambda function's code (runs under its existing role, no PassRole)",
+          "statementSid": "EverythingExceptIam",
+          "statementIndex": 0,
+          "actions": [
+            "lambda:UpdateFunctionCode"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants lambda:UpdateFunctionCode. Overwriting an existing function's code runs attacker-supplied code under that function's already-bound execution role - no iam:PassRole is required. Whether that role is more privileged than the caller is not known from this policy, but the code-execution primitive is present.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope lambda:UpdateFunctionCode to specific function ARNs, restrict it to a dedicated deployment role, and protect high-value functions (whose execution roles are privileged) with change review and a permission boundary.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/lambda/latest/api/API_UpdateFunctionCode.html",
+          "escalation": {
+            "technique": "replace-existing-function-code",
+            "service": "lambda",
+            "requiredActions": [
+              "lambda:UpdateFunctionCode"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "replace-existing-function-code",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "lambda:UpdateFunctionCode"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "EverythingExceptIam",
+              "role": "primitive",
+              "actions": [
+                "lambda:UpdateFunctionCode"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "EverythingExceptIam",
+              "actions": [
+                "lambda:UpdateFunctionCode"
               ]
             }
           ],
@@ -227,6 +312,24 @@
                   "helpUri": "https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html"
                 },
                 {
+                  "id": "LAMBDA-CODE-OVERWRITE",
+                  "name": "LAMBDA-CODE-OVERWRITE",
+                  "shortDescription": {
+                    "text": "Overwrite an existing Lambda function's code (runs under its existing role, no PassRole)"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type LAMBDA-CODE-OVERWRITE. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/lambda/latest/api/API_UpdateFunctionCode.html"
+                },
+                {
                   "id": "NOTACTION-ALLOW",
                   "name": "NOTACTION-ALLOW",
                   "shortDescription": {
@@ -268,8 +371,8 @@
           "properties": {
             "analysisStatus": "complete",
             "exitCode": 1,
-            "blockingCount": 3,
-            "findingsCount": 3
+            "blockingCount": 4,
+            "findingsCount": 4
           },
           "results": [
             {
@@ -322,6 +425,52 @@
               "ruleIndex": 0
             },
             {
+              "ruleId": "LAMBDA-CODE-OVERWRITE",
+              "level": "error",
+              "message": {
+                "text": "Overwrite an existing Lambda function's code (runs under its existing role, no PassRole) [identity policy] at statement `EverythingExceptIam`; actions: `lambda:UpdateFunctionCode`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "132217115ef6ff0fc72e86c2293b"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "EverythingExceptIam",
+                    "role": "primitive",
+                    "actions": [
+                      "lambda\\:UpdateFunctionCode"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "EverythingExceptIam"
+              },
+              "ruleIndex": 1
+            },
+            {
               "ruleId": "NOTACTION-ALLOW",
               "level": "error",
               "message": {
@@ -354,7 +503,7 @@
                   "iam\\:\\*"
                 ]
               },
-              "ruleIndex": 1
+              "ruleIndex": 2
             },
             {
               "ruleId": "WILDCARD-RESOURCE",
@@ -389,7 +538,7 @@
                   "iam\\:\\*"
                 ]
               },
-              "ruleIndex": 2
+              "ruleIndex": 3
             }
           ]
         }
@@ -432,6 +581,20 @@
         ],
         "conditionsPresent": false,
         "evidenceWhyHash": "e3fbb21b00462412"
+      },
+      {
+        "id": "LAMBDA-CODE-OVERWRITE",
+        "severity": "high",
+        "title": "Overwrite an existing Lambda function's code (runs under its existing role, no PassRole)",
+        "statementIndex": 0,
+        "actions": [
+          "lambda:UpdateFunctionCode"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "00d369f37e2a118f"
       },
       {
         "id": "NOTACTION-ALLOW",
