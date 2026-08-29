@@ -1,5 +1,5 @@
 {
-  "name": "read-only Lambda access does not fire LAMBDA-CODE-OVERWRITE",
+  "name": "read-only Lambda access does not fire COMPUTE-CODE-OVERWRITE",
   "note": "Stage-13 EFO-3 negative: lambda:GetFunction / lambda:ListFunctions cannot change a function's code, so the standalone code-overwrite primitive must NOT fire. Only lambda:UpdateFunctionCode (or a grant that includes it) is the overwrite capability.",
   "phase": 3,
   "story": "IAM-301",
@@ -16,9 +16,9 @@
   },
   "negativeExpect": {
     "mustFind": [],
-    "mustNotFind": ["LAMBDA-CODE-OVERWRITE", "PASSROLE-LAMBDA"],
+    "mustNotFind": ["COMPUTE-CODE-OVERWRITE", "PASSROLE-LAMBDA"],
     "maxSeverity": {},
     "maxPathExploitability": {}
   },
-  "rationale": "lambda:GetFunction and lambda:ListFunctions are read/list actions; they do not modify function code and therefore cannot run attacker-supplied code under the function's execution role. LAMBDA-CODE-OVERWRITE must fire only on lambda:UpdateFunctionCode (the code-replacement action), so a read-only Lambda policy is a true negative for both the standalone code-overwrite primitive and the PassRole-Lambda path."
+  "rationale": "lambda:GetFunction and lambda:ListFunctions are read/list actions; they do not modify function code and therefore cannot run attacker-supplied code under the function's execution role. COMPUTE-CODE-OVERWRITE must fire only on lambda:UpdateFunctionCode (the code-replacement action), so a read-only Lambda policy is a true negative for both the standalone code-overwrite primitive and the PassRole-Lambda path."
 }

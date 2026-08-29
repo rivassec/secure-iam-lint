@@ -111,7 +111,7 @@ const APPLICABILITY = Object.freeze({
   // primitive like the PassRole-family finding ids, so it declares the same kind set
   // (notAction/notResource are exercised by the shared broad-grant fixtures and are
   // not distinctive for this single-action primitive).
-  'LAMBDA-CODE-OVERWRITE': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
+  'COMPUTE-CODE-OVERWRITE': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
   'ASSUME-ROLE-EXPANSION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
   // IAM-902: the ROLE-TAKEOVER chain is a multi-statement compound AND path
   // (grant + trust-modify + assume on the same role). Like the PassRole compound

@@ -1,6 +1,6 @@
 {
   "name": "standalone lambda:UpdateFunctionCode with a hostile Sid rides through inert (positive; hostile)",
-  "note": "Stage-13 EFO-3 hostile witness: a standalone code-overwrite grant fires LAMBDA-CODE-OVERWRITE, and an HTML/JS payload embedded in the Sid must survive verbatim as inert DATA in the finding (statementSid) - never executed, never sanitized into a false clean.",
+  "note": "Stage-13 EFO-3 hostile witness: a standalone code-overwrite grant fires COMPUTE-CODE-OVERWRITE, and an HTML/JS payload embedded in the Sid must survive verbatim as inert DATA in the finding (statementSid) - never executed, never sanitized into a false clean.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -15,7 +15,7 @@
   "expect": {
     "valid": true,
     "hostile": true,
-    "hostileFor": ["LAMBDA-CODE-OVERWRITE"],
+    "hostileFor": ["COMPUTE-CODE-OVERWRITE"],
     "notFindingIds": ["PASSROLE-LAMBDA"]
   }
 }

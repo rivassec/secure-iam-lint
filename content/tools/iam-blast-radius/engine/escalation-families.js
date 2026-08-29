@@ -229,64 +229,84 @@ export function detectCredentialCreation(allows, out, denies) {
   }
 }
 
-// Stage-13 EFO-3: lambda:UpdateFunctionCode overwrites an EXISTING function's code,
-// which then runs under that function's already-bound execution role - a standalone
-// code-exec / lateral-movement primitive that needs NO iam:PassRole (Rhino
-// "UpdateExistingLambdaFunctionCode"). This is the SAME technique the PassRole path
-// models as 'replace-existing-function-code' (requiresPassRole:false); detecting it
-// here surfaces it when NO iam:PassRole->lambda path exists (where detectPassRolePaths
-// returns early and never credited it, a T8 fail-open).
-const LAMBDA_CODE_OVERWRITE_ACTIONS = Object.freeze(['lambda:UpdateFunctionCode']);
+// Stage-13 EFO-3 / Stage-14: overwriting the code (or code-selecting configuration) of
+// an EXISTING compute resource runs attacker-supplied code under that resource's
+// ALREADY-BOUND execution/service role - a standalone code-exec / lateral-movement
+// primitive that needs NO iam:PassRole (Rhino "UpdateExistingLambdaFunctionCode" and its
+// siblings). These are the SAME "update existing" exec actions the PassRole path models
+// (requiresPassRole:false); detecting them here surfaces the capability when NO viable
+// iam:PassRole->service path exists (where detectPassRolePaths returns early or the
+// service is not permitted, and never credited it - a T8 fail-open).
+//   lambda:UpdateFunctionCode / UpdateFunctionConfiguration - new code, or a layer swap /
+//     handler repoint / NODE_OPTIONS env, run under the function's existing role.
+//   codebuild:UpdateProject   - new buildspec/commands run under the project's role.
+//   glue:UpdateJob            - new job script runs under the job's role.
+//   cloudformation:UpdateStack- a changed template acts through the stack's role.
+// (Create*/RunInstances create a NEW workload and genuinely need iam:PassRole to attach a
+// role, so they stay on the compound PassRole path and are NOT listed here.)
+const COMPUTE_CODE_OVERWRITE_ACTIONS = Object.freeze([
+  'lambda:UpdateFunctionCode',
+  'lambda:UpdateFunctionConfiguration',
+  'codebuild:UpdateProject',
+  'glue:UpdateJob',
+  'cloudformation:UpdateStack',
+]);
 
-export function detectLambdaCodeOverwrite(allows, out, denies) {
+export function detectComputeCodeOverwrite(allows, out, denies) {
   for (const stmt of allows) {
-    const matched = grantedPatternsFor(stmt, LAMBDA_CODE_OVERWRITE_ACTIONS);
+    const matched = grantedPatternsFor(stmt, COMPUTE_CODE_OVERWRITE_ACTIONS);
     if (matched.length === 0) continue;
     const deny = applyDenyToActions(denies, matched, stmt);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
-    // Dedup: when a viable iam:PassRole->lambda path already credited THIS statement's
-    // code grant, detectPassRolePaths (which runs first) has emitted PASSROLE-LAMBDA
-    // (critical) covering it. Do not also emit the standalone HIGH finding there - the
-    // paired case stays critical-only. When no such path exists (no PassRole, or a
-    // PassRole that does not permit lambda), PASSROLE-LAMBDA is absent and this fires.
+    // Dedup: when a viable iam:PassRole->service path already credited THIS statement's
+    // overwrite grant, detectPassRolePaths (which runs first) has emitted a PASSROLE-*
+    // finding (critical) covering it - PASSROLE-LAMBDA for lambda, PASSROLE-SERVICE for
+    // codebuild/glue/cloudformation. Do not also emit the standalone HIGH finding there;
+    // the paired case stays critical-only. When no such path exists (no PassRole, or a
+    // PassRole that does not permit this service), no PASSROLE-* covers it and this fires.
     const alreadyPaired = out.some((f) =>
-      f.id === 'PASSROLE-LAMBDA'
+      /^PASSROLE-/.test(f.id)
       && (f.statementIndex === stmt.index
         || (f.contributingStatements || []).some((cs) => cs.statementIndex === stmt.index)));
     if (alreadyPaired) continue;
     const actions = deny.actions;
+    // Service is the prefix of the first matched action (lambda / codebuild / glue /
+    // cloudformation) - all matched actions in one statement share the overwrite class.
+    const service = String(matched[0]).split(':')[0] || null;
     out.push(
-      makeEscalation('LAMBDA-CODE-OVERWRITE', stmt, {
+      makeEscalation('COMPUTE-CODE-OVERWRITE', stmt, {
         // High, not critical (mirrors IAM-102): a standalone direct primitive, not a
         // compound privilege-boundary crossing. Critical is reserved for the compound
-        // PassRole->service path (execution under a DIFFERENT role).
+        // PassRole->service path (execution under a DIFFERENT, freshly-attached role).
         severity: 'high',
-        // Grant present (evidence high). ELEVATION requires the existing function's
-        // execution role to be more privileged than the caller - a target whose power
-        // is not in scope here (same unknown-target cap as CREDENTIAL-CREATION /
+        // Grant present (evidence high). ELEVATION requires the existing resource's
+        // execution role to be more privileged than the caller - a target whose power is
+        // not in scope here (same unknown-target cap as CREDENTIAL-CREATION /
         // TRUST-POLICY-MODIFY) -> exploitability medium.
         policyEvidence: 'high',
         pathExploitability: 'medium',
         conditioned: hasNonEmptyCondition(stmt),
         denyNarrowed: deny.narrowed,
-        technique: 'replace-existing-function-code',
-        service: 'lambda',
+        technique: 'overwrite-existing-compute-code',
+        service,
         requiredActions: actions.slice(),
         prerequisites: prerequisitesOf([
-          prereqTechnique('replace-existing-function-code', [prereqGroup(actions, 'primitive')], {}),
+          prereqTechnique('overwrite-existing-compute-code', [prereqGroup(actions, 'primitive')], {}),
         ]),
         actions,
         resources: resourceScope(stmt),
         evidence: [evidenceOf(stmt, 'primitive', actions)],
         why:
-          'Grants lambda:UpdateFunctionCode. Overwriting an existing function\'s code ' +
-          'runs attacker-supplied code under that function\'s already-bound execution ' +
-          'role - no iam:PassRole is required. Whether that role is more privileged than ' +
-          'the caller is not known from this policy, but the code-execution primitive ' +
-          'is present.',
+          'Grants an "update existing compute" action (e.g. lambda:UpdateFunctionCode / ' +
+          'UpdateFunctionConfiguration, codebuild:UpdateProject, glue:UpdateJob, ' +
+          'cloudformation:UpdateStack). Overwriting the code (or code-selecting ' +
+          'configuration) of an EXISTING resource runs attacker-supplied code under that ' +
+          'resource\'s already-bound execution/service role - no iam:PassRole is required. ' +
+          'Whether that role is more privileged than the caller is not known from this ' +
+          'policy, but the code-execution primitive is present.',
         remediation:
-          'Scope lambda:UpdateFunctionCode to specific function ARNs, restrict it to a ' +
-          'dedicated deployment role, and protect high-value functions (whose execution ' +
+          'Scope these update actions to specific resource ARNs, restrict them to a ' +
+          'dedicated deployment role, and protect high-value compute (whose execution ' +
           'roles are privileged) with change review and a permission boundary.',
       }),
     );

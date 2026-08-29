@@ -206,7 +206,7 @@ test('story: at least 5 escalation families each have a positive fixture produci
   assert.ok(producedIds.size <= ESCALATION_IDS.length, 'produced ids must be a subset of the catalog');
   // Catalog itself stays within the story bound of 5-12 escalation paths (the 11th
   // is S2-crossaccount-scoped-surface's CROSS-ACCOUNT-ASSUME-ROLE; the 12th is
-  // Stage-13 EFO-3's LAMBDA-CODE-OVERWRITE, standalone lambda code-overwrite).
+  // Stage-13 EFO-3's COMPUTE-CODE-OVERWRITE, standalone lambda code-overwrite).
   assert.ok(ESCALATION_IDS.length >= 5 && ESCALATION_IDS.length <= 12, `catalog must define 5-12 paths, has ${ESCALATION_IDS.length}`);
 });
 

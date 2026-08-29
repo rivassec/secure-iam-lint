@@ -113,13 +113,17 @@
           }
         },
         {
-          "id": "LAMBDA-CODE-OVERWRITE",
+          "id": "COMPUTE-CODE-OVERWRITE",
           "severity": "high",
-          "title": "Overwrite an existing Lambda function's code (runs under its existing role, no PassRole)",
+          "title": "Overwrite existing compute code/config (runs under its existing role, no PassRole)",
           "statementSid": "EverythingExceptIam",
           "statementIndex": 0,
           "actions": [
-            "lambda:UpdateFunctionCode"
+            "lambda:UpdateFunctionCode",
+            "lambda:UpdateFunctionConfiguration",
+            "codebuild:UpdateProject",
+            "glue:UpdateJob",
+            "cloudformation:UpdateStack"
           ],
           "resources": [
             "*"
@@ -127,26 +131,34 @@
           "conditions": null,
           "policyEvidence": "high",
           "pathExploitability": "medium",
-          "why": "Grants lambda:UpdateFunctionCode. Overwriting an existing function's code runs attacker-supplied code under that function's already-bound execution role - no iam:PassRole is required. Whether that role is more privileged than the caller is not known from this policy, but the code-execution primitive is present.",
+          "why": "Grants an \"update existing compute\" action (e.g. lambda:UpdateFunctionCode / UpdateFunctionConfiguration, codebuild:UpdateProject, glue:UpdateJob, cloudformation:UpdateStack). Overwriting the code (or code-selecting configuration) of an EXISTING resource runs attacker-supplied code under that resource's already-bound execution/service role - no iam:PassRole is required. Whether that role is more privileged than the caller is not known from this policy, but the code-execution primitive is present.",
           "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
-          "remediation": "Scope lambda:UpdateFunctionCode to specific function ARNs, restrict it to a dedicated deployment role, and protect high-value functions (whose execution roles are privileged) with change review and a permission boundary.",
+          "remediation": "Scope these update actions to specific resource ARNs, restrict them to a dedicated deployment role, and protect high-value compute (whose execution roles are privileged) with change review and a permission boundary.",
           "ruleVersion": "1",
           "docRef": "https://docs.aws.amazon.com/lambda/latest/api/API_UpdateFunctionCode.html",
           "escalation": {
-            "technique": "replace-existing-function-code",
+            "technique": "overwrite-existing-compute-code",
             "service": "lambda",
             "requiredActions": [
-              "lambda:UpdateFunctionCode"
+              "lambda:UpdateFunctionCode",
+              "lambda:UpdateFunctionConfiguration",
+              "codebuild:UpdateProject",
+              "glue:UpdateJob",
+              "cloudformation:UpdateStack"
             ],
             "prerequisites": {
               "anyOf": [
                 {
-                  "technique": "replace-existing-function-code",
+                  "technique": "overwrite-existing-compute-code",
                   "allOf": [
                     {
                       "role": "primitive",
                       "anyOf": [
-                        "lambda:UpdateFunctionCode"
+                        "lambda:UpdateFunctionCode",
+                        "lambda:UpdateFunctionConfiguration",
+                        "codebuild:UpdateProject",
+                        "glue:UpdateJob",
+                        "cloudformation:UpdateStack"
                       ]
                     }
                   ],
@@ -163,7 +175,11 @@
               "statementSid": "EverythingExceptIam",
               "role": "primitive",
               "actions": [
-                "lambda:UpdateFunctionCode"
+                "lambda:UpdateFunctionCode",
+                "lambda:UpdateFunctionConfiguration",
+                "codebuild:UpdateProject",
+                "glue:UpdateJob",
+                "cloudformation:UpdateStack"
               ],
               "resources": [
                 "*"
@@ -177,7 +193,11 @@
               "statementIndex": 0,
               "statementSid": "EverythingExceptIam",
               "actions": [
-                "lambda:UpdateFunctionCode"
+                "lambda:UpdateFunctionCode",
+                "lambda:UpdateFunctionConfiguration",
+                "codebuild:UpdateProject",
+                "glue:UpdateJob",
+                "cloudformation:UpdateStack"
               ]
             }
           ],
@@ -312,13 +332,13 @@
                   "helpUri": "https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html"
                 },
                 {
-                  "id": "LAMBDA-CODE-OVERWRITE",
-                  "name": "LAMBDA-CODE-OVERWRITE",
+                  "id": "COMPUTE-CODE-OVERWRITE",
+                  "name": "COMPUTE-CODE-OVERWRITE",
                   "shortDescription": {
-                    "text": "Overwrite an existing Lambda function's code (runs under its existing role, no PassRole)"
+                    "text": "Overwrite existing compute code/config (runs under its existing role, no PassRole)"
                   },
                   "fullDescription": {
-                    "text": "IAM blast-radius finding type LAMBDA-CODE-OVERWRITE. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                    "text": "IAM blast-radius finding type COMPUTE-CODE-OVERWRITE. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
                   },
                   "defaultConfiguration": {
                     "level": "error"
@@ -425,10 +445,10 @@
               "ruleIndex": 0
             },
             {
-              "ruleId": "LAMBDA-CODE-OVERWRITE",
+              "ruleId": "COMPUTE-CODE-OVERWRITE",
               "level": "error",
               "message": {
-                "text": "Overwrite an existing Lambda function's code (runs under its existing role, no PassRole) [identity policy] at statement `EverythingExceptIam`; actions: `lambda:UpdateFunctionCode`. Potential blast radius from the supplied policy context only; not effective permissions."
+                "text": "Overwrite existing compute code/config (runs under its existing role, no PassRole) [identity policy] at statement `EverythingExceptIam`; actions: `cloudformation:UpdateStack`, `codebuild:UpdateProject`, `glue:UpdateJob`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`. Potential blast radius from the supplied policy context only; not effective permissions."
               },
               "locations": [
                 {
@@ -440,7 +460,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "132217115ef6ff0fc72e86c2293b"
+                "iamBlastRadius/semanticIdentity/v1": "08d2a149977b2a0999a011f26dc7"
               },
               "properties": {
                 "category": "security",
@@ -458,7 +478,11 @@
                     "statementSid": "EverythingExceptIam",
                     "role": "primitive",
                     "actions": [
-                      "lambda\\:UpdateFunctionCode"
+                      "lambda\\:UpdateFunctionCode",
+                      "lambda\\:UpdateFunctionConfiguration",
+                      "codebuild\\:UpdateProject",
+                      "glue\\:UpdateJob",
+                      "cloudformation\\:UpdateStack"
                     ],
                     "resources": [
                       "\\*"
@@ -583,18 +607,22 @@
         "evidenceWhyHash": "e3fbb21b00462412"
       },
       {
-        "id": "LAMBDA-CODE-OVERWRITE",
+        "id": "COMPUTE-CODE-OVERWRITE",
         "severity": "high",
-        "title": "Overwrite an existing Lambda function's code (runs under its existing role, no PassRole)",
+        "title": "Overwrite existing compute code/config (runs under its existing role, no PassRole)",
         "statementIndex": 0,
         "actions": [
-          "lambda:UpdateFunctionCode"
+          "cloudformation:UpdateStack",
+          "codebuild:UpdateProject",
+          "glue:UpdateJob",
+          "lambda:UpdateFunctionCode",
+          "lambda:UpdateFunctionConfiguration"
         ],
         "resources": [
           "*"
         ],
         "conditionsPresent": false,
-        "evidenceWhyHash": "00d369f37e2a118f"
+        "evidenceWhyHash": "f218418ec3f832b6"
       },
       {
         "id": "NOTACTION-ALLOW",
