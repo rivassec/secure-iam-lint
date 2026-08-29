@@ -3,18 +3,21 @@
 # DORMANT until you deliberately release: it fires only on a pushed version tag
 # (v*.*.*) or a manual dispatch. Nothing here runs on normal pushes/PRs.
 #
-# PREREQUISITES before the first real publish (Item 5, app-sec panel):
+# PREREQUISITES before the first real publish:
 #   1. Claim the `secure-iam-lint` name on npm (or switch package.json to a scoped
 #      name, e.g. @rivassec/secure-iam-lint, and set access: public below).
-#   2. Add a repo secret NPM_TOKEN = an npm *granular automation* token with
-#      publish rights to the package (Settings -> Secrets and variables -> Actions).
-#   3. Confirm package.json `version` matches the tag you push (the guard below
-#      fails the release on a mismatch so a stray tag can never publish).
-#   4. First time: run this workflow via "Run workflow" with dry_run=true to see
-#      `npm publish --dry-run` output before a real publish.
+#   2. TRUSTED PUBLISHING (no long-lived token): on npmjs.com, configure this repo +
+#      the `release` workflow as a Trusted Publisher for the package (Settings ->
+#      Trusted Publishers). npm then mints a short-lived, workflow-scoped credential
+#      via OIDC at publish time - there is NO reusable NPM_TOKEN to steal. (Review
+#      finding C2.) The publish step below carries no NODE_AUTH_TOKEN.
+#   3. Create a protected GitHub Environment named `npm` (Settings -> Environments)
+#      with required reviewers, so a real publish needs manual approval (C2).
+#   4. Confirm package.json `version` matches the tag you push (the guard below fails
+#      the release on a mismatch, and requires a v*.*.* tag even for a manual dispatch).
+#   5. First time: run via "Run workflow" with dry_run=true to see the dry-run output.
 #
-# `--provenance` requires `id-token: write` (OIDC) and a public repo; npm attaches a
-# verifiable provenance attestation consumers can check with `npm audit signatures`.
+# `--provenance` requires `id-token: write` (OIDC) and a public repo.
 
 name: release
 
@@ -39,25 +42,36 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Protected environment: a real publish requires the approval configured on the
+    # `npm` environment (review finding C2). The dry-run path is gated the same way but
+    # publishes nothing.
+    environment: npm
     permissions:
       contents: read
-      id-token: write   # OIDC token for npm provenance (Sigstore)
+      id-token: write   # OIDC: npm provenance AND trusted-publishing credential
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # release.yml runs only on a maintainer tag push, sets no `cache:`, and all inputs
-      # come from the committed lockfile - no runtime cache to poison (zizmor confidence: Low).
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v4.4.0 # zizmor: ignore[cache-poisoning]
+      # release.yml runs only on a maintainer tag push / approved dispatch, sets no
+      # `cache:`, and all inputs come from the committed lockfile - no runtime cache to
+      # poison (zizmor confidence: Low).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 # zizmor: ignore[cache-poisoning]
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      # A tag must match the version being published, or the release fails closed.
-      - name: Verify tag matches package.json version
-        if: github.event_name == 'push'
+      # A real publish MUST run from a v*.*.* tag whose version matches package.json -
+      # this guards both a tag push AND a non-dry-run manual dispatch, so a dispatch can
+      # never publish an unversioned or mismatched build (review finding C1).
+      - name: Verify release runs from a matching version tag
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
         run: |
+          case "$GITHUB_REF_NAME" in
+            v[0-9]*.[0-9]*.[0-9]*) : ;;
+            *) echo "::error::a real publish must run from a v*.*.* tag (got '$GITHUB_REF_NAME')"; exit 1 ;;
+          esac
           pkg_version="$(node -p "require('./package.json').version")"
           tag_version="${GITHUB_REF_NAME#v}"
           if [ "$pkg_version" != "$tag_version" ]; then
@@ -65,25 +79,46 @@ jobs:
             exit 1
           fi
 
-      # Green-before-publish: the full test suite + the security gates must pass.
-      - name: Test + security gates
+      # Green-before-publish: the SAME gate set the PR CI enforces (not just the unit
+      # suite + greps) must pass before anything is published (review finding C1).
+      - name: Full test + security gate
         working-directory: tools/iam-blast-radius
         run: |
+          npm ci --no-audit --no-fund
           node --test "tests/**/*.test.js"
+          node --test "audit/**/*.test.js"
+          GOLDEN_RELEASE_GATE=1 node --test audit/golden-corpus/release-gate.test.js
           npm run gate:no-network
           npm run gate:no-unsafe-dom
           npm run gate:no-network:node
           npm run gate:no-unsafe:node
+          node audit/typecheck-ratchet.mjs
+          npx --yes madge@8.0.0 --circular --extensions js,mjs ../../content/tools/iam-blast-radius/engine ../../cli ../../action
+          out="$(node audit/lint/lint.mjs 2>&1 || true)"
+          echo "$out" | grep -qE 'RESULT:.* 0 missing target\(s\)' \
+            || { echo "::error::fail-open lint reports MISSING guard target(s)"; exit 1; }
+
+      # Machine-derive the build identity from the release commit (review finding C3): the
+      # shipped version.js carries buildSha:'dev' in the tree; stamp it with GITHUB_SHA at
+      # release time (no runtime build - a one-shot sed on the published artifact) and fail
+      # closed if it is not 'dev' (already stamped / tampered).
+      - name: Stamp buildSha from the release commit
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+        run: |
+          v=content/tools/iam-blast-radius/engine/version.js
+          grep -qE "buildSha: *'dev'" "$v" || { echo "::error::version.js buildSha is not 'dev' (refusing to stamp)"; exit 1; }
+          sed -i "s/buildSha: *'dev'/buildSha: '${GITHUB_SHA}'/" "$v"
+          node -e "const s=require('fs').readFileSync('$v','utf8'); const m=/buildSha: '([^']+)'/.exec(s); if(!m||m[1]==='dev'){console.error('::error::buildSha still dev after stamp');process.exit(1)} console.log('stamped buildSha='+m[1])"
 
       - name: Publish (dry-run)
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
         run: npm publish --provenance --access public --dry-run
 
-      - name: Publish to npm with provenance
+      # Trusted publishing: no NODE_AUTH_TOKEN - npm mints a short-lived credential via
+      # OIDC (id-token: write) for the configured trusted publisher (review finding C2).
+      - name: Publish to npm with provenance (trusted publishing)
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Ship a CycloneDX SBOM alongside the provenance attestation. The package is
       # zero-dependency, so this is a small, verifiable record of exactly that.
