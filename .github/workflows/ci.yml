@@ -52,6 +52,11 @@ jobs:
         run: |
           node audit/lint/lint.mjs --check-targets \
             || { echo "::error::fail-open lint reports MISSING guard target(s)"; exit 1; }
+          # Stage-14 PERI-CHECK-TARGETS-NONGATING: ALSO gate on active hotspots against
+          # the committed baseline, so INTRODUCING a new fail-open hotspot (not just
+          # DELETING a target) fails CI. Line shifts are tolerated (key is file+class).
+          node audit/lint/lint.mjs --check-hotspots \
+            || { echo "::error::fail-open lint reports NEW/INCREASED hotspot(s) vs hotspot-baseline.json"; exit 1; }
           # Print the informational hotspot detail (non-gating) for the log.
           node audit/lint/lint.mjs 2>&1 || true
 

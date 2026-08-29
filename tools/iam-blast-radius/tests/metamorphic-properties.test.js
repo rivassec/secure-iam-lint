@@ -136,3 +136,47 @@ test('spoofTwinKey overwrites with a DISTINCT decoy (a copy would not guard the 
   assert.ok(twinKey, 'a zero-width twin key was added');
   assert.notEqual(principal[twinKey], principal.AWS, 'the decoy value must DIFFER from the real value');
 });
+
+// --- Stage-14 PERI-METAMORPHIC-NEVER-CLEAN-ORACLE ---------------------------
+// The relative metamorphic properties gate on hasConcreteFinding(base): if a detector
+// is DELETED, the finding vanishes from base AND mutant alike, so the relative props
+// stay GREEN while a real capability now reads CLEAN. The 4-entry NEVER_CLEAN list did
+// not anchor most ids. This self-closing gate asserts that EVERY emittable escalation id
+// has at least one corpus fixture that produces it AND does not read clean - a per-id
+// absolute reference. A deleted detector (its positive fixtures stop producing the id)
+// or a new escalation id without a non-clean witness fails here, directly.
+import { readdirSync as _readdirSync, readFileSync as _readFileSync, statSync as _statSync } from 'node:fs';
+import { fileURLToPath as _fileURLToPath } from 'node:url';
+import { dirname as _dirname, join as _join } from 'node:path';
+import { ESCALATION_IDS } from '../../../content/tools/iam-blast-radius/engine/escalation.js';
+
+const _fxDir = _join(_dirname(_fileURLToPath(import.meta.url)), '..', 'fixtures');
+function _allFixtures() {
+  const out = [];
+  for (const d of _readdirSync(_fxDir, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    for (const f of _readdirSync(_join(_fxDir, d.name))) {
+      if (!f.endsWith('.json')) continue;
+      try { out.push(JSON.parse(_readFileSync(_join(_fxDir, d.name, f), 'utf8'))); } catch { /* skip */ }
+    }
+  }
+  return out;
+}
+
+test('absolute per-id anchor: every escalation id has a NON-CLEAN corpus witness (deleted detector fails here)', () => {
+  const fixtures = _allFixtures();
+  const producedNonClean = new Set();
+  for (const data of fixtures) {
+    const pol = data.policy;
+    if (!pol) continue;
+    let r;
+    try { r = analyze(typeof data.policyRaw === 'string' ? data.policyRaw : JSON.stringify(pol), data.context || undefined); }
+    catch { continue; }
+    if (!r || !Array.isArray(r.findings)) continue;
+    if (isClean(r)) continue; // a clean result is not an anchor
+    for (const f of r.findings) producedNonClean.add(f.id);
+  }
+  const missing = ESCALATION_IDS.filter((id) => !producedNonClean.has(id));
+  assert.equal(missing.length, 0,
+    `escalation ids with NO non-clean corpus witness (a deleted detector or a new id without an absolute probe): ${missing.join(', ')}`);
+});

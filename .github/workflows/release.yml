@@ -125,6 +125,10 @@ jobs:
           # otherwise forge the ` 0 missing target(s)` anchor).
           node audit/lint/lint.mjs --check-targets \
             || { echo "::error::fail-open lint reports MISSING guard target(s)"; exit 1; }
+          # Stage-14 PERI-CHECK-TARGETS-NONGATING: also block a release on any NEW/
+          # increased active hotspot vs the committed baseline.
+          node audit/lint/lint.mjs --check-hotspots \
+            || { echo "::error::fail-open lint reports NEW/INCREASED hotspot(s) vs hotspot-baseline.json"; exit 1; }
 
       # Machine-derive the build identity from the release commit (review finding C3 +
       # Stage-11 #10). The SINGLE source is coverage.js BUILD_SHA - version.js derives

@@ -38,10 +38,36 @@ const ENGINE_DIR = 'content/tools/iam-blast-radius/engine';
 export function isEngineModule(f) {
   return /\.(js|mjs|cjs)$/.test(f) && !/\.test\.(js|mjs|cjs)$/.test(f);
 }
-const ENGINE_FILES_ON_DISK = readdirSync(resolve(REPO_ROOT, ENGINE_DIR))
-  .filter(isEngineModule)
-  .sort()
-  .map((f) => `${ENGINE_DIR}/${f}`);
+
+// Stage-14 PERI-NONRECURSIVE-READDIR: walk a shipped source directory RECURSIVELY,
+// returning repo-relative module paths. A non-recursive readdir left any SUBDIRECTORY
+// module (e.g. engine/sub/x.js after the planned F6 decomposition) import-loadable yet
+// invisible to the lint keyspace, the coverage==tree assertion, and the deletion
+// tripwire. Exported so the guard tests derive the tree the SAME way.
+export function walkModules(absDir, relBase) {
+  const out = [];
+  const ents = readdirSync(absDir, { withFileTypes: true });
+  for (const e of ents) {
+    const rel = `${relBase}/${e.name}`;
+    if (e.isDirectory()) {
+      out.push(...walkModules(resolve(absDir, e.name), rel));
+    } else if (isEngineModule(e.name)) {
+      out.push(rel);
+    }
+  }
+  return out.sort();
+}
+
+const ENGINE_FILES_ON_DISK = walkModules(resolve(REPO_ROOT, ENGINE_DIR), ENGINE_DIR);
+
+// Stage-14 PERI-ACTION-SUBTREE-LINT-KEYSPACE: the action/ subtree ships 8 loadable
+// modules that index.mjs imports; only 'action/index.mjs' was hardcoded, leaving the
+// rest unscanned. Derive action/ and cli/ the same recursive way as engine/ so every
+// shipped CLI/action module is in the fail-open keyspace. (Deletion of any of these is
+// also caught at import time - index.mjs / iam-br.mjs import them - so a manifest
+// deletion tripwire is only maintained for the larger, refactor-churned engine/ tree.)
+const ACTION_FILES_ON_DISK = walkModules(resolve(REPO_ROOT, 'action'), 'action');
+const CLI_FILES_ON_DISK = walkModules(resolve(REPO_ROOT, 'cli'), 'cli');
 
 // Stage-12 #2: deriving the target list SOLELY from readdir made --check-targets blind to
 // DELETION - a removed engine module simply vanishes from the listing, so it can never be
@@ -58,15 +84,13 @@ const ENGINE_FILES_REQUIRED = ENGINE_MANIFEST
   .map((f) => `${ENGINE_DIR}/${f}`);
 const ENGINE_FILES = [...new Set([...ENGINE_FILES_ON_DISK, ...ENGINE_FILES_REQUIRED])].sort();
 
-const TARGET_FILES = [
+const TARGET_FILES = [...new Set([
   ...ENGINE_FILES,
   'content/tools/iam-blast-radius/app.js',
   'content/tools/iam-blast-radius/worker.js',
-  'cli/iam-br.mjs',
-  'cli/scan.mjs',
-  'cli/sarif.mjs',
-  'action/index.mjs',
-];
+  ...CLI_FILES_ON_DISK,
+  ...ACTION_FILES_ON_DISK,
+])].sort();
 
 const ENGINE_REL_PREFIX = `${ENGINE_DIR}/`;
 
@@ -619,6 +643,36 @@ export function exitCodeFor({ active = [], missing = [] } = {}) {
 // Stable path the coverage-matrix indexer consumes as its AST-hotspots feed.
 const HOTSPOTS_OUT = resolve(HERE, 'hotspots.json');
 
+// Stage-14 PERI-CHECK-TARGETS-NONGATING: the committed baseline of accepted active
+// hotspots, keyed by "<file>::<cls>" -> count. --check-hotspots fails when the current
+// scan exceeds it (a NEW class in a file, or MORE instances). Keyed by file+class (not
+// line) so a refactor that shifts lines does not spuriously fail the gate. Regenerate
+// deliberately with `node audit/lint/lint.mjs --write-hotspot-baseline`.
+const HOTSPOT_BASELINE_OUT = resolve(HERE, 'hotspot-baseline.json');
+function loadHotspotBaseline() {
+  try { return JSON.parse(readFileSync(HOTSPOT_BASELINE_OUT, 'utf8')); }
+  catch { return {}; }
+}
+export function hotspotCounts(active) {
+  const m = new Map();
+  for (const f of active) {
+    const key = `${f.file}::${f.cls}`;
+    m.set(key, (m.get(key) || 0) + 1);
+  }
+  return m;
+}
+
+// Pure comparison exported for testing: which current (file::cls) hotspots exceed the
+// committed baseline (a NEW key, or MORE instances of an existing one). Empty => PASS.
+export function hotspotRegressions(active, baseline) {
+  const current = hotspotCounts(active);
+  const out = [];
+  for (const [key, n] of current) {
+    if (n > ((baseline && baseline[key]) || 0)) out.push({ key, was: (baseline && baseline[key]) || 0, now: n });
+  }
+  return out;
+}
+
 function formatFinding(fnd, allowlisted) {
   const tag = allowlisted ? ' [allowlisted]' : '';
   return (
@@ -653,6 +707,17 @@ function mainCli(argv) {
 
   const exit = exitCodeFor({ active, missing });
 
+  // Deliberately (re)write the committed hotspot baseline (--check-hotspots reads it).
+  // Run this only when you have reviewed the active hotspots and accept them.
+  if (args.includes('--write-hotspot-baseline')) {
+    const counts = Object.fromEntries([...hotspotCounts(active).entries()].sort());
+    writeFileSync(HOTSPOT_BASELINE_OUT, JSON.stringify(counts, null, 2) + '\n');
+    process.stdout.write(
+      `wrote hotspot-baseline.json (${Object.keys(counts).length} file::cls keys, ${active.length} active hotspots)\n`,
+    );
+    return 0;
+  }
+
   // Stage-11 #9: an UNSPOOFABLE gate for the security-meaningful signal (MISSING
   // guard targets). CI used to grep the human RESULT line, but that line prints
   // alongside echoed source SNIPPETS, so a planted comment
@@ -666,6 +731,25 @@ function mainCli(argv) {
     process.stdout.write(
       `CHECK_TARGETS: scanned=${scanned.length} missing=${missing.length} -> ${ok ? 'PASS' : 'FAIL'}\n`,
     );
+    return ok ? 0 : 1;
+  }
+
+  // Stage-14 PERI-CHECK-TARGETS-NONGATING: --check-targets only fails on a DELETED
+  // guard target; the full active-hotspot lint ran non-gating (|| true) in CI, so
+  // INTRODUCING a new fail-open hotspot in an in-keyspace file never failed CI. This
+  // mode gates on active hotspots against a committed BASELINE (hotspot-baseline.json:
+  // a { "<file>::<cls>": count } map of the known/accepted hotspots). A NEW (file,cls)
+  // hotspot class, or MORE instances of an existing one, forces a non-zero exit; line
+  // shifts from refactors are tolerated (the key is file+class, not line). Read-only:
+  // it never rewrites the baseline. Exit 0 iff no active hotspot exceeds the baseline
+  // (missing targets ALSO fail, folding in the --check-targets guarantee).
+  if (args.includes('--check-hotspots')) {
+    const regressions = hotspotRegressions(active, loadHotspotBaseline());
+    const ok = regressions.length === 0 && missing.length === 0;
+    process.stdout.write(
+      `CHECK_HOTSPOTS: active=${active.length} new/increased=${regressions.length} missing=${missing.length} -> ${ok ? 'PASS' : 'FAIL'}\n`,
+    );
+    for (const r of regressions) process.stdout.write(`  NEW/INCREASED: ${r.key} (${r.was} -> ${r.now})\n`);
     return ok ? 0 : 1;
   }
 

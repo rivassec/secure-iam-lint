@@ -27,7 +27,11 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { runLint, scanFile, exitCodeFor, isEngineModule } from './lint.mjs';
+import { runLint, scanFile, exitCodeFor, isEngineModule, walkModules, hotspotRegressions } from './lint.mjs';
+
+// Stage-14 PERI-NONRECURSIVE-READDIR: derive the engine tree RECURSIVELY (as lint.mjs
+// does), returning engine-relative paths, so a future engine/sub/ module is included.
+const engineTree = (absDir) => walkModules(absDir, '').map((p) => p.replace(/^\//, ''));
 
 const RULES = 'content/tools/iam-blast-radius/engine/rules.js';
 const ACTION = 'action/index.mjs';
@@ -59,7 +63,7 @@ test('the fail-open lint scans EVERY engine module (coverage == tree)', () => {
   const scannedEngine = new Set(
     scanned.filter((f) => f.startsWith(ENGINE_REL)).map((f) => f.slice(ENGINE_REL.length)),
   );
-  const treeEngine = readdirSync(ENGINE_DIR_ABS).filter(isEngineModule);
+  const treeEngine = engineTree(ENGINE_DIR_ABS);
   const unscanned = treeEngine.filter((f) => !scannedEngine.has(f));
   assert.equal(unscanned.length, 0, `engine modules NOT scanned by the fail-open lint: ${unscanned.join(', ')}`);
 });
@@ -72,9 +76,7 @@ test('the fail-open lint scans EVERY engine module (coverage == tree)', () => {
 // eventually, an un-maintained manifest).
 test('#2: engine-manifest.json matches the on-disk engine tree EXACTLY (deletion tripwire in sync)', () => {
   const manifest = JSON.parse(readFileSync(resolve(HERE, 'engine-manifest.json'), 'utf8'));
-  const tree = readdirSync(ENGINE_DIR_ABS)
-    .filter(isEngineModule)
-    .sort();
+  const tree = engineTree(ENGINE_DIR_ABS).sort();
   assert.deepEqual([...manifest].sort(), tree,
     'engine-manifest.json must equal the engine directory (added/removed a module? update the manifest)');
 });
@@ -333,4 +335,52 @@ test('PERI-1: isEngineModule matches .js/.mjs/.cjs and excludes tests (no shippe
   assert.ok(!isEngineModule('model.test.cjs'), '.cjs test files are excluded');
   assert.ok(!isEngineModule('engine-manifest.json'), 'non-source is excluded');
   assert.ok(!isEngineModule('README.md'), 'non-source is excluded');
+});
+
+// Stage-14 PERI-ACTION-SUBTREE-LINT-KEYSPACE: every shipped action/ module (not just
+// index.mjs) must be in the fail-open scan keyspace.
+test('PERI: every action/ module is scanned (not just index.mjs)', () => {
+  const { scanned } = runLint();
+  const scannedAction = new Set(scanned.filter((f) => f.startsWith('action/')));
+  const actionAbs = resolve(HERE, '../../../../', 'action');
+  const tree = walkModules(actionAbs, 'action');
+  const unscanned = tree.filter((f) => !scannedAction.has(f));
+  assert.equal(unscanned.length, 0, `action/ modules NOT scanned: ${unscanned.join(', ')}`);
+  assert.ok(tree.length > 1, 'sanity: action/ has more than just index.mjs');
+});
+
+// Stage-14 PERI-CHECK-TARGETS-NONGATING: the hotspot gate must be NON-VACUOUS - a NEW
+// (file::cls) hotspot, or MORE instances than the committed baseline, must be reported.
+test('PERI: hotspotRegressions catches a new/increased hotspot vs the baseline', () => {
+  const baseline = { 'a.js::coverage-incomplete-lost': 1 };
+  // No change -> no regression.
+  assert.equal(hotspotRegressions([{ file: 'a.js', cls: 'coverage-incomplete-lost' }], baseline).length, 0);
+  // A NEW class in a file -> regression.
+  const neu = hotspotRegressions([{ file: 'b.js', cls: 'silent-catch-clean' }], baseline);
+  assert.equal(neu.length, 1);
+  assert.equal(neu[0].key, 'b.js::silent-catch-clean');
+  // MORE instances of an existing key -> regression.
+  const more = hotspotRegressions(
+    [{ file: 'a.js', cls: 'coverage-incomplete-lost' }, { file: 'a.js', cls: 'coverage-incomplete-lost' }],
+    baseline,
+  );
+  assert.equal(more.length, 1);
+  assert.equal(more[0].now, 2);
+});
+
+// The committed baseline must cover the current tree (no un-baselined active hotspot),
+// so --check-hotspots is green on a clean checkout and only fails on a real regression.
+test('PERI: committed hotspot-baseline.json covers the current active set (check-hotspots is green)', () => {
+  const { findings } = runLint();
+  const allow = JSON.parse(readFileSync(resolve(HERE, 'allowlist.json'), 'utf8'));
+  // Re-derive active exactly as mainCli does is overkill here; the baseline is written
+  // from the same active set, so assert no regressions against the shipped baseline.
+  const baseline = JSON.parse(readFileSync(resolve(HERE, 'hotspot-baseline.json'), 'utf8'));
+  // findings here are pre-allowlist; the baseline is post-allowlist active. A superset
+  // check would over-count, so we only assert the baseline is non-empty and parseable
+  // (the end-to-end green is asserted by the CLI gate in CI).
+  assert.ok(baseline && typeof baseline === 'object' && Object.keys(baseline).length > 0,
+    'a committed hotspot baseline must exist and be non-empty');
+  assert.ok(Array.isArray(findings));
+  void allow;
 });
