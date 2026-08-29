@@ -190,8 +190,15 @@ export function sanitizeTree(value) {
       // __proto__/constructor/prototype long before this display sanitizer, but a future
       // caller could hand sanitizeTree() a raw JSON.parse'd object that skipped validate.js.
       // Never reparent the output via a dangerous key.
-      if (SANITIZE_DANGEROUS_KEYS.has(key)) continue;
-      out[neutralizeForDisplay(key)] = sanitizeTree(value[key]);
+      //
+      // Stage-11 #8: neutralize the key BEFORE the blocklist check. Checking the RAW
+      // key let a format-control-spoofed twin (`__pro<U+200B>to__`) pass - it is not
+      // literally "__proto__" - and neutralizeForDisplay() then collapsed it back to
+      // "__proto__", reparenting the output (or dropping the value). Test the CLEANED
+      // key, the same strip-before-check ordering the model boundary uses.
+      const cleanKey = neutralizeForDisplay(key);
+      if (SANITIZE_DANGEROUS_KEYS.has(cleanKey)) continue;
+      out[cleanKey] = sanitizeTree(value[key]);
     }
     return out;
   }
