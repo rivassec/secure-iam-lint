@@ -24,5 +24,6 @@
   "content/tools/iam-blast-radius/engine/trust-principal-helpers.js::candidate-drop": 1,
   "content/tools/iam-blast-radius/engine/trust-principal-helpers.js::unbounded-walk": 1,
   "content/tools/iam-blast-radius/engine/validate.js::silent-catch-clean": 1,
-  "content/tools/iam-blast-radius/engine/validate.js::unbounded-walk": 1
+  "content/tools/iam-blast-radius/engine/validate.js::unbounded-walk": 1,
+  "content/tools/iam-blast-radius/samples.js::unbounded-walk": 1
 }

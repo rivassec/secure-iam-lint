@@ -244,6 +244,11 @@ export function detectCredentialCreation(allows, out, denies) {
 //   cloudformation:UpdateStack- a changed template acts through the stack's role.
 // (Create*/RunInstances create a NEW workload and genuinely need iam:PassRole to attach a
 // role, so they stay on the compound PassRole path and are NOT listed here.)
+// Severity ordering for the dedup viability gate (Stage-15): a covering PASSROLE-*
+// finding only suppresses the standalone overwrite finding when it is at least as
+// severe (>= high) - a demoted, non-viable medium does not.
+const SEVERITY_RANK = Object.freeze({ info: 0, low: 1, medium: 2, high: 3, critical: 4 });
+
 const COMPUTE_CODE_OVERWRITE_ACTIONS = Object.freeze([
   'lambda:UpdateFunctionCode',
   'lambda:UpdateFunctionConfiguration',
@@ -258,14 +263,23 @@ export function detectComputeCodeOverwrite(allows, out, denies) {
     if (matched.length === 0) continue;
     const deny = applyDenyToActions(denies, matched, stmt);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
-    // Dedup: when a viable iam:PassRole->service path already credited THIS statement's
+    // Dedup: when a VIABLE iam:PassRole->service path already credited THIS statement's
     // overwrite grant, detectPassRolePaths (which runs first) has emitted a PASSROLE-*
     // finding (critical) covering it - PASSROLE-LAMBDA for lambda, PASSROLE-SERVICE for
     // codebuild/glue/cloudformation. Do not also emit the standalone HIGH finding there;
     // the paired case stays critical-only. When no such path exists (no PassRole, or a
     // PassRole that does not permit this service), no PASSROLE-* covers it and this fires.
+    //
+    // Stage-15 CRITICAL: the covering PASSROLE-* must itself be BLOCKING (severity >=
+    // high). A cross-account / non-viable PassRole is DEMOTED to PASSROLE-*:medium but
+    // still overlaps the overwrite statement; suppressing on overlap ALONE let an inert
+    // cross-account PassRole DECOY demote the pair to a sub-threshold medium and drop the
+    // standalone high -> CLEAN (a fail-open, worsened by supplying the correct
+    // subjectAccount). Only a PASSROLE-* that is at least as severe as this finding
+    // genuinely covers the standalone capability, so gate the dedup on its severity.
     const alreadyPaired = out.some((f) =>
       /^PASSROLE-/.test(f.id)
+      && SEVERITY_RANK[f.severity] >= SEVERITY_RANK.high
       && (f.statementIndex === stmt.index
         || (f.contributingStatements || []).some((cs) => cs.statementIndex === stmt.index)));
     if (alreadyPaired) continue;

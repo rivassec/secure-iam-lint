@@ -54,6 +54,25 @@ test('Stage-14: the paired PassRole+lambda case stays critical-only (dedup, no C
   assert.ok(!ids(r).includes('COMPUTE-CODE-OVERWRITE'), 'not double-flagged (deduped vs PASSROLE-LAMBDA)');
 });
 
+test('Stage-15 CRITICAL: an inert cross-account PassRole decoy must NOT suppress COMPUTE-CODE-OVERWRITE', () => {
+  // The dedup must only defer to a covering PASSROLE-* that is itself BLOCKING (>= high).
+  // A cross-account (non-viable) PassRole demotes to PASSROLE-LAMBDA:medium but still
+  // overlaps the overwrite statement; if the dedup suppressed on overlap alone, the high
+  // COMPUTE-CODE-OVERWRITE vanished and only the sub-threshold medium survived -> CLEAN.
+  const p = {
+    Version: '2012-10-17',
+    Statement: [
+      { Effect: 'Allow', Action: 'lambda:UpdateFunctionCode', Resource: 'arn:aws:lambda:us-east-1:111122223333:function:foo' },
+      { Effect: 'Allow', Action: 'iam:PassRole', Resource: 'arn:aws:iam::999988887777:role/r' },
+    ],
+  };
+  const s = scan({ text: JSON.stringify(p), family: 'identity', subjectAccount: '111122223333' });
+  assert.notEqual(s.exitCode, 0, 'a cross-account PassRole decoy suppressed the standalone overwrite -> FAIL-OPEN');
+  const r = analyze(JSON.stringify(p), { family: 'identity', requireExplicitFamily: true, subjectAccount: '111122223333' });
+  assert.ok(ids(r).includes('COMPUTE-CODE-OVERWRITE'),
+    'the standalone high finding still fires when the only covering PassRole path is a demoted (non-viable) medium');
+});
+
 test('Stage-14: paired PassRole+codebuild stays critical-only (dedup vs PASSROLE-SERVICE)', () => {
   const p = {
     Version: '2012-10-17',

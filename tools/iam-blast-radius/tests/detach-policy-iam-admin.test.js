@@ -23,3 +23,11 @@ for (const action of ['iam:DetachRolePolicy', 'iam:DetachUserPolicy', 'iam:Detac
     assert.ok(ids(A(p)).includes('DIRECT-IAM-ADMIN'), `${action} must fire DIRECT-IAM-ADMIN`);
   });
 }
+
+// Stage-15: iam:UpdateAccessKey - cataloged Write credential-manipulation, was silent.
+test('iam:UpdateAccessKey is NOT clean (fires DIRECT-IAM-ADMIN, sibling of CreateAccessKey)', () => {
+  const p = { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: 'iam:UpdateAccessKey', Resource: 'arn:aws:iam::123456789012:user/alice' }] };
+  const s = scan({ text: JSON.stringify(p), family: 'identity' });
+  assert.notEqual(s.exitCode, 0, 'iam:UpdateAccessKey must not read CLEAN');
+  assert.ok(ids(A(p)).includes('DIRECT-IAM-ADMIN'), 'iam:UpdateAccessKey must fire DIRECT-IAM-ADMIN');
+});

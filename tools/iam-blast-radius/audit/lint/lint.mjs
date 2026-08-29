@@ -69,6 +69,15 @@ const ENGINE_FILES_ON_DISK = walkModules(resolve(REPO_ROOT, ENGINE_DIR), ENGINE_
 const ACTION_FILES_ON_DISK = walkModules(resolve(REPO_ROOT, 'action'), 'action');
 const CLI_FILES_ON_DISK = walkModules(resolve(REPO_ROOT, 'cli'), 'cli');
 
+// Stage-15 periphery: the content root ships browser-loadable modules beyond app.js /
+// worker.js (e.g. samples.js, imported by app.js). Hardcoding only app.js + worker.js
+// left the rest outside the keyspace. Walk the whole content root recursively; the
+// engine/ subtree it also returns is deduped against ENGINE_FILES (which keeps the
+// manifest deletion tripwire), so nothing is lost and every shipped content-root module
+// is scanned.
+const CONTENT_ROOT = 'content/tools/iam-blast-radius';
+const CONTENT_ROOT_FILES = walkModules(resolve(REPO_ROOT, CONTENT_ROOT), CONTENT_ROOT);
+
 // Stage-12 #2: deriving the target list SOLELY from readdir made --check-targets blind to
 // DELETION - a removed engine module simply vanishes from the listing, so it can never be
 // `missing`, and the whole 63-module guard surface could be gutted with the gate still
@@ -86,8 +95,7 @@ const ENGINE_FILES = [...new Set([...ENGINE_FILES_ON_DISK, ...ENGINE_FILES_REQUI
 
 const TARGET_FILES = [...new Set([
   ...ENGINE_FILES,
-  'content/tools/iam-blast-radius/app.js',
-  'content/tools/iam-blast-radius/worker.js',
+  ...CONTENT_ROOT_FILES,
   ...CLI_FILES_ON_DISK,
   ...ACTION_FILES_ON_DISK,
 ])].sort();

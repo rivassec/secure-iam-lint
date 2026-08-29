@@ -136,6 +136,11 @@ export const IAM_ADMIN_ACTIONS = Object.freeze([
   'iam:CreateUser',
   'iam:CreateRole',
   'iam:CreateAccessKey',
+  // Stage-15: iam:UpdateAccessKey flips a target user's access key Active/Inactive - a
+  // standalone credential-manipulation write (reactivate a compromised key = persistence;
+  // deactivate a user's only key = DoS), no PassRole. Cataloged Write yet silent while the
+  // sibling CreateAccessKey fires - a cataloged-but-silent CLEAN read (fail-open).
+  'iam:UpdateAccessKey',
   'iam:CreateLoginProfile',
   'iam:UpdateLoginProfile',
   'iam:UpdateAssumeRolePolicy',
