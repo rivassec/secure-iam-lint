@@ -86,6 +86,22 @@ test('Stage-14: paired PassRole+codebuild stays critical-only (dedup vs PASSROLE
   assert.ok(!ids(r).includes('COMPUTE-CODE-OVERWRITE'), 'not double-flagged (deduped vs PASSROLE-SERVICE)');
 });
 
+test('Stage-16 per-action dedup: a PassRole-uncovered overwrite (glue) still fires even when a co-present lambda overwrite IS covered', () => {
+  const p = {
+    Version: '2012-10-17',
+    Statement: [
+      { Sid: 'lam', Effect: 'Allow', Action: 'lambda:UpdateFunctionCode', Resource: 'arn:aws:lambda:us-east-1:111111111111:function:fn' },
+      { Sid: 'glu', Effect: 'Allow', Action: 'glue:UpdateJob', Resource: 'arn:aws:glue:us-east-1:111111111111:job/j' },
+      { Sid: 'pass', Effect: 'Allow', Action: 'iam:PassRole', Resource: '*', Condition: { StringEquals: { 'iam:PassedToService': 'lambda.amazonaws.com' } } },
+    ],
+  };
+  const r = analyze(JSON.stringify(p), { family: 'identity', requireExplicitFamily: true, subjectAccount: '111111111111' });
+  assert.ok(ids(r).includes('PASSROLE-LAMBDA'), 'the covered lambda path fires the compound critical');
+  const cco = r.findings.filter((f) => f.id === 'COMPUTE-CODE-OVERWRITE');
+  assert.equal(cco.length, 1, 'exactly one standalone overwrite finding for the UNCOVERED service');
+  assert.equal(cco[0].escalation.service, 'glue', 'the surviving overwrite is glue (lambda is covered by PASSROLE-LAMBDA)');
+});
+
 test('EFO-3: a same-policy Deny covering the overwrite action removes the path (clean)', () => {
   const p = {
     Version: '2012-10-17',

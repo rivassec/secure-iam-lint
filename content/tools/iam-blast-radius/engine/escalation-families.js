@@ -259,7 +259,12 @@ const COMPUTE_CODE_OVERWRITE_ACTIONS = Object.freeze([
 
 export function detectComputeCodeOverwrite(allows, out, denies) {
   for (const stmt of allows) {
-    const matched = grantedPatternsFor(stmt, COMPUTE_CODE_OVERWRITE_ACTIONS);
+    // A bare "*" action is owned by WILDCARD-ACTION (and every PASSROLE-* critical it
+    // implies); this detector targets SPECIFIC overwrite actions (service wildcards like
+    // `lambda:*` are kept - they name a concrete service's overwrite capability). Mirrors
+    // matchPatterns' `isFullWildcard` skip so an admin "*" is not double-flagged here with
+    // a meaningless service:"*".
+    const matched = grantedPatternsFor(stmt, COMPUTE_CODE_OVERWRITE_ACTIONS).filter((a) => a !== '*');
     if (matched.length === 0) continue;
     const deny = applyDenyToActions(denies, matched, stmt);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
@@ -270,23 +275,31 @@ export function detectComputeCodeOverwrite(allows, out, denies) {
     // the paired case stays critical-only. When no such path exists (no PassRole, or a
     // PassRole that does not permit this service), no PASSROLE-* covers it and this fires.
     //
-    // Stage-15 CRITICAL: the covering PASSROLE-* must itself be BLOCKING (severity >=
-    // high). A cross-account / non-viable PassRole is DEMOTED to PASSROLE-*:medium but
-    // still overlaps the overwrite statement; suppressing on overlap ALONE let an inert
-    // cross-account PassRole DECOY demote the pair to a sub-threshold medium and drop the
-    // standalone high -> CLEAN (a fail-open, worsened by supplying the correct
-    // subjectAccount). Only a PASSROLE-* that is at least as severe as this finding
-    // genuinely covers the standalone capability, so gate the dedup on its severity.
-    const alreadyPaired = out.some((f) =>
-      /^PASSROLE-/.test(f.id)
-      && SEVERITY_RANK[f.severity] >= SEVERITY_RANK.high
-      && (f.statementIndex === stmt.index
-        || (f.contributingStatements || []).some((cs) => cs.statementIndex === stmt.index)));
-    if (alreadyPaired) continue;
-    const actions = deny.actions;
-    // Service is the prefix of the first matched action (lambda / codebuild / glue /
-    // cloudformation) - all matched actions in one statement share the overwrite class.
-    const service = String(matched[0]).split(':')[0] || null;
+    // Stage-15 CRITICAL + Stage-16 per-action: the covering PASSROLE-* must itself be
+    // BLOCKING (severity >= high) AND must credit the SAME SERVICE as the overwrite
+    // action. A cross-account / non-viable PassRole is DEMOTED to PASSROLE-*:medium but
+    // still overlaps the statement; suppressing on overlap ALONE let an inert cross-account
+    // PassRole DECOY demote the pair to a sub-threshold medium and drop the standalone high
+    // -> CLEAN (fail-open, worsened by supplying the correct subjectAccount). And a PassRole
+    // path for service A (e.g. lambda) must not suppress an overwrite of service B (e.g.
+    // glue) co-located in the same statement (a redundancy loss). So collect the set of
+    // services credited by a BLOCKING (>= high) PASSROLE-* overlapping this statement, and
+    // emit only for overwrite actions whose service is NOT already covered. The >= high gate
+    // preserves the safety invariant: suppression only removes an action a blocking finding
+    // already covers, so the verdict can never become a bare CLEAN through this dedup.
+    const coveredServices = new Set();
+    for (const f of out) {
+      if (!/^PASSROLE-/.test(f.id)) continue;
+      if (SEVERITY_RANK[f.severity] < SEVERITY_RANK.high) continue;
+      const overlaps = f.statementIndex === stmt.index
+        || (f.contributingStatements || []).some((cs) => cs.statementIndex === stmt.index);
+      if (overlaps && f.escalation && f.escalation.service) coveredServices.add(f.escalation.service);
+    }
+    const actions = deny.actions.filter((a) => !coveredServices.has(String(a).split(':')[0]));
+    if (actions.length === 0) continue; // every overwrite action is covered -> paired critical-only
+    // Service is the prefix of the first surviving action (all surviving actions here are
+    // NOT covered by a blocking PassRole path).
+    const service = String(actions[0]).split(':')[0] || null;
     out.push(
       makeEscalation('COMPUTE-CODE-OVERWRITE', stmt, {
         // High, not critical (mirrors IAM-102): a standalone direct primitive, not a

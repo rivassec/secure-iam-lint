@@ -1,0 +1,18 @@
+{
+  "name": "a non-covering Deny does not remove COMPUTE-CODE-OVERWRITE (deny witness)",
+  "note": "Stage-16 deny witness: a Deny on an UNRELATED action does not suppress the standalone compute-overwrite grant, so COMPUTE-CODE-OVERWRITE still fires; no iam:PassRole so no PASSROLE path.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "Overwrite", "Effect": "Allow", "Action": "lambda:UpdateFunctionCode", "Resource": "arn:aws:lambda:us-east-1:111122223333:function:fn" },
+      { "Sid": "DenyUnrelated", "Effect": "Deny", "Action": "lambda:DeleteFunction", "Resource": "*" }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["COMPUTE-CODE-OVERWRITE"],
+    "mustNotFind": ["PASSROLE-LAMBDA"],
+    "maxSeverity": { "COMPUTE-CODE-OVERWRITE": "high" },
+    "maxPathExploitability": {}
+  },
+  "rationale": "An explicit Deny on an UNRELATED action (lambda:DeleteFunction) does not cover the overwrite grant (lambda:UpdateFunctionCode), so the standalone code-overwrite capability survives and COMPUTE-CODE-OVERWRITE fires. Witnesses the rule's interaction with a present-but-non-covering Deny."
+}
