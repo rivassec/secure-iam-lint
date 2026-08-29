@@ -27,7 +27,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { runLint, scanFile, exitCodeFor } from './lint.mjs';
+import { runLint, scanFile, exitCodeFor, isEngineModule } from './lint.mjs';
 
 const RULES = 'content/tools/iam-blast-radius/engine/rules.js';
 const ACTION = 'action/index.mjs';
@@ -59,7 +59,7 @@ test('the fail-open lint scans EVERY engine module (coverage == tree)', () => {
   const scannedEngine = new Set(
     scanned.filter((f) => f.startsWith(ENGINE_REL)).map((f) => f.slice(ENGINE_REL.length)),
   );
-  const treeEngine = readdirSync(ENGINE_DIR_ABS).filter((f) => f.endsWith('.js') && !f.endsWith('.test.js'));
+  const treeEngine = readdirSync(ENGINE_DIR_ABS).filter(isEngineModule);
   const unscanned = treeEngine.filter((f) => !scannedEngine.has(f));
   assert.equal(unscanned.length, 0, `engine modules NOT scanned by the fail-open lint: ${unscanned.join(', ')}`);
 });
@@ -73,7 +73,7 @@ test('the fail-open lint scans EVERY engine module (coverage == tree)', () => {
 test('#2: engine-manifest.json matches the on-disk engine tree EXACTLY (deletion tripwire in sync)', () => {
   const manifest = JSON.parse(readFileSync(resolve(HERE, 'engine-manifest.json'), 'utf8'));
   const tree = readdirSync(ENGINE_DIR_ABS)
-    .filter((f) => f.endsWith('.js') && !f.endsWith('.test.js'))
+    .filter(isEngineModule)
     .sort();
   assert.deepEqual([...manifest].sort(), tree,
     'engine-manifest.json must equal the engine directory (added/removed a module? update the manifest)');
@@ -316,4 +316,21 @@ test('coverage-incomplete-lost: fires when a local flag is never propagated', ()
   const kept = `function f(){ let incomplete = false; if (x) incomplete = true; return { out, incomplete }; }`;
   assert.equal(scanFile('x.js', lost).filter((f) => f.cls === 'coverage-incomplete-lost').length, 1);
   assert.equal(scanFile('x.js', kept).filter((f) => f.cls === 'coverage-incomplete-lost').length, 0);
+});
+
+// Stage-13 PERI-1: the fail-open lint keyspace must treat ANY import-loadable engine
+// source as a scan target, not only a flat `.js`. A dropped `.mjs`/`.cjs` module was
+// import-loadable yet invisible to the coverage==tree check, the deletion tripwire, and
+// --check-targets, so a shipped module carrying a silent-catch-clean fail-open could ship
+// green. lint.mjs and this test now share the single isEngineModule() predicate, so the
+// keyspace cannot drift and no shipped module type is silently unscanned.
+test('PERI-1: isEngineModule matches .js/.mjs/.cjs and excludes tests (no shipped module type is invisible)', () => {
+  assert.ok(isEngineModule('rules.mjs'), '.mjs engine module must be in the scan keyspace');
+  assert.ok(isEngineModule('worker.cjs'), '.cjs engine module must be in the scan keyspace');
+  assert.ok(isEngineModule('model.js'), '.js engine module must be in the scan keyspace');
+  assert.ok(!isEngineModule('model.test.js'), 'test files are excluded');
+  assert.ok(!isEngineModule('model.test.mjs'), '.mjs test files are excluded');
+  assert.ok(!isEngineModule('model.test.cjs'), '.cjs test files are excluded');
+  assert.ok(!isEngineModule('engine-manifest.json'), 'non-source is excluded');
+  assert.ok(!isEngineModule('README.md'), 'non-source is excluded');
 });

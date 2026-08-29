@@ -29,8 +29,17 @@ const ENGINE_DIR = 'content/tools/iam-blast-radius/engine';
 // hardcoded list previously scanned 24 of 63 files, leaving 62% of the engine outside
 // the fail-open tripwire. The coverage==tree property is asserted by failopen-lint.test.js
 // so this cannot silently drift again.
+// Stage-13 PERI-1: an engine module is any import-loadable source, NOT only a flat
+// `.js`. A dropped `.mjs` / `.cjs` module was import-loadable yet invisible to this
+// keyspace (the filter was literal `.endsWith('.js')`), so a shipped module carrying a
+// silent-catch-clean fail-open could ship with every gate green. The keyspace now
+// matches .js/.mjs/.cjs (excluding test files) via one shared predicate, so lint.mjs and
+// failopen-lint.test.js (coverage==tree, deletion tripwire) can never disagree on it.
+export function isEngineModule(f) {
+  return /\.(js|mjs|cjs)$/.test(f) && !/\.test\.(js|mjs|cjs)$/.test(f);
+}
 const ENGINE_FILES_ON_DISK = readdirSync(resolve(REPO_ROOT, ENGINE_DIR))
-  .filter((f) => f.endsWith('.js') && !f.endsWith('.test.js'))
+  .filter(isEngineModule)
   .sort()
   .map((f) => `${ENGINE_DIR}/${f}`);
 
