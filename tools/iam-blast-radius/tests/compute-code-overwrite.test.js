@@ -25,6 +25,12 @@ const CLASS = [
   ['lambda:UpdateFunctionConfiguration', 'arn:aws:lambda:us-east-1:111111111111:function:prod-fn'],
   ['codebuild:UpdateProject', 'arn:aws:codebuild:us-east-1:111111111111:project/prod'],
   ['glue:UpdateJob', 'arn:aws:glue:us-east-1:111111111111:job/prod'],
+  // glue:UpdateDevEndpoint: inject an SSH public key / custom libraries into an EXISTING
+  // Glue dev endpoint, then connect and run code as the endpoint's already-bound role
+  // (Rhino privesc method; no PassRole). Same "mutate existing compute -> exec as its role"
+  // shape as the rest of the family. Added after the ground-truth benchmark surfaced it as
+  // backstop-only (audit/benchmark).
+  ['glue:UpdateDevEndpoint', 'arn:aws:glue:us-east-1:111111111111:devEndpoint/prod'],
   ['cloudformation:UpdateStack', 'arn:aws:cloudformation:us-east-1:111111111111:stack/prod/*'],
 ];
 

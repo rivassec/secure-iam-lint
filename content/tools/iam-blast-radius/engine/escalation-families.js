@@ -254,6 +254,10 @@ const COMPUTE_CODE_OVERWRITE_ACTIONS = Object.freeze([
   'lambda:UpdateFunctionConfiguration',
   'codebuild:UpdateProject',
   'glue:UpdateJob',
+  // glue:UpdateDevEndpoint: mutate an existing Glue dev endpoint (inject SSH public key /
+  // custom libraries) and connect to run code as the endpoint's already-bound role - a
+  // standalone code-exec primitive needing no iam:PassRole, same shape as glue:UpdateJob.
+  'glue:UpdateDevEndpoint',
   'cloudformation:UpdateStack',
 ]);
 

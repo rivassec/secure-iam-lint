@@ -123,6 +123,7 @@
             "lambda:UpdateFunctionConfiguration",
             "codebuild:UpdateProject",
             "glue:UpdateJob",
+            "glue:UpdateDevEndpoint",
             "cloudformation:UpdateStack"
           ],
           "resources": [
@@ -144,6 +145,7 @@
               "lambda:UpdateFunctionConfiguration",
               "codebuild:UpdateProject",
               "glue:UpdateJob",
+              "glue:UpdateDevEndpoint",
               "cloudformation:UpdateStack"
             ],
             "prerequisites": {
@@ -158,6 +160,7 @@
                         "lambda:UpdateFunctionConfiguration",
                         "codebuild:UpdateProject",
                         "glue:UpdateJob",
+                        "glue:UpdateDevEndpoint",
                         "cloudformation:UpdateStack"
                       ]
                     }
@@ -179,6 +182,7 @@
                 "lambda:UpdateFunctionConfiguration",
                 "codebuild:UpdateProject",
                 "glue:UpdateJob",
+                "glue:UpdateDevEndpoint",
                 "cloudformation:UpdateStack"
               ],
               "resources": [
@@ -197,6 +201,7 @@
                 "lambda:UpdateFunctionConfiguration",
                 "codebuild:UpdateProject",
                 "glue:UpdateJob",
+                "glue:UpdateDevEndpoint",
                 "cloudformation:UpdateStack"
               ]
             }
@@ -448,7 +453,7 @@
               "ruleId": "COMPUTE-CODE-OVERWRITE",
               "level": "error",
               "message": {
-                "text": "Overwrite existing compute code/config (runs under its existing role, no PassRole) [identity policy] at statement `EverythingExceptIam`; actions: `cloudformation:UpdateStack`, `codebuild:UpdateProject`, `glue:UpdateJob`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`. Potential blast radius from the supplied policy context only; not effective permissions."
+                "text": "Overwrite existing compute code/config (runs under its existing role, no PassRole) [identity policy] at statement `EverythingExceptIam`; actions: `cloudformation:UpdateStack`, `codebuild:UpdateProject`, `glue:UpdateDevEndpoint`, `glue:UpdateJob`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`. Potential blast radius from the supplied policy context only; not effective permissions."
               },
               "locations": [
                 {
@@ -460,7 +465,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "08d2a149977b2a0999a011f26dc7"
+                "iamBlastRadius/semanticIdentity/v1": "1277144feabe5c1453dda2f3aaba"
               },
               "properties": {
                 "category": "security",
@@ -482,6 +487,7 @@
                       "lambda\\:UpdateFunctionConfiguration",
                       "codebuild\\:UpdateProject",
                       "glue\\:UpdateJob",
+                      "glue\\:UpdateDevEndpoint",
                       "cloudformation\\:UpdateStack"
                     ],
                     "resources": [
@@ -614,6 +620,7 @@
         "actions": [
           "cloudformation:UpdateStack",
           "codebuild:UpdateProject",
+          "glue:UpdateDevEndpoint",
           "glue:UpdateJob",
           "lambda:UpdateFunctionCode",
           "lambda:UpdateFunctionConfiguration"
@@ -622,7 +629,7 @@
           "*"
         ],
         "conditionsPresent": false,
-        "evidenceWhyHash": "f218418ec3f832b6"
+        "evidenceWhyHash": "91b19b72fe9e21a0"
       },
       {
         "id": "NOTACTION-ALLOW",
