@@ -176,6 +176,7 @@ test('every rule family has at least one positive and one negative fixture', () 
     'WILDCARD-ACTION': ['wildcard', 'direct-iam'],
     'WILDCARD-RESOURCE': ['wildcard', 'direct-iam', 'detection'],
     'DIRECT-IAM-ADMIN': ['direct-iam'],
+    'RESOURCE-POLICY-WRITE': ['resource-policy'],
     'DATA-EXFIL': ['exfil'],
     'KMS-DECRYPT': ['exfil'],
     'DATA-READ': ['exfil'],

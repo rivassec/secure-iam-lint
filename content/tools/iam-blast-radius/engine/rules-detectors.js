@@ -1,5 +1,5 @@
 // rules-detectors.js - the identity-policy rule detectors (wildcard action/resource, direct-IAM-admin, data-exfil, kms-decrypt, scoped data-read + container-read spared-resource analysis, destructive, detection-impairment, notaction-allow, group-membership). Extracted (behavior-preserving).
-import { actionGrants, actionService, actionVerb, concreteResourceAccount, groupNameFromArn, groupNameSuggestsPrivilege, isFullWildcard, isServiceWildcard, isWholeContainerRead, resourceAccountFromCondition, resourceHasVariable, resourceInfersSensitive, BULK_READ_ACTIONS, CONCRETE_ACCOUNT_ID_RE, DATA_READ_ACTIONS, DESTRUCTIVE_VERB, DETECTION_ACTIONS, DETECTION_SERVICES, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, KMS_DECRYPT_ACTIONS, SECRET_READ_ACTIONS } from './rules-classify.js';
+import { actionGrants, actionService, actionVerb, concreteResourceAccount, groupNameFromArn, groupNameSuggestsPrivilege, isFullWildcard, isServiceWildcard, isWholeContainerRead, resourceAccountFromCondition, resourceHasVariable, resourceInfersSensitive, BULK_READ_ACTIONS, CONCRETE_ACCOUNT_ID_RE, DATA_READ_ACTIONS, DESTRUCTIVE_VERB, DETECTION_ACTIONS, DETECTION_SERVICES, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, KMS_DECRYPT_ACTIONS, RESOURCE_POLICY_WRITE_ACTIONS, SECRET_READ_ACTIONS } from './rules-classify.js';
 import { denyFencesToNarrow, grantsNonReadAction, makeFinding, remediableWildcardActions, resourceIsBroad, resourceScope, isBroadArnResource, ruleFindingDenySuppressed, survivingBroadReadActions } from './rules-finding.js';
 import { chargeWork, globMatch } from './glob.js';
 import { classifyResource, parseArn, RESOURCE_CLASS } from './resource-arn.js';
@@ -124,6 +124,42 @@ export function ruleDirectIamAdmin(stmt, out) {
       remediation:
         'Remove self-service IAM write access; route policy changes through a ' +
         'reviewed pipeline and constrain with a permission boundary.',
+    }),
+  );
+}
+
+// 3b. Resource-policy write / cross-account grant (Stage-13 EFO-2). Rewriting a
+// resource's OWN policy (bucket/key/function/topic/queue/repo/secret) lets the
+// holder grant an external or arbitrary principal access to it - a cross-account
+// exfil / key-control / backdoor primitive. Distinct from DIRECT-IAM-ADMIN
+// (identity-policy edits). Service wildcards are excluded (WILDCARD-ACTION owns
+// them); this targets the specific-action fail-open that used to read CLEAN.
+export function ruleResourcePolicyWrite(stmt, out) {
+  const matched = matchPatterns(stmt, RESOURCE_POLICY_WRITE_ACTIONS, false);
+  if (matched.length === 0) return;
+  out.push(
+    makeFinding('RESOURCE-POLICY-WRITE', stmt, {
+      // High, not critical: a standalone permissions-management primitive (like
+      // DIRECT-IAM-ADMIN). Critical is reserved for compound privilege-boundary
+      // crossing paths (IAM-102 severity model). Whether an external principal is
+      // actually added is a runtime action, not in this policy - so evidence high,
+      // but it is a genuine, standalone grant-delegation capability.
+      severity: 'high',
+      policyEvidence: 'high',
+      actions: matched,
+      resources: resourceScope(stmt),
+      why:
+        'Grants a resource-policy write / cross-account grant action (e.g. ' +
+        's3:PutBucketPolicy, s3:PutObjectAcl, kms:PutKeyPolicy, kms:CreateGrant, ' +
+        'lambda:AddPermission, sns:AddPermission, secretsmanager:PutResourcePolicy). ' +
+        'A principal that can rewrite a resource\'s own policy can grant an external ' +
+        'or arbitrary principal access to that data store, key, function, or topic - ' +
+        'a cross-account exfiltration, key-control, or persistence backdoor primitive.',
+      remediation:
+        'Restrict resource-policy writes to a dedicated administration role, scope ' +
+        'the Resource to specific ARNs, and use SCPs / resource-control policies and ' +
+        'aws:PrincipalOrgID conditions to prevent granting access to principals ' +
+        'outside your organization.',
     }),
   );
 }

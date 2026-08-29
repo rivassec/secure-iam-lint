@@ -1,0 +1,11 @@
+{
+  "name": "RESOURCE-POLICY-WRITE boundary: lambda:AddPermission on a concrete function ARN",
+  "note": "Stage-13 EFO-2 boundary witness: lambda:AddPermission adds a statement to a function's resource policy (can grant an external principal invoke), scoped to a single function ARN - the narrow-scope boundary still fires.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AddInvokePermission", "Effect": "Allow", "Action": "lambda:AddPermission", "Resource": "arn:aws:lambda:us-east-1:123456789012:function:prod-fn" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["RESOURCE-POLICY-WRITE"] }
+}

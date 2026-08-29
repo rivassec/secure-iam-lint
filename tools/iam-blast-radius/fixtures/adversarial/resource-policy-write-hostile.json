@@ -1,0 +1,11 @@
+{
+  "name": "s3:PutBucketPolicy with a hostile Sid rides through inert (positive; hostile)",
+  "note": "Stage-13 EFO-2 hostile witness: RESOURCE-POLICY-WRITE fires and an HTML/JS payload in the Sid survives verbatim as inert DATA in the finding.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "<script>alert(1)</script>", "Effect": "Allow", "Action": "s3:PutBucketPolicy", "Resource": "arn:aws:s3:::prod-data-lake" }
+    ]
+  },
+  "expect": { "valid": true, "hostile": true, "hostileFor": ["RESOURCE-POLICY-WRITE"] }
+}

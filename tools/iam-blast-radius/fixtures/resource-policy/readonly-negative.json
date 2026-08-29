@@ -1,0 +1,11 @@
+{
+  "name": "reading a resource policy does not fire RESOURCE-POLICY-WRITE",
+  "note": "Stage-13 EFO-2 negative: s3:GetBucketPolicy / kms:GetKeyPolicy READ a resource policy; they cannot grant an external principal, so the write finding must not fire.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadPolicies", "Effect": "Allow", "Action": ["s3:GetBucketPolicy", "kms:GetKeyPolicy"], "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "notFindingIds": ["RESOURCE-POLICY-WRITE"] }
+}

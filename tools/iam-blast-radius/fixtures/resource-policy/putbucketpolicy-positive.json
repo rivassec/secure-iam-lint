@@ -1,0 +1,11 @@
+{
+  "name": "s3:PutBucketPolicy on a concrete bucket fires RESOURCE-POLICY-WRITE",
+  "note": "Stage-13 EFO-2 positive: rewriting a bucket's own policy can grant an external principal access to the bucket (cross-account exfil / backdoor), even on a concrete resource.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "WriteBucketPolicy", "Effect": "Allow", "Action": "s3:PutBucketPolicy", "Resource": "arn:aws:s3:::prod-data-lake" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["RESOURCE-POLICY-WRITE"] }
+}

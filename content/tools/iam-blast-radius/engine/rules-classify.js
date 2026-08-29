@@ -89,6 +89,40 @@ export const DETECTION_SERVICES = new Set(['cloudtrail', 'guardduty', 'config'])
 // action when the pattern glob-matches it. This handles "iam:*",
 // "iam:Put*", and the exact action alike, all via one matcher.
 
+// Stage-13 EFO-2: resource-policy-write / cross-account-grant actions. Each rewrites
+// (or adds a grant to) a RESOURCE's own policy - a bucket/key/function/topic/queue/
+// repo/secret - so the holder can grant an EXTERNAL or arbitrary principal access to
+// that resource: cross-account exfil, key-control, or a persistence backdoor. These
+// are distinct from DIRECT-IAM-ADMIN (identity-policy edits, iam:*); AWS classifies
+// them as "Permissions management" but no identity detector consumed them, so a
+// concrete-resource grant used to read CLEAN (T8 fail-open). Service wildcards
+// (s3:*, kms:*) are deliberately NOT matched here - they are already owned by
+// WILDCARD-ACTION (never clean), so RESOURCE-POLICY-WRITE targets the SPECIFIC-action
+// gap without double-flagging every wildcard grant.
+export const RESOURCE_POLICY_WRITE_ACTIONS = Object.freeze([
+  's3:PutBucketPolicy',
+  's3:PutBucketAcl',
+  's3:PutObjectAcl',
+  's3:PutAccessPointPolicy',
+  'kms:PutKeyPolicy',
+  'kms:CreateGrant',
+  'lambda:AddPermission',
+  'lambda:AddLayerVersionPermission',
+  'sns:AddPermission',
+  'sqs:AddPermission',
+  'ecr:SetRepositoryPolicy',
+  'ecr-public:SetRepositoryPolicy',
+  'secretsmanager:PutResourcePolicy',
+  'events:PutPermission',
+  'glacier:SetVaultAccessPolicy',
+  'backup:PutBackupVaultAccessPolicy',
+  'mediastore:PutContainerPolicy',
+  'serverlessrepo:PutApplicationPolicy',
+  'codeartifact:PutDomainPermissionsPolicy',
+  'codeartifact:PutRepositoryPermissionsPolicy',
+  'ses:PutIdentityPolicy',
+]);
+
 export const IAM_ADMIN_ACTIONS = Object.freeze([
   'iam:PutUserPolicy',
   'iam:PutRolePolicy',

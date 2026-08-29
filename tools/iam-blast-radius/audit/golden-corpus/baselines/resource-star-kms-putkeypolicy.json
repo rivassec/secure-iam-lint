@@ -13,10 +13,45 @@
       "analysisStatus": "complete",
       "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
       "exitCode": 1,
-      "findingsCount": 1,
-      "blockingCount": 1,
+      "findingsCount": 2,
+      "blockingCount": 2,
       "analysisStates": [],
       "findings": [
+        {
+          "id": "RESOURCE-POLICY-WRITE",
+          "severity": "high",
+          "title": "Resource-policy write / cross-account grant",
+          "statementSid": "KmsControl",
+          "statementIndex": 0,
+          "actions": [
+            "kms:PutKeyPolicy"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "high",
+          "why": "Grants a resource-policy write / cross-account grant action (e.g. s3:PutBucketPolicy, s3:PutObjectAcl, kms:PutKeyPolicy, kms:CreateGrant, lambda:AddPermission, sns:AddPermission, secretsmanager:PutResourcePolicy). A principal that can rewrite a resource's own policy can grant an external or arbitrary principal access to that data store, key, function, or topic - a cross-account exfiltration, key-control, or persistence backdoor primitive.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+          "remediation": "Restrict resource-policy writes to a dedicated administration role, scope the Resource to specific ARNs, and use SCPs / resource-control policies and aws:PrincipalOrgID conditions to prevent granting access to principals outside your organization.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies-cross-account-resource-access.html",
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
         {
           "id": "WILDCARD-RESOURCE",
           "severity": "high",
@@ -67,6 +102,24 @@
               "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
               "rules": [
                 {
+                  "id": "RESOURCE-POLICY-WRITE",
+                  "name": "RESOURCE-POLICY-WRITE",
+                  "shortDescription": {
+                    "text": "Resource-policy write / cross-account grant"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type RESOURCE-POLICY-WRITE. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies-cross-account-resource-access.html"
+                },
+                {
                   "id": "WILDCARD-RESOURCE",
                   "name": "WILDCARD-RESOURCE",
                   "shortDescription": {
@@ -90,10 +143,42 @@
           "properties": {
             "analysisStatus": "complete",
             "exitCode": 1,
-            "blockingCount": 1,
-            "findingsCount": 1
+            "blockingCount": 2,
+            "findingsCount": 2
           },
           "results": [
+            {
+              "ruleId": "RESOURCE-POLICY-WRITE",
+              "level": "error",
+              "message": {
+                "text": "Resource-policy write / cross-account grant [identity policy] at statement `KmsControl`; actions: `kms:PutKeyPolicy`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "1571b96a1c2eb803da849e53ec63"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "high"
+                },
+                "jsonPointer": "/Statement/0",
+                "statementSid": "KmsControl"
+              },
+              "ruleIndex": 0
+            },
             {
               "ruleId": "WILDCARD-RESOURCE",
               "level": "error",
@@ -124,7 +209,7 @@
                 "jsonPointer": "/Statement/0",
                 "statementSid": "KmsControl"
               },
-              "ruleIndex": 0
+              "ruleIndex": 1
             }
           ]
         }
@@ -152,6 +237,20 @@
       }
     },
     "findings": [
+      {
+        "id": "RESOURCE-POLICY-WRITE",
+        "severity": "high",
+        "title": "Resource-policy write / cross-account grant",
+        "statementIndex": 0,
+        "actions": [
+          "kms:PutKeyPolicy"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "0f83bad0cabc9994"
+      },
       {
         "id": "WILDCARD-RESOURCE",
         "severity": "high",

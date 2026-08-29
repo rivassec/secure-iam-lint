@@ -74,6 +74,12 @@ const APPLICABILITY = Object.freeze({
   'WILDCARD-ACTION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],
   'WILDCARD-RESOURCE': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
   'DIRECT-IAM-ADMIN': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
+  // Stage-13 EFO-2: resource-policy write / cross-account grant. Matches only
+  // SPECIFIC actions (service wildcards are owned by WILDCARD-ACTION), so notAction/
+  // notResource are not distinctive here (a NotAction/broad grant is already caught by
+  // WILDCARD-ACTION / NOTACTION-ALLOW); the remaining kinds are witnessed by the
+  // resource-policy/ fixtures + the hostile adversarial fixture.
+  'RESOURCE-POLICY-WRITE': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
   'DATA-EXFIL': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   'KMS-DECRYPT': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   // IAM-706: resource/variable-scoped data-read capability. notAction is excluded

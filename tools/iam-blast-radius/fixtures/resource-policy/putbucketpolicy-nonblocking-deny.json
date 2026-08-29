@@ -1,0 +1,12 @@
+{
+  "name": "a non-covering Deny does not remove RESOURCE-POLICY-WRITE",
+  "note": "Stage-13 EFO-2 deny witness: a Deny on an UNRELATED action does not suppress the resource-policy-write grant, so the finding still fires.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "WriteBucketPolicy", "Effect": "Allow", "Action": "s3:PutBucketPolicy", "Resource": "arn:aws:s3:::prod-data-lake" },
+      { "Sid": "DenyUnrelated", "Effect": "Deny", "Action": "s3:DeleteBucket", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["RESOURCE-POLICY-WRITE"] }
+}

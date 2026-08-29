@@ -1,0 +1,11 @@
+{
+  "name": "conditioned kms:PutKeyPolicy still fires RESOURCE-POLICY-WRITE (downgraded)",
+  "note": "Stage-13 EFO-2 condition witness: a Condition is a runtime gate that downgrades confidence but does not remove the grant-delegation capability.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PutKeyPolicyIfTagged", "Effect": "Allow", "Action": "kms:PutKeyPolicy", "Resource": "arn:aws:kms:us-east-1:123456789012:key/prod-cmk", "Condition": { "StringEquals": { "aws:RequestTag/team": "platform" } } }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["RESOURCE-POLICY-WRITE"] }
+}

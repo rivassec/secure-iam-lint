@@ -124,6 +124,17 @@ export const RULES = Object.freeze({
     docRef:
       'https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-keys.html',
   }),
+  // Stage-13 EFO-2: rewrite a resource's own policy to grant an external/arbitrary
+  // principal access (cross-account exfil / key-control / backdoor). Distinct from
+  // DIRECT-IAM-ADMIN (identity-policy edits).
+  'RESOURCE-POLICY-WRITE': Object.freeze({
+    id: 'RESOURCE-POLICY-WRITE',
+    order: 12,
+    title: 'Resource-policy write / cross-account grant',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies-cross-account-resource-access.html',
+  }),
 });
 
 export const RULE_IDS = Object.freeze(Object.keys(RULES));
