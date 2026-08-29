@@ -8,13 +8,15 @@ model and trust boundary.
 
 ## Supported versions
 
-The project is pre-1.0. Security fixes land on `main`, which is the only
-supported line. Pin to a commit SHA if you need reproducibility.
+Security fixes land on `main` and ship in the next tagged release. `main` and the
+latest release are the supported lines; pin to a commit SHA or a release tag if
+you need reproducibility.
 
-| Version         | Supported    |
-| --------------- | ------------ |
-| `main`          | yes          |
-| tagged releases | latest only  |
+| Version        | Supported   |
+| -------------- | ----------- |
+| `main`         | yes         |
+| latest release | yes         |
+| older releases | no          |
 
 ## Reporting a vulnerability
 
@@ -32,11 +34,16 @@ triggers the issue is ideal.
 
 ### What to expect
 
-- Acknowledgement within 5 business days.
-- An initial assessment (severity and whether it is in scope) within 10 business
-  days.
+secure-iam-lint is maintained by one person in their spare time, so these are
+best-effort targets rather than guarantees:
+
+- Acknowledgement of your report within **7 days**.
+- An initial assessment (severity and whether it is in scope) within **30 days**.
 - For confirmed issues, a fix on `main` and a published advisory crediting the
   reporter, unless you prefer to remain anonymous.
+
+GitHub emails the maintainer the moment a private advisory is filed, so
+acknowledgement is usually much faster than the target.
 
 ## Scope
 
