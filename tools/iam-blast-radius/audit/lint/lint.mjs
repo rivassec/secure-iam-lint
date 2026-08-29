@@ -12,7 +12,7 @@
 // No runtime deps (Node built-ins only). ASCII only. Deterministic: same tree
 // in -> same findings out, sorted by (file, line, class).
 
-import { readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, realpathSync, readdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve, relative } from 'node:path';
 
@@ -24,13 +24,15 @@ const REPO_ROOT = resolve(HERE, '../../../../');
 // Target files: the SHIPPED surface that must fail closed.
 // ---------------------------------------------------------------------------
 const ENGINE_DIR = 'content/tools/iam-blast-radius/engine';
-const ENGINE_FILES = [
-  'analyze.js', 'catalog.js', 'conditions.js', 'correlate.js', 'coverage.js',
-  'envelope.js', 'escalation.js', 'family.js',
-  'format-control.js', 'glob.js', 'graph.js', 'masked-grant.js', 'model.js',
-  'parse.js', 'rcp.js', 'render-graph.js', 'report.js', 'resource-arn.js',
-  'resource.js', 'rules.js', 'scp.js', 'trust.js', 'validate.js', 'version.js',
-].map((f) => `${ENGINE_DIR}/${f}`);
+// Derived from the engine directory itself, NOT a hand-maintained list: a decomposition
+// that adds/renames a module is scanned automatically. A stale hardcoded list previously
+// scanned 24 of 63 files, leaving 62% of the engine outside the fail-open tripwire. The
+// coverage==tree property is asserted by failopen-lint.test.js so this cannot silently
+// drift again.
+const ENGINE_FILES = readdirSync(resolve(REPO_ROOT, ENGINE_DIR))
+  .filter((f) => f.endsWith('.js') && !f.endsWith('.test.js'))
+  .sort()
+  .map((f) => `${ENGINE_DIR}/${f}`);
 
 const TARGET_FILES = [
   ...ENGINE_FILES,

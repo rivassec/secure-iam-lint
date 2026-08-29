@@ -24,11 +24,18 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { runLint, scanFile, exitCodeFor } from './lint.mjs';
 
 const RULES = 'content/tools/iam-blast-radius/engine/rules.js';
 const ACTION = 'action/index.mjs';
 const CLI = 'cli/iam-br.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ENGINE_REL = 'content/tools/iam-blast-radius/engine/';
+const ENGINE_DIR_ABS = resolve(HERE, '../../../../', ENGINE_REL);
 
 const { findings } = runLint();
 
@@ -39,8 +46,22 @@ function hasClassInFile(file, cls) {
 test('scan actually ran over the shipped tree (no zero-analysis success)', () => {
   const { scanned, missing } = runLint();
   assert.equal(missing.length, 0, `missing target files: ${missing.join(', ')}`);
-  assert.ok(scanned.length >= 25, `expected >=25 scanned files, got ${scanned.length}`);
+  assert.ok(scanned.length >= 40, `expected the decomposed tree (>=40 files), got ${scanned.length}`);
   assert.ok(findings.length > 0, 'lint found zero hotspots -> it is not looking');
+});
+
+// B2 (review finding): the fail-open tripwire must scan EVERY engine module, not a
+// hand-maintained subset. A stale 24-file list previously left 62% of the engine
+// unscanned, so real budget-bypass / candidate-drop hotspots in the decomposed modules
+// went undetected. Assert coverage == the engine directory tree so it cannot drift again.
+test('the fail-open lint scans EVERY engine module (coverage == tree)', () => {
+  const { scanned } = runLint();
+  const scannedEngine = new Set(
+    scanned.filter((f) => f.startsWith(ENGINE_REL)).map((f) => f.slice(ENGINE_REL.length)),
+  );
+  const treeEngine = readdirSync(ENGINE_DIR_ABS).filter((f) => f.endsWith('.js') && !f.endsWith('.test.js'));
+  const unscanned = treeEngine.filter((f) => !scannedEngine.has(f));
+  assert.equal(unscanned.length, 0, `engine modules NOT scanned by the fail-open lint: ${unscanned.join(', ')}`);
 });
 
 // (1) raw-realpath-mismatch is FIXED (story S1-entrypoint-guard): the lint must find
