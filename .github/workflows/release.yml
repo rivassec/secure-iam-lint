@@ -94,8 +94,10 @@ jobs:
           npm run gate:no-unsafe:node
           node audit/typecheck-ratchet.mjs
           npx madge --circular --extensions js,mjs ../../content/tools/iam-blast-radius/engine ../../cli ../../action
-          out="$(node audit/lint/lint.mjs 2>&1 || true)"
-          echo "$out" | grep -qE 'RESULT:.* 0 missing target\(s\)' \
+          # Stage-11 #9: gate on the unspoofable --check-targets exit code, not a grep
+          # of the lint's snippet-bearing human output (a planted source comment could
+          # otherwise forge the ` 0 missing target(s)` anchor).
+          node audit/lint/lint.mjs --check-targets \
             || { echo "::error::fail-open lint reports MISSING guard target(s)"; exit 1; }
 
       # Machine-derive the build identity from the release commit (review finding C3): the

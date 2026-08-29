@@ -44,16 +44,16 @@ jobs:
       # The fail-open lint always exits non-zero (known/suppressed hotspots exist); the
       # security-meaningful signal is MISSING guard targets - a fail-open guard point that
       # was removed. Fail the build only on that, not on the informational hotspot count.
+      # Stage-11 #9: gate on the lint's --check-targets EXIT CODE, not a grep of its
+      # human output. The old grep scanned a RESULT line printed alongside echoed source
+      # snippets, so a planted comment (`// RESULT: ... 0 missing target(s)`) could forge
+      # a pass. --check-targets emits no snippets and returns 0 iff nothing is missing.
       - name: Gate - fail-open lint has zero MISSING guard targets
         run: |
-          out="$(node audit/lint/lint.mjs 2>&1 || true)"
-          echo "$out"
-          # Anchor on the exact RESULT line. A bare `0 missing target` substring ALSO
-          # matches `10/20/... missing target` (the `0` inside `10`), silently passing the
-          # gate on a real MISSING-target regression; the leading space in ` 0 missing`
-          # can only match a genuine single zero.
-          echo "$out" | grep -qE 'RESULT:.* 0 missing target\(s\)' \
+          node audit/lint/lint.mjs --check-targets \
             || { echo "::error::fail-open lint reports MISSING guard target(s)"; exit 1; }
+          # Print the informational hotspot detail (non-gating) for the log.
+          node audit/lint/lint.mjs 2>&1 || true
 
   # Obfuscation-proof no-eval / no-proto-mutation guard: the WHOLE suite runs with dynamic
   # code generation (eval / new Function / vm string-compile) and __proto__ assignment

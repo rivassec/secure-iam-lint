@@ -629,6 +629,22 @@ function mainCli(argv) {
 
   const exit = exitCodeFor({ active, missing });
 
+  // Stage-11 #9: an UNSPOOFABLE gate for the security-meaningful signal (MISSING
+  // guard targets). CI used to grep the human RESULT line, but that line prints
+  // alongside echoed source SNIPPETS, so a planted comment
+  // (`// RESULT: ... 0 missing target(s)`) could forge a pass. This mode emits NO
+  // snippets and returns the verdict purely as an EXIT CODE: 0 iff no shipped
+  // guard target is missing/moved, IGNORING active (informational) hotspots. The
+  // single line it prints is fixed-shape and carries no source text, so nothing a
+  // scanned file contains can influence it. CI/release gate on this exit code.
+  if (args.includes('--check-targets')) {
+    const ok = missing.length === 0;
+    process.stdout.write(
+      `CHECK_TARGETS: scanned=${scanned.length} missing=${missing.length} -> ${ok ? 'PASS' : 'FAIL'}\n`,
+    );
+    return ok ? 0 : 1;
+  }
+
   if (jsonOut) {
     process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
     return exit;
