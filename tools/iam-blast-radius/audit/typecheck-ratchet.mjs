@@ -18,22 +18,24 @@
 // --update) to lock the win in; a change that adds a NEW signature/instance fails until the
 // new error is fixed (not the baseline).
 //
-// tsc is fetched via npx at a PINNED version (dev-time only; the shipped package stays
+// tsc is the lockfile-pinned dev dependency (dev-time only; the shipped package stays
 // zero-dependency). --skipLibCheck drops @types/node lib noise so only OUR code is measured.
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-const TS_VERSION = '5.7.3';
 const here = dirname(fileURLToPath(import.meta.url));
 const engineDir = join(here, '..', '..', '..', 'content', 'tools', 'iam-blast-radius', 'engine');
 const baselinePath = join(here, 'typecheck-baseline.json');
 
 const files = readdirSync(engineDir).filter((f) => f.endsWith('.js')).map((f) => join(engineDir, f));
 
+// typescript is dev-pinned in package-lock.json (review finding C4); run the LOCAL tsc
+// via `npx tsc` (resolves node_modules/.bin), not `npx -p typescript@X` which would fetch
+// an unreviewed tree at CI time. Callers must `npm ci` first.
 const args = [
-  '--yes', '-p', `typescript@${TS_VERSION}`, 'tsc',
+  'tsc',
   '--checkJs', '--noEmit', '--allowJs', '--skipLibCheck',
   '--target', 'es2022', '--module', 'es2022',
   ...files,

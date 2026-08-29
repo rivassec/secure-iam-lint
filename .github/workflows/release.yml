@@ -93,7 +93,7 @@ jobs:
           npm run gate:no-network:node
           npm run gate:no-unsafe:node
           node audit/typecheck-ratchet.mjs
-          npx --yes madge@8.0.0 --circular --extensions js,mjs ../../content/tools/iam-blast-radius/engine ../../cli ../../action
+          npx madge --circular --extensions js,mjs ../../content/tools/iam-blast-radius/engine ../../cli ../../action
           out="$(node audit/lint/lint.mjs 2>&1 || true)"
           echo "$out" | grep -qE 'RESULT:.* 0 missing target\(s\)' \
             || { echo "::error::fail-open lint reports MISSING guard target(s)"; exit 1; }

@@ -11,19 +11,17 @@
     "gate:no-unsafe-dom": "! grep -rInE 'innerHTML|outerHTML|insertAdjacentHTML|\\beval\\(|new Function|WebAssembly|data:(text|application)/javascript|eval:\\s*true' ../../content/tools/iam-blast-radius/ || (echo 'UNSAFE DOM/EVAL FOUND' && exit 1)",
     "gate:no-network:node": "! grep -rInE 'fetch\\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|import\\([\"'\\''`]https?:|[\"'\\''`](node:)?(http|https|http2|net|tls|dgram|dns|inspector)[\"'\\''`]' ../../cli/ ../../action/ || (echo 'NETWORK API FOUND (cli/action)' && exit 1)",
     "gate:no-unsafe:node": "! grep -rInE '\\beval\\(|new Function|WebAssembly|data:(text|application)/javascript|eval:\\s*true|innerHTML|outerHTML|insertAdjacentHTML|setTimeout\\(\\s*[\"'\\''`]|[\"'\\''`](node:)?(child_process|vm)[\"'\\''`]' ../../cli/ ../../action/ || (echo 'UNSAFE NODE API FOUND (cli/action)' && exit 1)",
-    "e2e": "playwright test",
-    "mutation": "stryker run"
+    "e2e": "playwright test"
   },
   "devDependencies": {
-    "@jazzer.js/core": "^4.0.0",
+    "@jazzer.js/core": "4.0.0",
     "@playwright/test": "1.62.1",
-    "@stryker-mutator/core": "10.0.0"
+    "madge": "8.0.0",
+    "typescript": "5.7.3"
   },
-  "comment:overrides": "Force PATCHED versions of dev-only transitive deps with known CVEs (the shipped package has zero runtime deps, so these never reach a consumer; we patch rather than ignore). ajv/babel/tmp were flagged by OSV; qs is pinned >=6.15.2 defensively so a future dep bump cannot downgrade it back into GHSA-q8mj-m7cp-5q26. tmp 0.0.33->0.2.x reaches only external-editor's interactive-editor prompt (never triggered in CI or non-interactive mutation runs).",
+  "comment:overrides": "Force PATCHED versions of dev-only transitive deps (via @playwright/test / @jazzer.js/core) that OSV flagged. The shipped package has zero runtime deps, so these never reach a consumer; we patch rather than ignore.",
   "overrides": {
-    "ajv": "^8.18.0",
     "@babel/core": "^7.29.6",
-    "tmp": "^0.2.6",
-    "qs": "^6.15.2"
+    "tmp": "^0.2.6"
   }
 }

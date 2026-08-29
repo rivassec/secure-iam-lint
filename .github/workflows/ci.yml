@@ -79,6 +79,9 @@ jobs:
   # introduces a cycle (a load-order/shared-state footgun) is caught in review.
   graph:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/iam-blast-radius
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,13 +89,16 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
-      - name: No circular dependencies (madge, pinned)
-        run: npx --yes madge@8.0.0 --circular --extensions js,mjs content/tools/iam-blast-radius/engine cli action
+      # madge + typescript are dev-pinned in package-lock.json (review finding C4): install
+      # from the reviewed lockfile with `npm ci` and run the LOCAL binaries, rather than
+      # `npx --yes madge@X` which resolves an unreviewed transitive tree at CI time.
+      - name: Install dev deps (pinned in the lockfile)
+        run: npm ci --no-audit --no-fund
+      - name: No circular dependencies (madge, from the lockfile)
+        run: npx madge --circular --extensions js,mjs ../../content/tools/iam-blast-radius/engine ../../cli ../../action
       # Zero-dep typecheck RATCHET: runs tsc --checkJs over the engine and fails only on a
-      # NEW type error over the committed baseline (58 pre-existing JSDoc frictions, no bugs).
-      # Catches type regressions in review without churning the frozen baseline.
+      # NEW type error (by signature) over the committed baseline. Uses the lockfile tsc.
       - name: Typecheck ratchet (no new type errors)
-        working-directory: tools/iam-blast-radius
         run: node audit/typecheck-ratchet.mjs
 
   csp:
