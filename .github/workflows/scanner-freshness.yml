@@ -38,8 +38,19 @@ jobs:
             pinned="$(awk -v repo="$repo" '/VER=/{v=$0; sub(/.*VER=/,"",v); sub(/[^0-9.].*/,"",v)} index($0,"github.com/" repo "/releases/download"){print v; exit}' "$sec")"
             local latest
             latest="$(gh api "repos/${repo}/releases/latest" --jq '.tag_name' | sed 's/^v//')"
+            # Stage-11 #12: an UNPARSEABLE pin (awk matched nothing) or an unresolvable
+            # latest means freshness could NOT be established. That is a FAILURE, not a
+            # pass: a silent "up to date" here would let a refactor that breaks the parse
+            # rot every scanner undetected. Fail closed (stale=1) so the weekly job goes
+            # red and the parse is fixed deliberately.
             if [ -z "$pinned" ]; then
-              echo "::warning::${name}: could not read pinned version from ${sec}"
+              echo "::error::${name}: could not read pinned version from ${sec} (unparseable pin -> fail closed)"
+              stale=1
+              return
+            fi
+            if [ -z "$latest" ]; then
+              echo "::error::${name}: could not resolve latest release for ${repo} (fail closed)"
+              stale=1
               return
             fi
             if [ "$pinned" != "$latest" ]; then

@@ -48,8 +48,12 @@ export const VERSION_MANIFEST = Object.freeze({
   // Dated curated action-catalog snapshot (catalog.js ACTION_CATALOG_VERSION),
   // versioned on its own cadence, distinct from the rule version.
   actionCatalogVersion: '2026.08.22',
-  // Committed deploy marker (coverage.js BUILD_SHA); hand-updated at deploy time.
-  buildSha: 'dev',
+  // Committed deploy marker. Stage-11 #10: DERIVE from the single source
+  // (coverage.js BUILD_SHA, imported above) instead of a second 'dev' literal.
+  // The release stamps coverage.js BUILD_SHA; a separate literal here would ship a
+  // TORN buildSha (stamped manifest, 'dev' in the coverage/SARIF output that reads
+  // BUILD_SHA). One source -> the stamp propagates and the two can never diverge.
+  buildSha: BUILD_SHA,
 });
 
 // Each shipped identifier and the manifest field it must equal. The `id` strings

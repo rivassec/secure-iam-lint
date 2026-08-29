@@ -53,6 +53,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0   # full history: the ancestry gate needs the tag <-> main merge base
+
+      # Stage-11 #11: bind the release to a commit that actually landed on main (and thus
+      # passed the FULL CI matrix). A tag can be pushed on ANY commit; without this a build
+      # that never went green could be published. Require the tagged commit to be reachable
+      # from origin/main.
+      - name: Verify the tagged commit is on origin/main
+        if: github.event_name == 'push'
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tagged commit $GITHUB_SHA is not reachable from origin/main (it never landed on main / passed full CI)"
+            exit 1
+          fi
+          echo "tagged commit is on origin/main"
 
       # release.yml runs only on a maintainer tag push / approved dispatch, sets no
       # `cache:`, and all inputs come from the committed lockfile - no runtime cache to
@@ -86,8 +101,15 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           node --test "tests/**/*.test.js"
+          # Stage-11 #11: also run the hardened-runtime job's check (the CI matrix runs it
+          # in parallel; a release must not be a strict subset of PR CI). Any path that
+          # relied on eval / __proto__ mutation aborts under these flags.
+          node --disallow-code-generation-from-strings --disable-proto=throw --test "tests/**/*.test.js"
           node --test "audit/**/*.test.js"
           GOLDEN_RELEASE_GATE=1 node --test audit/golden-corpus/release-gate.test.js
+          # Stage-11 #11: the CSP audit job, too (no inline styles/scripts/handlers).
+          # Paths are ../../-relative because this step runs in tools/iam-blast-radius.
+          python3 ../../scripts/csp_audit.py ../../content/tools/iam-blast-radius
           npm run gate:no-network
           npm run gate:no-unsafe-dom
           npm run gate:no-network:node
@@ -100,17 +122,25 @@ jobs:
           node audit/lint/lint.mjs --check-targets \
             || { echo "::error::fail-open lint reports MISSING guard target(s)"; exit 1; }
 
-      # Machine-derive the build identity from the release commit (review finding C3): the
-      # shipped version.js carries buildSha:'dev' in the tree; stamp it with GITHUB_SHA at
-      # release time (no runtime build - a one-shot sed on the published artifact) and fail
-      # closed if it is not 'dev' (already stamped / tampered).
+      # Machine-derive the build identity from the release commit (review finding C3 +
+      # Stage-11 #10). The SINGLE source is coverage.js BUILD_SHA - version.js derives
+      # its manifest buildSha from that import, and the shipped coverage/SARIF output
+      # reads BUILD_SHA. Stamp the ONE source with GITHUB_SHA (no runtime build - a
+      # one-shot sed), then fail closed unless NO shipped engine file still carries a
+      # 'dev' buildSha and the version-coherence self-test agrees (so a torn stamp -
+      # manifest stamped, output still 'dev' - can never be published).
       - name: Stamp buildSha from the release commit
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
         run: |
-          v=content/tools/iam-blast-radius/engine/version.js
-          grep -qE "buildSha: *'dev'" "$v" || { echo "::error::version.js buildSha is not 'dev' (refusing to stamp)"; exit 1; }
-          sed -i "s/buildSha: *'dev'/buildSha: '${GITHUB_SHA}'/" "$v"
-          node -e "const s=require('fs').readFileSync('$v','utf8'); const m=/buildSha: '([^']+)'/.exec(s); if(!m||m[1]==='dev'){console.error('::error::buildSha still dev after stamp');process.exit(1)} console.log('stamped buildSha='+m[1])"
+          c=content/tools/iam-blast-radius/engine/coverage.js
+          grep -qE "BUILD_SHA = 'dev'" "$c" || { echo "::error::coverage.js BUILD_SHA is not 'dev' (refusing to stamp)"; exit 1; }
+          sed -i "s/BUILD_SHA = 'dev'/BUILD_SHA = '${GITHUB_SHA}'/" "$c"
+          # No shipped engine file may still carry a 'dev' buildSha after the stamp.
+          if grep -rnE "BUILD_SHA = 'dev'|buildSha: *'dev'" content/tools/iam-blast-radius/engine; then
+            echo "::error::a 'dev' buildSha survived the stamp (torn build identity)"; exit 1
+          fi
+          # The version-coherence self-test must agree that manifest == output == stamped.
+          node -e "import('./content/tools/iam-blast-radius/engine/version.js').then(m=>{const r=m.checkVersionCoherence();const sha=m.VERSION_MANIFEST.buildSha;if(!r.ok){console.error('::error::version incoherent after stamp: '+JSON.stringify(r.mismatches));process.exit(1)}if(sha==='dev'){console.error('::error::manifest buildSha still dev');process.exit(1)}console.log('stamped+coherent buildSha='+sha)})"
 
       - name: Publish (dry-run)
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
