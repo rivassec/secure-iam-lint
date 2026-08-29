@@ -1,0 +1,19 @@
+{
+  "analyze-results.js|TS2345": 2,
+  "analyze-results.js|TS2353": 6,
+  "analyze.js|TS2322": 11,
+  "analyze.js|TS2353": 1,
+  "arn-util.js|TS2339": 3,
+  "arn-util.js|TS2345": 1,
+  "arn-util.js|TS2353": 1,
+  "coverage.js|TS2339": 15,
+  "envelope.js|TS2322": 2,
+  "escalation.js|TS2322": 4,
+  "family.js|TS2339": 1,
+  "family.js|TS2345": 1,
+  "rcp.js|TS2322": 2,
+  "render-graph.js|TS2322": 1,
+  "resource.js|TS2345": 1,
+  "rules.js|TS2322": 4,
+  "scp.js|TS2322": 2
+}
