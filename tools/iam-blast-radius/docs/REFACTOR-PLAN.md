@@ -1,3 +1,7 @@
+> **STATUS 2026-08-29: LARGELY DONE / SIZES BELOW ARE STALE.** The decomposition is already
+> complete on main (escalation.js ~526 LOC not 3016; resource.js 672; nothing over the 750 decompose
+> threshold). F6 is NOT a v1.0.0 blocker. The security review CONVERGED (Stage-13..18) and is deployed.
+
 # secure-iam-lint - Behavior-Preserving Refactor Plan (cross-model reviewed)
 
 Status: 2026-08-27. Reviewed + reconciled with Openclaw (gpt-5.5) and Gentoo (Claude, checked-out repo). This file is self-contained: a fresh session can execute it cold.

@@ -11,7 +11,7 @@
 // combination of grants (and their resource / condition relationships) that
 // lets a principal grant itself more than it was given.
 //
-// Escalation families implemented (>=5, <=10 per the story):
+// Escalation families implemented (ESCALATION_IDS; see escalation-catalogs.js):
 //   1. PASSROLE-LAMBDA   iam:PassRole (to lambda) + lambda create/update.
 //   2. PASSROLE-EC2      iam:PassRole (to ec2)    + ec2:RunInstances.
 //   3. PASSROLE-SERVICE  iam:PassRole (to a service) + that service's
@@ -23,6 +23,11 @@
 //   7. TRUST-POLICY-MODIFY iam:UpdateAssumeRolePolicy (rewrite a role's trust).
 //   8. CREDENTIAL-CREATION iam:CreateAccessKey / Create|UpdateLoginProfile.
 //   9. ASSUME-ROLE-EXPANSION sts:AssumeRole over a wildcard / broad role scope.
+//  10. ROLE-TAKEOVER    grant-perms + rewrite-trust + assume, same role (compound).
+//  11. CROSS-ACCOUNT-ASSUME-ROLE scoped sts:AssumeRole into a DIFFERENT account.
+//  12. COMPUTE-CODE-OVERWRITE overwrite an existing compute resource's code/config
+//                        (lambda/codebuild/glue/cloudformation) -> runs under its
+//                        existing role, no iam:PassRole (deduped vs PASSROLE-* when paired).
 //
 // SEVERITY MODEL (IAM-102). `critical` is RESERVED for compound escalation
 // paths that plausibly cross a privilege boundary:
