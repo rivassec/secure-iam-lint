@@ -1,0 +1,384 @@
+{
+  "id": "role-takeover-chain",
+  "klass": "risky",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 1,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "identity",
+      "threshold": "high",
+      "partitionAsserted": null,
+      "analysisStatus": "complete",
+      "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
+      "exitCode": 1,
+      "findingsCount": 1,
+      "blockingCount": 1,
+      "analysisStates": [],
+      "findings": [
+        {
+          "id": "ROLE-TAKEOVER",
+          "severity": "critical",
+          "title": "Role takeover chain (grant permissions + rewrite trust + assume, same role)",
+          "statementSid": "GrantRewriteAssume",
+          "statementIndex": 0,
+          "actions": [
+            "iam:PutRolePolicy",
+            "iam:UpdateAssumeRolePolicy",
+            "sts:AssumeRole"
+          ],
+          "resources": [
+            "arn:aws:iam::111122223333:role/target"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants a compound role-takeover chain on arn:aws:iam::111122223333:role/target: a permission-grant primitive (iam:PutRolePolicy) to give the role permissions, iam:UpdateAssumeRolePolicy to rewrite its trust policy so the principal may assume it, and sts:AssumeRole to then assume it. Together these let the principal take the role over - grant it permissions, make it assumable, and assume it - WITHOUT needing iam:PassRole. The role's current permissions and any permission boundary on it are not in scope.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Separate role-permission management (iam:PutRolePolicy / iam:AttachRolePolicy), trust-policy management (iam:UpdateAssumeRolePolicy), and role assumption (sts:AssumeRole) across distinct administrative identities so no single principal can grant, re-trust, and assume the same role; scope each to specific role ARNs and protect high-value roles with a permission boundary and change review.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_manage_modify.html",
+          "escalation": {
+            "technique": "role-takeover-chain",
+            "service": null,
+            "requiredActions": [
+              "iam:PutRolePolicy",
+              "iam:UpdateAssumeRolePolicy",
+              "sts:AssumeRole"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "role-takeover-chain",
+                  "allOf": [
+                    {
+                      "role": "grant-permissions",
+                      "anyOf": [
+                        "iam:PutRolePolicy"
+                      ]
+                    },
+                    {
+                      "role": "modify-trust",
+                      "anyOf": [
+                        "iam:UpdateAssumeRolePolicy"
+                      ]
+                    },
+                    {
+                      "role": "assume",
+                      "anyOf": [
+                        "sts:AssumeRole"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GrantRewriteAssume",
+              "role": "grant-permissions",
+              "actions": [
+                "iam:PutRolePolicy"
+              ],
+              "resources": [
+                "arn:aws:iam::111122223333:role/target"
+              ],
+              "condition": null,
+              "note": "can attach/write a permission policy onto arn:aws:iam::111122223333:role/target"
+            },
+            {
+              "statementIndex": 0,
+              "statementSid": "GrantRewriteAssume",
+              "role": "modify-trust",
+              "actions": [
+                "iam:UpdateAssumeRolePolicy"
+              ],
+              "resources": [
+                "arn:aws:iam::111122223333:role/target"
+              ],
+              "condition": null,
+              "note": "can rewrite the trust policy of arn:aws:iam::111122223333:role/target to trust an attacker-controlled principal"
+            },
+            {
+              "statementIndex": 0,
+              "statementSid": "GrantRewriteAssume",
+              "role": "assume",
+              "actions": [
+                "sts:AssumeRole"
+              ],
+              "resources": [
+                "arn:aws:iam::111122223333:role/target"
+              ],
+              "condition": null,
+              "note": "can assume arn:aws:iam::111122223333:role/target once its trust policy permits it"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GrantRewriteAssume",
+              "actions": [
+                "iam:PutRolePolicy",
+                "iam:UpdateAssumeRolePolicy",
+                "sts:AssumeRole"
+              ]
+            }
+          ],
+          "riskFactors": [
+            {
+              "key": "grant-permissions",
+              "label": "Permission-grant primitive on arn:aws:iam::111122223333:role/target (iam:PutRolePolicy)",
+              "present": true
+            },
+            {
+              "key": "modify-trust",
+              "label": "Trust-policy rewrite on arn:aws:iam::111122223333:role/target (iam:UpdateAssumeRolePolicy)",
+              "present": true
+            },
+            {
+              "key": "assume",
+              "label": "Role assumption of arn:aws:iam::111122223333:role/target (sts:AssumeRole)",
+              "present": true
+            },
+            {
+              "key": "same-role",
+              "label": "All three primitives target the same role ARN",
+              "present": true
+            }
+          ],
+          "subsumed": [
+            {
+              "id": "PUT-INLINE-POLICY",
+              "title": "Write inline policy on self / a principal",
+              "severity": "high",
+              "statementSid": "GrantRewriteAssume",
+              "statementIndex": 0,
+              "actions": [
+                "iam:PutRolePolicy"
+              ],
+              "resources": [
+                "arn:aws:iam::111122223333:role/target"
+              ],
+              "why": "Grants iam:Put{User,Role,Group}Policy. A principal that can write an inline policy on itself (or a principal it controls) can grant itself any permission, including full admin - a direct privilege-escalation path.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+              "remediation": "Remove self-service inline-policy writes; constrain with a permission boundary that caps the effective permissions, and route policy changes through a reviewed pipeline.",
+              "reason": "Subsumed into the compound role-takeover chain on the same role: this primitive is one leg of the modify-then-assume takeover, so it is reported as a risk factor of that critical path rather than a separate row.",
+              "policyFamily": "identity"
+            },
+            {
+              "id": "DIRECT-IAM-ADMIN",
+              "title": "Direct IAM administration",
+              "severity": "high",
+              "statementSid": "GrantRewriteAssume",
+              "statementIndex": 0,
+              "actions": [
+                "iam:PutRolePolicy",
+                "iam:UpdateAssumeRolePolicy"
+              ],
+              "resources": [
+                "arn:aws:iam::111122223333:role/target"
+              ],
+              "why": "Grants direct IAM administration (e.g. attach/put policy, create policy version, create access key / login profile). A principal that can edit IAM can grant itself any other permission - a privilege-escalation primitive on its own.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
+              "remediation": "Remove self-service IAM write access; route policy changes through a reviewed pipeline and constrain with a permission boundary.",
+              "reason": "Subsumed into the more-specific IAM primitive on the same statement: the generic direct-IAM-administration rule only restates that this statement touches IAM administration, so it is folded in as a risk factor rather than a duplicate row.",
+              "policyFamily": "identity"
+            },
+            {
+              "id": "TRUST-POLICY-MODIFY",
+              "title": "Role trust-policy modification (UpdateAssumeRolePolicy)",
+              "severity": "high",
+              "statementSid": "GrantRewriteAssume",
+              "statementIndex": 0,
+              "actions": [
+                "iam:UpdateAssumeRolePolicy"
+              ],
+              "resources": [
+                "arn:aws:iam::111122223333:role/target"
+              ],
+              "why": "Grants iam:UpdateAssumeRolePolicy. A principal can rewrite a role's trust policy to trust itself and then assume the role, taking on the role's permissions. Whether the target role is more privileged is not known from this policy, but the trust-then-assume primitive is present.",
+              "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+              "remediation": "Restrict iam:UpdateAssumeRolePolicy to a dedicated role-administration identity, scope the Resource to specific role ARNs, and protect high-value roles with a permission boundary and change review.",
+              "reason": "Subsumed into the compound role-takeover chain on the same role: this primitive is one leg of the modify-then-assume takeover, so it is reported as a risk factor of that critical path rather than a separate row.",
+              "policyFamily": "identity"
+            }
+          ],
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        }
+      ]
+    }
+  },
+  "cliSarif": {
+    "exit": 1,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": [
+                {
+                  "id": "ROLE-TAKEOVER",
+                  "name": "ROLE-TAKEOVER",
+                  "shortDescription": {
+                    "text": "Role takeover chain (grant permissions + rewrite trust + assume, same role)"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type ROLE-TAKEOVER. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "9.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_manage_modify.html"
+                }
+              ]
+            }
+          },
+          "properties": {
+            "analysisStatus": "complete",
+            "exitCode": 1,
+            "blockingCount": 1,
+            "findingsCount": 1
+          },
+          "results": [
+            {
+              "ruleId": "ROLE-TAKEOVER",
+              "level": "error",
+              "message": {
+                "text": "Role takeover chain (grant permissions + rewrite trust + assume, same role) [identity policy] at statement `GrantRewriteAssume`; actions: `iam:PutRolePolicy`, `iam:UpdateAssumeRolePolicy`, `sts:AssumeRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "04614edca41b6903d4ff36501b68"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GrantRewriteAssume",
+                    "role": "grant\\-permissions",
+                    "actions": [
+                      "iam\\:PutRolePolicy"
+                    ],
+                    "resources": [
+                      "arn\\:aws\\:iam\\:\\:111122223333\\:role\\/target"
+                    ],
+                    "note": "can attach\\/write a permission policy onto arn\\:aws\\:iam\\:\\:111122223333\\:role\\/target"
+                  },
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GrantRewriteAssume",
+                    "role": "modify\\-trust",
+                    "actions": [
+                      "iam\\:UpdateAssumeRolePolicy"
+                    ],
+                    "resources": [
+                      "arn\\:aws\\:iam\\:\\:111122223333\\:role\\/target"
+                    ],
+                    "note": "can rewrite the trust policy of arn\\:aws\\:iam\\:\\:111122223333\\:role\\/target to trust an attacker\\-controlled principal"
+                  },
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GrantRewriteAssume",
+                    "role": "assume",
+                    "actions": [
+                      "sts\\:AssumeRole"
+                    ],
+                    "resources": [
+                      "arn\\:aws\\:iam\\:\\:111122223333\\:role\\/target"
+                    ],
+                    "note": "can assume arn\\:aws\\:iam\\:\\:111122223333\\:role\\/target once its trust policy permits it"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GrantRewriteAssume"
+              },
+              "ruleIndex": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": true,
+    "coverage": {
+      "incomplete": false,
+      "analysisAborted": false,
+      "codes": [],
+      "statements": {
+        "total": 1,
+        "accepted": 1,
+        "rejected": 0
+      },
+      "counts": {
+        "unrecognizedActions": 0,
+        "unsupportedConditions": 0,
+        "unsupportedElements": 0,
+        "actionResourceMismatches": 0,
+        "maskedGrants": 0,
+        "broadUndecidableUncovered": 0
+      }
+    },
+    "findings": [
+      {
+        "id": "ROLE-TAKEOVER",
+        "severity": "critical",
+        "title": "Role takeover chain (grant permissions + rewrite trust + assume, same role)",
+        "statementIndex": 0,
+        "actions": [
+          "iam:PutRolePolicy",
+          "iam:UpdateAssumeRolePolicy",
+          "sts:AssumeRole"
+        ],
+        "resources": [
+          "arn:aws:iam::111122223333:role/target"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "5f78747bfae41944"
+      }
+    ]
+  }
+}

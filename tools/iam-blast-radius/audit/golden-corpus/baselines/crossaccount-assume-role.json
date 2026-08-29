@@ -1,0 +1,236 @@
+{
+  "id": "crossaccount-assume-role",
+  "klass": "risky",
+  "knownOpen": null,
+  "cliJson": {
+    "exit": 1,
+    "stderrClean": false,
+    "report": {
+      "tool": "iam-blast-radius",
+      "family": "identity",
+      "threshold": "low",
+      "partitionAsserted": null,
+      "analysisStatus": "complete",
+      "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
+      "exitCode": 1,
+      "findingsCount": 1,
+      "blockingCount": 1,
+      "analysisStates": [],
+      "findings": [
+        {
+          "id": "CROSS-ACCOUNT-ASSUME-ROLE",
+          "severity": "low",
+          "title": "Cross-account role assumption (scoped sts:AssumeRole into another account)",
+          "statementSid": "AssumeForeignRole",
+          "statementIndex": 0,
+          "actions": [
+            "sts:AssumeRole"
+          ],
+          "resources": [
+            "arn:aws:iam::999999999999:role/target"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "low",
+          "why": "Grants sts:AssumeRole scoped to a specific role in account 999999999999, which is a DIFFERENT AWS account than the analyzed principal (account 111122223333). Assuming a role in another account is a cross-account privilege transition: the principal would operate with the target role's permissions. Whether this is EXPLOITABLE depends on the target role's trust policy (it must permit this principal) and on the target role's permissions, neither of which is in scope here - so this is surfaced as a low-severity cross-account capability, not a confirmed escalation.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Confirm the principal is intended to assume a role in account 999999999999. If so, ensure the target role's trust policy trusts only the intended principals and gate the assumption with conditions (e.g. sts:ExternalId, aws:SourceAccount). If not, remove the cross-account role from the Resource scope.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html",
+          "escalation": {
+            "technique": "cross-account-assume-role",
+            "service": null,
+            "requiredActions": [
+              "sts:AssumeRole"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "cross-account-assume-role",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "sts:AssumeRole"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "AssumeForeignRole",
+              "role": "primitive",
+              "actions": [
+                "sts:AssumeRole"
+              ],
+              "resources": [
+                "arn:aws:iam::999999999999:role/target"
+              ],
+              "condition": null,
+              "note": "cross-account role target"
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "AssumeForeignRole",
+              "actions": [
+                "sts:AssumeRole"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        }
+      ]
+    }
+  },
+  "cliSarif": {
+    "exit": 1,
+    "sarif": {
+      "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+      "runs": [
+        {
+          "tool": {
+            "driver": {
+              "name": "IAM Blast Radius",
+              "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
+              "rules": [
+                {
+                  "id": "CROSS-ACCOUNT-ASSUME-ROLE",
+                  "name": "CROSS-ACCOUNT-ASSUME-ROLE",
+                  "shortDescription": {
+                    "text": "Cross-account role assumption (scoped sts:AssumeRole into another account)"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type CROSS-ACCOUNT-ASSUME-ROLE. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "note"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "2.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html"
+                }
+              ]
+            }
+          },
+          "properties": {
+            "analysisStatus": "complete",
+            "exitCode": 1,
+            "blockingCount": 1,
+            "findingsCount": 1
+          },
+          "results": [
+            {
+              "ruleId": "CROSS-ACCOUNT-ASSUME-ROLE",
+              "level": "note",
+              "message": {
+                "text": "Cross-account role assumption (scoped sts:AssumeRole into another account) [identity policy] at statement `AssumeForeignRole`; actions: `sts:AssumeRole`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "13372f95eb98e81482273e198285"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "low",
+                "policyFamily": "identity",
+                "security-severity": "2.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "low",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "AssumeForeignRole",
+                    "role": "primitive",
+                    "actions": [
+                      "sts\\:AssumeRole"
+                    ],
+                    "resources": [
+                      "arn\\:aws\\:iam\\:\\:999999999999\\:role\\/target"
+                    ],
+                    "note": "cross\\-account role target"
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "AssumeForeignRole"
+              },
+              "ruleIndex": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "analyze": {
+    "ok": true,
+    "coverage": {
+      "incomplete": false,
+      "analysisAborted": false,
+      "codes": [],
+      "statements": {
+        "total": 1,
+        "accepted": 1,
+        "rejected": 0
+      },
+      "counts": {
+        "unrecognizedActions": 0,
+        "unsupportedConditions": 0,
+        "unsupportedElements": 0,
+        "actionResourceMismatches": 0,
+        "maskedGrants": 0,
+        "broadUndecidableUncovered": 0
+      }
+    },
+    "findings": [
+      {
+        "id": "CROSS-ACCOUNT-ASSUME-ROLE",
+        "severity": "low",
+        "title": "Cross-account role assumption (scoped sts:AssumeRole into another account)",
+        "statementIndex": 0,
+        "actions": [
+          "sts:AssumeRole"
+        ],
+        "resources": [
+          "arn:aws:iam::999999999999:role/target"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "93cc3c5bbbc2a273"
+      }
+    ]
+  }
+}
