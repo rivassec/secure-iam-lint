@@ -146,6 +146,13 @@ export const IAM_ADMIN_ACTIONS = Object.freeze([
   // so it is not mislabeled as generic direct-IAM administration.
   'iam:DeleteUserPolicy',
   'iam:DeleteRolePolicy',
+  // Stage-14 (FAILOPEN-IAM-DETACH-POLICY): detaching a managed policy is the inverse
+  // IAM-attachment write of iam:Attach*Policy (already above) - a de-restriction /
+  // guardrail-removal / persistence primitive. These were cataloged L.PERMISSIONS
+  // (incomplete:false) yet silent -> a cataloged-but-silent CLEAN read (fail-open).
+  'iam:DetachUserPolicy',
+  'iam:DetachRolePolicy',
+  'iam:DetachGroupPolicy',
 ]);
 
 // IAM-1005: group-membership privilege assignment. iam:AddUserToGroup adds a user
