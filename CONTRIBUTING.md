@@ -59,6 +59,23 @@ node tests/fuzz/parity-fuzz.mjs
 CI runs this same set on every PR, plus CodeQL, ClusterFuzzLite, and OpenSSF
 Scorecard.
 
+## Security-mutation harness (assurance)
+
+`audit/mutation/security-mutations.mjs` is a targeted mutation tester. Each
+mutation reintroduces one concrete fail-open class a prior adversarial review
+fixed; the harness applies it to the real engine source, runs the whole suite,
+and asserts the suite goes red (the mutant is "killed"). A surviving mutant is a
+direct fail-closed test gap.
+
+```bash
+node audit/mutation/security-mutations.mjs   # from tools/iam-blast-radius/
+```
+
+It re-runs the full suite once per mutation, so it is an occasional / nightly
+check rather than a per-PR gate. When you fix a new fail-open, add a mutation for
+it here so the fix stays pinned. Every mutation must be killed; add a test if one
+survives.
+
 ## Adding or changing a detector
 
 The engine is decomposed into small modules (rules in `rules-*.js`, escalation in
