@@ -10,15 +10,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.0] - 2026-08-29
 
-First stable release. `package.json` is at `1.0.0`; the `v1.0.0` git tag is the
-release marker.
+First stable release. `package.json` is at `1.0.0`; the `v1.0.0` git tag - which
+marks the release and makes the compare/tag links below resolve - is pending.
 
 ### Added
 
 - **Browser-pure analyzer** (`analyze()`): pastes an AWS IAM policy and computes
   its *potential* blast radius - privilege-escalation paths, role-assumption
-  reach, and data exposure - entirely client-side under a strict Content-Security
-  -Policy that blocks all outbound connections.
+  reach, and data exposure - entirely client-side under a strict
+  Content-Security-Policy that blocks all outbound connections.
 - **Node CLI** (`iam-br`) and a headless `scan()` API sharing the same engine,
   with policy-family selection (identity / resource / role-trust / scp-rcp /
   session / permissions-boundary) and exit codes suitable for CI gating.
@@ -34,8 +34,8 @@ release marker.
   reports incomplete coverage, and the browser is never more permissive than the
   CLI (enforced by a determinism + parity fuzzer).
 - Hardened through a multi-round adversarial security review that found and fixed
-  a series of fail-open classes, including: unicode / case-fold / homoglyph action
-  -token spoofs; de-spoofed Deny / condition-key suppression; bypassable
+  a series of fail-open classes, including: unicode / case-fold / homoglyph
+  action-token spoofs; de-spoofed Deny / condition-key suppression; bypassable
   `iam:PassedToService` qualifiers; cross-account resource-policy-write grants;
   standalone compute-code-overwrite escalation; and cataloged-but-silent IAM
   actions. Each fix ships with a regression test.
