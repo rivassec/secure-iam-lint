@@ -1,0 +1,59 @@
+# Scanner-binary freshness check (review finding C6).
+#
+# security.yml pins actionlint / zizmor / gitleaks / osv-scanner as curl-downloaded
+# binaries by exact VERSION + SHA256. That is reproducible, but Dependabot cannot parse a
+# `VER=...` shell constant, so those gate binaries would silently go stale (missing new
+# detections / CVE fixes) until hand-bumped. This scheduled job compares each pinned
+# version against the tool's latest GitHub release and FAILS (a visible weekly signal) when
+# one is behind, so the bump is a deliberate, prompted action - not a thing that rots.
+name: Scanner freshness
+
+on:
+  schedule:
+    - cron: '37 5 * * 1'   # weekly, Monday
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare pinned scanner versions to latest releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sec=.github/workflows/security.yml
+          stale=0
+          check() {
+            local name="$1" repo="$2"
+            # Pinned version = the `VER=X.Y.Z` that precedes this tool's download URL in
+            # security.yml (the URL itself uses v${VER}, so read the VER= shell constant).
+            local pinned
+            pinned="$(awk -v repo="$repo" '/VER=/{v=$0; sub(/.*VER=/,"",v); sub(/[^0-9.].*/,"",v)} index($0,"github.com/" repo "/releases/download"){print v; exit}' "$sec")"
+            local latest
+            latest="$(gh api "repos/${repo}/releases/latest" --jq '.tag_name' | sed 's/^v//')"
+            if [ -z "$pinned" ]; then
+              echo "::warning::${name}: could not read pinned version from ${sec}"
+              return
+            fi
+            if [ "$pinned" != "$latest" ]; then
+              echo "::warning::${name} is BEHIND: pinned ${pinned}, latest ${latest} (bump VER+SHA in ${sec})"
+              stale=1
+            else
+              echo "${name}: up to date (${pinned})"
+            fi
+          }
+          check actionlint   rhysd/actionlint
+          check zizmor        zizmorcore/zizmor
+          check gitleaks      gitleaks/gitleaks
+          check osv-scanner   google/osv-scanner
+          if [ "$stale" -ne 0 ]; then
+            echo "::error::one or more pinned security scanners are behind their latest release"
+            exit 1
+          fi
