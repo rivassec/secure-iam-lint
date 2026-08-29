@@ -70,7 +70,7 @@ T7. **Supply chain** -> Minimal, self-hosted, pinned deps. The SHIPPED tool
 (engine + app + worker + CLI + Action) has ZERO runtime dependencies and NO
 build step (architecture invariants 2 + 7): what is committed is what runs, so
 there is no build-time transform and no transitive-runtime compromise surface.
-Dev-only tooling (test/e2e/mutation) has its top-level versions exact-pinned in
+Dev-only tooling (test/e2e/fuzz) has its top-level versions exact-pinned in
 `package.json` (no `^`/`~`), and its transitive tree is locked in
 `package-lock.json` (committed to git, no longer gitignored). CI therefore
 installs them with `npm ci`, which fails CLOSED on any lockfile/`package.json`

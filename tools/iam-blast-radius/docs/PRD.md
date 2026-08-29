@@ -36,7 +36,8 @@ full multi-policy effective-permission evaluation (Phase 3 partial).
 - Security: no high/critical findings; zero network egress verified
 - Privacy/network: 100%
 - Core engine reliability: statement coverage 100%, branch >=95%,
-  mutation score for evaluator >=90%, 0 known critical FP/FN, 0 unhandled
+  differential + metamorphic fuzz parity holds (browser==CLI and the
+  security-monotonic properties), 0 known critical FP/FN, 0 unhandled
   exceptions, 0 non-deterministic results
 - Compatibility: Chromium + Firefox + WebKit pass
 - Accessibility: no serious/critical violations; findings table works with
@@ -45,8 +46,9 @@ full multi-policy effective-permission evaluation (Phase 3 partial).
 - Docs: limitations + rule version visible in the UI
 
 ## Toolchain-gated items (require CI/browser, not the authoring loop)
-Playwright browser matrix, real-device smoke, mutation testing, and
-`npm audit`/OSV run in CI. The Ralph authoring loop delivers code + unit
+Playwright browser matrix, real-device smoke, differential + metamorphic
+fuzzing (ClusterFuzzLite + the nightly parity fuzzer), and `npm audit`/OSV run
+in CI. The Ralph authoring loop delivers code + unit
 tests + fixtures + the CI config; those gates are green in CI, not asserted
 by the authoring agents. See progress.md for gate status per story.
 
