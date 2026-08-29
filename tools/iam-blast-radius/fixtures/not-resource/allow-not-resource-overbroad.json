@@ -41,9 +41,11 @@
           "notPrincipal": null,
           "notActionPresent": false,
           "notResourcePresent": true,
-          "resourcePresent": false
+          "resourcePresent": false,
+          "spoofedToken": false
         }
-      ]
+      ],
+      "spoofedTokenCount": 0
     },
     "decide": [
       {

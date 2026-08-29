@@ -51,7 +51,8 @@
           "notPrincipal": null,
           "notActionPresent": false,
           "notResourcePresent": false,
-          "resourcePresent": true
+          "resourcePresent": true,
+          "spoofedToken": false
         },
         {
           "index": 1,
@@ -75,9 +76,11 @@
           "notPrincipal": null,
           "notActionPresent": false,
           "notResourcePresent": false,
-          "resourcePresent": true
+          "resourcePresent": true,
+          "spoofedToken": false
         }
-      ]
+      ],
+      "spoofedTokenCount": 0
     }
   }
 }

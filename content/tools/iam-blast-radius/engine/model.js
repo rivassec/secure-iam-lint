@@ -61,21 +61,36 @@ function deepFreeze(value) {
 // Action/NotAction/Resource/NotResource accept a string or an array of
 // strings. Normalize to a fresh string array. Returns { ok, values, error }.
 
-function toStringArray(value, field, path) {
+// S4-unicode-spoof + Stage-11 RC-A: strip the narrow spoof class and RECORD when
+// doing so CHANGED the token. `stripModelSpoof` is a no-op on valid (alphanumeric)
+// AWS tokens, so a change means the source carried an invisible/reordering code
+// point - i.e. the token was tampered. We still return the CLEANED value (display
+// stays legible, S4 intact), but the caller's `spoof` accumulator flips so the
+// verdict layer refuses to TRUST the canonicalized token. This closes the fail-OPEN
+// where a de-spoofed Deny/NotAction/condition-key is AWS-inert (AWS matches the
+// literal requested token against the pattern that still carries the code point and
+// does NOT match) yet the linter credits it as coverage and reads CLEAN.
+function despoof(value, spoof) {
+  const stripped = stripModelSpoof(value);
+  if (spoof && stripped !== value) spoof.hit = true;
+  return stripped;
+}
+
+function toStringArray(value, field, path, spoof) {
   if (value === undefined) {
     return { ok: true, values: [] };
   }
   if (typeof value === 'string') {
     // S4-unicode-spoof: normalization boundary. Strip the NARROW model class
     // (stripModelSpoof: zero-width / bidi / default-ignorable) as the string enters
-    // the model. Collapsing an obfuscated spelling onto its real token is fail-CLOSED
-    // (more rules may fire) and can never hide a grant; legit tokens are alphanumeric
-    // per AWS grammar, so it is a no-op on valid policies. The narrow class PRESERVES
-    // \p{Cc} controls + U+2028/U+2029 on purpose: a control/separator in an ARN keeps
-    // the value non-canonical so viability fails CLOSED (UNKNOWN), rather than being
-    // "cleaned" into a canonical ARN and mis-resolved. Display sinks re-strip the
-    // broad class, so nothing invisible reaches a human trust surface (format-control.js).
-    return { ok: true, values: [stripModelSpoof(value)] };
+    // the model. The narrow class PRESERVES \p{Cc} controls + U+2028/U+2029 on
+    // purpose: a control/separator in an ARN keeps the value non-canonical so
+    // viability fails CLOSED (UNKNOWN), rather than being "cleaned" into a canonical
+    // ARN and mis-resolved. Display sinks re-strip the broad class, so nothing
+    // invisible reaches a human trust surface (format-control.js). Stage-11 RC-A: a
+    // canonicalization is recorded via `spoof` so the verdict never TRUSTS a token
+    // that only exists after de-spoofing (fail closed, not a bare CLEAN).
+    return { ok: true, values: [despoof(value, spoof)] };
   }
   if (Array.isArray(value)) {
     const values = [];
@@ -90,7 +105,7 @@ function toStringArray(value, field, path) {
           ),
         };
       }
-      values.push(stripModelSpoof(value[i]));
+      values.push(despoof(value[i], spoof));
     }
     return { ok: true, values };
   }
@@ -109,7 +124,7 @@ function toStringArray(value, field, path) {
 // structurally intact (fresh copy, dangerous keys re-rejected) without trying
 // to interpret operator semantics here (that is the evaluator's job).
 
-function normalizeCondition(value, errors, path) {
+function normalizeCondition(value, errors, path, spoof) {
   if (value === undefined) return null;
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     errors.push(
@@ -117,31 +132,33 @@ function normalizeCondition(value, errors, path) {
     );
     return null;
   }
-  return copyGuarded(value, errors, `${path}.Condition`);
+  return copyGuarded(value, errors, `${path}.Condition`, spoof);
 }
 
 // Recursively copy a plain data value into fresh objects/arrays, rejecting
 // prototype-pollution keys. Strings/numbers/booleans/null pass through.
-function copyGuarded(value, errors, path) {
+function copyGuarded(value, errors, path, spoof) {
   // S4-unicode-spoof: normalization boundary. A Condition carries attacker-
   // controlled OBJECT KEYS (operators, condition keys) and string VALUES. Strip the
   // invisible/reordering spoof class from both. The key is stripped BEFORE the
   // dangerous-key check so an obfuscated `__pro<ZWSP>to__` collapses to `__proto__`
   // and is still rejected (closes a would-be prototype-pollution fail-open); it is
-  // stripped BEFORE recursion so nested keys are de-spoofed too.
+  // stripped BEFORE recursion so nested keys are de-spoofed too. Stage-11 RC-A: a
+  // stripped key/value that CHANGED sets `spoof.hit` so a de-spoofed condition KEY
+  // can never be credited as a modeled guardrail that flips exit 3 -> clean pass.
   if (value === null) return value;
-  if (typeof value === 'string') return stripModelSpoof(value);
+  if (typeof value === 'string') return despoof(value, spoof);
   if (typeof value !== 'object') return value;
   if (Array.isArray(value)) {
     const out = [];
     for (let i = 0; i < value.length; i++) {
-      out.push(copyGuarded(value[i], errors, `${path}[${i}]`));
+      out.push(copyGuarded(value[i], errors, `${path}[${i}]`, spoof));
     }
     return out;
   }
   const out = {};
   for (const rawKey of Object.getOwnPropertyNames(value)) {
-    const key = stripModelSpoof(rawKey);
+    const key = despoof(rawKey, spoof);
     if (DANGEROUS_KEYS.has(key)) {
       errors.push(
         err(
@@ -169,7 +186,7 @@ function copyGuarded(value, errors, path) {
       );
       continue;
     }
-    out[key] = copyGuarded(value[rawKey], errors, `${path}.${key}`);
+    out[key] = copyGuarded(value[rawKey], errors, `${path}.${key}`, spoof);
   }
   return out;
 }
@@ -185,7 +202,7 @@ function copyGuarded(value, errors, path) {
 //   { anyPrincipal: true,  byType: {} }         ("*")
 //   { anyPrincipal: false, byType: { AWS: [...], Service: [...] } }
 
-function normalizePrincipal(value, errors, path, element) {
+function normalizePrincipal(value, errors, path, element, spoof) {
   const name = element || 'Principal';
   if (value === undefined) return null;
   if (value === '*') {
@@ -205,8 +222,8 @@ function normalizePrincipal(value, errors, path, element) {
   for (const rawKey of Object.getOwnPropertyNames(value)) {
     // S4-unicode-spoof: strip the spoof class from the principal-type key BEFORE
     // the dangerous-key check (same rationale as copyGuarded); values are stripped
-    // inside toStringArray.
-    const key = stripModelSpoof(rawKey);
+    // inside toStringArray. Stage-11 RC-A: record a canonicalized key via `spoof`.
+    const key = despoof(rawKey, spoof);
     if (DANGEROUS_KEYS.has(key)) {
       errors.push(
         err(
@@ -233,7 +250,7 @@ function normalizePrincipal(value, errors, path, element) {
       );
       continue;
     }
-    const arr = toStringArray(value[rawKey], key, `${path}.${name}`);
+    const arr = toStringArray(value[rawKey], key, `${path}.${name}`, spoof);
     if (!arr.ok) {
       errors.push(arr.error);
       continue;
@@ -281,6 +298,12 @@ function normalizeStatement(stmt, index, errors) {
 
   const before = errors.length;
 
+  // Stage-11 RC-A: per-statement accumulator. Set true when stripModelSpoof
+  // canonicalized any SECURITY-RELEVANT token (Action/NotAction/Resource/
+  // NotResource/Condition key or value/Principal type). Sid/Version/Id are
+  // deliberately EXCLUDED - they are cosmetic and cannot hide a grant.
+  const spoof = { hit: false };
+
   // Effect (required, exactly Allow/Deny).
   const effect = stmt['Effect'];
   if (typeof effect !== 'string' || !VALID_EFFECTS.has(effect)) {
@@ -315,8 +338,8 @@ function normalizeStatement(stmt, index, errors) {
       err('MISSING_ACTION', 'Statement must contain Action or NotAction.', path),
     );
   }
-  const actions = collect(toStringArray(stmt['Action'], 'Action', path), errors);
-  const notActions = collect(toStringArray(stmt['NotAction'], 'NotAction', path), errors);
+  const actions = collect(toStringArray(stmt['Action'], 'Action', path, spoof), errors);
+  const notActions = collect(toStringArray(stmt['NotAction'], 'NotAction', path, spoof), errors);
 
   // Resource / NotResource: at most one family. Absence is tolerated (some
   // contexts imply the resource); default to empty arrays.
@@ -331,13 +354,13 @@ function normalizeStatement(stmt, index, errors) {
       ),
     );
   }
-  const resources = collect(toStringArray(stmt['Resource'], 'Resource', path), errors);
+  const resources = collect(toStringArray(stmt['Resource'], 'Resource', path, spoof), errors);
   const notResources = collect(
-    toStringArray(stmt['NotResource'], 'NotResource', path),
+    toStringArray(stmt['NotResource'], 'NotResource', path, spoof),
     errors,
   );
 
-  const condition = normalizeCondition(stmt['Condition'], errors, path);
+  const condition = normalizeCondition(stmt['Condition'], errors, path, spoof);
 
   // Principal / NotPrincipal: distinct, mutually-exclusive elements (IAM-501).
   // AWS forbids both in one statement; that is a schema error here. Each is
@@ -357,8 +380,8 @@ function normalizeStatement(stmt, index, errors) {
       ),
     );
   }
-  const principal = normalizePrincipal(stmt['Principal'], errors, path, 'Principal');
-  const notPrincipal = normalizePrincipal(stmt['NotPrincipal'], errors, path, 'NotPrincipal');
+  const principal = normalizePrincipal(stmt['Principal'], errors, path, 'Principal', spoof);
+  const notPrincipal = normalizePrincipal(stmt['NotPrincipal'], errors, path, 'NotPrincipal', spoof);
 
   if (errors.length !== before) {
     // This statement had at least one schema error; do not emit a half-built
@@ -398,6 +421,12 @@ function normalizeStatement(stmt, index, errors) {
     // detector uses this flag (with resourcePresent === false AND notResourcePresent
     // === false, and no Principal) to fail closed on the unspecified-scope shape.
     resourcePresent: hasResource,
+    // Stage-11 RC-A: a security-relevant token in this statement was canonicalized
+    // by stripModelSpoof (the source carried an invisible/reordering code point).
+    // The verdict layer must NOT trust a de-spoofed token as coverage/guardrail;
+    // coverage.summary.incomplete is flipped so a spoofed Deny/NotAction/condition
+    // -key can never suppress a finding into a clean pass (fail closed).
+    spoofedToken: spoof.hit,
   };
 }
 
@@ -445,6 +474,11 @@ export function buildModel(raw) {
       version: typeof parsed.version === 'string' ? stripModelSpoof(parsed.version) : parsed.version,
       id: typeof parsed.id === 'string' ? stripModelSpoof(parsed.id) : parsed.id,
       statements,
+      // Stage-11 RC-A: how many statements carried a canonicalized (tampered)
+      // security-relevant token. Non-zero flips coverage.summary.incomplete in
+      // enrichCoverage so a de-spoofed token can never read as a complete CLEAN
+      // pass. Zero on every legitimate (pure-ASCII) policy - no false fail-closed.
+      spoofedTokenCount: statements.reduce((n, s) => n + (s && s.spoofedToken ? 1 : 0), 0),
     });
 
     return { ok: true, errors, model };

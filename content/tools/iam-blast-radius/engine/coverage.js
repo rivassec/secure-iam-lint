@@ -215,6 +215,21 @@ export function enrichCoverage(coverage, context) {
     ? ctx.unsupportedConditions.map((c) => String(c))
     : [];
 
+  // Stage-11 RC-A (fail-open fix): the model (model.js) records when
+  // stripModelSpoof CANONICALIZED a security-relevant token - the source carried
+  // an invisible/reordering code point, so the token only exists in its clean form
+  // AFTER de-spoofing. Such a token is AWS-INERT (AWS matches the literal requested
+  // action/key against the pattern that STILL carries the code point and does not
+  // match), so it must never be TRUSTED as coverage: a spoofed Deny/NotAction that
+  // the engine "cleans" into a matching pattern would otherwise SUPPRESS a real
+  // finding and read CLEAN (the T8 worst-bug). Any canonicalized token flips
+  // `incomplete` below - the verdict fails closed exactly like a non-canonical
+  // (homograph) token already does, while the model still stores the cleaned value
+  // for display. Zero on every legitimate pure-ASCII policy (no false fail-closed).
+  const spoofedTokenCount = ctx.model && Number.isFinite(ctx.model.spoofedTokenCount)
+    ? ctx.model.spoofedTokenCount
+    : 0;
+
   // IAM-1006 (suite-2 test 50): action/resource-type mismatches - a supplied
   // grant whose action operates on a resource type the supplied ARN cannot
   // identify (an S3 object action scoped to a bucket-only ARN). Each is a
@@ -383,7 +398,10 @@ export function enrichCoverage(coverage, context) {
     // S2-airtight-incomplete (b): a truncated attack-path graph dropped edges to
     // stay within its bound, so the analysis could not be fully represented and is
     // INCOMPLETE (a truncated graph is never a bare CLEAN pass).
-    || truncated;
+    || truncated
+    // Stage-11 RC-A: a canonicalized (spoofed) security-relevant token cannot be
+    // trusted as coverage; the analysis fails closed (never a bare CLEAN).
+    || spoofedTokenCount > 0;
 
   // Stable machine-readable codes carried into exports. Today this mirrors the
   // family gate's blocking codes; future non-blocking coverage codes append here
@@ -420,6 +438,12 @@ export function enrichCoverage(coverage, context) {
   // S2-airtight-incomplete (b): a stable code for a truncated attack-path graph.
   if (truncated && !codes.includes('GRAPH_TRUNCATED')) {
     codes.push('GRAPH_TRUNCATED');
+  }
+  // Stage-11 RC-A: a stable code when a security-relevant token was canonicalized
+  // by stripModelSpoof (invisible/reordering code point in Action/Resource/
+  // Condition/Principal). Names the reason the verdict fails closed.
+  if (spoofedTokenCount > 0 && !codes.includes('SPOOFED_TOKEN_NORMALIZED')) {
+    codes.push('SPOOFED_TOKEN_NORMALIZED');
   }
 
   const summary = Object.freeze({
