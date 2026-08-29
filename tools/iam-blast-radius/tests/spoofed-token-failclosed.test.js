@@ -67,6 +67,47 @@ for (const [name, cp] of [['ZWSP U+200B', ZWSP], ['soft-hyphen U+00AD', SHY],
   });
 }
 
+// --- Stage-13 EFO-1: the CASE-FOLD channel (distinct from the \p{Cf} strip class) ---
+//
+// stripModelSpoof strips the invisible/reordering class (Cf + Default_Ignorable +
+// Braille). U+212A KELVIN SIGN is category Lu (a LETTER), so it is NOT stripped and
+// the Stage-11 accumulator above never trips on it. But JS String.prototype
+// .toLowerCase() Unicode-case-FOLDS U+212A -> ASCII 'k', so the case-insensitive
+// action matcher folds `iam:CreateAccess<U+212A>ey` onto the real `iam:createaccesskey`
+// and credits an AWS-INERT Deny as a guardrail (real AWS action matching is ASCII
+// case-insensitive ONLY and never Unicode-folds, so U+212A never matches 'K'). An AWS
+// action namespace is strictly ASCII, so ANY non-ASCII code point in an Action token
+// is not a real action: it must flip coverage.summary.incomplete (fail closed).
+const KELVIN = String.fromCodePoint(0x212A); // folds to ASCII 'k' under .toLowerCase()
+
+test('EFO-1: a KELVIN-spoofed Deny action must not suppress a live grant to CLEAN (fail closed)', () => {
+  const p = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [
+      { Effect: 'Allow', Action: 'iam:CreateAccessKey', Resource: 'arn:aws:iam::123456789012:user/bob' },
+      { Effect: 'Deny', Action: `iam:CreateAccess${KELVIN}ey`, Resource: '*' },
+    ],
+  });
+  const r = scan({ text: p, family: 'identity' });
+  assert.notEqual(r.exitCode, 0, 'a Kelvin-folded inert Deny suppressed a live credential-creation grant -> FAIL-OPEN');
+  assert.equal(r.coverage.summary.incomplete, true, 'a non-ASCII action token flips incomplete (fail closed)');
+  assert.ok((r.coverage.summary.codes || []).includes('SPOOFED_TOKEN_NORMALIZED'),
+    'the incomplete verdict names the spoofed-token reason');
+});
+
+test('EFO-1 mirror: a KELVIN-spoofed ALLOW action must not read CLEAN (an ASCII-fold-only fix would leave this open)', () => {
+  // The mirror of the Deny case: if the matcher were merely made ASCII-only, a Kelvin
+  // in an ALLOW action would no longer match any detector pattern and read CLEAN. The
+  // non-ASCII action-token guard closes both directions.
+  const p = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Action: `iam:CreateAccess${KELVIN}ey`, Resource: '*' }],
+  });
+  const r = scan({ text: p, family: 'identity' });
+  assert.notEqual(r.exitCode, 0, 'a Kelvin-spoofed Allow action read CLEAN -> FAIL-OPEN mirror');
+  assert.equal(r.coverage.summary.incomplete, true, 'a non-ASCII action token flips incomplete (fail closed)');
+});
+
 test('RC-A #7: a spoofed Condition KEY must not credit an unmodeled guardrail into a clean pass', () => {
   // sts:ExternalId spelled with an embedded ZWSP: de-spoofing it onto a modeled
   // guardrail key must not flip a fail-closed (exit 3) into a clean exit 0.

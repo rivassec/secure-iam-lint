@@ -76,6 +76,27 @@ function despoof(value, spoof) {
   return stripped;
 }
 
+// Stage-13 EFO-1: an AWS action namespace is strictly ASCII (`service:Action`, where
+// both halves are drawn from [A-Za-z0-9] plus `:_*?-` and policy variables `${...}`).
+// A code point > U+007F therefore cannot belong to a real AWS action. It matters
+// because the case-insensitive action matcher lowercases via JS .toLowerCase(), which
+// Unicode-case-FOLDS some non-ASCII LETTERS onto ASCII (U+212A KELVIN SIGN -> 'k',
+// among others) - a channel the stripModelSpoof accumulator does not see (those code
+// points are letters, not the invisible/reordering class it strips). At real AWS the
+// token is inert (ASCII-only case-insensitive matching never folds U+212A onto 'K'),
+// so a non-ASCII Deny/NotAction is AWS-inert yet the folded matcher would credit it as
+// a guardrail (fail OPEN), and a non-ASCII Allow action would silently match no
+// detector (fail OPEN mirror). Treat any non-ASCII action token as a canonicalization
+// event that flips the spoof accumulator, exactly like a de-spoofed token - fail
+// closed (incomplete), never a bare CLEAN.
+const NON_ASCII_RE = /[^\x00-\x7F]/;
+function actionsHaveNonAscii(values) {
+  for (const v of values) {
+    if (NON_ASCII_RE.test(String(v))) return true;
+  }
+  return false;
+}
+
 function toStringArray(value, field, path, spoof) {
   if (value === undefined) {
     return { ok: true, values: [] };
@@ -340,6 +361,11 @@ function normalizeStatement(stmt, index, errors) {
   }
   const actions = collect(toStringArray(stmt['Action'], 'Action', path, spoof), errors);
   const notActions = collect(toStringArray(stmt['NotAction'], 'NotAction', path, spoof), errors);
+  // Stage-13 EFO-1: a non-ASCII code point in an Action/NotAction token cannot be a
+  // real AWS action; it is either inert at AWS or a case-fold spoof of one. Flip the
+  // spoof accumulator so the verdict fails closed (incomplete) rather than trusting a
+  // folded match - the same fail-closed posture as a de-spoofed token above.
+  if (actionsHaveNonAscii(actions) || actionsHaveNonAscii(notActions)) spoof.hit = true;
 
   // Resource / NotResource: at most one family. Absence is tolerated (some
   // contexts imply the resource); default to empty arrays.
