@@ -95,6 +95,13 @@ const MUTATIONS = [
     // tests/notaction-deny-variable-failclosed.test.js.
     note: 'A NotAction-Deny with a policy variable is treated as a certain block, silently dropping the capability finding (incomplete-coverage backstop still fails closed at the CLI).',
   },
+  {
+    id: 'trust-conditioned-deny-counts-as-unconditional',
+    file: 'trust-deny.js',
+    find: `if (!d.conditioned && aa.certain) coveredUnconditionally = true;`,
+    replace: `if (aa.certain) coveredUnconditionally = true;`,
+    note: 'A CONDITIONAL trust-policy Deny is credited as unconditional coverage, so a Deny whose condition may not hold at runtime fully suppresses a TRUST-* finding.',
+  },
 ];
 
 function runSuite() {

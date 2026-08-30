@@ -17,11 +17,13 @@ import assert from 'node:assert/strict';
 
 import { analyze } from '../../../../content/tools/iam-blast-radius/engine/analyze.js';
 import { scan, EXIT } from '../../../../cli/scan.mjs';
-import { CORPUS, SUBJECT_ACCOUNT } from './corpus.mjs';
+import { CORPUS, SECOND_TIER, SUBJECT_ACCOUNT } from './corpus.mjs';
 
 const CTX = { subjectAccount: SUBJECT_ACCOUNT, partition: 'aws' };
 
 let caught = 0;
+let tierNamed = 0;
+let tierBackstop = 0;
 for (const c of CORPUS) {
   test(`privesc catalog: ${c.id} is caught (not CLEAN, fires ${c.finding})`, () => {
     const text = JSON.stringify({ Version: '2012-10-17', Statement: c.statements });
@@ -40,9 +42,37 @@ for (const c of CORPUS) {
   });
 }
 
+// Second tier: every method must still fail closed (never CLEAN). Where `finding`
+// is set the specific detector must fire; where it is null the method is caught by
+// the incomplete-coverage backstop (recorded honestly, a named-detector candidate).
+for (const c of SECOND_TIER) {
+  test(`second tier: ${c.id} never CLEAN${c.finding ? ` (fires ${c.finding})` : ' (backstop)'}`, () => {
+    const text = JSON.stringify({ Version: '2012-10-17', Statement: c.statements });
+    const s = scan({ text, family: 'identity', subjectAccount: SUBJECT_ACCOUNT, partition: 'aws' });
+    assert.notEqual(s.exitCode, EXIT.CLEAN, `${c.id}: scan() reported CLEAN on a real privesc method`);
+
+    const res = analyze(text, CTX);
+    assert.equal(res.ok, true, `${c.id}: analyze() did not complete ok`);
+    if (c.finding) {
+      const ids = (res.findings || []).map((f) => f.id);
+      assert.ok(ids.includes(c.finding), `${c.id}: expected ${c.finding}, got [${ids.join(', ') || 'none'}]`);
+      tierNamed++;
+    } else {
+      // Backstop: no named finding required, but coverage must be flagged incomplete
+      // so the non-CLEAN verdict is a deliberate "cannot fully decide", not an accident.
+      assert.equal(res.coverage?.summary?.incomplete, true,
+        `${c.id}: backstop case must mark coverage incomplete`);
+      tierBackstop++;
+    }
+  });
+}
+
 test('SCORECARD: full published privesc catalog is caught', () => {
   assert.equal(caught, CORPUS.length,
     `caught ${caught}/${CORPUS.length} methods`);
-  // Emitted to test output so CI logs / evidence capture show the number.
-  console.log(`# privesc-benchmark: ${caught}/${CORPUS.length} named-detector catches, 0 CLEAN`);
+  assert.equal(tierNamed + tierBackstop, SECOND_TIER.length,
+    `second tier: ${tierNamed + tierBackstop}/${SECOND_TIER.length} accounted for`);
+  // Emitted to test output so CI logs / evidence capture show the numbers.
+  console.log(`# privesc-benchmark: catalog ${caught}/${CORPUS.length} named, 0 CLEAN; ` +
+    `second-tier ${tierNamed} named + ${tierBackstop} backstop, 0 CLEAN`);
 });

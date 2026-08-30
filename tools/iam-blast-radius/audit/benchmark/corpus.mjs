@@ -76,3 +76,40 @@ export const CORPUS = [
 ];
 
 export const SOURCE = 'Rhino Security Labs / Spencer Gietzen, "AWS IAM Privilege Escalation - Methods and Mitigation" (2018); Pacu iam__privesc_scan.';
+
+// --- Second tier: well-known privesc primitives beyond the original Rhino 21 ---
+// Same fail-closed invariant (never CLEAN). `finding` names the specific detector
+// where the engine already emits one; `finding: null` marks a method currently
+// caught ONLY by the incomplete-coverage backstop (never CLEAN, but not yet a
+// named detector) -- an honest record and a candidate for a future named detector,
+// never a silent pass. Every entry is at its hardest resource-scoped form.
+export const SECOND_TIER = [
+  // Named: PassRole to more compute services (PASSROLE-SERVICE family).
+  { id: 'PassRole_ECS_RunTask', method: 'iam:PassRole + ecs:RunTask / RegisterTaskDefinition',
+    statements: [A('iam:PassRole', iam('role/ecs-task')), A('ecs:RunTask', svc(`ecs:us-east-1:${ACCT}:task-definition/app:1`)), A('ecs:RegisterTaskDefinition', '*')],
+    finding: 'PASSROLE-SERVICE' },
+  { id: 'PassRole_SageMaker_Notebook', method: 'iam:PassRole + sagemaker:CreateNotebookInstance',
+    statements: [A('iam:PassRole', iam('role/sm')), A('sagemaker:CreateNotebookInstance', svc(`sagemaker:us-east-1:${ACCT}:notebook-instance/n`)), A('sagemaker:CreatePresignedNotebookInstanceUrl', '*')],
+    finding: 'PASSROLE-SERVICE' },
+  { id: 'PassRole_CodeBuild', method: 'iam:PassRole + codebuild:CreateProject + StartBuild',
+    statements: [A('iam:PassRole', iam('role/cb')), A('codebuild:CreateProject', '*'), A('codebuild:StartBuild', '*')],
+    finding: 'PASSROLE-SERVICE' },
+  { id: 'PassRole_Glue_CreateJob', method: 'iam:PassRole + glue:CreateJob',
+    statements: [A('iam:PassRole', iam('role/glue')), A('glue:CreateJob', '*')], finding: 'PASSROLE-SERVICE' },
+  // Named: direct role assumption + resource-policy write.
+  { id: 'AssumeRole_wildcard', method: 'sts:AssumeRole on * (assume any role)',
+    statements: [A('sts:AssumeRole', '*')], finding: 'ASSUME-ROLE-EXPANSION' },
+  { id: 'Lambda_AddPermission', method: 'lambda:AddPermission (function resource-policy write)',
+    statements: [A('lambda:AddPermission', svc(`lambda:us-east-1:${ACCT}:function:app`))], finding: 'RESOURCE-POLICY-WRITE' },
+  // Backstop-only: never CLEAN, but no named detector yet (candidates).
+  { id: 'PassRole_EventBridge_PutTargets', method: 'iam:PassRole + events:PutTargets (EventBridge invokes target as role)',
+    statements: [A('iam:PassRole', iam('role/eb')), A('events:PutRule', '*'), A('events:PutTargets', '*')], finding: null },
+  { id: 'PassRole_Batch_SubmitJob', method: 'iam:PassRole + batch:RegisterJobDefinition + SubmitJob',
+    statements: [A('iam:PassRole', iam('role/batch')), A('batch:RegisterJobDefinition', '*'), A('batch:SubmitJob', '*')], finding: null },
+  { id: 'SSM_SendCommand', method: 'ssm:SendCommand (run commands on EC2 as the instance role)',
+    statements: [A('ssm:SendCommand', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: null },
+  { id: 'SSM_StartSession', method: 'ssm:StartSession (interactive shell on EC2 as the instance role)',
+    statements: [A('ssm:StartSession', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: null },
+  { id: 'EC2InstanceConnect_SendSSHKey', method: 'ec2-instance-connect:SendSSHPublicKey (push key, SSH in as the instance role)',
+    statements: [A('ec2-instance-connect:SendSSHPublicKey', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: null },
+];

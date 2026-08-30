@@ -7,7 +7,9 @@ claim.
 ## Result
 
 **21 / 21 published privesc methods caught, 0 read CLEAN** - each by a specific
-named detector, not the incomplete-coverage backstop.
+named detector, not the incomplete-coverage backstop. An additional second-tier
+set (11 methods beyond the original 21) also never reads CLEAN: 6 by named
+detector, 5 by the backstop and flagged as named-detector candidates (see below).
 
 Reproduce (from `tools/iam-blast-radius/`):
 
@@ -38,6 +40,24 @@ minimal policy per method.
   mechanically identical to the compute-code-overwrite family already modeled, so
   it was promoted to a specific `COMPUTE-CODE-OVERWRITE` detector. The benchmark
   then read 21/21 by named detector.
+
+## Second tier (beyond the original 21)
+
+`corpus.mjs` also carries a `SECOND_TIER` set of well-known privesc primitives
+outside Rhino's original list. Every one still fails closed (never CLEAN):
+
+- **Named (6):** `PassRole + ecs:RunTask`, `+ sagemaker:CreateNotebookInstance`,
+  `+ codebuild:CreateProject`, `+ glue:CreateJob` (all `PASSROLE-SERVICE`);
+  `sts:AssumeRole *` (`ASSUME-ROLE-EXPANSION`); `lambda:AddPermission`
+  (`RESOURCE-POLICY-WRITE`).
+- **Backstop-only (5), candidates for a named detector:** `PassRole +
+  events:PutTargets` (EventBridge), `PassRole + batch:RegisterJobDefinition`,
+  `ssm:SendCommand`, `ssm:StartSession`, `ec2-instance-connect:SendSSHPublicKey`.
+  These are caught today only by the incomplete-coverage backstop - never CLEAN,
+  but not yet a named finding. events/batch are a data-only add to the PassRole
+  service catalog; the SSM/EC2-Instance-Connect trio is a new "code-exec on an
+  existing instance -> assume its role" family. Recorded here honestly rather
+  than hidden, and gated so they can never silently become CLEAN.
 
 ## Scope note
 
