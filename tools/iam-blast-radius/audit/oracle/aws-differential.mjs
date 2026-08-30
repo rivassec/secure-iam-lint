@@ -41,39 +41,62 @@ const REGION = opt('--region') || 'us-east-1';
 // benchmark policies exercise). We only assert the fail-closed direction on these.
 const DANGEROUS = /(:PassRole|:CreateAccessKey|:CreateLoginProfile|:UpdateLoginProfile|:Attach.*Policy|:Put.*Policy|:AddUserToGroup|:UpdateAssumeRolePolicy|:CreatePolicyVersion|:SetDefaultPolicyVersion|:RunInstances|:CreateFunction|:UpdateFunctionCode|:UpdateFunctionConfiguration|:CreateProject|:UpdateProject|:CreateJob|:UpdateJob|:UpdateDevEndpoint|:CreateStack|:UpdateStack|:CreatePipeline|:RunTask|:RegisterTaskDefinition|:CreateNotebookInstance|:CreatePresignedNotebookInstanceUrl|:AssumeRole|:AddPermission|:PutTargets|:SendCommand|:StartSession|:SendSSHPublicKey|:CreateProjectFromTemplate|:AssociateTeamMember|:SubmitJob|:RegisterJobDefinition)/;
 
-function policyActions(statements) {
-  const out = new Set();
+// Map each dangerous action to the resource(s) of the statement that grants it, so
+// SimulateCustomPolicy evaluates the action against the scope the policy actually
+// grants (simulating against a mismatched resource would wrongly read as denied).
+function dangerousActionResources(statements) {
+  const map = new Map(); // action -> Set(resources)
   for (const s of statements) {
-    for (const a of [].concat(s.Action || [])) if (DANGEROUS.test(a)) out.add(a);
+    if (s.Effect !== 'Allow') continue;
+    const resources = [].concat(s.Resource || []);
+    for (const a of [].concat(s.Action || [])) {
+      if (!DANGEROUS.test(a)) continue;
+      if (!map.has(a)) map.set(a, new Set());
+      for (const r of resources) map.get(a).add(r);
+    }
   }
-  return [...out];
+  return map;
 }
 
-// Real AWS call: iam:SimulateCustomPolicy over the supplied policy doc + action list.
-// Returns a map action -> 'allowed' | 'explicitDeny' | 'implicitDeny'.
-function awsSimulate(policyDoc, actions) {
+// SimulateCustomPolicy needs concrete ARNs. A bare "*" resource -> omit --resource-arns
+// (evaluate the action unconstrained). A wildcard ARN (role/deploy-*) -> substitute a
+// concrete instance that the wildcard matches, so the grant still evaluates as allowed.
+function concretize(resources) {
+  const arns = [];
+  for (const r of resources) {
+    if (r === '*') continue; // unconstrained -> omit
+    arns.push(String(r).replace(/\*/g, 'x'));
+  }
+  return arns;
+}
+
+// Real AWS call: iam:SimulateCustomPolicy for ONE action against its own resources.
+// Returns 'allowed' | 'explicitDeny' | 'implicitDeny'.
+function awsSimulateAction(policyDoc, action, resources) {
   if (DRY_RUN) {
-    // Canned response: AWS "allows" every dangerous action a naive read of the policy
-    // grants (Effect Allow, no Deny). Exercises the diff logic without network.
-    const denied = new Set();
     for (const s of policyDoc.Statement) {
-      if (s.Effect === 'Deny') for (const a of [].concat(s.Action || [])) denied.add(a);
+      if (s.Effect === 'Deny' && [].concat(s.Action || []).includes(action)) return 'explicitDeny';
     }
-    return Object.fromEntries(actions.map((a) => [a, denied.has(a) ? 'explicitDeny' : 'allowed']));
+    return 'allowed';
   }
   const args = [
     'iam', 'simulate-custom-policy',
-    '--policy-input-list', JSON.stringify(JSON.stringify(policyDoc)),
-    '--action-names', ...actions,
-    '--resource-arns', '*',
+    '--policy-input-list', JSON.stringify(policyDoc),
+    '--action-names', action,
     '--region', REGION, '--output', 'json',
   ];
+  const arns = concretize(resources);
+  if (arns.length) args.push('--resource-arns', ...arns);
   if (PROFILE) args.push('--profile', PROFILE);
   const raw = execFileSync('aws', args, { encoding: 'utf8', maxBuffer: 8 << 20 });
   const parsed = JSON.parse(raw);
-  const map = {};
-  for (const r of parsed.EvaluationResults || []) map[r.EvalActionName] = r.EvalDecision;
-  return map;
+  // If simulated against multiple resources, the grant holds if ANY resource is allowed.
+  let decision = 'implicitDeny';
+  for (const r of parsed.EvaluationResults || []) {
+    if (r.EvalDecision === 'allowed') return 'allowed';
+    if (r.EvalDecision === 'explicitDeny') decision = 'explicitDeny';
+  }
+  return decision;
 }
 
 const CASES = [...CORPUS, ...SECOND_TIER, ...PART2];
@@ -92,12 +115,13 @@ const falsePositiveCandidates = [];
 
 for (const c of CASES) {
   const policyDoc = { Version: '2012-10-17', Statement: c.statements };
-  const actions = policyActions(c.statements);
+  const actionRes = dangerousActionResources(c.statements);
+  const actions = [...actionRes.keys()];
   if (actions.length === 0) continue;
 
-  let awsDecision;
+  const awsDecision = {};
   try {
-    awsDecision = awsSimulate(policyDoc, actions);
+    for (const a of actions) awsDecision[a] = awsSimulateAction(policyDoc, a, [...actionRes.get(a)]);
   } catch (e) {
     console.error(`  ${c.id}: AWS simulate failed: ${String(e.message).split('\n')[0]}`);
     process.exit(3);
