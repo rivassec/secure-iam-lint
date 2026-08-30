@@ -58,9 +58,10 @@ marks the release and makes the compare/tag links below resolve - is pending.
   each fixed fail-open into the engine and confirms the test suite catches it
   (9/9 killed); a ground-truth benchmark grades the analyzer against the published
   Rhino Security Labs privilege-escalation catalog - all 28 numbered methods fail
-  closed, none read CLEAN; and a differential oracle cross-checks the engine
-  against AWS's own `iam:SimulateCustomPolicy` evaluator, which corroborated the
-  fail-closed verdict on every benchmark policy (zero fail-closed violations).
+  closed, none read CLEAN; and a differential-oracle harness cross-checks the
+  engine against AWS's own `iam:SimulateCustomPolicy` evaluator - an offline
+  self-check runs in CI, and pointed at a real AWS account it verifies the engine
+  never reads CLEAN on a policy AWS reports as allowing the action.
 
 [Unreleased]: https://github.com/rivassec/secure-iam-lint/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/rivassec/secure-iam-lint/releases/tag/v1.0.0
