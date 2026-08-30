@@ -112,6 +112,10 @@ const APPLICABILITY = Object.freeze({
   // (notAction/notResource are exercised by the shared broad-grant fixtures and are
   // not distinctive for this single-action primitive).
   'COMPUTE-CODE-OVERWRITE': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
+  // Same shape as COMPUTE-CODE-OVERWRITE: a standalone code-exec primitive on an
+  // existing role-bearing resource; notAction/notResource excluded for the same
+  // reasons (a concrete named exec action, not an inversion/complement scope).
+  'COMPUTE-SESSION-TAKEOVER': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
   'ASSUME-ROLE-EXPANSION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'notResource', 'hostile'],
   // IAM-902: the ROLE-TAKEOVER chain is a multi-statement compound AND path
   // (grant + trust-modify + assume on the same role). Like the PassRole compound

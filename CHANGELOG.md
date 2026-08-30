@@ -6,7 +6,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-- Nothing yet.
+### Added
+
+- **COMPUTE-SESSION-TAKEOVER** escalation detector (13th family): names the "gain
+  code-execution on an EXISTING role-bearing compute resource, then use its role"
+  primitive - `ssm:SendCommand` / `ssm:StartSession`,
+  `ec2-instance-connect:SendSSHPublicKey`, and
+  `sagemaker:CreatePresignedNotebookInstanceUrl` (Rhino method 28). Needs no
+  `iam:PassRole` and no code change; fires at high. Previously these were caught
+  fail-closed only by the incomplete-coverage backstop; now they surface as a named
+  finding. The privesc benchmark's SSM / EC2-Instance-Connect / existing-SageMaker
+  -notebook cases move from backstop to named accordingly.
 
 ## [1.0.0] - 2026-08-29
 

@@ -8,11 +8,13 @@ reproducible coverage claim.
 
 **All 28 of Rhino's currently-cataloged privesc methods fail closed, 0 read
 CLEAN.** Rhino's original Part 1 (21 methods) are each caught by a specific named
-detector. Rhino Part 2 (repo methods 22-28) are all caught too: 3 by named
-detector, 4 by the incomplete-coverage backstop - and 3 of those 4 are CodeStar,
-a service AWS deprecated and closed in 2024, so no named detector is warranted.
+detector. Rhino Part 2 (repo methods 22-28) are all caught too: 4 by named
+detector, 3 by the incomplete-coverage backstop - and all 3 are CodeStar, a
+service AWS deprecated and closed in 2024, so no named detector is warranted.
 An additional second-tier set (11 primitives beyond Rhino's 28) also never reads
-CLEAN: 7 by named detector, 4 by the backstop (named-detector candidates).
+CLEAN: 10 by named detector, 1 by the backstop (AWS Batch, a named-detector
+candidate). The SSM / EC2-Instance-Connect / existing-SageMaker-notebook cases are
+now named by the COMPUTE-SESSION-TAKEOVER detector (v1.1.0).
 
 Reproduce (from `tools/iam-blast-radius/`):
 
@@ -51,20 +53,19 @@ methods; this corpus covers the original 21 by name, with more in the second tie
 `corpus.mjs` also carries a `SECOND_TIER` set of well-known privesc primitives
 outside Rhino's original list. Every one still fails closed (never CLEAN):
 
-- **Named (7):** `PassRole + ecs:RunTask`, `+ sagemaker:CreateNotebookInstance`,
+- **Named (10):** `PassRole + ecs:RunTask`, `+ sagemaker:CreateNotebookInstance`,
   `+ codebuild:CreateProject`, `+ glue:CreateJob`, `+ events:PutTargets`
   (all `PASSROLE-SERVICE`); `sts:AssumeRole *` (`ASSUME-ROLE-EXPANSION`);
-  `lambda:AddPermission` (`RESOURCE-POLICY-WRITE`).
-- **Backstop-only (4), candidates for a named detector:** `PassRole +
-  batch:RegisterJobDefinition`, `ssm:SendCommand`, `ssm:StartSession`,
-  `ec2-instance-connect:SendSSHPublicKey`. Caught today only by the
-  incomplete-coverage backstop - never CLEAN, but not yet a named finding. batch's
-  job role is assumed via ECS (`ecs-tasks`), so its principal semantics need care;
-  the SSM / EC2-Instance-Connect trio (plus Rhino method 28, the existing-SageMaker
-  -notebook presigned URL) is a coherent "code-exec on an existing compute resource
-  -> assume its already-bound role" family and a tracked candidate for a named
-  detector. Recorded honestly rather than hidden, and gated so none can silently
-  become CLEAN.
+  `lambda:AddPermission` (`RESOURCE-POLICY-WRITE`); and `ssm:SendCommand`,
+  `ssm:StartSession`, `ec2-instance-connect:SendSSHPublicKey`
+  (`COMPUTE-SESSION-TAKEOVER`, v1.1.0 - which also names Rhino method 28, the
+  existing-SageMaker-notebook presigned URL).
+- **Backstop-only (1), a candidate for a named detector:** `PassRole +
+  batch:RegisterJobDefinition`. Caught today only by the incomplete-coverage
+  backstop - never CLEAN, but not yet a named finding: batch's job role is assumed
+  via ECS (`ecs-tasks`), so its PassRole principal semantics need care before it is
+  added to the service catalog. Recorded honestly rather than hidden, and gated so
+  it can never silently become CLEAN.
 
 ## Scope note
 

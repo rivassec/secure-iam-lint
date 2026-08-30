@@ -1,0 +1,22 @@
+{
+  "name": "ec2-instance-connect:SendSSHPublicKey at the narrowest concrete instance scope still fires (scope boundary)",
+  "note": "Even scoped to a single concrete instance ARN (no wildcard, so no WILDCARD-RESOURCE co-finding), the session-takeover primitive fires - the finding tracks the exec ACTION, not resource breadth. Boundary witness: the tightest scope that still fires.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PushKeyToOneInstance",
+        "Effect": "Allow",
+        "Action": "ec2-instance-connect:SendSSHPublicKey",
+        "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/i-0deadbeef"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["COMPUTE-SESSION-TAKEOVER"],
+    "mustNotFind": ["WILDCARD-RESOURCE"],
+    "maxSeverity": { "COMPUTE-SESSION-TAKEOVER": "high" },
+    "maxPathExploitability": {}
+  },
+  "rationale": "ec2-instance-connect:SendSSHPublicKey pushes an SSH key to a specific instance; connecting then yields the instance role from IMDS. Scoping to one concrete instance ARN does not remove the primitive (and does not raise WILDCARD-RESOURCE), so COMPUTE-SESSION-TAKEOVER still fires at high - the resource-scope boundary does not gate the action-level risk."
+}
