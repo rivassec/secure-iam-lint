@@ -18,7 +18,8 @@ marks the release and makes the compare/tag links below resolve - is pending.
 - **Browser-pure analyzer** (`analyze()`): pastes an AWS IAM policy and computes
   its *potential* blast radius - privilege-escalation paths, role-assumption
   reach, and data exposure - entirely client-side under a strict
-  Content-Security-Policy that blocks all outbound connections.
+  Content-Security-Policy that blocks the page from making network requests
+  (`connect-src 'none'`) and loads no third-party scripts.
 - **Node CLI** (`iam-br`) and a headless `scan()` API sharing the same engine,
   with policy-family selection (identity / resource / role-trust / scp-rcp /
   session / permissions-boundary) and exit codes suitable for CI gating.
@@ -43,6 +44,13 @@ marks the release and makes the compare/tag links below resolve - is pending.
   Scorecard, Dependabot, a committed fail-open-lint gate (guard-target +
   active-hotspot baseline), and npm publish with build provenance via trusted
   publishing (OIDC, no long-lived token).
+- Independently validated on three axes: a security-mutation harness reintroduces
+  each fixed fail-open into the engine and confirms the test suite catches it
+  (9/9 killed); a ground-truth benchmark grades the analyzer against the published
+  Rhino Security Labs privilege-escalation catalog - all 28 numbered methods fail
+  closed, none read CLEAN; and a differential oracle cross-checks the engine
+  against AWS's own `iam:SimulateCustomPolicy` evaluator, which corroborated the
+  fail-closed verdict on every benchmark policy (zero fail-closed violations).
 
 [Unreleased]: https://github.com/rivassec/secure-iam-lint/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/rivassec/secure-iam-lint/releases/tag/v1.0.0
