@@ -1,0 +1,22 @@
+{
+  "name": "standalone ssm:SendCommand (no PassRole) fires COMPUTE-SESSION-TAKEOVER",
+  "note": "Running a command on an existing EC2 instance executes under the instance's already-attached IAM role - a standalone code-exec / lateral-movement primitive needing no iam:PassRole and no code change. COMPUTE-SESSION-TAKEOVER fires at high.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SendCmd",
+        "Effect": "Allow",
+        "Action": "ssm:SendCommand",
+        "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/i-0abc"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["COMPUTE-SESSION-TAKEOVER"],
+    "mustNotFind": ["PASSROLE-EC2", "PASSROLE-SERVICE"],
+    "maxSeverity": { "COMPUTE-SESSION-TAKEOVER": "high" },
+    "maxPathExploitability": {}
+  },
+  "rationale": "ssm:SendCommand runs attacker-supplied commands on an existing instance under that instance's IAM role; it does not attach a new role, so no PassRole path fires. It is a real standalone code-execution primitive (Rhino SSM privesc), so COMPUTE-SESSION-TAKEOVER fires at high (evidence high, exploitability medium: the target instance role's power is out of scope)."
+}

@@ -110,11 +110,11 @@ export const SECOND_TIER = [
   { id: 'PassRole_Batch_SubmitJob', method: 'iam:PassRole + batch:RegisterJobDefinition + SubmitJob',
     statements: [A('iam:PassRole', iam('role/batch')), A('batch:RegisterJobDefinition', '*'), A('batch:SubmitJob', '*')], finding: null },
   { id: 'SSM_SendCommand', method: 'ssm:SendCommand (run commands on EC2 as the instance role)',
-    statements: [A('ssm:SendCommand', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: null },
+    statements: [A('ssm:SendCommand', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: 'COMPUTE-SESSION-TAKEOVER' },
   { id: 'SSM_StartSession', method: 'ssm:StartSession (interactive shell on EC2 as the instance role)',
-    statements: [A('ssm:StartSession', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: null },
+    statements: [A('ssm:StartSession', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: 'COMPUTE-SESSION-TAKEOVER' },
   { id: 'EC2InstanceConnect_SendSSHKey', method: 'ec2-instance-connect:SendSSHPublicKey (push key, SSH in as the instance role)',
-    statements: [A('ec2-instance-connect:SendSSHPublicKey', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: null },
+    statements: [A('ec2-instance-connect:SendSSHPublicKey', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: 'COMPUTE-SESSION-TAKEOVER' },
 ];
 
 // --- Rhino Part 2 (repo methods 22-28) ------------------------------------------
@@ -141,5 +141,5 @@ export const PART2 = [
     finding: 'PASSROLE-SERVICE' },
   { id: 'R28_SageMaker_ExistingNotebook', method: '28. Gaining access to an existing SageMaker notebook (presigned URL)',
     statements: [A('sagemaker:CreatePresignedNotebookInstanceUrl', svc(`sagemaker:us-east-1:${ACCT}:notebook-instance/n`))],
-    finding: null },
+    finding: 'COMPUTE-SESSION-TAKEOVER' },
 ];

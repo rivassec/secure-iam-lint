@@ -7,7 +7,17 @@ privesc benchmark (`audit/benchmark/`) so they can never silently regress to CLE
 Each is a precision / UX upgrade (a named, actionable finding), not a fail-closed
 fix. Listed with enough design to implement cleanly in a focused change.
 
-## 1. COMPUTE-SESSION-TAKEOVER (highest value)
+## 1. COMPUTE-SESSION-TAKEOVER - DONE (v1.1.0)
+
+Implemented: named detector `COMPUTE-SESSION-TAKEOVER` (13th escalation family) in
+`escalation-families.js` / `escalation-catalogs.js`, wired into the DETECTORS array,
+with fixtures across the fixture-matrix cells, a dedicated test, a mutation-harness
+entry, and the benchmark ssm/eic/method-28 entries flipped from backstop to named.
+Follow-up still open: register these actions in `catalog.js` so a fully-DENIED
+session action reads clean (rather than fail-closed-incomplete). Original design
+below, kept for reference.
+
+### (original design)
 
 **Primitive.** Gain interactive code-execution on an EXISTING compute resource that
 already has an attached IAM role, and thereby obtain/use that role - no iam:PassRole,
