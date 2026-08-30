@@ -106,7 +106,7 @@ export const SECOND_TIER = [
     statements: [A('lambda:AddPermission', svc(`lambda:us-east-1:${ACCT}:function:app`))], finding: 'RESOURCE-POLICY-WRITE' },
   // Backstop-only: never CLEAN, but no named detector yet (candidates).
   { id: 'PassRole_EventBridge_PutTargets', method: 'iam:PassRole + events:PutTargets (EventBridge invokes target as role)',
-    statements: [A('iam:PassRole', iam('role/eb')), A('events:PutRule', '*'), A('events:PutTargets', '*')], finding: null },
+    statements: [A('iam:PassRole', iam('role/eb')), A('events:PutRule', '*'), A('events:PutTargets', '*')], finding: 'PASSROLE-SERVICE' },
   { id: 'PassRole_Batch_SubmitJob', method: 'iam:PassRole + batch:RegisterJobDefinition + SubmitJob',
     statements: [A('iam:PassRole', iam('role/batch')), A('batch:RegisterJobDefinition', '*'), A('batch:SubmitJob', '*')], finding: null },
   { id: 'SSM_SendCommand', method: 'ssm:SendCommand (run commands on EC2 as the instance role)',
@@ -115,4 +115,31 @@ export const SECOND_TIER = [
     statements: [A('ssm:StartSession', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: null },
   { id: 'EC2InstanceConnect_SendSSHKey', method: 'ec2-instance-connect:SendSSHPublicKey (push key, SSH in as the instance role)',
     statements: [A('ec2-instance-connect:SendSSHPublicKey', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: null },
+];
+
+// --- Rhino Part 2 (repo methods 22-28) ------------------------------------------
+// Completes coverage of Rhino's current 28-method repo. Several overlap Part 1 /
+// the second tier (22 DataPipeline, 26 Lambda-layer, 27 SageMaker-new); they are
+// re-encoded here so "all 28 numbered methods" is checked end to end. Every entry
+// still fails closed (never CLEAN). CodeStar (23-25) is caught by the backstop
+// only and NOT given a named detector: AWS deprecated and closed CodeStar in 2024,
+// so a named detector for a removed service is not warranted (deprecated: true).
+export const PART2 = [
+  { id: 'R22_DataPipeline', method: '22. Passing a role to Data Pipeline',
+    statements: [A('iam:PassRole', iam('role/dp')), A('datapipeline:CreatePipeline', '*'), A('datapipeline:PutPipelineDefinition', '*')],
+    finding: 'PASSROLE-SERVICE' },
+  { id: 'R23_CodeStar_FromTemplate', method: '23. Creating a CodeStar project from a template',
+    statements: [A('codestar:CreateProjectFromTemplate', '*')], finding: null, deprecated: true },
+  { id: 'R24_CodeStar_PassRole', method: '24. Passing a role to a new CodeStar project',
+    statements: [A('iam:PassRole', iam('role/cs')), A('codestar:CreateProject', '*')], finding: null, deprecated: true },
+  { id: 'R25_CodeStar_TeamMember', method: '25. Creating a CodeStar project and associating a team member',
+    statements: [A('codestar:CreateProject', '*'), A('codestar:AssociateTeamMember', '*')], finding: null, deprecated: true },
+  { id: 'R26_Lambda_Layer', method: '26. Adding a malicious Lambda layer (lambda:UpdateFunctionConfiguration)',
+    statements: [A('lambda:UpdateFunctionConfiguration', svc(`lambda:us-east-1:${ACCT}:function:app`))], finding: 'COMPUTE-CODE-OVERWRITE' },
+  { id: 'R27_SageMaker_NewNotebook', method: '27. Passing a role to a new SageMaker notebook',
+    statements: [A('iam:PassRole', iam('role/sm')), A('sagemaker:CreateNotebookInstance', svc(`sagemaker:us-east-1:${ACCT}:notebook-instance/n`)), A('sagemaker:CreatePresignedNotebookInstanceUrl', '*')],
+    finding: 'PASSROLE-SERVICE' },
+  { id: 'R28_SageMaker_ExistingNotebook', method: '28. Gaining access to an existing SageMaker notebook (presigned URL)',
+    statements: [A('sagemaker:CreatePresignedNotebookInstanceUrl', svc(`sagemaker:us-east-1:${ACCT}:notebook-instance/n`))],
+    finding: null },
 ];
