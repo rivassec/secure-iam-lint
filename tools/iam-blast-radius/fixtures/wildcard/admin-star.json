@@ -34,7 +34,7 @@
       ]
     },
     "summary": {
-      "counts": { "privEscPaths": 13, "roleAssumption": 1, "sensitiveData": 0, "broadResource": 0 },
+      "counts": { "privEscPaths": 14, "roleAssumption": 1, "sensitiveData": 0, "broadResource": 0 },
       "highestRisk": { "id": "ASSUME-ROLE-EXPANSION", "severity": "critical", "path": "Principal -> sts:AssumeRole -> assumed role (unknown privileges)" }
     },
     "graphNote": "IAM-107: each PassRole compound path is encoded as a transition through an unknown-privileges pivot - principal --can-pass--> role:passable:{svc} --can-execute-as--> service:{svc} - not a direct principal->service spoke. The pivot node carries the analyzer's KNOWN/UNKNOWN split (the two grants are known; the passed role's privileges are not).",
@@ -46,6 +46,7 @@
       { "from": "principal", "to": "role:passable:datapipeline", "type": "can-pass", "certainty": "policy-supported" },
       { "from": "principal", "to": "role:passable:ec2", "type": "can-pass", "certainty": "policy-supported" },
       { "from": "principal", "to": "role:passable:ecs", "type": "can-pass", "certainty": "policy-supported" },
+      { "from": "principal", "to": "role:passable:events", "type": "can-pass", "certainty": "policy-supported" },
       { "from": "principal", "to": "role:passable:glue", "type": "can-pass", "certainty": "policy-supported" },
       { "from": "principal", "to": "role:passable:lambda", "type": "can-pass", "certainty": "policy-supported" },
       { "from": "principal", "to": "role:passable:sagemaker", "type": "can-pass", "certainty": "policy-supported" },
@@ -57,6 +58,7 @@
       { "from": "role:passable:datapipeline", "to": "service:datapipeline", "type": "can-execute-as", "certainty": "policy-supported" },
       { "from": "role:passable:ec2", "to": "service:ec2", "type": "can-execute-as", "certainty": "policy-supported" },
       { "from": "role:passable:ecs", "to": "service:ecs", "type": "can-execute-as", "certainty": "policy-supported" },
+      { "from": "role:passable:events", "to": "service:events", "type": "can-execute-as", "certainty": "policy-supported" },
       { "from": "role:passable:glue", "to": "service:glue", "type": "can-execute-as", "certainty": "policy-supported" },
       { "from": "role:passable:lambda", "to": "service:lambda", "type": "can-execute-as", "certainty": "policy-supported" },
       { "from": "role:passable:sagemaker", "to": "service:sagemaker", "type": "can-execute-as", "certainty": "policy-supported" },

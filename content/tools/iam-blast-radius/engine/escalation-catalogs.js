@@ -70,6 +70,14 @@ const PASS_ROLE_SERVICES = Object.freeze([
     id: 'PASSROLE-SERVICE',
     execActions: Object.freeze(['datapipeline:CreatePipeline', 'datapipeline:PutPipelineDefinition']),
   }),
+  Object.freeze({
+    // EventBridge (CloudWatch Events): events:PutTargets carries a RoleArn that the
+    // service assumes to invoke the target - pass a privileged role, drive the target.
+    service: 'events',
+    principal: 'events.amazonaws.com',
+    id: 'PASSROLE-SERVICE',
+    execActions: Object.freeze(['events:PutTargets']),
+  }),
 ]);
 
 const PASS_ROLE_ACTION = 'iam:PassRole';
