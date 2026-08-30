@@ -1,15 +1,18 @@
 # Ground-truth privilege-escalation benchmark
 
-This directory measures `secure-iam-lint` against the canonical published catalog
-of AWS IAM privilege-escalation methods, as an objective, reproducible coverage
-claim.
+This directory measures `secure-iam-lint` against the published catalog of AWS
+IAM privilege-escalation methods from Rhino Security Labs, as an objective,
+reproducible coverage claim.
 
 ## Result
 
-**21 / 21 published privesc methods caught, 0 read CLEAN** - each by a specific
-named detector, not the incomplete-coverage backstop. An additional second-tier
-set (11 methods beyond the original 21) also never reads CLEAN: 6 by named
-detector, 5 by the backstop and flagged as named-detector candidates (see below).
+**21 / 21 of Rhino's original (Part 1) privesc methods caught, 0 read CLEAN** -
+each by a specific named detector, not the incomplete-coverage backstop. Rhino's
+repo has since grown to 28 numbered methods; this corpus covers the original 21,
+and an additional second-tier set (11 more, several of them Rhino Part 2) also
+never reads CLEAN: 6 by named detector, 5 by the backstop and flagged as
+named-detector candidates (see below). Covering the full 28 by number is a
+tracked follow-up.
 
 Reproduce (from `tools/iam-blast-radius/`):
 
@@ -20,10 +23,12 @@ node --test audit/benchmark/benchmark.test.js
 
 ## Source
 
-The method list is the canonical set from Rhino Security Labs - Spencer Gietzen,
-"AWS IAM Privilege Escalation - Methods and Mitigation" (2018) - the same 21
-methods automated in Pacu's `iam__privesc_scan` module. `corpus.mjs` encodes one
-minimal policy per method.
+The method list is Rhino Security Labs' original catalog - Spencer Gietzen, "AWS
+IAM Privilege Escalation - Methods and Mitigation" Part 1 (2018) - the 21 methods
+automated in Pacu's `iam__privesc_scan` module. Rhino's repo
+(`github.com/RhinoSecurityLabs/AWS-IAM-Privilege-Escalation`) now enumerates 28
+methods; this corpus covers the original 21 by name, with more in the second tier.
+`corpus.mjs` encodes one minimal policy per method.
 
 ## Methodology (why the number is honest)
 

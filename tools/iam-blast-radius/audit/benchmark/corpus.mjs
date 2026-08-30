@@ -1,11 +1,14 @@
 // Ground-truth privilege-escalation benchmark corpus.
 //
-// The canonical published set of AWS IAM privilege-escalation methods: Spencer
-// Gietzen / Rhino Security Labs, "AWS IAM Privilege Escalation - Methods and
-// Mitigation" (2018), the same 21 methods implemented in Pacu's
-// iam__privesc_scan module. Each entry is a MINIMAL policy that grants exactly
-// one method, at its HARDEST resource-scoped form (concrete ARNs, no bare "*"
-// resource) so a catch cannot ride on a generic WILDCARD-RESOURCE finding.
+// The 21 methods in Rhino Security Labs' ORIGINAL catalog: Spencer Gietzen,
+// "AWS IAM Privilege Escalation - Methods and Mitigation" (Part 1, 2018), the set
+// wired into Pacu's iam__privesc_scan. Rhino's repo
+// (github.com/RhinoSecurityLabs/AWS-IAM-Privilege-Escalation) has since grown to
+// 28 numbered methods (Part 2 adds SageMaker / CodeStar and others); several of
+// those are covered in SECOND_TIER below, and the full 28 are a tracked follow-up.
+// Each entry is a MINIMAL policy that grants exactly one method, at its HARDEST
+// resource-scoped form (concrete ARNs, no bare "*" resource) so a catch cannot
+// ride on a generic WILDCARD-RESOURCE finding.
 //
 // The invariant every entry asserts: the engine must NOT read CLEAN on a real,
 // modeled privesc primitive (threat-model T8). `finding` additionally names the
@@ -75,7 +78,7 @@ export const CORPUS = [
     finding: 'PASSROLE-SERVICE' },
 ];
 
-export const SOURCE = 'Rhino Security Labs / Spencer Gietzen, "AWS IAM Privilege Escalation - Methods and Mitigation" (2018); Pacu iam__privesc_scan.';
+export const SOURCE = 'Rhino Security Labs / Spencer Gietzen, "AWS IAM Privilege Escalation - Methods and Mitigation" Part 1 (2018), the original 21 methods; Rhino repo now enumerates 28. Pacu iam__privesc_scan.';
 
 // --- Second tier: well-known privesc primitives beyond the original Rhino 21 ---
 // Same fail-closed invariant (never CLEAN). `finding` names the specific detector
