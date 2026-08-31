@@ -81,15 +81,12 @@ jobs:
           node-version: '24.20.0'
           registry-url: 'https://registry.npmjs.org'
 
-      # Node 22 bundles npm 10.x, which does NOT perform the OIDC token exchange for
-      # trusted publishing (a real publish then goes out unauthenticated and the
-      # registry answers with a misleading 404). OIDC trusted publishing requires
-      # npm >= 11.5.1; pin an exact version so the release toolchain is reproducible.
-      # zizmor adhoc-packages: a global npm self-upgrade is unavoidably outside a
-      # lockfile, but it is an EXACT pin (not a floating range) and installs only npm
-      # itself from the public registry - accepted, reviewed exception.
-      - name: Upgrade npm to a version that supports OIDC trusted publishing
-        run: npm install -g npm@12.0.2 # zizmor: ignore[adhoc-packages]
+      # No npm upgrade step: node 24.20.0 (pinned above) BUNDLES npm 11.19.0, which is
+      # >= 11.5.1 and performs the OIDC token exchange for trusted publishing. npm's
+      # version is thus pinned via the exact, checksum-verified node distribution - no
+      # separate `npm install -g` (an unpinned global install) needed. If the node pin
+      # is ever LOWERED below a bundle carrying npm < 11.5.1, OIDC publishing breaks with
+      # a misleading 404 - keep node >= 24 (or reinstate a pinned npm upgrade).
 
       # A real publish MUST run from a v*.*.* tag whose version matches package.json -
       # this guards both a tag push AND a non-dry-run manual dispatch, so a dispatch can
