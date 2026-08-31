@@ -85,8 +85,11 @@ jobs:
       # trusted publishing (a real publish then goes out unauthenticated and the
       # registry answers with a misleading 404). OIDC trusted publishing requires
       # npm >= 11.5.1; pin an exact version so the release toolchain is reproducible.
+      # zizmor adhoc-packages: a global npm self-upgrade is unavoidably outside a
+      # lockfile, but it is an EXACT pin (not a floating range) and installs only npm
+      # itself from the public registry - accepted, reviewed exception.
       - name: Upgrade npm to a version that supports OIDC trusted publishing
-        run: npm install -g npm@11.19.1
+        run: npm install -g npm@11.19.1 # zizmor: ignore[adhoc-packages]
 
       # A real publish MUST run from a v*.*.* tag whose version matches package.json -
       # this guards both a tag push AND a non-dry-run manual dispatch, so a dispatch can
