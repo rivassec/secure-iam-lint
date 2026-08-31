@@ -17,7 +17,7 @@
     "@jazzer.js/core": "4.0.0",
     "@playwright/test": "1.62.1",
     "madge": "8.0.0",
-    "typescript": "5.7.3"
+    "typescript": "5.9.3"
   },
   "comment:overrides": "Force PATCHED versions of dev-only transitive deps (via @playwright/test / @jazzer.js/core) that OSV flagged. The shipped package has zero runtime deps, so these never reach a consumer; we patch rather than ignore.",
   "overrides": {

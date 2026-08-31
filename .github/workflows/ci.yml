@@ -21,7 +21,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'   # node --test glob expansion needs >= 21
+          node-version: '24.20.0'   # node --test glob expansion needs >= 21
       - name: Unit + security tests
         run: node --test "tests/**/*.test.js"
       - name: Gate - no network APIs in shipped JS
@@ -75,7 +75,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: '24.20.0'
       - name: Full suite under --disallow-code-generation-from-strings --disable-proto=throw
         run: node --disallow-code-generation-from-strings --disable-proto=throw --test "tests/**/*.test.js"
 
@@ -93,7 +93,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: '24.20.0'
       # madge + typescript are dev-pinned in package-lock.json (review finding C4): install
       # from the reviewed lockfile with `npm ci` and run the LOCAL binaries, rather than
       # `npx --yes madge@X` which resolves an unreviewed transitive tree at CI time.
@@ -160,7 +160,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: '24.20.0'
       - name: Install @playwright/test (pinned in package.json)
         run: npm ci --no-audit --no-fund
       # Cache the browser BINARIES (~300-400 MB). Keyed on the dev package.json

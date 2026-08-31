@@ -78,8 +78,15 @@ jobs:
       # poison (zizmor confidence: Low).
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 # zizmor: ignore[cache-poisoning]
         with:
-          node-version: '22'
+          node-version: '24.20.0'
           registry-url: 'https://registry.npmjs.org'
+
+      # No npm upgrade step: node 24.20.0 (pinned above) BUNDLES npm 11.19.0, which is
+      # >= 11.5.1 and performs the OIDC token exchange for trusted publishing. npm's
+      # version is thus pinned via the exact, checksum-verified node distribution - no
+      # separate `npm install -g` (an unpinned global install) needed. If the node pin
+      # is ever LOWERED below a bundle carrying npm < 11.5.1, OIDC publishing breaks with
+      # a misleading 404 - keep node >= 24 (or reinstate a pinned npm upgrade).
 
       # A real publish MUST run from a v*.*.* tag whose version matches package.json -
       # this guards both a tag push AND a non-dry-run manual dispatch, so a dispatch can
