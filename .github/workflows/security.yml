@@ -63,7 +63,7 @@ jobs:
 
   osv:
     # The SHIPPED package is zero-dependency, but the DEV tree (@playwright/test,
-    # @stryker-mutator/core) pulls a large transitive tree. Scan every lockfile/manifest
+    # @jazzer.js/core, madge) pulls a large transitive tree. Scan every lockfile/manifest
     # for known CVEs. The job exit gates. PREFER PATCHING over ignoring: pin a fixed
     # version of a flagged transitive via a package.json `overrides` entry (the dev tree
     # never ships, so an override cannot affect a consumer). Only if no fix exists should

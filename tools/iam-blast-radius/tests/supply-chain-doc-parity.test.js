@@ -112,6 +112,45 @@ test('T7 states the shipped tool has zero runtime deps and no build step', () =>
   assert.match(T7, /no\s+build step/i, 'T7 must state there is no build step');
 });
 
+// The T7 test above pins the DOC claim; this pins the MANIFEST reality, so the two
+// can never drift (the same both-directions discipline the lockfile gate uses). The
+// SHIPPED package is the repo-root package.json (what `npm publish` uploads); it must
+// declare NO runtime, peer, optional, or bundled dependencies. This is the load-bearing
+// invariant behind the whole supply-chain posture: it is what makes OSV's dev-tree-only
+// scan scope correct and lets consumers inherit zero transitive vuln surface. (It is
+// also why an `npm audit --omit=dev` gate would be vacuous here - it would scan an empty
+// set - so we assert the emptiness directly and loudly instead of auditing nothing.)
+test('the shipped package manifest actually declares zero runtime dependencies', () => {
+  const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+  // Every field npm treats as an INSTALLED/expected runtime dependency of the published
+  // package. devDependencies is intentionally excluded - it never ships.
+  const runtimeDepFields = [
+    'dependencies',
+    'peerDependencies',
+    'optionalDependencies',
+    'bundleDependencies',
+    'bundledDependencies', // npm accepts both spellings; assert on both.
+  ];
+  for (const field of runtimeDepFields) {
+    const v = pkg[field];
+    if (v === undefined) continue; // absent === zero, which is what we want
+    const count = Array.isArray(v) ? v.length : Object.keys(v).length;
+    assert.equal(
+      count,
+      0,
+      `package.json.${field} must be empty - the shipped tool is zero-runtime-dependency ` +
+        `(T7's load-bearing claim; a runtime dep here silently breaks "consumers inherit ` +
+        `zero vuln surface"). Found: ${JSON.stringify(v)}`,
+    );
+  }
+  // Both-directions tie: the manifest is zero-dep AND T7 claims it. Neither may move alone.
+  assert.match(
+    T7,
+    /zero runtime dependenc/i,
+    'manifest is zero-runtime-dep but T7 no longer claims it - doc/manifest drift',
+  );
+});
+
 // S7-A (CLASS): every external tool download in security.yml must be
 // checksum-verified. The story flagged zizmor specifically (it used
 // `pipx run`, version-pinned but NOT hash-verified, unlike the adjacent
