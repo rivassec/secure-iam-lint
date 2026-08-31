@@ -81,6 +81,13 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      # Node 22 bundles npm 10.x, which does NOT perform the OIDC token exchange for
+      # trusted publishing (a real publish then goes out unauthenticated and the
+      # registry answers with a misleading 404). OIDC trusted publishing requires
+      # npm >= 11.5.1; pin an exact version so the release toolchain is reproducible.
+      - name: Upgrade npm to a version that supports OIDC trusted publishing
+        run: npm install -g npm@11.5.1
+
       # A real publish MUST run from a v*.*.* tag whose version matches package.json -
       # this guards both a tag push AND a non-dry-run manual dispatch, so a dispatch can
       # never publish an unversioned or mismatched build (review finding C1).
