@@ -89,7 +89,7 @@ jobs:
       # lockfile, but it is an EXACT pin (not a floating range) and installs only npm
       # itself from the public registry - accepted, reviewed exception.
       - name: Upgrade npm to a version that supports OIDC trusted publishing
-        run: npm install -g npm@11.19.1 # zizmor: ignore[adhoc-packages]
+        run: npm install -g npm@12.0.2 # zizmor: ignore[adhoc-packages]
 
       # A real publish MUST run from a v*.*.* tag whose version matches package.json -
       # this guards both a tag push AND a non-dry-run manual dispatch, so a dispatch can
