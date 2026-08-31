@@ -78,7 +78,7 @@ jobs:
       # poison (zizmor confidence: Low).
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 # zizmor: ignore[cache-poisoning]
         with:
-          node-version: '22.23.2'
+          node-version: '24.20.0'
           registry-url: 'https://registry.npmjs.org'
 
       # Node 22 bundles npm 10.x, which does NOT perform the OIDC token exchange for
