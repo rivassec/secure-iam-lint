@@ -288,6 +288,14 @@ export const ESCALATIONS = Object.freeze({
     docRef:
       'https://docs.aws.amazon.com/lambda/latest/api/API_UpdateFunctionCode.html',
   }),
+  'COMPUTE-SESSION-TAKEOVER': Object.freeze({
+    id: 'COMPUTE-SESSION-TAKEOVER',
+    order: 12,
+    title: 'Access an existing compute resource and use its role (no PassRole, no code change)',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_SendCommand.html',
+  }),
 });
 
 export const ESCALATION_IDS = Object.freeze(Object.keys(ESCALATIONS));

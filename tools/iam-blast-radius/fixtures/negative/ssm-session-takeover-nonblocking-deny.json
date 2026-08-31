@@ -1,0 +1,28 @@
+{
+  "name": "ssm:SendCommand with a non-blocking Deny still fires COMPUTE-SESSION-TAKEOVER",
+  "note": "A Deny on an UNRELATED action does not cover the session action, so the standalone primitive still fires - a deny witness that must NOT read clean.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SendCmd",
+        "Effect": "Allow",
+        "Action": "ssm:SendCommand",
+        "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/i-0abc"
+      },
+      {
+        "Sid": "DenyUnrelated",
+        "Effect": "Deny",
+        "Action": "s3:GetObject",
+        "Resource": "*"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["COMPUTE-SESSION-TAKEOVER"],
+    "mustNotFind": [],
+    "maxSeverity": { "COMPUTE-SESSION-TAKEOVER": "high" },
+    "maxPathExploitability": {}
+  },
+  "rationale": "The Deny targets s3:GetObject, which does not cover ssm:SendCommand, so the session-takeover primitive is unaffected and still fires. A same-policy Deny only removes the path when it actually covers the session action."
+}
