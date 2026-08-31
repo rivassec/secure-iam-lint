@@ -28,7 +28,9 @@ resource's role) but by *accessing* the resource rather than *mutating* its code
 - `ssm:SendCommand` - run commands on an EC2 instance as the instance role.
 - `ssm:StartSession` - interactive shell on an instance as the instance role.
 - `ec2-instance-connect:SendSSHPublicKey` - push a key, SSH in, read the instance
-  role from IMDS. (Consider `ec2-instance-connect:SendSerialConsoleSSHPublicKey` too.)
+  role from IMDS.
+- `ec2-instance-connect:SendSerialConsoleSSHPublicKey` - same takeover via the EC2
+  serial console (a separate action, so it is listed and covered explicitly).
 - `sagemaker:CreatePresignedNotebookInstanceUrl` - open an existing notebook and run
   code as its execution role (Rhino repo method 28).
 

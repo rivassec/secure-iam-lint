@@ -5,7 +5,8 @@
 // mutating its code:
 //   - ssm:SendCommand / ssm:StartSession  -> commands/shell on an EC2 instance as the
 //     instance role;
-//   - ec2-instance-connect:SendSSHPublicKey -> push a key, SSH in, read the role from IMDS;
+//   - ec2-instance-connect:SendSSHPublicKey / SendSerialConsoleSSHPublicKey -> push a key,
+//     connect (SSH or serial console), read the role from IMDS;
 //   - sagemaker:CreatePresignedNotebookInstanceUrl -> open an existing notebook and run
 //     code as its execution role (Rhino repo method 28).
 // High severity (mirrors COMPUTE-CODE-OVERWRITE): a standalone code-exec primitive;
@@ -30,6 +31,7 @@ const CLASS = [
   ['ssm:SendCommand', 'arn:aws:ec2:us-east-1:111111111111:instance/*'],
   ['ssm:StartSession', 'arn:aws:ec2:us-east-1:111111111111:instance/*'],
   ['ec2-instance-connect:SendSSHPublicKey', 'arn:aws:ec2:us-east-1:111111111111:instance/*'],
+  ['ec2-instance-connect:SendSerialConsoleSSHPublicKey', 'arn:aws:ec2:us-east-1:111111111111:instance/*'],
   ['sagemaker:CreatePresignedNotebookInstanceUrl', 'arn:aws:sagemaker:us-east-1:111111111111:notebook-instance/n'],
 ];
 
@@ -66,5 +68,11 @@ test('a same-policy Deny removes the COMPUTE-SESSION-TAKEOVER finding', () => {
   const r = A(p);
   assert.ok(!ids(r).includes('COMPUTE-SESSION-TAKEOVER'), 'the same-policy Deny removes the named path');
   const s = scan({ text: JSON.stringify(p), family: 'identity' });
-  assert.notEqual(s.exitCode, 1, 'no active finding after the Deny (fails closed via coverage, never a findings pass)');
+  // Fails CLOSED, not CLEAN. The covering Deny drops the NAMED finding, but because these
+  // session actions are not yet in ACTION_CATALOG the verdict must be incomplete-coverage
+  // (exit 3), never a clean pass (0) or a findings pass (1). Assert the exact code so all
+  // three are pinned: a regression to CLEAN - the T8 fail-open - is caught here, which the
+  // old notEqual(exitCode, 1) let through (it also passed on a clean 0).
+  assert.equal(s.exitCode, 3, 'denied session action must fail closed via incomplete coverage (exit 3), never CLEAN (0) or findings (1)');
+  assert.equal(s.reason, 'COVERAGE_INCOMPLETE', 'the fail-closed verdict is incomplete coverage, not a clean pass');
 });
