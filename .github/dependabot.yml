@@ -28,6 +28,12 @@ updates:
     groups:
       dev-dependencies:
         patterns: ["*"]
+    # TypeScript 7 (the native port) ships no JS compiler API. madge's parser chain
+    # (precinct -> typescript-estree -> ts-api-utils) crashes on load, which fails the
+    # "No circular dependencies" gate. Stay on 5.x until that chain supports 7.
+    ignore:
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
 
   # The ClusterFuzzLite base image (.clusterfuzzlite/Dockerfile) is digest-pinned;
   # Dependabot bumps the digest so the pin stays current instead of going stale.
