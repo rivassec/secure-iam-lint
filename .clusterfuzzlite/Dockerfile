@@ -2,7 +2,7 @@
 # The base image ships Jazzer.js + the compile_javascript_fuzzer helper.
 # Pinned by digest (was :latest) for reproducible builds; Dependabot (docker
 # ecosystem, /.clusterfuzzlite) bumps the digest so it does not go stale.
-FROM gcr.io/oss-fuzz-base/base-builder-javascript@sha256:d98097ebdd505ccd8147197093971ec32cf62b4ddc26a60b75b9e5c55e5af379
+FROM gcr.io/oss-fuzz-base/base-builder-javascript@sha256:98bfcd008b1f07ff3ab640946146878778a4b34c5aac7017d418841007b35d0e
 
 # Copy the whole repo: the fuzz target (tools/iam-blast-radius/tests/fuzz) imports
 # the shipped engine (content/) and CLI adapter (cli/) by relative path, so both
