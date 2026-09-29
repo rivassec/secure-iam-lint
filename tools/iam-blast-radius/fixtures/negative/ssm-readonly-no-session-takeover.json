@@ -1,0 +1,22 @@
+{
+  "name": "read-only SSM access does not fire COMPUTE-SESSION-TAKEOVER",
+  "note": "ssm:GetCommandInvocation / ssm:DescribeInstanceInformation cannot execute code on an instance, so the standalone session-takeover primitive must NOT fire. Only the interactive/exec session actions are the capability.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadOnlySSM",
+        "Effect": "Allow",
+        "Action": ["ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation"],
+        "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/i-0abc"
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": [],
+    "mustNotFind": ["COMPUTE-SESSION-TAKEOVER"],
+    "maxSeverity": {},
+    "maxPathExploitability": {}
+  },
+  "rationale": "ssm:GetCommandInvocation and ssm:DescribeInstanceInformation are read/describe actions; they do not run commands or open a session, so they cannot execute code under the instance role. COMPUTE-SESSION-TAKEOVER must fire only on the interactive/exec session actions, so a read-only SSM policy is a true negative."
+}

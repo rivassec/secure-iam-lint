@@ -96,6 +96,13 @@ const MUTATIONS = [
     note: 'A NotAction-Deny with a policy variable is treated as a certain block, silently dropping the capability finding (incomplete-coverage backstop still fails closed at the CLI).',
   },
   {
+    id: 'compute-session-takeover-blind',
+    file: 'escalation-families.js',
+    find: `const matched = grantedPatternsFor(stmt, COMPUTE_SESSION_TAKEOVER_ACTIONS).filter((a) => a !== '*');`,
+    replace: `const matched = [];`,
+    note: 'The COMPUTE-SESSION-TAKEOVER detector goes blind, so ssm:SendCommand / StartSession / ec2-instance-connect / sagemaker-notebook lose their named finding (incomplete-coverage backstop still fails closed at the CLI).',
+  },
+  {
     id: 'trust-conditioned-deny-counts-as-unconditional',
     file: 'trust-deny.js',
     find: `if (!d.conditioned && aa.certain) coveredUnconditionally = true;`,

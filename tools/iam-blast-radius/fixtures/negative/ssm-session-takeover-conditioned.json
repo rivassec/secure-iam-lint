@@ -1,0 +1,23 @@
+{
+  "name": "conditioned ssm:StartSession still fires COMPUTE-SESSION-TAKEOVER",
+  "note": "A Condition gates the grant at runtime but does not remove the standalone session-takeover primitive; the finding still fires (confidence downgraded by the Condition).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "StartSessionIfTagged",
+        "Effect": "Allow",
+        "Action": "ssm:StartSession",
+        "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/i-0abc",
+        "Condition": { "StringEquals": { "aws:RequestTag/team": "platform" } }
+      }
+    ]
+  },
+  "negativeExpect": {
+    "mustFind": ["COMPUTE-SESSION-TAKEOVER"],
+    "mustNotFind": ["PASSROLE-EC2"],
+    "maxSeverity": { "COMPUTE-SESSION-TAKEOVER": "high" },
+    "maxPathExploitability": {}
+  },
+  "rationale": "A Condition on ssm:StartSession is a runtime gate that lowers confidence but does not eliminate the primitive: when the condition holds the caller still gets an interactive shell on the instance and runs code under its role. The finding still fires; no PassRole path exists."
+}

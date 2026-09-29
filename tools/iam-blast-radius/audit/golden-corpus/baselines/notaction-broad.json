@@ -13,8 +13,8 @@
       "analysisStatus": "complete",
       "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
       "exitCode": 1,
-      "findingsCount": 4,
-      "blockingCount": 4,
+      "findingsCount": 5,
+      "blockingCount": 5,
       "analysisStates": [],
       "findings": [
         {
@@ -223,6 +223,111 @@
           }
         },
         {
+          "id": "COMPUTE-SESSION-TAKEOVER",
+          "severity": "high",
+          "title": "Access an existing compute resource and use its role (no PassRole, no code change)",
+          "statementSid": "EverythingExceptIam",
+          "statementIndex": 0,
+          "actions": [
+            "ssm:SendCommand",
+            "ssm:StartSession",
+            "ec2-instance-connect:SendSSHPublicKey",
+            "ec2-instance-connect:SendSerialConsoleSSHPublicKey",
+            "sagemaker:CreatePresignedNotebookInstanceUrl"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants an action that gains interactive code-execution on an EXISTING compute resource (e.g. ssm:SendCommand / ssm:StartSession on an EC2 instance, ec2-instance-connect:SendSSHPublicKey, sagemaker:CreatePresignedNotebookInstanceUrl on an existing notebook). Running code on a resource that already carries an IAM role yields that role's credentials - no iam:PassRole and no code change is required. Whether that role is more privileged than the caller is not known from this policy, but the code-execution primitive is present.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope these session/access actions to specific instance or notebook ARNs, gate them with SSM session-document policies / condition keys, and keep privileged execution roles off broadly-accessible compute; separate operator access from role-bearing workloads.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_SendCommand.html",
+          "escalation": {
+            "technique": "access-existing-compute-session",
+            "service": "ssm",
+            "requiredActions": [
+              "ssm:SendCommand",
+              "ssm:StartSession",
+              "ec2-instance-connect:SendSSHPublicKey",
+              "ec2-instance-connect:SendSerialConsoleSSHPublicKey",
+              "sagemaker:CreatePresignedNotebookInstanceUrl"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "access-existing-compute-session",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "ssm:SendCommand",
+                        "ssm:StartSession",
+                        "ec2-instance-connect:SendSSHPublicKey",
+                        "ec2-instance-connect:SendSerialConsoleSSHPublicKey",
+                        "sagemaker:CreatePresignedNotebookInstanceUrl"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "EverythingExceptIam",
+              "role": "primitive",
+              "actions": [
+                "ssm:SendCommand",
+                "ssm:StartSession",
+                "ec2-instance-connect:SendSSHPublicKey",
+                "ec2-instance-connect:SendSerialConsoleSSHPublicKey",
+                "sagemaker:CreatePresignedNotebookInstanceUrl"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "EverythingExceptIam",
+              "actions": [
+                "ssm:SendCommand",
+                "ssm:StartSession",
+                "ec2-instance-connect:SendSSHPublicKey",
+                "ec2-instance-connect:SendSerialConsoleSSHPublicKey",
+                "sagemaker:CreatePresignedNotebookInstanceUrl"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
           "id": "NOTACTION-ALLOW",
           "severity": "high",
           "title": "Allow with NotAction (broad inverse grant)",
@@ -355,6 +460,24 @@
                   "helpUri": "https://docs.aws.amazon.com/lambda/latest/api/API_UpdateFunctionCode.html"
                 },
                 {
+                  "id": "COMPUTE-SESSION-TAKEOVER",
+                  "name": "COMPUTE-SESSION-TAKEOVER",
+                  "shortDescription": {
+                    "text": "Access an existing compute resource and use its role (no PassRole, no code change)"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type COMPUTE-SESSION-TAKEOVER. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_SendCommand.html"
+                },
+                {
                   "id": "NOTACTION-ALLOW",
                   "name": "NOTACTION-ALLOW",
                   "shortDescription": {
@@ -396,8 +519,8 @@
           "properties": {
             "analysisStatus": "complete",
             "exitCode": 1,
-            "blockingCount": 4,
-            "findingsCount": 4
+            "blockingCount": 5,
+            "findingsCount": 5
           },
           "results": [
             {
@@ -501,6 +624,56 @@
               "ruleIndex": 1
             },
             {
+              "ruleId": "COMPUTE-SESSION-TAKEOVER",
+              "level": "error",
+              "message": {
+                "text": "Access an existing compute resource and use its role (no PassRole, no code change) [identity policy] at statement `EverythingExceptIam`; actions: `ec2-instance-connect:SendSSHPublicKey`, `ec2-instance-connect:SendSerialConsoleSSHPublicKey`, `sagemaker:CreatePresignedNotebookInstanceUrl`, `ssm:SendCommand`, `ssm:StartSession`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v1": "0617e2d3cbd06a09b08351bf42c1"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "EverythingExceptIam",
+                    "role": "primitive",
+                    "actions": [
+                      "ssm\\:SendCommand",
+                      "ssm\\:StartSession",
+                      "ec2\\-instance\\-connect\\:SendSSHPublicKey",
+                      "ec2\\-instance\\-connect\\:SendSerialConsoleSSHPublicKey",
+                      "sagemaker\\:CreatePresignedNotebookInstanceUrl"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "EverythingExceptIam"
+              },
+              "ruleIndex": 2
+            },
+            {
               "ruleId": "NOTACTION-ALLOW",
               "level": "error",
               "message": {
@@ -533,7 +706,7 @@
                   "iam\\:\\*"
                 ]
               },
-              "ruleIndex": 2
+              "ruleIndex": 3
             },
             {
               "ruleId": "WILDCARD-RESOURCE",
@@ -568,7 +741,7 @@
                   "iam\\:\\*"
                 ]
               },
-              "ruleIndex": 3
+              "ruleIndex": 4
             }
           ]
         }
@@ -630,6 +803,24 @@
         ],
         "conditionsPresent": false,
         "evidenceWhyHash": "91b19b72fe9e21a0"
+      },
+      {
+        "id": "COMPUTE-SESSION-TAKEOVER",
+        "severity": "high",
+        "title": "Access an existing compute resource and use its role (no PassRole, no code change)",
+        "statementIndex": 0,
+        "actions": [
+          "ec2-instance-connect:SendSSHPublicKey",
+          "ec2-instance-connect:SendSerialConsoleSSHPublicKey",
+          "sagemaker:CreatePresignedNotebookInstanceUrl",
+          "ssm:SendCommand",
+          "ssm:StartSession"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "7e058ede00d459b4"
       },
       {
         "id": "NOTACTION-ALLOW",

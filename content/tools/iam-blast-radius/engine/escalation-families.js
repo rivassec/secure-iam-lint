@@ -344,6 +344,71 @@ export function detectComputeCodeOverwrite(allows, out, denies) {
   }
 }
 
+// COMPUTE-SESSION-TAKEOVER (v1.1.0): gain interactive code-execution on an EXISTING
+// compute resource that already carries an IAM role, and thereby use that role - no
+// iam:PassRole and no code overwrite. Sibling of detectComputeCodeOverwrite (same
+// "exec as an existing resource's role" outcome) but by ACCESSING the resource rather
+// than mutating its code. Standalone primitive: it does not pair with a PassRole path,
+// so (unlike the overwrite family) there is no PASSROLE-* dedup here.
+const COMPUTE_SESSION_TAKEOVER_ACTIONS = Object.freeze([
+  'ssm:SendCommand',
+  'ssm:StartSession',
+  'ec2-instance-connect:SendSSHPublicKey',
+  'ec2-instance-connect:SendSerialConsoleSSHPublicKey',
+  'sagemaker:CreatePresignedNotebookInstanceUrl',
+]);
+
+export function detectComputeSessionTakeover(allows, out, denies) {
+  for (const stmt of allows) {
+    // A bare "*" action is owned by WILDCARD-ACTION; target SPECIFIC session/access
+    // actions (service wildcards like `ssm:*` are kept - they name the service's
+    // capability). Mirrors the overwrite detector's isFullWildcard skip.
+    const matched = grantedPatternsFor(stmt, COMPUTE_SESSION_TAKEOVER_ACTIONS).filter((a) => a !== '*');
+    if (matched.length === 0) continue;
+    const deny = applyDenyToActions(denies, matched, stmt);
+    if (deny.blocked) continue; // same-policy explicit Deny removes the path
+    const actions = deny.actions;
+    if (actions.length === 0) continue;
+    const service = String(actions[0]).split(':')[0] || null;
+    out.push(
+      makeEscalation('COMPUTE-SESSION-TAKEOVER', stmt, {
+        // High, not critical (mirrors COMPUTE-CODE-OVERWRITE): a standalone direct
+        // code-exec primitive, not a compound privilege-boundary crossing.
+        severity: 'high',
+        // Grant present (evidence high); ELEVATION requires the existing resource's role
+        // to out-power the caller - a target whose power is out of scope here -> medium.
+        policyEvidence: 'high',
+        pathExploitability: 'medium',
+        conditioned: hasNonEmptyCondition(stmt),
+        denyNarrowed: deny.narrowed,
+        technique: 'access-existing-compute-session',
+        service,
+        requiredActions: actions.slice(),
+        prerequisites: prerequisitesOf([
+          prereqTechnique('access-existing-compute-session', [prereqGroup(actions, 'primitive')], {}),
+        ]),
+        actions,
+        resources: resourceScope(stmt),
+        evidence: [evidenceOf(stmt, 'primitive', actions)],
+        why:
+          'Grants an action that gains interactive code-execution on an EXISTING compute ' +
+          'resource (e.g. ssm:SendCommand / ssm:StartSession on an EC2 instance, ' +
+          'ec2-instance-connect:SendSSHPublicKey, ' +
+          'sagemaker:CreatePresignedNotebookInstanceUrl on an existing notebook). Running ' +
+          'code on a resource that already carries an IAM role yields that role\'s ' +
+          'credentials - no iam:PassRole and no code change is required. Whether that role ' +
+          'is more privileged than the caller is not known from this policy, but the ' +
+          'code-execution primitive is present.',
+        remediation:
+          'Scope these session/access actions to specific instance or notebook ARNs, gate ' +
+          'them with SSM session-document policies / condition keys, and keep privileged ' +
+          'execution roles off broadly-accessible compute; separate operator access from ' +
+          'role-bearing workloads.',
+      }),
+    );
+  }
+}
+
 export function detectAssumeRoleExpansion(allows, out, denies) {
   for (const stmt of allows) {
     const matched = grantedPatternsFor(stmt, ASSUME_ROLE_ACTIONS);

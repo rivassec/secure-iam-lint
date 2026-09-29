@@ -90,7 +90,7 @@ import {
 } from './escalation-takeover.js';
 export * from './escalation-takeover.js';
 import {
-  detectPolicyVersion, detectAttachPolicy, detectPutInlinePolicy, detectTrustModify, detectCredentialCreation, detectComputeCodeOverwrite, detectAssumeRoleExpansion, detectCrossAccountScopedAssume,
+  detectPolicyVersion, detectAttachPolicy, detectPutInlinePolicy, detectTrustModify, detectCredentialCreation, detectComputeCodeOverwrite, detectComputeSessionTakeover, detectAssumeRoleExpansion, detectCrossAccountScopedAssume,
 } from './escalation-families.js';
 export * from './escalation-families.js';
 import {
@@ -977,6 +977,7 @@ const DETECTORS = [
   detectTrustModify,
   detectCredentialCreation,
   detectComputeCodeOverwrite,
+  detectComputeSessionTakeover,
   detectAssumeRoleExpansion,
   detectCrossAccountScopedAssume,
   detectRoleTakeover,
