@@ -1,0 +1,21 @@
+{
+  "name": "standalone ssm:StartSession with a hostile Sid rides through inert (positive; hostile)",
+  "note": "The session-takeover grant fires COMPUTE-SESSION-TAKEOVER; an HTML/JS payload embedded in the Sid must survive verbatim as inert DATA in the finding (statementSid) - never executed, never sanitized into a false clean.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "<script>alert(1)</script>",
+        "Effect": "Allow",
+        "Action": "ssm:StartSession",
+        "Resource": "arn:aws:ec2:us-east-1:111122223333:instance/i-0abc"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "hostile": true,
+    "hostileFor": ["COMPUTE-SESSION-TAKEOVER"],
+    "notFindingIds": ["PASSROLE-EC2"]
+  }
+}
