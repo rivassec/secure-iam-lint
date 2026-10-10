@@ -102,10 +102,13 @@ jobs:
 tag; for security-sensitive workflows pin the full commit SHA instead:
 
 ```yaml
-      # TODO(release): replace <FULL_40_CHAR_COMMIT_SHA> with the commit that the
-      # v1.1.0 release tag points at (and keep the version comment) when v1.1.0 is cut.
-      - uses: rivassec/secure-iam-lint@<FULL_40_CHAR_COMMIT_SHA> # v1.1.0
+      # Resolve the commit for a release tag and pin it (keep the version comment):
+      #   git ls-remote https://github.com/rivassec/secure-iam-lint refs/tags/v1.1.0
+      - uses: rivassec/secure-iam-lint@v1.1.0
 ```
+
+Each GitHub Release lists the exact commit SHA for that tag; copy it into the
+`uses:` line in place of `v1.1.0` for a pin that cannot move.
 
 ### Inputs and outputs
 
