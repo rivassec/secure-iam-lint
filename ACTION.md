@@ -85,34 +85,63 @@ jobs:
 
 ### Uploading to the Security tab
 
-Add `github/codeql-action/upload-sarif` as a separate step to send results to the
-GitHub code-scanning Security tab. **That step's job needs
-`security-events: write`** - a permission the Action itself never requires. Keep
-the scan step read-only and grant the write scope only where SARIF is uploaded.
+Add `github/codeql-action/upload-sarif` to send results to the GitHub code-scanning
+Security tab. **Only the job that uploads needs `security-events: write`** - a
+permission the Action itself never requires - so keep the scan in its own read-only
+job and upload from a second job that is skipped for fork pull requests. The
+`pull_request` trigger is used (never `pull_request_target`).
 
 ```yaml
 name: IAM policy scan
-on: [pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 
-permissions:
-  contents: read
-  security-events: write   # required ONLY for the upload-sarif step below
+permissions: {}
 
 jobs:
-  iam-blast-radius:
+  scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: rivassec/secure-iam-lint@v1
         with:
           paths: policies/**/*.json
           family: identity
-          fail-on: high
           sarif-output: iam-blast-radius.sarif
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()          # upload even when the scan step failed the job
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: iam-blast-radius-sarif
+          path: iam-blast-radius.sarif
+          if-no-files-found: ignore
+          retention-days: 1
+
+  upload:
+    needs: scan
+    # always(): upload even when the scan failed; the scan job still shows failed.
+    # Same-repo PRs and pushes only - fork PRs are skipped.
+    if: >-
+      ${{ always() &&
+          (github.event_name != 'pull_request' ||
+           github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # the ONLY job with this permission
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: iam-blast-radius-sarif
+      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: iam-blast-radius.sarif
+          category: iam-blast-radius
 ```
 
 Mixed repositories (identity policies and resource policies and SCPs in one tree)
@@ -185,7 +214,8 @@ exit code (that is driven only by finding severity: a fail-closed `3` stays `3`)
 - Default required permission is **`contents: read`**. The Action reads files and
   writes a SARIF file in the workspace; nothing more.
 - Grant **`security-events: write` only** in a job that runs
-  `github/codeql-action/upload-sarif`, and only on that job.
+  `github/codeql-action/upload-sarif`, and only on that job. Do not grant it in the
+  job that runs the Action on untrusted pull-request content.
 
 ## Security guidance for consumers
 

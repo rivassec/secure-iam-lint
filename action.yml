@@ -5,7 +5,7 @@ branding:
   icon: shield
   color: purple
 
-# A JavaScript action (node20), not Docker or composite: no build step, no bundled
+# A JavaScript action (node24), not Docker or composite: no build step, no bundled
 # dist, no runtime npm deps. It imports the headless scan module directly and reads
 # a STRUCTURED result (it never scrapes stdout). It reads policy FILES only and
 # NEVER runs Terraform, npm, shell, or any repo-provided command - untrusted PR
@@ -133,6 +133,10 @@ outputs:
   analysis-status:
     description: Aggregate analysis status - complete, partial, or failed.
 
+# Runtime: node24, provided by the GitHub-hosted runner (nothing is installed or bundled
+# by this action). GitHub.com-hosted runners are the supported baseline; a self-hosted
+# runner or GHES instance must provide a runner version new enough to offer the node24
+# action runtime. This is independent of the npm package's own `engines.node`.
 runs:
-  using: node20
+  using: node24
   main: action/index.mjs
