@@ -1,6 +1,6 @@
 {
   "name": "secure-iam-lint",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Client-side AWS IAM policy blast-radius analyzer with a fail-closed headless CLI, SARIF 2.1.0 output, and a GitHub Action. Reports potential blast radius, not effective permissions.",
   "type": "module",
   "license": "MIT",

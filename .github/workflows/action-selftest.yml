@@ -17,6 +17,17 @@
 #   vacuous-deny   -> step outcome failure, exit-code 1, status complete, a REAL DATA-EXFIL
 #                     result (R1: a vacuous NotResource Deny must NOT suppress DATA-EXFIL).
 #
+# Added for the v1.1.0 release (each asserts step outcome AND exit-code via
+# .github/scripts/selftest-assert.sh; expectations verified against the real action):
+#   internal-error        -> failure, exit 4 (unreadable policy file: a real, deterministic
+#                            production trigger; no test-only hook exists or was added).
+#   mixed-valid-malformed -> failure, exit 3 (clean + malformed in ONE paths list; never 0).
+#   partition-omitted     -> failure, exit 3 (cross-partition PassRole verdict depends on it;
+#                            UNKNOWN_VIABILITY) + partition-asserted control -> exit 1.
+#   one fixture per policy family: identity (known-good/known-bad above), role-trust (exit 1),
+#   resource WITH resource-arn/type (exit 3 partial, by design) and WITHOUT (exit 3 failed),
+#   permissions-boundary (exit 1), session (exit 0), scp (exit 0), rcp (exit 0).
+#
 # The bad/malformed/usage/vacuous steps use continue-on-error so the job can inspect their
 # outcome; the good case does NOT (a failure there is a real regression that fails CI).
 #
@@ -50,6 +61,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: self-test summary header
+        run: |
+          {
+            echo "## IAM Blast Radius action self-test"
+            echo ""
+            echo "| case | step outcome | exit-code | analysis-status |"
+            echo "| --- | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # --- known-good: expect success, exit 0 --------------------------------
       - name: known-good (expect success, exit 0)
@@ -315,7 +335,296 @@ jobs:
           grep -q 'ENUMERATION_TRUNCATED' "$ws/iam-blast-radius.sarif" \
             || { echo "dir-cap: SARIF missing ENUMERATION_TRUNCATED analyzer-state"; exit 1; }
 
-      - name: self-test summary
+      # --- Additional fail-closed + per-family cases (shared assertion helper) ----------
+      # Each case runs the LOCAL action (`uses: ./`) and asserts BOTH the step outcome AND the
+      # `exit-code` output via .github/scripts/selftest-assert.sh. Cases whose expected outcome
+      # is `failure` use continue-on-error so the job can inspect them; the expectations are
+      # then asserted (a wrong outcome/exit code fails the JOB - no green-skip).
+      # exit 4 (INTERNAL): deterministic, production-code trigger - an UNREADABLE policy file
+      # (chmod 000, non-root runner) makes the file read throw, which the action maps to an
+      # internal error (exit 4), never 0. A clean sibling is included to prove worst-code wins.
+      - name: stage internal-error fixture (chmod-000 policy file)
+        run: |
+          set -euo pipefail
+          mkdir -p selftest-exit4
+          cp .github/action-selftest-fixtures/clean-identity.json selftest-exit4/clean.json
+          cp .github/action-selftest-fixtures/admin-identity.json selftest-exit4/unreadable.json
+          chmod 000 selftest-exit4/unreadable.json
+          # chmod-000 only denies a NON-root reader; assert it, rather than green-pass a no-op.
+          if cat selftest-exit4/unreadable.json >/dev/null 2>&1; then
+            echo "internal-error: runner does not enforce chmod-000 (running as root?) - cannot stage reproduction"
+            exit 1
+          fi
+
+      - name: 'internal-error (unreadable file; expect failure, exit 4)'
+        id: internal
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: selftest-exit4/*.json
+          family: identity
+          fail-on: high
+          sarif-output: selftest-internal.sarif
+
+      - name: cleanup internal-error fixture
+        if: always()
+        run: |
+          chmod 644 selftest-exit4/unreadable.json 2>/dev/null || true
+          rm -rf selftest-exit4
+
+      - name: assert internal-error FAILS CLOSED (exit 4, never 0)
+        env:
+          CASE: internal-error
+          OUTCOME: ${{ steps.internal.outcome }}
+          CODE: ${{ steps.internal.outputs.exit-code }}
+          STATUS: ${{ steps.internal.outputs.analysis-status }}
+          WANT_OUTCOME: failure
+          WANT_CODE: '4'
+          WANT_STATUS: failed
+        run: bash .github/scripts/selftest-assert.sh
+      # One valid file and one unanalysable file in the SAME `paths` list. Worst-exit-code
+      # aggregation must surface 3 (fail closed); a clean sibling must never launder it to 0.
+      - name: 'mixed-valid-and-malformed (one paths list; expect failure, exit 3, never 0)'
+        id: mixed
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: |
+            .github/action-selftest-fixtures/clean-identity.json
+            .github/action-selftest-fixtures/malformed.json
+          family: identity
+          fail-on: high
+          sarif-output: selftest-mixed.sarif
+
+      - name: assert mixed
+        env:
+          CASE: mixed
+          OUTCOME: ${{ steps.mixed.outcome }}
+          CODE: ${{ steps.mixed.outputs.exit-code }}
+          STATUS: ${{ steps.mixed.outputs.analysis-status }}
+          WANT_OUTCOME: failure
+          WANT_CODE: '3'
+          WANT_STATUS: failed
+        run: bash .github/scripts/selftest-assert.sh
+
+      # `partition` is deliberately NOT set. The PassRole role ARN is in aws-us-gov while the
+      # subject account's partition is unasserted, so viability is UNKNOWN and must fail closed
+      # (exit 3), never be demoted to a passing medium.
+      - name: 'partition-omitted (cross-partition PassRole verdict depends on it; expect failure, exit 3)'
+        id: partition_omitted
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/cross-partition-passrole.json
+          family: identity
+          subject-account: 111122223333
+          fail-on: high
+          sarif-output: selftest-partition-omitted.sarif
+
+      - name: assert partition-omitted
+        env:
+          CASE: partition-omitted
+          OUTCOME: ${{ steps.partition_omitted.outcome }}
+          CODE: ${{ steps.partition_omitted.outputs.exit-code }}
+          STATUS: ${{ steps.partition_omitted.outputs.analysis-status }}
+          WANT_OUTCOME: failure
+          WANT_CODE: '3'
+          WANT_STATUS: partial
+          SARIF: selftest-partition-omitted.sarif
+          WANT_RULE: analysis.UNKNOWN_VIABILITY
+        run: bash .github/scripts/selftest-assert.sh
+
+      # Control for partition-omitted: the ONLY difference is the asserted partition, which turns
+      # the UNKNOWN verdict into a confident blocking finding (exit 1, complete).
+      - name: 'partition-asserted (control: same policy, partition=aws-us-gov; expect failure, exit 1, complete)'
+        id: partition_asserted
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/cross-partition-passrole.json
+          family: identity
+          subject-account: 111122223333
+          partition: aws-us-gov
+          fail-on: high
+          sarif-output: selftest-partition-asserted.sarif
+
+      - name: assert partition-asserted
+        env:
+          CASE: partition-asserted
+          OUTCOME: ${{ steps.partition_asserted.outcome }}
+          CODE: ${{ steps.partition_asserted.outputs.exit-code }}
+          STATUS: ${{ steps.partition_asserted.outputs.analysis-status }}
+          WANT_OUTCOME: failure
+          WANT_CODE: '1'
+          WANT_STATUS: complete
+          SARIF: selftest-partition-asserted.sarif
+          WANT_RULE: PASSROLE-EC2
+        run: bash .github/scripts/selftest-assert.sh
+
+      - name: 'family role-trust (public trust principal; expect failure, exit 1)'
+        id: role_trust
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/role-trust-public.json
+          family: role-trust
+          fail-on: high
+          sarif-output: selftest-role-trust.sarif
+
+      - name: assert role-trust
+        env:
+          CASE: role-trust
+          OUTCOME: ${{ steps.role_trust.outcome }}
+          CODE: ${{ steps.role_trust.outputs.exit-code }}
+          STATUS: ${{ steps.role_trust.outputs.analysis-status }}
+          WANT_OUTCOME: failure
+          WANT_CODE: '1'
+          WANT_STATUS: complete
+          SARIF: selftest-role-trust.sarif
+          WANT_RULE: TRUST-PUBLIC
+        run: bash .github/scripts/selftest-assert.sh
+
+      # The resource family analyzes the attached-resource policy but reports coverage
+      # INCOMPLETE by design (identity-side policies are not supplied), so it is a real
+      # PUBLIC-ACCESS finding AND a fail-closed exit 3 - never a green check.
+      - name: 'family resource with resource-arn/type (expect failure, exit 3, partial: resource coverage is always incomplete)'
+        id: resource
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/resource-public-read.json
+          family: resource
+          resource-arn: arn:aws:s3:::public-downloads/*
+          resource-type: s3-object
+          fail-on: high
+          sarif-output: selftest-resource.sarif
+
+      - name: assert resource
+        env:
+          CASE: resource
+          OUTCOME: ${{ steps.resource.outcome }}
+          CODE: ${{ steps.resource.outputs.exit-code }}
+          STATUS: ${{ steps.resource.outputs.analysis-status }}
+          WANT_OUTCOME: failure
+          WANT_CODE: '3'
+          WANT_STATUS: partial
+          SARIF: selftest-resource.sarif
+          WANT_RULE: PUBLIC-ACCESS
+        run: bash .github/scripts/selftest-assert.sh
+
+      - name: 'family resource WITHOUT resource-arn (expect failure, exit 3, failed)'
+        id: resource_noctx
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/resource-public-read.json
+          family: resource
+          fail-on: high
+          sarif-output: selftest-resource-noctx.sarif
+
+      - name: assert resource-noctx
+        env:
+          CASE: resource-noctx
+          OUTCOME: ${{ steps.resource_noctx.outcome }}
+          CODE: ${{ steps.resource_noctx.outputs.exit-code }}
+          STATUS: ${{ steps.resource_noctx.outputs.analysis-status }}
+          WANT_OUTCOME: failure
+          WANT_CODE: '3'
+          WANT_STATUS: failed
+          SARIF: selftest-resource-noctx.sarif
+          WANT_RULE: analysis.RESOURCE_CONTEXT_REQUIRED
+        run: bash .github/scripts/selftest-assert.sh
+
+      - name: 'family permissions-boundary (broad envelope; expect failure, exit 1)'
+        id: boundary
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/permissions-boundary-envelope.json
+          family: permissions-boundary
+          fail-on: high
+          sarif-output: selftest-boundary.sarif
+
+      - name: assert boundary
+        env:
+          CASE: boundary
+          OUTCOME: ${{ steps.boundary.outcome }}
+          CODE: ${{ steps.boundary.outputs.exit-code }}
+          STATUS: ${{ steps.boundary.outputs.analysis-status }}
+          WANT_OUTCOME: failure
+          WANT_CODE: '1'
+          WANT_STATUS: complete
+          SARIF: selftest-boundary.sarif
+          WANT_RULE: PERMISSIONS-BOUNDARY-ENVELOPE
+        run: bash .github/scripts/selftest-assert.sh
+
+      - name: 'family session (scoped session policy; expect success, exit 0)'
+        id: session
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/session-scoped.json
+          family: session
+          fail-on: high
+          sarif-output: selftest-session.sarif
+
+      - name: assert session
+        env:
+          CASE: session
+          OUTCOME: ${{ steps.session.outcome }}
+          CODE: ${{ steps.session.outputs.exit-code }}
+          STATUS: ${{ steps.session.outputs.analysis-status }}
+          WANT_OUTCOME: success
+          WANT_CODE: '0'
+          WANT_STATUS: complete
+          SARIF: selftest-session.sarif
+          WANT_RULE: SESSION-CEILING
+        run: bash .github/scripts/selftest-assert.sh
+
+      - name: 'family scp (region guardrail; expect success, exit 0)'
+        id: scp
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/scp-region-guardrail.json
+          family: scp
+          fail-on: high
+          sarif-output: selftest-scp.sarif
+
+      - name: assert scp
+        env:
+          CASE: scp
+          OUTCOME: ${{ steps.scp.outcome }}
+          CODE: ${{ steps.scp.outputs.exit-code }}
+          STATUS: ${{ steps.scp.outputs.analysis-status }}
+          WANT_OUTCOME: success
+          WANT_CODE: '0'
+          WANT_STATUS: complete
+          SARIF: selftest-scp.sarif
+          WANT_RULE: SCP-GUARDRAIL
+        run: bash .github/scripts/selftest-assert.sh
+
+      - name: 'family rcp (org-perimeter guardrail; expect success, exit 0)'
+        id: rcp
+        uses: ./
+        with:
+          paths: .github/action-selftest-fixtures/rcp-org-perimeter.json
+          family: rcp
+          fail-on: high
+          sarif-output: selftest-rcp.sarif
+
+      - name: assert rcp
+        env:
+          CASE: rcp
+          OUTCOME: ${{ steps.rcp.outcome }}
+          CODE: ${{ steps.rcp.outputs.exit-code }}
+          STATUS: ${{ steps.rcp.outputs.analysis-status }}
+          WANT_OUTCOME: success
+          WANT_CODE: '0'
+          WANT_STATUS: complete
+          SARIF: selftest-rcp.sarif
+          WANT_RULE: RCP-GUARDRAIL
+        run: bash .github/scripts/selftest-assert.sh
+
+      - name: self-test summary (legacy cases)
         if: always()
         env:
           GOOD_OUTCOME: ${{ steps.good.outcome }}
@@ -330,17 +639,13 @@ jobs:
           VACUOUS_CODE: ${{ steps.vacuous.outputs.exit-code }}
         run: |
           {
-            echo "## IAM Blast Radius action self-test"
-            echo ""
-            echo "| case | step outcome | exit-code |"
-            echo "| --- | --- | --- |"
-            echo "| known-good | $GOOD_OUTCOME | $GOOD_CODE |"
-            echo "| known-bad | $BAD_OUTCOME | $BAD_CODE |"
-            echo "| malformed | $MAL_OUTCOME | $MAL_CODE |"
-            echo "| usage-error | $USAGE_OUTCOME | $USAGE_CODE |"
-            echo "| vacuous-notresource-deny | $VACUOUS_OUTCOME | $VACUOUS_CODE |"
-            echo "| symlinked-entrypoint | (run-step) | asserted in step |"
-            echo "| unreadable-subtree | (run-step) | asserted in step |"
-            echo "| max-files-truncation | (run-step) | asserted in step |"
-            echo "| dir-cap-truncation | (run-step) | asserted in step |"
+            echo "| known-good | $GOOD_OUTCOME | $GOOD_CODE | |"
+            echo "| known-bad | $BAD_OUTCOME | $BAD_CODE | |"
+            echo "| malformed | $MAL_OUTCOME | $MAL_CODE | |"
+            echo "| usage-error | $USAGE_OUTCOME | $USAGE_CODE | |"
+            echo "| vacuous-notresource-deny | $VACUOUS_OUTCOME | $VACUOUS_CODE | |"
+            echo "| symlinked-entrypoint | (run-step) | asserted in step | |"
+            echo "| unreadable-subtree | (run-step) | asserted in step | |"
+            echo "| max-files-truncation | (run-step) | asserted in step | |"
+            echo "| dir-cap-truncation | (run-step) | asserted in step | |"
           } >> "$GITHUB_STEP_SUMMARY"

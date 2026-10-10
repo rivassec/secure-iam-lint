@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Nothing yet.
+
+## [1.1.0] - 2026-10-09
+
 ### Added
 
 - **COMPUTE-SESSION-TAKEOVER** escalation detector (13th family): names the "gain
@@ -18,6 +22,32 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fail-closed only by the incomplete-coverage backstop; now they surface as a named
   finding. The privesc benchmark's SSM / EC2-Instance-Connect / existing-SageMaker
   -notebook cases move from backstop to named accordingly.
+- **GitHub Action: `node24` runtime.** `action.yml` now declares `runs.using: node24`
+  (was `node20`, which GitHub is retiring). The Action is still a plain ESM entry
+  point (`action/index.mjs`) with no build step, bundled `dist`, or runtime npm
+  dependencies; the Node runtime is provided by the runner. GitHub.com-hosted
+  runners are the supported baseline. The npm package's `engines.node` is unchanged.
+- **Action self-test coverage** (`.github/workflows/action-selftest.yml`): new cases
+  assert both the step outcome and the `exit-code` output for an internal error
+  (exit `4`, via an unreadable policy file), a mixed valid + malformed `paths` list
+  (exit `3`, never `0`), an omitted `partition` on a verdict that depends on it
+  (exit `3`, with an asserted-partition control at exit `1`), and one fixture per
+  policy family (identity, role-trust, resource with and without `resource-arn`,
+  permissions-boundary, session, SCP, RCP).
+- **README "GitHub Action" section** for the GitHub Marketplace listing: usage
+  (`rivassec/secure-iam-lint@v1` and a full-commit-SHA pin), required permissions,
+  inputs/outputs, the exit-code contract (exit `3` is fail-closed, never a green
+  check), and the supported-runner statement.
+- **SARIF upload guidance**: README and `ACTION.md` now show a least-privilege
+  pattern - a read-only `scan` job and a separate `upload` job that alone holds
+  `security-events: write`, skips fork pull requests, never uses
+  `pull_request_target`, pins `upload-sarif` by commit SHA, and keeps the check
+  failed when the scan fails.
+
+### Changed
+
+- Release version bumped to `1.1.0` (`package.json` and
+  `VERSION_MANIFEST.releaseVersion`).
 
 ## [1.0.0] - 2026-08-29
 
@@ -64,5 +94,6 @@ marks the release and makes the compare/tag links below resolve - is pending.
   self-check runs in CI, and pointed at a real AWS account it verifies the engine
   never reads CLEAN on a policy AWS reports as allowing the action.
 
-[Unreleased]: https://github.com/rivassec/secure-iam-lint/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/rivassec/secure-iam-lint/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/rivassec/secure-iam-lint/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/rivassec/secure-iam-lint/releases/tag/v1.0.0
