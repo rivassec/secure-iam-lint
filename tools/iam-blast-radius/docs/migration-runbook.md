@@ -22,7 +22,7 @@ accepts an indexing reset.
 - Phase 14 merged to main, deployed, CI green, live-verified.
 - Working tree clean on main.
 - Local git identity = rivassec@rivassec.com (already set in this repo).
-- gh active account is oliveratprimer; rivassec is logged in (inactive).
+- gh active account is a separate work account; rivassec is logged in (inactive).
 
 ## Source of truth today (two dirs, one tool)
 - `content/tools/iam-blast-radius/` - shipped web build (served verbatim).
@@ -69,7 +69,7 @@ new repo unifies these so there is ONE engine copy.
        gh repo create rivassec/iam-blast-radius --public \
          --description "Client-side AWS IAM policy blast-radius analyzer + CI action" \
          --disable-wiki
-       gh auth switch --user oliveratprimer     # restore work context immediately
+       gh auth switch --user <work-account>    # restore work context immediately
 
 3. Push (SSH key, rivassec identity - independent of gh active account):
 
