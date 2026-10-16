@@ -37,8 +37,8 @@ jobs:
       - name: zizmor (pinned binary, checksum-verified; job exit gates)
         run: |
           set -euo pipefail
-          VER=1.29.0
-          SHA=dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839
+          VER=1.30.1
+          SHA=e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a
           curl -fsSL -o zizmor.tgz "https://github.com/zizmorcore/zizmor/releases/download/v${VER}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
           echo "${SHA}  zizmor.tgz" | sha256sum -c -
           tar -xzf zizmor.tgz zizmor
@@ -76,8 +76,8 @@ jobs:
       - name: OSV-Scanner (pinned binary, checksum-verified; known-CVE scan of all lockfiles)
         run: |
           set -euo pipefail
-          VER=2.5.1
-          SHA=f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be
+          VER=2.7.0
+          SHA=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
           curl -fsSL -o osv-scanner "https://github.com/google/osv-scanner/releases/download/v${VER}/osv-scanner_linux_amd64"
           echo "${SHA}  osv-scanner" | sha256sum -c -
           chmod +x osv-scanner
