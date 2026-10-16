@@ -74,7 +74,7 @@ jobs:
       # --- known-good: expect success, exit 0 --------------------------------
       - name: known-good (expect success, exit 0)
         id: good
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/clean-identity.json
           family: identity
@@ -101,7 +101,7 @@ jobs:
       - name: known-bad (expect failure, exit 1)
         id: bad
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/admin-identity.json
           family: identity
@@ -127,7 +127,7 @@ jobs:
       - name: malformed (expect failure, exit 3 - fail closed)
         id: malformed
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/malformed.json
           family: identity
@@ -161,7 +161,7 @@ jobs:
       - name: usage-error (family omitted, expect failure, exit 2)
         id: usage
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           # family is intentionally EMPTY: it is REQUIRED and never auto-detected, so
           # an empty/absent family must fail closed to a usage error (exit 2), never a
@@ -192,7 +192,7 @@ jobs:
       - name: 'vacuous-notresource-deny (R1: vacuous Deny must NOT suppress DATA-EXFIL)'
         id: vacuous
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/vacuous-notresource-deny.json
           family: identity
@@ -359,7 +359,7 @@ jobs:
       - name: 'internal-error (unreadable file; expect failure, exit 4)'
         id: internal
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: selftest-exit4/*.json
           family: identity
@@ -387,7 +387,7 @@ jobs:
       - name: 'mixed-valid-and-malformed (one paths list; expect failure, exit 3, never 0)'
         id: mixed
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: |
             .github/action-selftest-fixtures/clean-identity.json
@@ -413,7 +413,7 @@ jobs:
       - name: 'partition-omitted (cross-partition PassRole verdict depends on it; expect failure, exit 3)'
         id: partition_omitted
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/cross-partition-passrole.json
           family: identity
@@ -439,7 +439,7 @@ jobs:
       - name: 'partition-asserted (control: same policy, partition=aws-us-gov; expect failure, exit 1, complete)'
         id: partition_asserted
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/cross-partition-passrole.json
           family: identity
@@ -464,7 +464,7 @@ jobs:
       - name: 'family role-trust (public trust principal; expect failure, exit 1)'
         id: role_trust
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/role-trust-public.json
           family: role-trust
@@ -490,7 +490,7 @@ jobs:
       - name: 'family resource with resource-arn/type (expect failure, exit 3, partial: resource coverage is always incomplete)'
         id: resource
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/resource-public-read.json
           family: resource
@@ -515,7 +515,7 @@ jobs:
       - name: 'family resource WITHOUT resource-arn (expect failure, exit 3, failed)'
         id: resource_noctx
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/resource-public-read.json
           family: resource
@@ -538,7 +538,7 @@ jobs:
       - name: 'family permissions-boundary (broad envelope; expect failure, exit 1)'
         id: boundary
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/permissions-boundary-envelope.json
           family: permissions-boundary
@@ -560,7 +560,7 @@ jobs:
 
       - name: 'family session (scoped session policy; expect success, exit 0)'
         id: session
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/session-scoped.json
           family: session
@@ -582,7 +582,7 @@ jobs:
 
       - name: 'family scp (region guardrail; expect success, exit 0)'
         id: scp
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/scp-region-guardrail.json
           family: scp
@@ -604,7 +604,7 @@ jobs:
 
       - name: 'family rcp (org-perimeter guardrail; expect success, exit 0)'
         id: rcp
-        uses: ./
+        uses: $/
         with:
           paths: .github/action-selftest-fixtures/rcp-org-perimeter.json
           family: rcp
