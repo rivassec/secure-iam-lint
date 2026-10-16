@@ -127,7 +127,7 @@ test('workflow: exists, least-privilege permissions, and runs the LOCAL action',
   const wf = readFileSync(fileURLToPath(WORKFLOW_URL), 'utf8');
   assert.match(wf, /permissions:\s*\n\s*contents:\s*read/);
   // One local-action invocation per case (good/bad/malformed/usage) = 4+.
-  const localUses = wf.match(/uses:\s*\.\/\s*$/gm) || [];
+  const localUses = wf.match(/uses:\s*\.\/\s*(?:#.*)?$/gm) || []; // allow a trailing comment (zizmor ignore)
   assert.ok(localUses.length >= 4, `expected >=4 "uses: ./" invocations, found ${localUses.length}`);
 });
 
