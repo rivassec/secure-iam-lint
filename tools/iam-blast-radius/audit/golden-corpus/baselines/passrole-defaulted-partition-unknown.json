@@ -249,7 +249,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0a3d342b19505d15035639bdba54"
+                "iamBlastRadius/semanticIdentity/v2": "d266d175c5f83f1b0fdd1e1884455040"
               },
               "properties": {
                 "category": "security",
@@ -289,7 +289,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "PassGovRole",
-                "baselineId": "80225a3ee25d5983b22a5e96f3d1258849eb62cf83513529520a7432e8fa37f1"
+                "baselineId": "53fdaf091e3c3304988be8956ba0d71686b839a3fe4cef024ce10b96b31f54e4"
               },
               "ruleIndex": 0
             },
@@ -310,7 +310,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "14cfa8ba09fe8019de3e11062707"
+                "iamBlastRadius/semanticIdentity/v2": "a176187ddb8900c5b67756018a1478bc"
               },
               "properties": {
                 "category": "analysis-state",

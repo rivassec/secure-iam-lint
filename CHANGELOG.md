@@ -6,7 +6,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-- Nothing yet.
+### Changed
+
+- **SARIF fingerprints are now `iamBlastRadius/semanticIdentity/v2`** (breaking for
+  dismissed alerts and baselines, once). The statement position is no longer part of
+  a finding's identity, so inserting a statement above an accepted finding no longer
+  re-opens it; identical findings in one file are told apart by an occurrence
+  ordinal. `UNKNOWN_ACTION` / `UNSUPPORTED_CONDITION` fingerprints now include the
+  full sorted offending set (dismissing one no longer covers a different one). The
+  hash is SHA-256 truncated to 128 bits (was non-cryptographic cyrb53).
+- **Baseline file format is version 2.** Version 1 baselines are refused (exit `2`)
+  with a message to regenerate; keys follow the same identity change. `baseline-output`
+  warns when it writes `critical` entries.
 
 ## [1.1.0] - 2026-10-09
 

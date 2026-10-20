@@ -105,7 +105,11 @@ test('keys are SHA-256 hex and deterministic; distinct identities differ', () =>
 test('parseBaseline validates shape, version, key format and size', () => {
   assert.equal(parseBaseline('nope').ok, false);
   assert.equal(parseBaseline('[]').ok, false);
-  assert.equal(parseBaseline(JSON.stringify({ version: 2, entries: [] })).ok, false);
+  assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION + 1, entries: [] })).ok, false);
+  // A v1 baseline (pre fingerprint-v2) is rejected with an actionable message, not silently stale.
+  const v1 = parseBaseline(JSON.stringify({ version: 1, entries: [] }));
+  assert.equal(v1.ok, false);
+  assert.match(v1.message, /version 1.*Regenerate/);
   assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION })).ok, false);
   assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [{ id: 'ABC' }] })).ok, false);
   const many = Array.from({ length: MAX_BASELINE_ENTRIES + 1 }, () => ({ id: 'a'.repeat(64) }));
@@ -119,6 +123,27 @@ test('parseBaseline validates shape, version, key format and size', () => {
   assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [{ ...entry, severity: undefined }] })).ok, false);
   assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [entry, entry] })).ok, false);
   assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [{ id: entry.id, file: 'p.json', ruleId: 'analysis.UNKNOWN_ACTION' }] })).ok, true);
+});
+
+test('a statement inserted above an accepted finding keeps it accepted', () => {
+  const stmt = (a) => ({ Effect: 'Allow', Action: a, Resource: 'arn:aws:s3:::b/*' });
+  const doc = (list) => JSON.stringify({ Version: '2012-10-17', Statement: list });
+  const keys = acceptAll(doc([stmt('s3:DeleteObject')]));
+  const r = applyBaseline(scanText(doc([stmt('sqs:SendMessage'), stmt('s3:DeleteObject')])), 'p.json', keys, 'high');
+  assert.equal(r.baseline.used.length, 1);
+  assert.equal(r.blockingCount, 0);
+});
+
+test('identical findings in one file get distinct keys, stable under an unrelated insert', () => {
+  const f = { id: 'DESTRUCTIVE-ACTION', severity: 'high', actions: ['s3:DeleteObject'], resources: ['*'] };
+  const stmt = (a) => ({ Effect: 'Allow', Action: a, Resource: '*' });
+  const doc = (list) => JSON.stringify({ Version: '2012-10-17', Statement: list });
+  const two = applyBaseline(scanText(doc([stmt('s3:DeleteObject'), stmt('s3:DeleteObject')])), 'p.json', null, 'high');
+  const keys = [...two.baseline.keyOf.values()];
+  assert.equal(new Set(keys).size, keys.length);
+  assert.notEqual(findingBaselineKey(f, 'identity', 'p.json', 0), findingBaselineKey(f, 'identity', 'p.json', 1));
+  const shifted = applyBaseline(scanText(doc([stmt('sqs:SendMessage'), stmt('s3:DeleteObject'), stmt('s3:DeleteObject')])), 'p.json', null, 'high');
+  for (const k of keys) assert.ok([...shifted.baseline.keyOf.values()].includes(k));
 });
 
 test('SARIF publishes baselineKey; an applied baseline marks baselineState + suppressions', () => {
@@ -173,6 +198,13 @@ function actionIo(files) {
     listFiles: () => Object.keys(files).filter((f) => f.startsWith('p/')).sort(),
   };
 }
+
+test('Action: baseline-output counts the critical entries it writes (the CLI warns on stderr)', () => {
+  const env = { INPUT_PATHS: 'p/*.json', INPUT_FAMILY: 'identity', INPUT_PARTITION: 'aws', 'INPUT_BASELINE-OUTPUT': 'b.json' };
+  const crit = runAction({ env, io: actionIo({ 'p/a.json': JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: '*', Resource: '*' }] }) }) });
+  assert.ok(crit.baselineCritical >= 1);
+  assert.equal(runAction({ env, io: actionIo({ 'p/a.json': POLICY(['s3:DeleteObject']) }) }).baselineCritical, 0);
+});
 
 test('Action: baseline-output then baseline turns exit 3 into 0 with truthful outputs', () => {
   const files = { 'p/a.json': POLICY(['s3:DeleteObject', 'sqs:SendMessage']) };

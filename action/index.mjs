@@ -428,6 +428,7 @@ function finalize(rawUnits, inputs, manifest) {
   // baseline usage error), so a refused run can never overwrite a reviewed baseline.
   const baselinePath = inputs && isNonEmptyString(inputs.baselineOutput) && mismatchCount === 0
     ? inputs.baselineOutput : null;
+  const baselineDoc = baselinePath ? buildBaseline(units) : null;
   // The exit code above is computed from the REAL units, BEFORE the SARIF is built - so the
   // aggregate DOCUMENT-level truncation below can never downgrade (or inflate) it. The caps
   // mirror the max-files / max-total-bytes inputs (S2-NEW-SARIF-AGGREGATE).
@@ -441,7 +442,8 @@ function finalize(rawUnits, inputs, manifest) {
     exitCode, reason, analysisStatus, findingsCount, blockingCount,
     sarifPath, outputs, sarifLog, units, baselineStale,
     baselinePath,
-    baselineText: baselinePath ? formatBaseline(buildBaseline(units)) : null,
+    baselineText: baselineDoc ? formatBaseline(baselineDoc) : null,
+    baselineCritical: baselineDoc ? baselineDoc.entries.filter((e) => e.severity === 'critical').length : 0,
   };
 }
 
@@ -627,6 +629,10 @@ export async function main() {
       process.exitCode = EXIT.INTERNAL;
       return EXIT.INTERNAL;
     }
+  }
+
+  if (final.baselineCritical > 0) {
+    process.stderr.write(`IAM Blast Radius: baseline-output wrote ${final.baselineCritical} critical entr${final.baselineCritical === 1 ? 'y' : 'ies'}; review them before committing, since a baseline accepts critical results too.\n`);
   }
 
   // Stale baseline entries (accepted keys that matched nothing this run) are harmless but
