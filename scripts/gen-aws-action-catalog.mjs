@@ -24,12 +24,13 @@ import { dirname, join } from 'node:path';
 const BASE = 'https://servicereference.us-east-1.amazonaws.com/v1';
 
 // Services snapshotted in full. Chosen from real-world policies the curated slice
+// (datapipeline / license-manager: region-deny SCP entries)
 // failed on: S3 data-plane/bucket config, EC2 (region-deny SCPs exempt concrete
 // ec2:Describe* calls), and the global / account-level / billing services a region-deny
 // SCP exempts via NotAction (AWS Organizations example SCP). Keep this list explicit -
 // adding a service changes which actions read as "known".
 const SERVICES = [
-  's3', 'ec2',
+  's3', 'ec2', 'datapipeline', 'license-manager',
   'consolidatedbilling', 'freetier', 'invoicing', 'payments', 'purchase-orders',
   'savingsplans', 'sustainability', 'tag', 'tax',
   'account', 'acm', 'aws-marketplace', 'aws-marketplace-management', 'aws-portal',

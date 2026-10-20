@@ -560,10 +560,14 @@ export function lookupAction(token, catalog) {
 // only the exact `svc:*` form, only NotAction, only Effect "Deny"; a partial pattern
 // (svc:Get*), an Allow statement, or an Action-list wildcard still needs catalogued
 // actions, and an unpublished prefix (madeupsvc:*) stays unknown.
+// Real prefixes missing from the AWS index (discovery-marketplace: Control Tower SCP).
+const UNPUBLISHED_PREFIXES = Object.freeze(new Set(['discovery-marketplace']));
 function isDenyServiceCarveOut(stmt, token) {
   if (!stmt || stmt.effect !== 'Deny') return false;
   const m = /^([A-Za-z0-9-]+):\*$/.exec(String(token));
-  return !!m && AWS_SERVICE_PREFIXES.has(m[1].toLowerCase());
+  if (!m) return false;
+  const prefix = m[1].toLowerCase();
+  return AWS_SERVICE_PREFIXES.has(prefix) || UNPUBLISHED_PREFIXES.has(prefix);
 }
 
 /**

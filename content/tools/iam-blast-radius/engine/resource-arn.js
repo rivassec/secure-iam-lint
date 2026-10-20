@@ -105,6 +105,8 @@ const MODELED_TYPED_SERVICES = Object.freeze(new Set([
   'batch', 'efs', 'fsx', 'backup', 'organizations', 'account', 'apigateway',
   'execute-api', 'sso', 'identitystore', 'access-analyzer', 'signin', 'wafv2',
   'network-firewall', 'elasticbeanstalk', 'appsync', 'mq', 'transfer',
+  // type/id grammar verified in the AWS reference.
+  'bedrock', 'aws-marketplace', 'partnercentral',
 ]));
 
 // --- Semantic boundary-crossing PROBE battery --------------------------------
@@ -298,6 +300,11 @@ function classifyTrimmed(v) {
   if (v === '*') return RESOURCE_CLASS.BROAD;
 
   const arn = parseArn(v);
+  // Unparsed ARN with a high-order wildcard is still broad.
+  if (!arn && /^arn:/.test(v)) {
+    const seg = v.split(':');
+    if (seg.length >= 6 && [seg[1], seg[2], seg[4]].some(hasWildcard)) return RESOURCE_CLASS.BROAD;
+  }
   if (!arn) {
     // Not "*" and not a well-formed ARN. Two sub-cases, decided SEMANTICALLY:
     //   - a boundary-crossing GLOB that matches diverse canonical resources across

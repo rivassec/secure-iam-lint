@@ -40,6 +40,7 @@ import {
 export * from './action-output.mjs';
 import {
   exceedsInputByteCap, sarifOutputIsContained, sarifTargetContainedFs, getInput, readInputs, budgetMsInput,
+  unrecognizedInputs,
 } from './action-inputs.mjs';
 export * from './action-inputs.mjs';
 import {
@@ -633,6 +634,14 @@ export async function main() {
 
   if (final.baselineCritical > 0) {
     process.stderr.write(`IAM Blast Radius: baseline-output wrote ${final.baselineCritical} critical entr${final.baselineCritical === 1 ? 'y' : 'ies'}; review them before committing, since a baseline accepts critical results too.\n`);
+  }
+
+  // Name ignored inputs (charset-limited names only, never values).
+  const stray = unrecognizedInputs(process.env);
+  if (stray.names.length > 0 || stray.odd > 0) {
+    const listed = stray.names.length > 0 ? stray.names.join(', ') : '';
+    const more = stray.odd > 0 ? `${listed ? ' and ' : ''}${stray.odd} with an unusual name` : '';
+    process.stderr.write(`IAM Blast Radius: ignoring unrecognized input(s): ${listed}${more} (not declared in action.yml).\n`);
   }
 
   // Stale baseline entries (accepted keys that matched nothing this run) are harmless but

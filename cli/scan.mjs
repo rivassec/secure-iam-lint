@@ -159,15 +159,31 @@ function hasPartitionMismatch(f) {
   return !!(esc && Array.isArray(esc.warningCodes) && esc.warningCodes.includes('PARTITION_MISMATCH'));
 }
 
+// Provider ARN partition differs from the asserted one: the trust can't work as written.
+function hasFederatedPartitionMismatch(f, validPartition) {
+  if (!validPartition) return false;
+  for (const ev of (f && Array.isArray(f.evidence)) ? f.evidence : []) {
+    for (const p of (ev && Array.isArray(ev.principals)) ? ev.principals : []) {
+      if (!p || (p.type !== 'federated-oidc' && p.type !== 'federated-saml')) continue;
+      const m = /^arn:([^:]+):iam::/.exec(String(p.value));
+      if (m && m[1] !== validPartition) return true;
+    }
+  }
+  return false;
+}
+
 // The required-unknowns a finding depends on, given whether the caller explicitly
 // supplied a partition. Extends the engine's own escalation.requiredUnknowns with
 // 'subjectPartition' when a PARTITION_MISMATCH was derived against a DEFAULTED
 // partition (the engine assumed 'aws' and never recorded the unknown).
-function unknownViabilityReasons(f, partitionProvided) {
+function unknownViabilityReasons(f, partitionProvided, validPartition = null) {
   const esc = f && f.escalation;
   const reqs = (esc && Array.isArray(esc.requiredUnknowns)) ? esc.requiredUnknowns.slice() : [];
   if (!partitionProvided && hasPartitionMismatch(f) && !reqs.includes('subjectPartition')) {
     reqs.push('subjectPartition');
+  }
+  if (hasFederatedPartitionMismatch(f, validPartition) && !reqs.includes('providerPartition')) {
+    reqs.push('providerPartition');
   }
   return reqs;
 }
@@ -182,7 +198,7 @@ function unknownViabilityReasons(f, partitionProvided) {
 // not-viable verdict computed against a DEFAULTED partition is genuinely unknown,
 // so it fails closed exactly like the unconfirmed-account path rather than
 // collapsing to a clean pass.
-function findingHasUnknownViability(f, partitionProvided) {
+function findingHasUnknownViability(f, partitionProvided, validPartition = null) {
   if (!f || typeof f !== 'object') return false;
   const esc = f.escalation;
   if (esc && Array.isArray(esc.requiredUnknowns) && esc.requiredUnknowns.length > 0) return true;
@@ -190,6 +206,7 @@ function findingHasUnknownViability(f, partitionProvided) {
   if (f.viability === 'unknown') return true;
   if (f.certainty === 'unknown') return true;
   if (!partitionProvided && hasPartitionMismatch(f)) return true;
+  if (hasFederatedPartitionMismatch(f, validPartition)) return true;
   return false;
 }
 
@@ -231,12 +248,12 @@ const MASKED_GRANT_MESSAGES = Object.freeze({
     'suppresses its wildcard-resource / data-exfil findings. The policy fails closed ' +
     'rather than reporting a clean pass.',
   MALFORMED_RESOURCE_ARN:
-    'An Allow statement carries a Resource (or NotResource) value that is neither ' +
-    '"*" nor an ARN. The AWS IAM grammar requires a Resource element to be "*" or an ' +
-    'ARN, so AWS rejects this as MalformedPolicyDocument and the analyzer cannot ' +
-    'decide what the value scopes - a suffix/infix glob (e.g. "*.pem") or a bare ' +
-    'literal would otherwise read as a narrow scope and let a bulk read pass clean. ' +
-    'The policy fails closed rather than reporting a clean pass.',
+    'An Allow statement carries a Resource (or NotResource) value the analyzer cannot ' +
+    'classify: not "*" and not an ARN it can parse, or a wildcarded ARN of a service ' +
+    'whose resource grammar it does not model. It cannot decide what the value scopes - ' +
+    'a suffix/infix glob (e.g. "*.pem") or a bare literal would otherwise read as a ' +
+    'narrow scope and let a bulk read pass clean. The policy fails closed rather than ' +
+    'reporting a clean pass.',
   TOO_MANY_CONDITION_VALUES:
     'A statement Condition carries more values than the analyzer will process in a ' +
     'single pass (a value-array flood). Rather than silently analyzing or dropping the ' +
@@ -337,9 +354,9 @@ function incompleteStatesFromCoverage(coverage) {
         'complement - an account-wide broad scope - and no rule covered the statement, ' +
         'so the grant could not be analyzed (a broad grant left unanalyzed does NOT ' +
         'mean the policy is safe).'
-      : 'An Allow statement grants a broad but malformed (non-ARN) Resource glob whose ' +
-        'concrete scope cannot be established, and no rule covered the statement, so ' +
-        'the grant could not be analyzed (a broad grant left unanalyzed does NOT mean ' +
+      : 'An Allow statement grants a resource-scopable read on a broad Resource (such as ' +
+        '"*" or a wildcarded ARN), and no rule covered the statement, so the breadth of ' +
+        'that read could not be analyzed (a broad grant left unanalyzed does NOT mean ' +
         'the policy is safe).';
     out.push(state(
       ANALYSIS_STATE.INCOMPLETE,
@@ -726,11 +743,11 @@ export function scan(input) {
   // capped-to-low unknown-viability finding from slipping under a 'high' threshold
   // and reporting exit 0.
   const coverageIncomplete = !!(coverage && coverage.summary && coverage.summary.incomplete);
-  const unknownFindings = findings.filter((f) => findingHasUnknownViability(f, partitionProvided));
+  const unknownFindings = findings.filter((f) => findingHasUnknownViability(f, partitionProvided, validPartition));
   if (coverageIncomplete || unknownFindings.length > 0) {
     const states = incompleteStatesFromCoverage(coverage);
     for (const f of unknownFindings) {
-      const reqs = unknownViabilityReasons(f, partitionProvided);
+      const reqs = unknownViabilityReasons(f, partitionProvided, validPartition);
       states.push(state(
         ANALYSIS_STATE.UNKNOWN,
         'UNKNOWN_VIABILITY',

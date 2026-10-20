@@ -430,6 +430,9 @@ function isAllAddressIp(v) {
 // 2). MUST stay behaviorally identical to trust.js isAllGlobOrEmpty.
 function valueNarrowsKey(keyLower, value) {
   switch (keyLower) {
+    case 'sts:externalid':
+      // Mirrors trust-principal-helpers: exact ExternalId values only.
+      return String(value) !== '' && !hasGlob(String(value));
     case 'aws:sourceaccount':
     case 'aws:principalaccount':
     case 'aws:principalorgid':

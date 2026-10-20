@@ -109,6 +109,29 @@ export function getInput(env, name) {
 // against a partition the consumer never vouched for would slip under a 'high'
 // threshold and report a green pass. This mirrors the CLI, which passes
 // `partition: undefined` when --partition is omitted.
+// Inputs declared in action.yml (pinned by a test).
+export const DECLARED_INPUTS = Object.freeze([
+  'paths', 'family', 'subject-account', 'resource-arn', 'resource-type', 'resource-account',
+  'partition', 'fail-on', 'sarif-output', 'baseline', 'baseline-output', 'budget-ms',
+  'max-files', 'max-total-bytes', 'max-sarif-results', 'max-sarif-bytes',
+]);
+
+// Undeclared INPUT_* names; odd names are only counted.
+export function unrecognizedInputs(env) {
+  const known = new Set();
+  for (const n of DECLARED_INPUTS) { known.add(n); known.add(n.replace(/-/g, '_')); }
+  const names = [];
+  let odd = 0;
+  for (const key of Object.keys(env || {})) {
+    if (!key.startsWith('INPUT_')) continue;
+    const name = key.slice('INPUT_'.length).toLowerCase();
+    if (known.has(name)) continue;
+    if (/^[a-z0-9_-]{1,64}$/.test(name)) names.push(name);
+    else odd += 1;
+  }
+  return { names: names.sort(), odd };
+}
+
 export function readInputs(env) {
   return {
     paths: getInput(env, 'paths'),

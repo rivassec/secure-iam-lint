@@ -1,5 +1,5 @@
 [
-  { "file": "action/index.mjs", "class": "candidate-drop", "line": 179,
+  { "file": "action/index.mjs", "class": "candidate-drop", "line": 180,
     "reason": "unreadable baseline rejects the WHOLE run as a usage error (exit 2, BASELINE_UNREADABLE); nothing is dropped and the run never proceeds without it" },
   { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 106,
     "reason": "oversize baseline returns ok:false (INVALID_BASELINE), which every caller turns into exit 2; no partial baseline is ever used" },

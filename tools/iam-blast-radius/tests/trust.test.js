@@ -1030,16 +1030,16 @@ test('Finding 2: other all-glob default-path ExternalId values ("*?", "?", "**?"
   }
 });
 
-test('Finding 2 preservation: a partial ExternalId carrying a LITERAL is still a (weaker) constraint (low/medium)', () => {
-  for (const v of ['corr-?', 'my-ext-id-*', 'prefix?suffix']) {
+test('a partial ExternalId glob is not a guardrail: stays high', () => {
+  // A glob lets other tenants of the vendor match (confused deputy).
+  for (const v of ['corr-?', 'my-ext-id-*', 'prefix?suffix', 'a*']) {
     const f = trust([{
       Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::999888777666:root' }, Action: 'sts:AssumeRole',
       Condition: { StringLike: { 'sts:ExternalId': v } },
     }]).findings.find((x) => x.id === 'TRUST-CROSS-ACCOUNT');
     assert.ok(f, `ExternalId ${v}`);
-    assert.ok(['low', 'medium'].includes(f.severity),
-      `a literal-carrying ExternalId "${v}" still forces a correlation substring, got ${f.severity}`);
-    assert.equal(f.conditionClassification.hasCreditableConstraint, true, `"${v}" is credited (has a literal)`);
+    assert.equal(f.severity, 'high', `ExternalId glob "${v}"`);
+    assert.equal(f.conditionClassification.hasCreditableConstraint, false, `"${v}" not credited`);
   }
 });
 

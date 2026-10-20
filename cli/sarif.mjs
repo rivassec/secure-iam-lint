@@ -886,6 +886,30 @@ function stateDetailClause(s) {
 // are the only free prose. A hostile Sid or Action such as `[x](javascript:...)` or one
 // carrying a newline therefore cannot inject a link, image, or line break into the
 // rendered message.
+// Issuers of a federated trust finding, so a lookalike host is visible. Attacker-controlled.
+function federatedIssuers(finding) {
+  const out = new Set();
+  for (const ev of (finding && Array.isArray(finding.evidence)) ? finding.evidence : []) {
+    for (const p of (ev && Array.isArray(ev.principals)) ? ev.principals : []) {
+      if (!p || (p.type !== 'federated-oidc' && p.type !== 'federated-saml')) continue;
+      const m = /:(?:oidc|saml)-provider\/(.+)$/.exec(String(p.value));
+      if (m) out.add(m[1]);
+    }
+  }
+  return [...out].sort();
+}
+
+function renderIssuerClause(finding) {
+  const { shown, more } = capMessageTokens(federatedIssuers(finding));
+  const tokens = [];
+  for (const v of shown) {
+    const safe = sanitizeSid(v);
+    if (safe) tokens.push(`\`${safe}\``);
+  }
+  if (tokens.length === 0) return '';
+  return `; issuer: ${tokens.join(', ')}${more > 0 ? `, (+${more} more)` : ''}`;
+}
+
 function findingMessage(finding, family) {
   const f = finding || {};
   const title = isNonEmptyString(f.title) ? f.title.trim() : String(f.id != null ? f.id : 'finding');
@@ -895,7 +919,8 @@ function findingMessage(finding, family) {
     : (typeof f.statementIndex === 'number' ? `(index ${f.statementIndex})` : '(unknown statement)');
   const fam = family != null ? String(family) : 'unknown';
   const actionPart = renderActionClause(f.actions);
-  return `${title} [${fam} policy] at statement ${sidToken}${actionPart}. Potential blast radius from the supplied policy context only; not effective permissions.`;
+  const issuerPart = renderIssuerClause(f);
+  return `${title} [${fam} policy] at statement ${sidToken}${actionPart}${issuerPart}. Potential blast radius from the supplied policy context only; not effective permissions.`;
 }
 
 // A stable JSON Pointer to the statement the finding is anchored on, when the engine
@@ -1250,6 +1275,8 @@ function buildResults(result, uri, ruleIndex) {
     if (f && Array.isArray(f.excludedResources) && f.excludedResources.length > 0) {
       properties.excludedResources = inertTokenList(f.excludedResources);
     }
+    const issuers = federatedIssuers(f);
+    if (issuers.length > 0) properties.issuers = inertTokenList(issuers);
 
     // R5-uri-trunc: an over-length artifact URI is sliced but NOT marker-mutated (that would
     // corrupt GitHub's file deep-link); the slice is recorded via a SEPARATE properties flag.
