@@ -43,12 +43,12 @@ test('UNSUPPORTED_CONDITION message names each unmodeled condition key', () => {
     Version: '2012-10-17',
     Statement: [{
       Effect: 'Allow', Action: 's3:ListBucket', Resource: 'arn:aws:s3:::b',
-      Condition: { StringLike: { 's3:prefix': ['home/*'] } },
+      Condition: { StringLike: { 'zzz:madeupkey': ['home/*'] } },
     }],
   });
   const row = rows.find((r) => r.ruleId === 'analysis.UNSUPPORTED_CONDITION');
   assert.ok(row, 'UNSUPPORTED_CONDITION row present');
-  assert.ok(row.message.text.endsWith(' Offending condition keys: s3\\:prefix.'), row.message.text);
+  assert.ok(row.message.text.endsWith(' Offending condition keys: zzz\\:madeupkey.'), row.message.text);
 });
 
 test('a hostile unknown action renders inert (no newline, no live link, no raw backtick)', () => {

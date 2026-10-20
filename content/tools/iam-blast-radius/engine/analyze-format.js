@@ -1,5 +1,5 @@
 // analyze-format.js - finding presentation + summary: severity ordering, sortFindings, findingToRow columns, summarize categories, service labels, family stamping. Extracted (behavior-preserving).
-import { classifyConditions } from './conditions.js';
+import { classifyConditions, oidcProviderHosts } from './conditions.js';
 
 // Result-shape schema version stamped on every analyze() result (bumped on breaking result changes).
 export const CATALOG_VERSION = '1';
@@ -273,6 +273,15 @@ export function stampFamily(finding, family) {
   // runtime allow/deny. `null` conditions classify to a stable "not present"
   // shape. This is additive evidence; it does not change severity/exploitability
   // (the escalation/rule engines already fold conditions into those numbers).
-  stamped.conditionClassification = classifyConditions(finding.conditions);
+  // A trust finding's own federated OIDC provider(s) widen the federation-host allowlist
+  // exactly as unsupportedConditionKeys does for the statement, so evidence and coverage
+  // agree on whether an enterprise IdP's aud/sub claims are understood.
+  const fedValues = [];
+  for (const ev of Array.isArray(finding.evidence) ? finding.evidence : []) {
+    for (const p of (ev && Array.isArray(ev.principals)) ? ev.principals : []) {
+      if (p && p.type === 'federated-oidc') fedValues.push(p.value);
+    }
+  }
+  stamped.conditionClassification = classifyConditions(finding.conditions, oidcProviderHosts(fedValues));
   return Object.freeze(stamped);
 }

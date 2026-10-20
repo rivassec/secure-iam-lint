@@ -89,6 +89,15 @@ const KNOWN_KEYS = Object.freeze({
   'iam:passedtoservice': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'PassRole target service' },
   'iam:associatedresourcearn': { class: CONDITION_CLASS.SELECTOR, role: 'resource', label: 'Associated resource ARN' },
   'kms:viaservice': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'KMS calling service' },
+  // S3 ListBucket scoping. s3:prefix is the standard per-user / per-path scope on
+  // s3:ListBucket (it limits WHICH keys a list call may return), so a positive,
+  // specific value is a constraint; "*" or a negated operator falls to expansion via
+  // the generic branches below. s3:delimiter and s3:max-keys only shape the listing
+  // response (max-keys is bypassed by paginating), so they are modeled - understood,
+  // not unsupported - but as selectors, which are NEVER credited as a guardrail.
+  's3:prefix': { class: CONDITION_CLASS.CONSTRAINT, role: 'object-prefix', label: 'S3 list prefix' },
+  's3:delimiter': { class: CONDITION_CLASS.SELECTOR, role: 'listing-shape', label: 'S3 list delimiter (shapes the response, does not restrict access)' },
+  's3:max-keys': { class: CONDITION_CLASS.SELECTOR, role: 'listing-shape', label: 'S3 list page size (bypassed by pagination, does not restrict access)' },
 });
 
 // Recognized federation PROVIDER HOSTS (docs/trust-policy-semantics.md 4.4/4.5).
@@ -133,17 +142,41 @@ const RECOGNIZED_FEDERATION_HOSTS = Object.freeze(new Set([
 // everything before it, so a multi-colon attacker key (`acme:customkey:sub`) has
 // host `acme:customkey`, which is not recognized -> null. Returns null for any
 // non-federation or unrecognized-provider key.
-function federationMeta(keyLower) {
+//
+// `statementHosts` (optional) widens the allowlist PER STATEMENT to the OIDC provider
+// hosts that statement's own Principal.Federated names (oidcProviderHosts below). A
+// claim key on THAT provider is, by AWS semantics, that provider's claim - exactly
+// what the built-in hosts model - so an enterprise IdP (Okta, Entra ID, GitLab, ...)
+// trust is understood without a config input. The S2 property holds: a key whose host
+// is NOT the statement's federated provider (an attacker-named `acme:customkey:sub`,
+// or a typo'd host) still returns null and fails closed.
+function federationMeta(keyLower, statementHosts = null) {
   const lastColon = keyLower.lastIndexOf(':');
   if (lastColon <= 0 || lastColon === keyLower.length - 1) return null;
   const claim = keyLower.slice(lastColon + 1);
   if (claim !== 'aud' && claim !== 'sub') return null;
   const host = keyLower.slice(0, lastColon);
-  if (!RECOGNIZED_FEDERATION_HOSTS.has(host)) return null;
+  if (!RECOGNIZED_FEDERATION_HOSTS.has(host) && !(statementHosts && statementHosts.has(host))) return null;
   if (claim === 'aud') {
     return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-audience', label: 'Federated audience (aud)', federation: 'aud' };
   }
   return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-subject', label: 'Federated subject (sub)', federation: 'sub' };
+}
+
+// The OIDC provider hosts named by a list of Principal.Federated values, lowercased:
+// `arn:<partition>:iam::<12-digit account>:oidc-provider/<host>` -> `<host>`. A value
+// that is not a concrete OIDC provider ARN (a SAML provider - modeled by the built-in
+// `saml` host - a glob, or anything malformed) contributes nothing, so it can never
+// widen the allowlist. A host carrying ':' is rejected (a claim key splits host from
+// claim on the LAST colon, so it could never be matched honestly).
+const OIDC_PROVIDER_ARN = /^arn:[a-z0-9-]+:iam::\d{12}:oidc-provider\/([^*?:\s]+)$/i;
+export function oidcProviderHosts(values) {
+  const out = new Set();
+  for (const v of Array.isArray(values) ? values : []) {
+    const m = OIDC_PROVIDER_ARN.exec(String(v));
+    if (m) out.add(m[1].toLowerCase());
+  }
+  return out;
 }
 
 // Base operators (after stripping set qualifier + IfExists) whose match is
@@ -462,9 +495,12 @@ function appearsFor(cls) {
  *   omitted (direct callers), no sibling context is assumed and the ForAllValues
  *   caveat is emitted as before. Never affects `credited` (fail-safe: an
  *   uncredited footgun is not re-credited by a sibling presence check).
+ * @param {Set<string>|null} federationHosts lowercased OIDC provider hosts the
+ *   statement's own Principal.Federated names (oidcProviderHosts); their aud/sub
+ *   claim keys are modeled like the built-in providers. Optional.
  * @returns {object} frozen classification record
  */
-export function classifyConditionEntry(operator, key, value, presenceCheckedKeys = null) {
+export function classifyConditionEntry(operator, key, value, presenceCheckedKeys = null, federationHosts = null) {
   const { base, setOperator, ifExists } = parseOperator(operator);
   const keyStr = String(key);
   const keyLower = keyStr.toLowerCase();
@@ -474,7 +510,7 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
   // context-required, surfaced in coverage (unsupported does NOT mean safe).
   const meta = Object.prototype.hasOwnProperty.call(KNOWN_KEYS, keyLower)
     ? KNOWN_KEYS[keyLower]
-    : federationMeta(keyLower);
+    : federationMeta(keyLower, federationHosts);
   const known = meta !== null;
 
   const negated = NEGATED_OPERATORS.has(base);
@@ -638,9 +674,10 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
  * returns a stable "no conditions" shape.
  *
  * @param {object|null} condition normalized Condition object (or null)
+ * @param {Set<string>|null} [federationHosts] see classifyConditionEntry
  * @returns {object} frozen classification summary
  */
-export function classifyConditions(condition) {
+export function classifyConditions(condition, federationHosts = null) {
   const entries = [];
   if (condition && typeof condition === 'object' && !Array.isArray(condition)) {
     const operators = Object.keys(condition).sort();
@@ -678,7 +715,7 @@ export function classifyConditions(condition) {
         // characters they compare, not a flat per-call constant. chargeWork is a no-op
         // while no budget is armed, so this changes NO verdict.
         chargeWork(Math.max(1, toValueArray(block[key]).length));
-        entries.push(classifyConditionEntry(op, key, block[key], presenceCheckedKeys));
+        entries.push(classifyConditionEntry(op, key, block[key], presenceCheckedKeys, federationHosts));
       }
     }
   }
@@ -719,7 +756,9 @@ export function unsupportedConditionKeys(model) {
   const out = new Set();
   const statements = model && Array.isArray(model.statements) ? model.statements : [];
   for (const stmt of statements) {
-    const cc = classifyConditions(stmt && stmt.condition);
+    const federated = stmt && stmt.principal && stmt.principal.byType
+      ? stmt.principal.byType.Federated : null;
+    const cc = classifyConditions(stmt && stmt.condition, oidcProviderHosts(federated));
     for (const k of cc.contextRequiredKeys) out.add(k);
   }
   return [...out].sort();
