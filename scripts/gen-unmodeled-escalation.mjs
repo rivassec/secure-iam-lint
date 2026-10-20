@@ -3,7 +3,7 @@
 // no detector models. Usage: node scripts/gen-unmodeled-escalation.mjs [--baseline <rev>] [--check]
 //
 // Candidate = the engine answered "unknown" (exit 3) with the baseline snapshot (the rev
-// before the full-service refresh, default a27006e) but exit 0 with the current snapshot on a
+// before the full-service refresh, default tag catalog-baseline-2026-10-20) but exit 0 with the current snapshot on a
 // narrow-ARN single-action Allow, and the reference level is WRITE or PERMISSIONS. A candidate
 // is dropped when a named detector already fires: alone, or paired with iam:PassRole on a role.
 // READ/LIST/TAGGING stay known (no detector treats them as escalation, and withholding
@@ -18,7 +18,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const engine = 'content/tools/iam-blast-radius/engine';
 const args = process.argv.slice(2);
 const argVal = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
-const baselineRev = argVal('--baseline', 'a27006e');
+const baselineRev = argVal('--baseline', 'catalog-baseline-2026-10-20');
 const OUT = join(root, engine, 'catalog-unmodeled.js');
 const EMPTY = "export const UNMODELED_ESCALATION = Object.freeze([]);\n";
 

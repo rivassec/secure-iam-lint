@@ -53,7 +53,8 @@ zizmor, osv-scanner, CodeQL, fuzzing. Two `audit/golden-corpus/packaging.test.js
   `version.js`. Curated `CATALOG_DATA` entries always win over the generated data.
   `scripts/gen-unmodeled-escalation.mjs` (run after every catalog refresh) regenerates
   `engine/catalog-unmodeled.js`, the reference WRITE/PERMISSIONS actions no detector models;
-  `catalog.js` withholds them so an Allow stays UNKNOWN_ACTION. `--check` fails if stale.
+  `catalog.js` withholds them so an Allow stays UNKNOWN_ACTION. `--check` fails if stale;
+  it needs the tag `catalog-baseline-2026-10-20` (`git fetch --tags`), so never delete it.
 
 ## Reproducing a bug report
 
