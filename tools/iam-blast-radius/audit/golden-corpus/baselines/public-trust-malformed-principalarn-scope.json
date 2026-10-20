@@ -198,7 +198,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "PublicAssumeWithMalformedPrincipalArnScope",
-                "baselineId": "b7a791d101af144683aa859fd536750adcdc6e72ac63041ec66928f846ec69ff"
+                "baselineId": "706f9ec11afd91bd7864341ee7ec055890802ca81293d2b34880a081de6509b8"
               },
               "ruleIndex": 0
             }

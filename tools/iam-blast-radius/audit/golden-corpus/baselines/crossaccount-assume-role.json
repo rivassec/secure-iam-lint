@@ -188,7 +188,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AssumeForeignRole",
-                "baselineId": "708288c71d438bcf9f85c610a73f4c6f09effd1f1291b4e5a221da3db9f704bd"
+                "baselineId": "b3ebd897cceabd67ca0ec46205e8e7bb3c4acd32af553cd7204ccb802e47cac4"
               },
               "ruleIndex": 0
             }

@@ -176,7 +176,7 @@
                 },
                 "jsonPointer": "/Statement/0",
                 "statementSid": "KmsControl",
-                "baselineId": "481e6c6ae3e8c5dfe8e36d2a253a0658e3b8a3ff6a2a5a2ec7ce4a08381f5363"
+                "baselineId": "381fd3aca785614bf80b8937078cf6e60adf3de1b07e0ce66f8ed39b5275d3b9"
               },
               "ruleIndex": 0
             },
@@ -209,7 +209,7 @@
                 },
                 "jsonPointer": "/Statement/0",
                 "statementSid": "KmsControl",
-                "baselineId": "6e051cced87984f30fa9ad82f57e2e14cef8d4c7126ffb28c7c2df5767c871f2"
+                "baselineId": "f72033d334907385b89a1dcb4a9e48799f919130e6ddb99d133212e9856b4f32"
               },
               "ruleIndex": 1
             }

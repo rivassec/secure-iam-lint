@@ -956,7 +956,10 @@ function applyBaselineProjection(row, sourceRow, baseline) {
   if (typeof key !== 'string') return;
   row.properties.baselineId = key;
   if (!baseline.applied) return;
-  const accepted = baseline.accepted instanceof Set && baseline.accepted.has(key);
+  // Only a row the verdict ACTUALLY accepted is suppressed (baseline.used). An id listed in
+  // the baseline but refused - an ineligible failed analysis, or a metadata mismatch -
+  // stays "new" and unsuppressed, so the SARIF never hides what the exit code still counts.
+  const accepted = Array.isArray(baseline.used) && baseline.used.includes(key);
   row.baselineState = accepted ? 'unchanged' : 'new';
   if (accepted) row.suppressions = [{ kind: 'external', status: 'accepted', justification: BASELINE_JUSTIFICATION }];
 }

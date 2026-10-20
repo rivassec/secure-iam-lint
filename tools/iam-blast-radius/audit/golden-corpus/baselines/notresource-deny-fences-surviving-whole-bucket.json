@@ -121,7 +121,7 @@
                 },
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AllowReadBroad",
-                "baselineId": "2ccfecc7ba2e90a31f3047b88f27c75f3106a224eddf0a03473d3a15ce946379"
+                "baselineId": "a06e73ec27b1f7fbea9edac4790cc5750937f7c4f1b99122b0d1c5cecc25479e"
               },
               "ruleIndex": 0
             }

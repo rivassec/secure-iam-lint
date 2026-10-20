@@ -256,6 +256,16 @@ What a baseline can and cannot do:
   external suppression. Fingerprints do not change.
 - Stale entries (accepted results that no longer occur) are counted in
   `baseline-stale-count` and noted in the log; prune them.
+- Each entry's `file`, `ruleId` and (for a finding) `severity` are **checked**
+  against the result its `id` matches. A mismatch is never accepted and fails the
+  run (exit `2`, `BASELINE_METADATA_MISMATCH`), so what a reviewer reads in a
+  baseline diff is what is accepted. A finding's `id` also covers its severity and
+  rule version: if an engine upgrade raises a finding's severity, the acceptance
+  lapses and the finding counts again.
+- **The baseline is repository content.** In a `pull_request` workflow, a PR can
+  edit it (just as it can edit the workflow itself), so treat a baseline change
+  like a code change: protect the file with CODEOWNERS and required review, and
+  read added entries before merging.
 
 ## SARIF: security findings vs analyzer state
 

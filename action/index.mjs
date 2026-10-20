@@ -163,8 +163,14 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
       const fail = (reason, message) => finalize([{
         file: null, result: usageResult(reason, message, inputs.family),
       }], { ...inputs, baselineOutput: '' }, manifest);
-      if (!sarifOutputIsContained(inputs.baseline)) {
-        return fail('UNSAFE_BASELINE_PATH', 'The "baseline" input must be a RELATIVE path inside the workspace.');
+      // Lexical AND symlink-aware: io.readFile's O_NOFOLLOW only guards the LAST component,
+      // so a symlinked parent directory (linkdir/b.json) would otherwise read from outside.
+      let baselineSafe = sarifOutputIsContained(inputs.baseline);
+      if (baselineSafe && io && typeof io.sarifTargetContained === 'function') {
+        try { baselineSafe = io.sarifTargetContained(inputs.baseline) === true; } catch { baselineSafe = false; }
+      }
+      if (!baselineSafe) {
+        return fail('UNSAFE_BASELINE_PATH', 'The "baseline" input must be a RELATIVE path inside the workspace with no symlink component.');
       }
       let text;
       try {
@@ -365,12 +371,27 @@ function finalize(rawUnits, inputs, manifest) {
   // Attach baseline keys to every unit (so the SARIF publishes them) and apply an opt-in
   // baseline. applyBaseline never changes a usage/internal/failed unit, so synthetic
   // fail-closed units keep their verdict. The URI matches buildAggregateSarif's.
-  const baselineKeys = inputs && inputs.baselineKeys instanceof Set ? inputs.baselineKeys : null;
+  const baselineKeys = inputs && inputs.baselineKeys instanceof Map ? inputs.baselineKeys : null;
   const threshold = String((inputs && inputs.failOn) || 'high').trim().toLowerCase();
   const units = rawUnits.map((u) => ({
     ...u,
     result: applyBaseline(u.result, isNonEmptyString(u && u.file) ? u.file : 'action-inputs', baselineKeys, threshold),
   }));
+  // A baseline entry whose id matches a result but whose file / ruleId / severity does not
+  // was NOT accepted (applyBaseline); it also fails the run as a usage error, so a
+  // mislabelled acceptance can never sit unnoticed in a reviewed baseline.
+  const mismatchCount = units.reduce((n, u) => n + ((u.result && u.result.baseline && u.result.baseline.mismatched) || []).length, 0);
+  if (mismatchCount > 0) {
+    units.push({
+      file: null,
+      result: usageResult(
+        'BASELINE_METADATA_MISMATCH',
+        `${mismatchCount} baseline entr${mismatchCount === 1 ? 'y has' : 'ies have'} an id that matches a result but a different file, ruleId or severity; `
+          + 'regenerate the baseline (baseline-output) and review it.',
+        inputs && inputs.family,
+      ),
+    });
+  }
   const codes = units.map((u) => (u.result && u.result.exitCode));
   const exitCode = worstExitCode(codes);
   const findingsCount = units.reduce((n, u) => n + toCount(u.result && u.result.findingsCount), 0);
@@ -399,7 +420,7 @@ function finalize(rawUnits, inputs, manifest) {
   if (baselineKeys) {
     const used = new Set();
     for (const u of units) for (const k of ((u.result && u.result.baseline && u.result.baseline.used) || [])) used.add(k);
-    baselineStale = [...baselineKeys].filter((k) => !used.has(k)).length;
+    baselineStale = [...baselineKeys.keys()].filter((k) => !used.has(k)).length;
     outputs['baselined-count'] = String(used.size);
     outputs['baseline-stale-count'] = String(baselineStale);
   }

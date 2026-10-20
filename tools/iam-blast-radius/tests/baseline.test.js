@@ -110,9 +110,15 @@ test('parseBaseline validates shape, version, key format and size', () => {
   assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [{ id: 'ABC' }] })).ok, false);
   const many = Array.from({ length: MAX_BASELINE_ENTRIES + 1 }, () => ({ id: 'a'.repeat(64) }));
   assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: many })).ok, false);
-  const ok = parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [{ id: 'a'.repeat(64) }] }));
+  const entry = { id: 'a'.repeat(64), file: 'p.json', ruleId: 'DESTRUCTIVE-ACTION', severity: 'high' };
+  const ok = parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [entry] }));
   assert.equal(ok.ok, true);
   assert.equal(ok.keys.size, 1);
+  // Review metadata is required, and an id may appear once.
+  assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [{ id: entry.id }] })).ok, false);
+  assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [{ ...entry, severity: undefined }] })).ok, false);
+  assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [entry, entry] })).ok, false);
+  assert.equal(parseBaseline(JSON.stringify({ version: BASELINE_VERSION, entries: [{ id: entry.id, file: 'p.json', ruleId: 'analysis.UNKNOWN_ACTION' }] })).ok, true);
 });
 
 test('SARIF publishes baselineKey; an applied baseline marks baselineState + suppressions', () => {
@@ -202,4 +208,38 @@ test('Action: an unsafe, unreadable or malformed baseline is a usage error', () 
     assert.equal(r.reason, reason, `${input}=${value}`);
     assert.equal(r.baselinePath, null, 'nothing is written on a usage error');
   }
+});
+
+test('a matched id with a false file / ruleId / severity label is not accepted and fails the run', async () => {
+  const text = POLICY(['s3:DeleteObject']);
+  const real = JSON.parse(JSON.stringify(buildBaseline([{ file: 'p.json', result: applyBaseline(scanText(text), 'p.json', null, 'high') }])));
+  for (const tamper of [{ ruleId: 'WILDCARD-RESOURCE' }, { severity: 'low' }, { file: 'other.json' }]) {
+    const doc = { ...real, entries: real.entries.map((e) => ({ ...e, ...tamper })) };
+    const keys = parseBaseline(JSON.stringify(doc)).keys;
+    const r = applyBaseline(scanText(text), 'p.json', keys, 'high');
+    assert.equal(r.exitCode, EXIT.FINDINGS, JSON.stringify(tamper));
+    assert.equal(r.baseline.mismatched.length, 1, JSON.stringify(tamper));
+    const files = { 'p.json': text, 'b.json': JSON.stringify(doc) };
+    assert.equal(await run(['--family', 'identity', '--partition', 'aws', '--baseline', 'b.json', 'p.json'], cliIo(files).io), EXIT.USAGE);
+    const act = runAction({ env: { INPUT_PATHS: 'p/*.json', INPUT_FAMILY: 'identity', INPUT_PARTITION: 'aws', INPUT_BASELINE: 'b.json' },
+      io: actionIo({ 'p/x.json': text, 'b.json': JSON.stringify({ ...doc, entries: doc.entries.map((e) => ({ ...e, file: e.file === 'p.json' ? 'p/x.json' : e.file })) }) }) });
+    assert.notEqual(act.exitCode, EXIT.CLEAN, JSON.stringify(tamper));
+  }
+});
+
+test('a severity change invalidates an accepted finding', () => {
+  const f = { id: 'DESTRUCTIVE-ACTION', severity: 'medium', ruleVersion: '1', statementIndex: 0, actions: ['s3:DeleteObject'], resources: ['*'] };
+  assert.notEqual(findingBaselineKey(f, 'identity', 'p.json'), findingBaselineKey({ ...f, severity: 'high' }, 'identity', 'p.json'));
+  assert.notEqual(findingBaselineKey(f, 'identity', 'p.json'), findingBaselineKey({ ...f, ruleVersion: '2' }, 'identity', 'p.json'));
+});
+
+test('SARIF never suppresses a listed id on an ineligible (failed) result', () => {
+  const text = POLICY(['s3:DeleteObject']);
+  const keys = acceptAll(text);
+  const failed = { ...scanText(text), exitCode: EXIT.FAIL_CLOSED, analysisStatus: 'failed', reason: 'RESOURCE_BUDGET_EXCEEDED' };
+  const r = applyBaseline(failed, 'p.json', keys, 'high');
+  assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
+  const row = buildSarifLog(r, { file: 'p.json' }, { ruleVersion: '1' }).runs[0].results.find((x) => x.ruleId === 'DESTRUCTIVE-ACTION');
+  assert.equal(row.baselineState, 'new');
+  assert.equal(row.suppressions, undefined);
 });

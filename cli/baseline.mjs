@@ -14,7 +14,15 @@
 //   - Each accepted item is keyed INDIVIDUALLY. An analyzer-state key folds in the exact
 //     sorted action / condition-key list, so accepting today's unknown action can never
 //     accept a different one tomorrow; a finding key is its full semantic identity
-//     (findingIdentity - the same input as the SARIF fingerprint).
+//     (findingIdentity - the same input as the SARIF fingerprint) PLUS its severity and
+//     rule version, so an engine upgrade that raises a finding's severity or changes its
+//     rule invalidates the acceptance instead of silently carrying it over.
+//   - Each entry's review metadata (file, ruleId, and a finding's severity) is
+//     LOAD-BEARING: an entry whose id matches a result but whose metadata does not is
+//     never accepted and is reported as a mismatch (the CLI / Action turn it into exit 2).
+//     A reviewer reading a baseline diff therefore sees what is really being accepted.
+//   - The baseline is repo content, so a PR can edit it like any other file (as it can
+//     the workflow). Protect it with CODEOWNERS / required review; see ACTION.md.
 //   - Every key is bound to the artifact URI (the repo-relative file), so accepting a
 //     result in one file never accepts it in another.
 //   - Keys are SHA-256 (not the SARIF fingerprint's fast cyrb53): a PR author controls
@@ -59,7 +67,18 @@ function keyOf(kind, uri, canonical) {
 }
 
 export function findingBaselineKey(finding, family, uri) {
-  return keyOf('finding', uri, findingIdentity(finding, family));
+  const f = finding || {};
+  const extra = `\nseverity=${f.severity != null ? String(f.severity) : ''}\nruleVersion=${f.ruleVersion != null ? String(f.ruleVersion) : ''}`;
+  return keyOf('finding', uri, `${findingIdentity(f, family)}${extra}`);
+}
+
+// The review metadata a baseline entry must carry for a row (also what buildBaseline
+// writes): the file, the SARIF ruleId, and - for a finding - its severity.
+function rowMeta(row, uri) {
+  const isState = typeof row.code === 'string' && !Object.hasOwn(row, 'severity');
+  return isState
+    ? { file: String(uri), ruleId: `analysis.${row.code}` }
+    : { file: String(uri), ruleId: String(row.id), severity: String(row.severity) };
 }
 
 // null for a state a baseline may never accept.
@@ -74,9 +93,10 @@ export function stateBaselineKey(st, uri) {
 }
 
 /**
- * Parse a committed baseline file. Never throws.
+ * Parse a committed baseline file. Never throws. Returns the accepted ids plus each id's
+ * review metadata (applyBaseline checks it against the matched result).
  * @param {string} text
- * @returns {{ok:true, keys:Set<string>} | {ok:false, reason:string, message:string}}
+ * @returns {{ok:true, keys:Map<string,object>} | {ok:false, reason:string, message:string}}
  */
 export function parseBaseline(text) {
   const bad = (message) => ({ ok: false, reason: 'INVALID_BASELINE', message });
@@ -94,13 +114,23 @@ export function parseBaseline(text) {
   if (doc.version !== BASELINE_VERSION) return bad(`Unsupported baseline version (expected ${BASELINE_VERSION}).`);
   if (!Array.isArray(doc.entries)) return bad('The baseline file has no "entries" array.');
   if (doc.entries.length > MAX_BASELINE_ENTRIES) return bad(`The baseline file has more than ${MAX_BASELINE_ENTRIES} entries.`);
-  const keys = new Set();
+  const keys = new Map();
   for (const e of doc.entries) {
     const k = e && typeof e === 'object' ? e.id : undefined;
     if (typeof k !== 'string' || !KEY_RE.test(k)) {
       return bad('Every baseline entry needs an "id" of 64 lowercase hex characters.');
     }
-    keys.add(k);
+    if (keys.has(k)) return bad('The baseline file lists the same "id" twice.');
+    if (typeof e.file !== 'string' || typeof e.ruleId !== 'string' || e.file === '' || e.ruleId === '') {
+      return bad('Every baseline entry needs its "file" and "ruleId" (they are checked against the result).');
+    }
+    const isState = e.ruleId.startsWith('analysis.');
+    if (!isState && (typeof e.severity !== 'string' || e.severity === '')) {
+      return bad('Every finding entry in the baseline needs its "severity" (it is checked against the result).');
+    }
+    keys.set(k, isState
+      ? { file: e.file, ruleId: e.ruleId }
+      : { file: e.file, ruleId: e.ruleId, severity: e.severity });
   }
   return { ok: true, keys };
 }
@@ -113,7 +143,7 @@ export function parseBaseline(text) {
  *
  * @param {object} result   a scan() (or synthetic unit) result
  * @param {string} uri      the artifact URI the SARIF will carry for this result
- * @param {Set<string>|null} accepted keys from parseBaseline, or null (no baseline)
+ * @param {Map<string,object>|null} accepted ids -> review metadata from parseBaseline, or null
  * @param {string} threshold the run's fail-on threshold
  * @returns {object}
  */
@@ -127,12 +157,19 @@ export function applyBaseline(result, uri, accepted, threshold) {
     const k = stateBaselineKey(s, uri);
     if (k) keyOfRow.set(s, k);
   }
-  const applied = accepted instanceof Set;
+  const applied = accepted instanceof Map;
   const used = new Set();
+  const mismatched = new Set();
   const isAccepted = (row) => {
     const k = keyOfRow.get(row);
-    if (applied && k && accepted.has(k)) { used.add(k); return true; }
-    return false;
+    if (!applied || !k || !accepted.has(k)) return false;
+    const want = accepted.get(k);
+    const have = rowMeta(row, uri);
+    const same = want.file === have.file && want.ruleId === have.ruleId
+      && (have.severity === undefined || want.severity === have.severity);
+    if (!same) { mismatched.add(k); return false; }
+    used.add(k);
+    return true;
   };
 
   let verdict = {};
@@ -162,11 +199,14 @@ export function applyBaseline(result, uri, accepted, threshold) {
   return Object.freeze({
     ...result,
     ...verdict,
+    // `used` is the set of rows this verdict ACTUALLY accepted (empty for an ineligible
+    // result): the SARIF suppresses only those, never a merely-listed id.
     baseline: Object.freeze({
+      uri: String(uri),
       applied,
       keyOf: keyOfRow,
-      accepted: applied ? accepted : null,
       used: Object.freeze([...used].sort()),
+      mismatched: Object.freeze([...mismatched].sort()),
     }),
   });
 }
@@ -184,18 +224,13 @@ export function buildBaseline(units) {
     if (!b || !(b.keyOf instanceof Map)) continue;
     for (const [row, key] of b.keyOf) {
       if (byKey.has(key)) continue;
-      const isState = typeof row.code === 'string' && !Object.hasOwn(row, 'severity');
-      byKey.set(key, {
-        id: key,
-        file: u.file != null ? String(u.file) : null,
-        ruleId: isState ? `analysis.${row.code}` : String(row.id),
-      });
+      byKey.set(key, { id: key, ...rowMeta(row, b.uri) });
     }
   }
   return {
     version: BASELINE_VERSION,
     tool: 'iam-blast-radius',
-    note: 'Accepted IAM Blast Radius results. Only "id" is load-bearing; review each entry before committing.',
+    note: 'Accepted IAM Blast Radius results. "file", "ruleId" and "severity" are checked against each matched result; review every entry before committing.',
     entries: [...byKey.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
   };
 }

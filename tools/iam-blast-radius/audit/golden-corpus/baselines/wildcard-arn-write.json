@@ -176,7 +176,7 @@
                 },
                 "jsonPointer": "/Statement/0",
                 "statementSid": "WildcardArnWrite",
-                "baselineId": "702c33bee089f1c82ad49e0ff815e7325da84d0ab41dfe98df09ada186881508"
+                "baselineId": "b6c744ef3eb976d26901f22a5b92e9a1a80a327292fc2ab03901e2772b761c95"
               },
               "ruleIndex": 0
             },
@@ -209,7 +209,7 @@
                 },
                 "jsonPointer": "/Statement/0",
                 "statementSid": "WildcardArnWrite",
-                "baselineId": "0aa39aa61d1278f5895d00346236b21a3aa025a813aa49f1e2cc41a57d373eb8"
+                "baselineId": "fd1c74e258923712e4b0c69f7ee5f4291ac80d51211ed2901e4bc3078a01409b"
               },
               "ruleIndex": 1
             }

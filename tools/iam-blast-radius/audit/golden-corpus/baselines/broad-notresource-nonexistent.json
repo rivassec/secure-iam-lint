@@ -190,7 +190,7 @@
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz",
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz\\/\\*"
                 ],
-                "baselineId": "4f26fe3fed559e48c7086d4046191241ca5fd345a2fa798f98b514af8bad3947"
+                "baselineId": "26ebf008e88a5448408f4621af675d27f74a8824307db0c6487068e01e9f64ef"
               },
               "ruleIndex": 0
             },
@@ -227,7 +227,7 @@
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz",
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz\\/\\*"
                 ],
-                "baselineId": "74aee65202f7a27c319807de25fc372e389666acbfb946f8945b2f2c85f53676"
+                "baselineId": "8cedae3edba7e4f03ead38ad2b93e4609bc3a6376cdecc1a51dcfefaa46d3415"
               },
               "ruleIndex": 1
             }

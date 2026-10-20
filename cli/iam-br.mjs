@@ -672,6 +672,11 @@ export async function run(argv, io) {
     // See cli/baseline.mjs for what a baseline can and cannot accept.
     const threshold = isNonEmptyString(opts.threshold) ? opts.threshold.trim().toLowerCase() : 'high';
     const result = applyBaseline(scanned, artifactUri(opts), acceptedKeys, threshold);
+    if (result && result.baseline && result.baseline.mismatched.length > 0) {
+      err(`iam-br: ${result.baseline.mismatched.length} baseline entr${result.baseline.mismatched.length === 1 ? 'y matches' : 'ies match'} a result by id `
+        + 'but not by file / ruleId / severity; regenerate the baseline (--format baseline) and review it.\n');
+      return EXIT.USAGE;
+    }
 
     // Defensive: the code must be an integer in the contract's range. Anything
     // else is an internal invariant violation -> fail closed to 4, NEVER 0.

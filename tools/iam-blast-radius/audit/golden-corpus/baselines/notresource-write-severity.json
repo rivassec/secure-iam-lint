@@ -130,7 +130,7 @@
                 "excludedResources": [
                   "arn\\:aws\\:s3\\:\\:\\:locked\\-bucket\\/\\*"
                 ],
-                "baselineId": "9ba98f98c977e55b716ab37614aedd0fc979263cf4309437733c66a8cfc4d3fb"
+                "baselineId": "cd6bb5cd711dcd6c09051736eb2ea38458fac4f2b09d2dfe1b75b751b5d9a2fc"
               },
               "ruleIndex": 0
             }
