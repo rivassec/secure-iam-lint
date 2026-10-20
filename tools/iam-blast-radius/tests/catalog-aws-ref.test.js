@@ -151,3 +151,20 @@ test('the carve-out is narrow: made-up prefixes, partial patterns, Allow and Act
   assert.deepEqual(unknownFor({ Effect: 'Allow', NotAction: ['chime:*'], Resource: '*' }, 'identity'), ['chime:*']);
   assert.deepEqual(unknownFor({ Effect: 'Allow', Action: ['chime:*'], Resource: '*' }, 'identity'), ['chime:*']);
 });
+
+test('the carve-out keeps the guardrail verdict: the exempted services stay exclusions, never grants', () => {
+  const result = scanPolicy({
+    Version: '2012-10-17',
+    Statement: [{
+      Effect: 'Deny',
+      NotAction: ['chime:*', 'savingsplans:*', 'sts:*'],
+      Resource: '*',
+      Condition: { StringNotEquals: { 'aws:RequestedRegion': ['us-east-1'] } },
+    }],
+  }, 'scp-rcp');
+  assert.equal(result.exitCode, EXIT.CLEAN, JSON.stringify(result.analysisStates));
+  const guard = result.findings.find((f) => f.id === 'SCP-GUARDRAIL');
+  assert.ok(guard, 'SCP-GUARDRAIL present');
+  assert.equal(guard.severity, 'info');
+  assert.deepEqual([...guard.excludedActions].sort(), ['chime:*', 'savingsplans:*', 'sts:*']);
+});

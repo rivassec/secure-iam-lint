@@ -169,12 +169,20 @@ function federationMeta(keyLower, statementHosts = null) {
 // `saml` host - a glob, or anything malformed) contributes nothing, so it can never
 // widen the allowlist. A host carrying ':' is rejected (a claim key splits host from
 // claim on the LAST colon, so it could never be matched honestly).
-const OIDC_PROVIDER_ARN = /^arn:[a-z0-9-]+:iam::\d{12}:oidc-provider\/([^*?:\s]+)$/i;
+// Only a REAL partition counts: a made-up `arn:not-a-partition:...` provider cannot widen
+// the allowlist. MIRRORS escalation-reachability.js KNOWN_PARTITIONS (that module imports
+// this one, so importing it back would be a cycle); tests/conditions-s3-federation.test.js
+// pins the two sets equal.
+export const OIDC_PROVIDER_PARTITIONS = Object.freeze(new Set([
+  'aws', 'aws-us-gov', 'aws-cn',
+  'aws-iso', 'aws-iso-b', 'aws-iso-e', 'aws-iso-f',
+]));
+const OIDC_PROVIDER_ARN = /^arn:([a-z0-9-]+):iam::\d{12}:oidc-provider\/([^*?:\s]+)$/;
 export function oidcProviderHosts(values) {
   const out = new Set();
   for (const v of Array.isArray(values) ? values : []) {
     const m = OIDC_PROVIDER_ARN.exec(String(v));
-    if (m) out.add(m[1].toLowerCase());
+    if (m && OIDC_PROVIDER_PARTITIONS.has(m[1])) out.add(m[2].toLowerCase());
   }
   return out;
 }

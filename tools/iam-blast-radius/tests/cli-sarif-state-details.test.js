@@ -93,3 +93,19 @@ test('the offending tokens also ride in a machine-readable, inert property', () 
   }).find((r) => r.ruleId === 'analysis.UNSUPPORTED_CONDITION');
   assert.deepEqual(cond.properties.unsupportedConditions, ['zzz\\:madeup']);
 });
+
+test('the token cap boundary: 12 tokens are all named, 13 elide exactly one; message and property agree', () => {
+  const textFor = (n) => {
+    const actions = Array.from({ length: n }, (_, i) => `fakesvc:A${String(i).padStart(2, '0')}`);
+    const row = stateRows({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: [...actions, actions[0]], Resource: '*' }] })
+      .find((r) => r.ruleId === 'analysis.UNKNOWN_ACTION');
+    return row;
+  };
+  const twelve = textFor(12);
+  assert.doesNotMatch(twelve.message.text, /more\)/);
+  assert.ok(twelve.message.text.includes('fakesvc\\:A11'));
+  assert.equal(twelve.properties.unknownActions.length, 12, 'duplicates collapse');
+  const thirteen = textFor(13);
+  assert.match(thirteen.message.text, /\(\+1 more\)\.$/);
+  assert.equal(thirteen.properties.unknownActions.length, 13);
+});

@@ -10,8 +10,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  classifyConditionEntry, classifyConditions, oidcProviderHosts,
+  classifyConditionEntry, classifyConditions, oidcProviderHosts, OIDC_PROVIDER_PARTITIONS,
 } from '../../../content/tools/iam-blast-radius/engine/conditions.js';
+import { KNOWN_PARTITIONS } from '../../../content/tools/iam-blast-radius/engine/escalation-reachability.js';
 import { scan, EXIT } from '../../../cli/scan.mjs';
 
 function scanPolicy(policy, family) {
@@ -116,4 +117,44 @@ test('finding evidence agrees with coverage on a provider-matched claim', () => 
   const fed = r.findings.find((f) => f.id === 'TRUST-FEDERATED');
   assert.ok(fed, 'TRUST-FEDERATED present');
   assert.deepEqual(fed.conditionClassification.contextRequiredKeys, []);
+});
+
+test('a provider ARN with a made-up or mis-cased partition never widens the allowlist', () => {
+  assert.deepEqual([...oidcProviderHosts([
+    'arn:not-an-aws-partition:iam::123456789012:oidc-provider/idp.example',
+    'arn:AWS:iam::123456789012:oidc-provider/idp.example',
+    'arn:aws-iso-z:iam::123456789012:oidc-provider/idp.example',
+  ])], []);
+  const r = scanPolicy(trust('idp.example', { StringEquals: { 'idp.example:aud': 'x' } }), 'role-trust');
+  assert.deepEqual(unsupported(r), []);
+  const bogus = scanPolicy({
+    Version: '2012-10-17',
+    Statement: [{
+      Effect: 'Allow',
+      Principal: { Federated: 'arn:not-an-aws-partition:iam::123456789012:oidc-provider/idp.example' },
+      Action: 'sts:AssumeRoleWithWebIdentity',
+      Condition: { StringEquals: { 'idp.example:aud': 'x', 'idp.example:sub': 'svc' } },
+    }],
+  }, 'role-trust');
+  assert.equal(bogus.exitCode, EXIT.FAIL_CLOSED);
+});
+
+test('the OIDC partition set mirrors the engine KNOWN_PARTITIONS exactly', () => {
+  assert.deepEqual([...OIDC_PROVIDER_PARTITIONS].sort(), [...KNOWN_PARTITIONS].sort());
+});
+
+test('two providers in one statement each widen only their own claims', () => {
+  const r = scanPolicy({
+    Version: '2012-10-17',
+    Statement: [{
+      Effect: 'Allow',
+      Principal: { Federated: [
+        'arn:aws:iam::123456789012:oidc-provider/a.example',
+        'arn:aws:iam::123456789012:oidc-provider/b.example',
+      ] },
+      Action: 'sts:AssumeRoleWithWebIdentity',
+      Condition: { StringEquals: { 'a.example:aud': 'x', 'b.example:sub': 'y', 'c.example:sub': 'z' } },
+    }],
+  }, 'role-trust');
+  assert.deepEqual(unsupported(r), ['c.example:sub']);
 });
