@@ -51,6 +51,9 @@ zizmor, osv-scanner, CodeQL, fuzzing. Two `audit/golden-corpus/packaging.test.js
   `engine/catalog-aws-ref.js` from the AWS Service Authorization Reference (network,
   dev-only). Bump `ACTION_CATALOG_VERSION`/`DATE` in `catalog.js` and the manifest in
   `version.js`. Curated `CATALOG_DATA` entries always win over the generated data.
+  `scripts/gen-unmodeled-escalation.mjs` (run after every catalog refresh) regenerates
+  `engine/catalog-unmodeled.js`, the reference WRITE/PERMISSIONS actions no detector models;
+  `catalog.js` withholds them so an Allow stays UNKNOWN_ACTION. `--check` fails if stale.
 
 ## Reproducing a bug report
 
