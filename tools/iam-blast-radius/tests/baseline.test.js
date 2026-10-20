@@ -243,3 +243,30 @@ test('SARIF never suppresses a listed id on an ineligible (failed) result', () =
   assert.equal(row.baselineState, 'new');
   assert.equal(row.suppressions, undefined);
 });
+
+test('real scanned findings carry ruleVersion, so it is live in every production key', () => {
+  const raw = scanText(JSON.stringify({ Version: '2012-10-17', Statement: [
+    { Effect: 'Allow', Action: ['s3:DeleteObject', 's3:PutBucketPolicy'], Resource: 'arn:aws:s3:::b/*' },
+    { Effect: 'Allow', Action: 'iam:*', Resource: '*' },
+  ] }));
+  assert.ok(raw.findings.length >= 3);
+  for (const f of raw.findings) {
+    assert.ok(f.ruleVersion != null && String(f.ruleVersion) !== '', `${f.id} carries ruleVersion`);
+    assert.notEqual(findingBaselineKey(f, raw.family, 'p.json'), findingBaselineKey({ ...f, ruleVersion: `${f.ruleVersion}-next` }, raw.family, 'p.json'));
+  }
+});
+
+test('Action: a metadata mismatch never writes baseline-output (even onto the baseline itself)', () => {
+  const text = POLICY(['s3:DeleteObject']);
+  const first = runAction({ env: { INPUT_PATHS: 'p/*.json', INPUT_FAMILY: 'identity', INPUT_PARTITION: 'aws', 'INPUT_BASELINE-OUTPUT': 'b.json' }, io: actionIo({ 'p/x.json': text }) });
+  const doc = JSON.parse(first.baselineText);
+  doc.entries = doc.entries.map((e) => ({ ...e, severity: 'low' }));
+  const r = runAction({
+    env: { INPUT_PATHS: 'p/*.json', INPUT_FAMILY: 'identity', INPUT_PARTITION: 'aws', INPUT_BASELINE: 'b.json', 'INPUT_BASELINE-OUTPUT': 'b.json' },
+    io: actionIo({ 'p/x.json': text, 'b.json': JSON.stringify(doc) }),
+  });
+  assert.notEqual(r.exitCode, EXIT.CLEAN);
+  assert.ok(r.units.some((u) => u.result.reason === 'BASELINE_METADATA_MISMATCH'));
+  assert.equal(r.baselinePath, null);
+  assert.equal(r.baselineText, null);
+});

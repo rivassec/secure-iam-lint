@@ -424,7 +424,10 @@ function finalize(rawUnits, inputs, manifest) {
     outputs['baselined-count'] = String(used.size);
     outputs['baseline-stale-count'] = String(baselineStale);
   }
-  const baselinePath = inputs && isNonEmptyString(inputs.baselineOutput) ? inputs.baselineOutput : null;
+  // No fresh baseline is written on a metadata-mismatch usage error (like every other
+  // baseline usage error), so a refused run can never overwrite a reviewed baseline.
+  const baselinePath = inputs && isNonEmptyString(inputs.baselineOutput) && mismatchCount === 0
+    ? inputs.baselineOutput : null;
   // The exit code above is computed from the REAL units, BEFORE the SARIF is built - so the
   // aggregate DOCUMENT-level truncation below can never downgrade (or inflate) it. The caps
   // mirror the max-files / max-total-bytes inputs (S2-NEW-SARIF-AGGREGATE).

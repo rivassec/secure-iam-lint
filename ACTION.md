@@ -262,10 +262,13 @@ What a baseline can and cannot do:
   baseline diff is what is accepted. A finding's `id` also covers its severity and
   rule version: if an engine upgrade raises a finding's severity, the acceptance
   lapses and the finding counts again.
-- **The baseline is repository content.** In a `pull_request` workflow, a PR can
-  edit it (just as it can edit the workflow itself), so treat a baseline change
-  like a code change: protect the file with CODEOWNERS and required review, and
-  read added entries before merging.
+- **The baseline is repository content, and the check does not resist changes to
+  it.** In a `pull_request` workflow a PR can add an honestly labelled entry for
+  its own new finding, just as it can edit the workflow itself. The baseline (like
+  the workflow) belongs inside your review boundary: protect it with CODEOWNERS and
+  required review, and read added entries before merging. If the check must stay
+  trustworthy before any human review, don't pass `baseline` from PR-controlled
+  content.
 
 ## SARIF: security findings vs analyzer state
 

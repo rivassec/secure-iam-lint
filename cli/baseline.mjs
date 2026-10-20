@@ -206,6 +206,7 @@ export function applyBaseline(result, uri, accepted, threshold) {
       applied,
       keyOf: keyOfRow,
       used: Object.freeze([...used].sort()),
+      usedSet: used,
       mismatched: Object.freeze([...mismatched].sort()),
     }),
   });
