@@ -175,7 +175,8 @@
                   "pathExploitability": "high"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "KmsControl"
+                "statementSid": "KmsControl",
+                "baselineId": "481e6c6ae3e8c5dfe8e36d2a253a0658e3b8a3ff6a2a5a2ec7ce4a08381f5363"
               },
               "ruleIndex": 0
             },
@@ -207,7 +208,8 @@
                   "pathExploitability": "high"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "KmsControl"
+                "statementSid": "KmsControl",
+                "baselineId": "6e051cced87984f30fa9ad82f57e2e14cef8d4c7126ffb28c7c2df5767c871f2"
               },
               "ruleIndex": 1
             }

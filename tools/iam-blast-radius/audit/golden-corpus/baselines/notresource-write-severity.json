@@ -129,7 +129,8 @@
                 "statementSid": "WriteEverywhereButOneBucket",
                 "excludedResources": [
                   "arn\\:aws\\:s3\\:\\:\\:locked\\-bucket\\/\\*"
-                ]
+                ],
+                "baselineId": "9ba98f98c977e55b716ab37614aedd0fc979263cf4309437733c66a8cfc4d3fb"
               },
               "ruleIndex": 0
             }

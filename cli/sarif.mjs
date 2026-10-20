@@ -942,6 +942,25 @@ function stateDescriptor(s) {
   };
 }
 
+// Baseline projection (cli/baseline.mjs computes the keys; this pure adapter only READS
+// them off result.baseline, so it stays free of Node APIs). Every keyed row publishes its
+// key in properties.baselineId so a later run can build a baseline from the SARIF. When a
+// baseline was APPLIED, every keyed row also gets the standard SARIF 2.1.0 baselineState
+// ("unchanged" = accepted, "new" = not in the baseline) and an accepted row gets an
+// external, accepted suppression. Neither field changes the exit code (that was decided
+// in applyBaseline) or the fingerprint.
+const BASELINE_JUSTIFICATION = 'Accepted in the committed IAM Blast Radius baseline file.';
+function applyBaselineProjection(row, sourceRow, baseline) {
+  if (!baseline || !(baseline.keyOf instanceof Map)) return;
+  const key = baseline.keyOf.get(sourceRow);
+  if (typeof key !== 'string') return;
+  row.properties.baselineId = key;
+  if (!baseline.applied) return;
+  const accepted = baseline.accepted instanceof Set && baseline.accepted.has(key);
+  row.baselineState = accepted ? 'unchanged' : 'new';
+  if (accepted) row.suppressions = [{ kind: 'external', status: 'accepted', justification: BASELINE_JUSTIFICATION }];
+}
+
 // One analyzer-state RESULT row. Extracted (mirrors stateDescriptor) so the normal states
 // and the synthetic truncation state share ONE definition: kind:'fail', level:'error',
 // category analysis-state, NO security-severity, message through the sanitizeStateMessage
@@ -1189,6 +1208,7 @@ function buildResults(result, uri, ruleIndex) {
       properties,
     };
     if (ruleIndex.has(id)) row.ruleIndex = ruleIndex.get(id);
+    applyBaselineProjection(row, f, result.baseline);
 
     // fullCost includes evidence (natural key position preserved); bareCost is measured on a
     // shallow clone with evidence removed, so the REAL row is never reordered in the common
@@ -1263,6 +1283,7 @@ function buildResults(result, uri, ruleIndex) {
   let stateEmit = 0;
   for (const s of states) {
     const row = stateResultRow(s, uri);
+    applyBaselineProjection(row, s, result.baseline);
     const ruleId = row.ruleId;
     if (ruleIndex.has(ruleId)) row.ruleIndex = ruleIndex.get(ruleId);
     const cost = estimateRowBytes(row);

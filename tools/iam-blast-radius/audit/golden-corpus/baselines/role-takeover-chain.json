@@ -333,7 +333,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GrantRewriteAssume"
+                "statementSid": "GrantRewriteAssume",
+                "baselineId": "386d14ca2f8c4748f8fb0af2899d1796f3e4b8f77c21f08a819a719a09e6bfd7"
               },
               "ruleIndex": 0
             }

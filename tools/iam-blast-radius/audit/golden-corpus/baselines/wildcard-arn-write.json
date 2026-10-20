@@ -175,7 +175,8 @@
                   "pathExploitability": "high"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "WildcardArnWrite"
+                "statementSid": "WildcardArnWrite",
+                "baselineId": "702c33bee089f1c82ad49e0ff815e7325da84d0ab41dfe98df09ada186881508"
               },
               "ruleIndex": 0
             },
@@ -207,7 +208,8 @@
                   "pathExploitability": "high"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "WildcardArnWrite"
+                "statementSid": "WildcardArnWrite",
+                "baselineId": "0aa39aa61d1278f5895d00346236b21a3aa025a813aa49f1e2cc41a57d373eb8"
               },
               "ruleIndex": 1
             }

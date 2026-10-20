@@ -45,7 +45,7 @@ check on anything non-zero. A fail-closed "could not analyze" (exit `3`) is
 
 | Exit | Meaning | Check result |
 | ---- | ------- | ------------ |
-| `0` | Analyzed successfully; no findings at/above `fail-on`. | pass |
+| `0` | Analyzed successfully; no findings at/above `fail-on` (or every such result is accepted by a [`baseline`](#accepting-known-results-baseline)). | pass |
 | `1` | Analyzed successfully; findings at/above `fail-on`. | FAIL |
 | `2` | Usage / config error (missing/empty `family`, missing/empty `paths`, no matching files). | FAIL |
 | `3` | Fail-closed could-not-analyze (unknown / unsupported / malformed / incomplete; includes a bad/unsupported `family` token or a policy whose shape does not match the declared family). | FAIL |
@@ -81,6 +81,31 @@ jobs:
           paths: policies/**/*.json
           family: identity
           fail-on: high
+```
+
+### Mixed repos: one step per family
+
+`family` is never auto-detected, and one run with files of two families fails
+closed (`FAMILY_BLOCKED`, exit `3`). Give each family its own step and glob:
+
+```yaml
+      - uses: rivassec/secure-iam-lint@v1
+        with:
+          paths: iam/policies/**/*.json
+          family: identity
+          partition: aws
+          sarif-output: iam-identity.sarif
+      - uses: rivassec/secure-iam-lint@v1
+        with:
+          paths: iam/trust/**/*.json
+          family: role-trust
+          partition: aws
+          sarif-output: iam-trust.sarif
+      - uses: rivassec/secure-iam-lint@v1
+        with:
+          paths: org/scps/**/*.json
+          family: scp
+          sarif-output: iam-scp.sarif
 ```
 
 ### Uploading to the Security tab
@@ -160,7 +185,9 @@ run the Action **multiple times** with different `paths` globs and a different
 | `resource-account` | no | - | For `family: resource`: the owning account id, when known. |
 | `partition` | no | - | AWS partition (`aws`, `aws-us-gov`, `aws-cn`, `aws-iso*`). No default on purpose: an omitted partition is "not asserted", not `aws`. A cross-partition role-viability verdict is trusted only when you supply a real partition; otherwise it is treated as unknown and fails closed (exit `3`). |
 | `fail-on` | no | `high` | Minimum severity that fails the check: `critical`, `high`, `medium`, `low`, `info`, `none`. `none` does not turn a fail-closed `3` into `0`. |
-| `sarif-output` | no | `iam-blast-radius.sarif` | Relative path (inside the workspace) to write the SARIF 2.1.0 output file. An absolute path, one escaping the workspace via `..`, one containing a control character, or one whose directory component or target file is a symlink escaping the workspace is rejected as a usage error (exit `2`) and nothing is written outside the workspace. |
+| `sarif-output` | no | `iam-blast-radius.sarif` | Relative path (inside the workspace) to write the SARIF 2.1.0 output file. An absolute path, one escaping the workspace via `..`, one containing a control character, or one whose directory component or target file is a symlink escaping the workspace is rejected as a usage error (exit `2`, `UNSAFE_SARIF_OUTPUT`, with a hint to use a workspace-relative path such as `iam-blast-radius.sarif`) and nothing is written outside the workspace. |
+| `baseline` | no | - | Workspace-relative path to a committed baseline of accepted results (see [Accepting known results](#accepting-known-results-baseline)). An unsafe path, an unreadable file or a malformed baseline is a usage error (exit `2`), never "no baseline". |
+| `baseline-output` | no | - | Workspace-relative path to write a fresh baseline accepting every result of this run. Confined exactly like `sarif-output`. |
 | `budget-ms` | no | `10000` | Per-policy wall-clock analysis budget, in milliseconds. If a policy's analysis overruns this budget it fails closed (exit `3`, `RESOURCE_BUDGET_EXCEEDED`) - it never reports a clean pass. A non-numeric value falls back to the default. |
 | `max-files` | no | `1000` | Aggregate ceiling on the **number** of matched files analyzed in one run. Files are analyzed in a stable sorted order; once this many have been analyzed, the run stops, emits the findings gathered so far, and fails closed (exit `3`, `AGGREGATE_CAP_EXCEEDED`) with a SARIF analyzer-state notification - the partial scan is never reported clean. Bounds the linear CI-runtime cost of a fork PR matching thousands of near-cap policy files. Raise it for a legitimately large policy set; a non-positive/non-integer value falls back to the default. |
 | `max-total-bytes` | no | `67108864` | Aggregate ceiling on the **total UTF-8 bytes** analyzed across all matched files in one run (default 64 MiB). When analyzing the next file would exceed this budget the run stops, emits the findings gathered so far, and fails closed (exit `3`, `AGGREGATE_CAP_EXCEEDED`) with a SARIF analyzer-state notification - never a clean pass. Bounds cumulative parser work that the file-count cap alone would miss (a few giant files). Raise it for a legitimately large policy set; a non-positive/non-integer value falls back to the default. |
@@ -176,9 +203,59 @@ run the Action **multiple times** with different `paths` globs and a different
 | `findings-count` | Total findings emitted across all scanned files. |
 | `blocking-findings-count` | Total findings at/above the `fail-on` threshold. |
 | `analysis-status` | Aggregate analysis status: `complete`, `partial`, or `failed`. |
+| `baselined-count` | Baseline entries that matched a result this run. Set only when `baseline` is given. |
+| `baseline-stale-count` | Baseline entries that matched nothing this run and can be pruned. Set only when `baseline` is given. |
 
 Outputs are always written **before** the Action fails the check, so a failing
-job can still inspect `exit-code`, `analysis-status`, and the SARIF file.
+job can still inspect `exit-code`, `analysis-status`, and the SARIF file - also
+under `continue-on-error: true`, where a later step can gate on them:
+
+```yaml
+      - id: iam
+        uses: rivassec/secure-iam-lint@v1
+        continue-on-error: true
+        with:
+          paths: policies/**/*.json
+          family: identity
+      - if: steps.iam.outputs.exit-code == '1'
+        run: echo "::warning::IAM findings at or above fail-on"
+```
+
+Prefer a [`baseline`](#accepting-known-results-baseline) to `continue-on-error`:
+`continue-on-error` also hides every new risky grant.
+
+## Accepting known results (baseline)
+
+An existing repo rarely starts at zero findings. A **baseline** is a committed
+file of results you have reviewed and accepted; with it the run fails only on
+results that are not in it.
+
+1. Generate one: run once with `baseline-output: iam.baseline.json` (or locally,
+   `iam-br --family <f> --format baseline --artifact-uri <repo-relative path> <file>`
+   per file) and download or copy the file.
+2. Review every entry (`file` and `ruleId` are there for that), commit it, and pass
+   it as `baseline: iam.baseline.json`.
+
+What a baseline can and cannot do:
+
+- Each result is accepted **individually**. A finding's key is its full semantic
+  identity (rule, statement position, actions, resources, conditions, ...), so a
+  broader grant is a new result. An `UNKNOWN_ACTION` / `UNSUPPORTED_CONDITION`
+  state's key includes the exact sorted action / condition-key list, so a new
+  unknown action still fails closed.
+- Keys are bound to the file path: accepting a result in one file never accepts
+  it in another. They are SHA-256, so a PR cannot craft a colliding key.
+- Usage errors (`2`), internal errors (`4`), and every other fail-closed state
+  (malformed, blocked family, budget or aggregate cap, unknown viability, ...) are
+  **never** accepted.
+- `analysis-status` stays truthful: an accepted incomplete run reports `partial`
+  with exit `0` (reason `CLEAN_WITH_BASELINE`).
+- In the SARIF, every keyed result carries `properties.baselineId`; with a
+  baseline applied, results also carry the standard `baselineState` (`unchanged`
+  = accepted, `new` = not in the baseline), and accepted ones an `accepted`
+  external suppression. Fingerprints do not change.
+- Stale entries (accepted results that no longer occur) are counted in
+  `baseline-stale-count` and noted in the log; prune them.
 
 ## SARIF: security findings vs analyzer state
 
@@ -285,8 +362,7 @@ emits the findings gathered so far, and fails closed (exit `3`,
 reported as a clean pass. See the `max-files` / `max-total-bytes` inputs.
 
 This Action is an MVP: built-in SARIF upload, Terraform plan parsing,
-family auto-detection, baseline suppressions, and PR review comments are
-intentionally out of scope.
+family auto-detection, and PR review comments are intentionally out of scope.
 
 ## Versioning
 

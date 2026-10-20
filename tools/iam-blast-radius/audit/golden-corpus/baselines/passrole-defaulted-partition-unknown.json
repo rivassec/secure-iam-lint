@@ -288,7 +288,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "PassGovRole"
+                "statementSid": "PassGovRole",
+                "baselineId": "7bbc0aed4087b3c39c85a6361b2abb276b322b2cd41cf0beb5eff00548856e4d"
               },
               "ruleIndex": 0
             },

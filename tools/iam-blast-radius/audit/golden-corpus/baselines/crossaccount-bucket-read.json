@@ -120,7 +120,8 @@
                   "pathExploitability": "low"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "ReadOtherCorpBucket"
+                "statementSid": "ReadOtherCorpBucket",
+                "baselineId": "6ed7784b6ea9edb7714eab93f936a4d69d2177ded07e5f8a5efebd50c8f04991"
               },
               "ruleIndex": 0
             }

@@ -137,7 +137,7 @@ const KNOWN_PARTITIONS = Object.freeze(new Set([
 // matches. An unknown severity token is conservatively treated as NOT below the
 // floor only when threshold is a real severity - but since the engine only emits
 // the five known severities, an unrecognized token simply does not count.
-function meetsThreshold(severity, threshold) {
+export function meetsThreshold(severity, threshold) {
   if (threshold === 'none') return false;
   const ti = SEVERITIES.indexOf(threshold);
   const si = SEVERITIES.indexOf(String(severity));

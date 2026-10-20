@@ -51,7 +51,8 @@ import { scan, EXIT, SELECTABLE_FAMILIES, DEFAULT_BUDGET_MS } from './scan.mjs';
 import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 // The SARIF 2.1.0 adapter (story P15-sarif): a PURE projection of a scan() result.
 // The CLI just picks it when --format sarif; the exit code is unaffected.
-import { formatSarif } from './sarif.mjs';
+import { formatSarif, artifactUri } from './sarif.mjs';
+import { applyBaseline, parseBaseline, buildBaseline, formatBaseline } from './baseline.mjs';
 // READ-ONLY: the canonical version manifest (browser-safe, no Node deps). Ties the
 // CLI's --version to the same identifiers the engine reports, so they cannot drift.
 import { VERSION_MANIFEST } from '../content/tools/iam-blast-radius/engine/version.js';
@@ -73,13 +74,14 @@ const VALUE_FLAGS = Object.freeze(new Set([
   '--output',
   '--artifact-uri',
   '--budget-ms',
+  '--baseline',
 ]));
 
 // Boolean flags (no value). `-h` is an alias for `--help`. `--debug` is an alias
 // for `--verbose` (S5-cli-hardening: gates the errno detail on a read failure).
 const BOOLEAN_FLAGS = Object.freeze(new Set(['--version', '--help', '--verbose', '--debug']));
 
-const FORMATS = Object.freeze(new Set(['json', 'sarif']));
+const FORMATS = Object.freeze(new Set(['json', 'sarif', 'baseline']));
 
 // Tagged-error code raised by the input pre-guards (readStdin / readFileCapped) when the
 // input exceeds LIMITS.MAX_BYTES. run() recognizes it and routes the run down the EXISTING
@@ -254,8 +256,16 @@ OPTIONS
                           Default: high. 'none' only affects the 1-vs-0 decision
                           for a COMPLETE analysis; it can NEVER downgrade a
                           fail-closed exit 3 to 0.
-  --format <fmt>          Output format: json | sarif. Default: json. The format
-                          never changes the exit code.
+  --format <fmt>          Output format: json | sarif | baseline. Default: json.
+                          'baseline' prints a baseline file accepting every
+                          result of this run (review it before committing).
+                          The format never changes the exit code.
+  --baseline <file>       Accept the results listed in a committed baseline file
+                          (see --format baseline). Only accepted findings and
+                          accepted UNKNOWN_ACTION / UNSUPPORTED_CONDITION states
+                          stop counting; any other fail-closed state still exits
+                          3. Keys are bound to the artifact URI, so pass the same
+                          path (or --artifact-uri) the baseline was built with.
   --budget-ms <ms>        Wall-clock budget for analyzing the policy, in
                           milliseconds (default: ${DEFAULT_BUDGET_MS}). If analysis
                           overruns, the scan FAILS CLOSED (exit 3,
@@ -356,6 +366,7 @@ export function parseArgs(argv) {
         case '--output': opts.output = value; break;
         case '--artifact-uri': opts.artifactUri = value; break;
         case '--budget-ms': opts.budgetMs = value; break;
+        case '--baseline': opts.baseline = value; break;
         case '--resource-type': opts.resourceType = value; break;
         case '--resource-arn': opts.resourceArn = value; break;
         case '--resource-account': opts.resourceAccount = value; break;
@@ -404,7 +415,7 @@ export function parseArgs(argv) {
   }
   // Format is a CLI-level concern (scan does not see it), so validate it here.
   if (!FORMATS.has(opts.format)) {
-    return usage(`unknown --format '${opts.format}' (expected: json | sarif)`);
+    return usage(`unknown --format '${opts.format}' (expected: json | sarif | baseline)`);
   }
 
   // Coerce --budget-ms to a number. Flag values arrive as strings; a non-numeric
@@ -471,6 +482,7 @@ export function formatJson(result, opts, manifest = VERSION_MANIFEST) {
 }
 
 function formatResult(result, opts, manifest) {
+  if (opts.format === 'baseline') return formatBaseline(buildBaseline([{ file: artifactUri(opts), result }]));
   return opts.format === 'sarif'
     ? formatSarif(result, opts, manifest)
     : formatJson(result, opts, manifest);
@@ -610,9 +622,33 @@ export async function run(argv, io) {
       return EXIT.USAGE;
     }
 
+    // An opt-in baseline is read + validated BEFORE analysis: an unreadable or malformed
+    // baseline is a usage error (exit 2), never "no baseline" (which would silently fail
+    // every accepted result) and never a clean pass.
+    let acceptedKeys = null;
+    if (opts.baseline != null) {
+      let baselineText;
+      try {
+        baselineText = io.readFile(opts.baseline);
+      } catch (e) {
+        if (opts.verbose) {
+          err(`iam-br: cannot read baseline file '${opts.baseline}': ${(e && (e.code || e.message)) || 'error'}\n`);
+        } else {
+          err('iam-br: cannot read baseline file (use --verbose for details).\n');
+        }
+        return EXIT.USAGE;
+      }
+      const parsedBaseline = parseBaseline(baselineText);
+      if (!parsedBaseline.ok) {
+        err(`iam-br: ${parsedBaseline.message}\n`);
+        return EXIT.USAGE;
+      }
+      acceptedKeys = parsedBaseline.keys;
+    }
+
     // Run the analysis. scan() owns the exit-code contract; the CLI propagates it.
     const scanFn = (io && io.scan) || scan;
-    const result = scanFn({
+    const scanned = scanFn({
       text,
       family: opts.family,
       subjectAccount: opts.subjectAccount,
@@ -632,6 +668,10 @@ export async function run(argv, io) {
         ? { type: opts.resourceType, arn: opts.resourceArn, account: opts.resourceAccount }
         : undefined,
     });
+    // Attach baseline keys (always, so SARIF publishes them) and apply an opt-in baseline.
+    // See cli/baseline.mjs for what a baseline can and cannot accept.
+    const threshold = isNonEmptyString(opts.threshold) ? opts.threshold.trim().toLowerCase() : 'high';
+    const result = applyBaseline(scanned, artifactUri(opts), acceptedKeys, threshold);
 
     // Defensive: the code must be an integer in the contract's range. Anything
     // else is an internal invariant violation -> fail closed to 4, NEVER 0.

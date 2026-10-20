@@ -120,7 +120,8 @@
                   "pathExploitability": "low"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "AllowReadComplement"
+                "statementSid": "AllowReadComplement",
+                "baselineId": "2ccfecc7ba2e90a31f3047b88f27c75f3106a224eddf0a03473d3a15ce946379"
               },
               "ruleIndex": 0
             }

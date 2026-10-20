@@ -128,6 +128,11 @@ export function readInputs(env) {
     partition: getInput(env, 'partition'),
     failOn: getInput(env, 'fail-on') || 'high',
     sarifOutput: getInput(env, 'sarif-output') || DEFAULT_SARIF_OUTPUT,
+    // Opt-in accepted-results baseline (cli/baseline.mjs): a workspace-relative file to
+    // READ, and an optional workspace-relative file to WRITE a fresh baseline into. Both
+    // are confined exactly like sarif-output.
+    baseline: getInput(env, 'baseline'),
+    baselineOutput: getInput(env, 'baseline-output'),
     // Wall-clock budget per policy, in ms (S3-dos-budget). A non-numeric or omitted
     // value falls back to the default; a policy whose analysis overruns fails CLOSED
     // (exit 3, RESOURCE_BUDGET_EXCEEDED), never a clean pass.

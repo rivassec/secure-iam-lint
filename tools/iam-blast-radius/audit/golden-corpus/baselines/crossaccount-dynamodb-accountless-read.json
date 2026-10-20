@@ -120,7 +120,8 @@
                   "pathExploitability": "low"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "ScanOrdersTable"
+                "statementSid": "ScanOrdersTable",
+                "baselineId": "19da3cac720a4a9442549caa3abbe31c0c09a8704132d5162db9f462a33a5a43"
               },
               "ruleIndex": 0
             }

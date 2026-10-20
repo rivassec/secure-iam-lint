@@ -122,7 +122,8 @@
                   "pathExploitability": "high"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "ReadOnlyEverywhere"
+                "statementSid": "ReadOnlyEverywhere",
+                "baselineId": "0f86efad70a1ec6d6d8ca5af8d1d1c6909efcbfd7f22f635539fa842ceba8d9a"
               },
               "ruleIndex": 0
             }

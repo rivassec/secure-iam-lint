@@ -189,7 +189,8 @@
                 "excludedResources": [
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz",
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz\\/\\*"
-                ]
+                ],
+                "baselineId": "4f26fe3fed559e48c7086d4046191241ca5fd345a2fa798f98b514af8bad3947"
               },
               "ruleIndex": 0
             },
@@ -225,7 +226,8 @@
                 "excludedResources": [
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz",
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz\\/\\*"
-                ]
+                ],
+                "baselineId": "74aee65202f7a27c319807de25fc372e389666acbfb946f8945b2f2c85f53676"
               },
               "ruleIndex": 1
             }

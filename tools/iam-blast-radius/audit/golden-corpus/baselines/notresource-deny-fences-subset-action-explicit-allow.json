@@ -121,7 +121,8 @@
                   "pathExploitability": "low"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "BroadAndExplicit"
+                "statementSid": "BroadAndExplicit",
+                "baselineId": "f17a8d0bee532e6ce5b02917427507681fdeec568881fe526733ff8bea98ba41"
               },
               "ruleIndex": 0
             }
