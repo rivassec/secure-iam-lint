@@ -11,9 +11,9 @@ CLEAN.** Rhino's original Part 1 (21 methods) are each caught by a specific name
 detector. Rhino Part 2 (repo methods 22-28) are all caught too: 4 by named
 detector, 3 by the incomplete-coverage backstop - and all 3 are CodeStar, a
 service AWS deprecated and closed in 2024, so no named detector is warranted.
-An additional second-tier set (11 primitives beyond Rhino's 28) also never reads
-CLEAN: 10 by named detector, 1 by the backstop (AWS Batch, a named-detector
-candidate). The SSM / EC2-Instance-Connect / existing-SageMaker-notebook cases are
+An additional second-tier set (16 primitives beyond Rhino's 28) also never reads
+CLEAN: 11 by named detector, 5 by the backstop (AWS Batch and four ec2 actions,
+named-detector candidates). The SSM / EC2-Instance-Connect / existing-SageMaker-notebook cases are
 now named by the COMPUTE-SESSION-TAKEOVER detector (v1.1.0).
 
 Reproduce (from `tools/iam-blast-radius/`):
@@ -53,14 +53,17 @@ methods; this corpus covers the original 21 by name, with more in the second tie
 `corpus.mjs` also carries a `SECOND_TIER` set of well-known privesc primitives
 outside Rhino's original list. Every one still fails closed (never CLEAN):
 
-- **Named (10):** `PassRole + ecs:RunTask`, `+ sagemaker:CreateNotebookInstance`,
+- **Named (11):** `PassRole + ec2:AssociateIamInstanceProfile` (`PASSROLE-EC2`), `PassRole + ecs:RunTask`, `+ sagemaker:CreateNotebookInstance`,
   `+ codebuild:CreateProject`, `+ glue:CreateJob`, `+ events:PutTargets`
   (all `PASSROLE-SERVICE`); `sts:AssumeRole *` (`ASSUME-ROLE-EXPANSION`);
   `lambda:AddPermission` (`RESOURCE-POLICY-WRITE`); and `ssm:SendCommand`,
   `ssm:StartSession`, `ec2-instance-connect:SendSSHPublicKey`
   (`COMPUTE-SESSION-TAKEOVER`, v1.1.0 - which also names Rhino method 28, the
   existing-SageMaker-notebook presigned URL).
-- **Backstop-only (1), a candidate for a named detector:** `PassRole +
+- **Backstop-only (5), candidates for named detectors:** `ec2:ModifySnapshotAttribute`,
+  `ec2:ModifyImageAttribute`, `ec2:CreateNetworkInterfacePermission`,
+  `ec2:ModifyInstanceAttribute` (withheld from the catalog, see
+  `scripts/gen-unmodeled-escalation.mjs`), and `PassRole +
   batch:RegisterJobDefinition`. Caught today only by the incomplete-coverage
   backstop - never CLEAN, but not yet a named finding: batch's job role is assumed
   via ECS (`ecs-tasks`), so its PassRole principal semantics need care before it is

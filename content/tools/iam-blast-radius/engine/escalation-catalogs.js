@@ -24,7 +24,13 @@ const PASS_ROLE_SERVICES = Object.freeze([
     service: 'ec2',
     principal: 'ec2.amazonaws.com',
     id: 'PASSROLE-EC2',
-    execActions: Object.freeze(['ec2:RunInstances']),
+    // Associate/Replace attach an existing instance profile to a running instance, so with
+    // iam:PassRole they are the same role-transfer path as RunInstances.
+    execActions: Object.freeze([
+      'ec2:RunInstances',
+      'ec2:AssociateIamInstanceProfile',
+      'ec2:ReplaceIamInstanceProfileAssociation',
+    ]),
   }),
   Object.freeze({
     service: 'ecs',
