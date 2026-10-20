@@ -2207,7 +2207,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "14062ee06a46d005af6e54d2e0b5"
+                "iamBlastRadius/semanticIdentity/v2": "0072fbd455ae64172085de9f0a0c1513"
               },
               "properties": {
                 "category": "security",
@@ -2235,7 +2235,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "13b2d42c1d7ff05649ad28552dc821028d8cd35652527cb34be19d398bcd07dc"
+                "baselineId": "154f433085ec16aeedc015be5a91372b5a41e4796b809f4f98d4286e89ea9a8f"
               },
               "ruleIndex": 0
             },
@@ -2255,7 +2255,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "134021ada0595417efb599ab3ffb"
+                "iamBlastRadius/semanticIdentity/v2": "594bd2df971d0bf5272e075943706495"
               },
               "properties": {
                 "category": "security",
@@ -2295,7 +2295,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "5c3c4f901687231b96e997e2bb47213f882e926243eddddd3c41d31d5285f251"
+                "baselineId": "8953c0e4a5784f5124ed78d557e7f38396fe90d375d24ced521a0c823413f7a7"
               },
               "ruleIndex": 1
             },
@@ -2315,7 +2315,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "14aa6c247a659e099bafa2cf8640"
+                "iamBlastRadius/semanticIdentity/v2": "266eb1170717f6b16ed513099f52c167"
               },
               "properties": {
                 "category": "security",
@@ -2355,7 +2355,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "4f200bcf224e8a57c034d1e6a708351a6fc086a9cc1bada72045e58604efc10d"
+                "baselineId": "f3627d7dafef57ff57c450259d21fcd056de51831de7f6a2ef6fe97e8c6e8529"
               },
               "ruleIndex": 2
             },
@@ -2375,7 +2375,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0b56bf233f7d0a1a1c2f384bd720"
+                "iamBlastRadius/semanticIdentity/v2": "563edffb6f226761370bf8171293ef22"
               },
               "properties": {
                 "category": "security",
@@ -2415,7 +2415,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "ba5f107329c894c6dae74913ea3a35afd98f09eb3ee3b8d408e3835d913eb7e4"
+                "baselineId": "461d4631034d55d9362f8211a3117f55359a105e06fb9b97c8355711c9b4f503"
               },
               "ruleIndex": 3
             },
@@ -2435,7 +2435,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1f805863c4f64d0fcbacc8fab675"
+                "iamBlastRadius/semanticIdentity/v2": "1b85d1ff996d051aff3bce852aee7e72"
               },
               "properties": {
                 "category": "security",
@@ -2475,7 +2475,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "e1fca709b3ad61db1c088fc9bfa6855bd80bc22b3ae2dbd5e9601d12d4c3ef23"
+                "baselineId": "63bb72b40183725597b4137f2fd62430089931b966c37fe961b817a343522a54"
               },
               "ruleIndex": 3
             },
@@ -2495,7 +2495,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "179687797880650844beabe5ea34"
+                "iamBlastRadius/semanticIdentity/v2": "ca8be8337b973f6e22f6720a73a0d3fc"
               },
               "properties": {
                 "category": "security",
@@ -2535,7 +2535,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "8f3ae6ac7befa717a9853d6b948a0a43bd36d164f0bb8c20505fbbfc90ba166f"
+                "baselineId": "a3a363a48fdd124177707e669d03cfc8938298c5b45b9cf0ada4e1c1a5111ae8"
               },
               "ruleIndex": 3
             },
@@ -2555,7 +2555,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0d4ddbaaaa6c4d1a00d813d713f6"
+                "iamBlastRadius/semanticIdentity/v2": "f932dccdcd61c2eb2d8d39ade32ed8d2"
               },
               "properties": {
                 "category": "security",
@@ -2595,7 +2595,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "7a3bdae9652f92938443505a1e3ef87b934674720fabdd31b2a0943e3ba33045"
+                "baselineId": "d0a186f8a3bd2f634b6e0cc37ab7d8aafe9073afc7f090122157cdc4bae03021"
               },
               "ruleIndex": 3
             },
@@ -2615,7 +2615,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "016791d898d0ce0abfc707f79fd6"
+                "iamBlastRadius/semanticIdentity/v2": "3205e7c3acbf3c4ec75a3f0e0d18b055"
               },
               "properties": {
                 "category": "security",
@@ -2655,7 +2655,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "35e6fca0c4ac3e2a7543f2bfb264db806a42a682d9d6b55f66bea8114f5e047a"
+                "baselineId": "5b8b14108a7bdb9bfae8c787178246dd45b8a4e00a4be2fa1b44ebdaf52090e6"
               },
               "ruleIndex": 3
             },
@@ -2675,7 +2675,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "17a2a984f468c00905dbdc70710a"
+                "iamBlastRadius/semanticIdentity/v2": "34082ed1581e3d122e76fa0d4de8f0c6"
               },
               "properties": {
                 "category": "security",
@@ -2715,7 +2715,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "2e03c32bebcf024b7bcfcd5c924f4105fde52e0f5e41da8d18fbeca46e7c4e93"
+                "baselineId": "d257c14b092c45813a019c677771fb32d469026cb2bd2aa7f78a5317de842110"
               },
               "ruleIndex": 3
             },
@@ -2735,7 +2735,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1cd2369380a54901639421d5fd7f"
+                "iamBlastRadius/semanticIdentity/v2": "8eea8592d9bd5f49541219d941f14846"
               },
               "properties": {
                 "category": "security",
@@ -2775,7 +2775,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "3eafa4854b6bb615ad7c580d93144512373d5cd93d5c5759cee8593c776322a6"
+                "baselineId": "4bcec4c8a37991852b0f608fc1d9a37ad9566f0d377b1dee006fcd1cb084bf99"
               },
               "ruleIndex": 3
             },
@@ -2795,7 +2795,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "18b5efa2fe1c371b295874aa49be"
+                "iamBlastRadius/semanticIdentity/v2": "0db40e96c1012486428460314a94a88f"
               },
               "properties": {
                 "category": "security",
@@ -2822,7 +2822,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "23b9d4f54041837aaa9c1f0906d56a4639f4f2fad36f7b5e0828e8bcb268bfb2"
+                "baselineId": "9726c03c19a63a330dc6d6f25f32e25669fd0b9c826a8105ac6094550116eee8"
               },
               "ruleIndex": 4
             },
@@ -2842,7 +2842,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "12da52531440ea06bb1bb19579d5"
+                "iamBlastRadius/semanticIdentity/v2": "1536b37a359605c56c1e71fc3b122ce8"
               },
               "properties": {
                 "category": "security",
@@ -2869,7 +2869,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "a564635f765000a037825f886f401382e5d712bc3e8b772bfcc1bcfefc75b75a"
+                "baselineId": "30e3faca78ffdc59053f1d8e79050aa06f715e03d0aaef8a2dd422bcd3ae4582"
               },
               "ruleIndex": 5
             },
@@ -2889,7 +2889,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0854b54992b364032185f55c0f61"
+                "iamBlastRadius/semanticIdentity/v2": "a09c82480b31f4ac612a78ddba089fcc"
               },
               "properties": {
                 "category": "security",
@@ -2916,7 +2916,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "59680df05479898ea90d92b95da24747f5ec65f313ec50253180e9b2ca30c281"
+                "baselineId": "3821b313b181caff82b152e18d81dff46614ca1d862d7672a34ba6ea15db13d2"
               },
               "ruleIndex": 6
             },
@@ -2936,7 +2936,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0e9f463210bf0209202a9930df72"
+                "iamBlastRadius/semanticIdentity/v2": "a09a04e695aa91d349bde71ecd8fa841"
               },
               "properties": {
                 "category": "security",
@@ -2963,7 +2963,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "918e2e28efe1a0eca0289bbd8e3276936803992541b1bc5b0aa8a0f10f4bba95"
+                "baselineId": "954169a7ac68d05eb3bcc74d7fb710d49dc2376267e7c0b4a57115743f2da8e4"
               },
               "ruleIndex": 7
             },
@@ -2983,7 +2983,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1e26028f773e431a15cfd8e5079c"
+                "iamBlastRadius/semanticIdentity/v2": "7e6926f0114301bed388070f5cfff283"
               },
               "properties": {
                 "category": "security",
@@ -3010,7 +3010,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "e3ef751580b30ac226096845303e57cd6f613567020145d2fdc6fca50eb5d4fc"
+                "baselineId": "41113690796e498cde81fecbc70769e61e219f389aa55b6bb3729cce415544eb"
               },
               "ruleIndex": 8
             },
@@ -3030,7 +3030,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "02c41ca32f858200ffbd578fae07"
+                "iamBlastRadius/semanticIdentity/v2": "9d1d2bff6221d6d3f86a0d41c851fa0b"
               },
               "properties": {
                 "category": "security",
@@ -3043,7 +3043,7 @@
                 },
                 "jsonPointer": "/Statement/0",
                 "statementSid": "AdminAnchor",
-                "baselineId": "f91114aa0d9f5943fe92ff128d8fbfc606559cbe82673998133d1db514adcbad"
+                "baselineId": "2642c57c93617925382106cea5b75942c2df6cb735d7e8fa592908225ec4c976"
               },
               "ruleIndex": 9
             },
@@ -3064,7 +3064,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "12375350640a19095d46e2bb3d6a"
+                "iamBlastRadius/semanticIdentity/v2": "7be980f4e2659e85c9834e9746892301"
               },
               "properties": {
                 "category": "analysis-state",
@@ -3073,7 +3073,7 @@
                 "unknownActions": [
                   "kinesis\\:GetRecords"
                 ],
-                "baselineId": "f5989992500ffcb405b6b49629d518665827af5443fcfd69671c2c1afc748003"
+                "baselineId": "8680011e5c0f2784e8d52cae5cbac71ac8edcd5f9fe1fae5e4e098f227ae88ca"
               },
               "ruleIndex": 10
             }

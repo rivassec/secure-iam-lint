@@ -73,12 +73,14 @@ test('a long unknown-action list is count-capped with a truthful remainder', () 
   assert.ok(!text.includes('fakesvc\\:Action12'));
 });
 
-test('the state fingerprint does not depend on which actions are unknown', () => {
+test('the state fingerprint depends on the full offending set, not its order or duplicates', () => {
   const fp = (action) => stateRows({
     Version: '2012-10-17',
     Statement: [{ Effect: 'Allow', Action: action, Resource: '*' }],
   }).find((r) => r.ruleId === 'analysis.UNKNOWN_ACTION').partialFingerprints[FINGERPRINT_KEY];
-  assert.equal(fp('fakesvc:One'), fp('fakesvc:Two'));
+  assert.notEqual(fp('fakesvc:One'), fp('fakesvc:Two'));
+  assert.notEqual(fp(['fakesvc:One', 'fakesvc:Two']), fp('fakesvc:One'));
+  assert.equal(fp(['fakesvc:Two', 'fakesvc:One', 'fakesvc:One']), fp(['fakesvc:One', 'fakesvc:Two']));
 });
 
 test('the offending tokens also ride in a machine-readable, inert property', () => {

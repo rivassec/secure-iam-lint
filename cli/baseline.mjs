@@ -39,9 +39,11 @@
 import { createHash } from 'node:crypto';
 
 import { EXIT, ANALYSIS_STATUS, meetsThreshold } from './scan.mjs';
-import { findingIdentity, stateIdentity } from './sarif.mjs';
+import { findingIdentity, stateIdentity, occurrenceOrdinals } from './sarif.mjs';
 
-export const BASELINE_VERSION = 1;
+// v2: finding keys no longer include the statement position and carry an occurrence ordinal.
+// A v1 baseline is rejected outright (regenerate it) rather than going silently stale.
+export const BASELINE_VERSION = 2;
 // Bounds on a committed baseline file (it is repo content; keep it from becoming a
 // resource-exhaustion input).
 export const MAX_BASELINE_BYTES = 1024 * 1024;
@@ -66,9 +68,9 @@ function keyOf(kind, uri, canonical) {
   return sha256(`iam-blast-radius-baseline-v${BASELINE_VERSION}\n${JSON.stringify([kind, String(uri), canonical])}`);
 }
 
-export function findingBaselineKey(finding, family, uri) {
+export function findingBaselineKey(finding, family, uri, occurrence = 0) {
   const f = finding || {};
-  const extra = `\nseverity=${f.severity != null ? String(f.severity) : ''}\nruleVersion=${f.ruleVersion != null ? String(f.ruleVersion) : ''}`;
+  const extra = `\nseverity=${f.severity != null ? String(f.severity) : ''}\nruleVersion=${f.ruleVersion != null ? String(f.ruleVersion) : ''}\noccurrence=${occurrence}`;
   return keyOf('finding', uri, `${findingIdentity(f, family)}${extra}`);
 }
 
@@ -111,7 +113,11 @@ export function parseBaseline(text) {
     return bad('The baseline file is not valid JSON.');
   }
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return bad('The baseline file must be a JSON object.');
-  if (doc.version !== BASELINE_VERSION) return bad(`Unsupported baseline version (expected ${BASELINE_VERSION}).`);
+  if (doc.version !== BASELINE_VERSION) {
+    return bad(doc.version === 1
+      ? `This baseline is version 1 (pre-fingerprint-v2); its ids no longer match. Regenerate it with baseline-output (expected version ${BASELINE_VERSION}).`
+      : `Unsupported baseline version (expected ${BASELINE_VERSION}).`);
+  }
   if (!Array.isArray(doc.entries)) return bad('The baseline file has no "entries" array.');
   if (doc.entries.length > MAX_BASELINE_ENTRIES) return bad(`The baseline file has more than ${MAX_BASELINE_ENTRIES} entries.`);
   const keys = new Map();
@@ -152,7 +158,8 @@ export function applyBaseline(result, uri, accepted, threshold) {
   const findings = Array.isArray(result.findings) ? result.findings : [];
   const states = Array.isArray(result.analysisStates) ? result.analysisStates : [];
   const keyOfRow = new Map();
-  for (const f of findings) keyOfRow.set(f, findingBaselineKey(f, result.family, uri));
+  const occ = occurrenceOrdinals(findings, (x) => findingIdentity(x, result.family));
+  for (const [i, f] of findings.entries()) keyOfRow.set(f, findingBaselineKey(f, result.family, uri, occ[i]));
   for (const s of states) {
     const k = stateBaselineKey(s, uri);
     if (k) keyOfRow.set(s, k);

@@ -163,7 +163,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1571b96a1c2eb803da849e53ec63"
+                "iamBlastRadius/semanticIdentity/v2": "2ef2daf54c5713649811def274da4254"
               },
               "properties": {
                 "category": "security",
@@ -176,7 +176,7 @@
                 },
                 "jsonPointer": "/Statement/0",
                 "statementSid": "KmsControl",
-                "baselineId": "381fd3aca785614bf80b8937078cf6e60adf3de1b07e0ce66f8ed39b5275d3b9"
+                "baselineId": "662aae10582429f7431608a23a4547da77531325ad55a42a6dcc83527925ca99"
               },
               "ruleIndex": 0
             },
@@ -196,7 +196,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1d3fc5336a6f0b1de229f1a68245"
+                "iamBlastRadius/semanticIdentity/v2": "2aab46358a6876dce21e8e36f536d1b7"
               },
               "properties": {
                 "category": "security",
@@ -209,7 +209,7 @@
                 },
                 "jsonPointer": "/Statement/0",
                 "statementSid": "KmsControl",
-                "baselineId": "f72033d334907385b89a1dcb4a9e48799f919130e6ddb99d133212e9856b4f32"
+                "baselineId": "7fbf2e22cb482dea55863b5a02404424833ba943600550a710e99d5cfc164727"
               },
               "ruleIndex": 1
             }

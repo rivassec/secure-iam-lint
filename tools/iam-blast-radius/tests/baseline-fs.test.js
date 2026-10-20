@@ -11,7 +11,7 @@ import path from 'node:path';
 import { main, EXIT } from '../../../action/index.mjs';
 
 const POLICY = JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::b/*' }] });
-const EMPTY_BASELINE = JSON.stringify({ version: 1, entries: [] });
+const EMPTY_BASELINE = JSON.stringify({ version: 2, entries: [] });
 
 async function runMain(ws, extra) {
   const savedEnv = { ...process.env };

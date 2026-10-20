@@ -239,8 +239,10 @@ results that are not in it.
 What a baseline can and cannot do:
 
 - Each result is accepted **individually**. A finding's key is its full semantic
-  identity (rule, statement position, actions, resources, conditions, ...), so a
-  broader grant is a new result. An `UNKNOWN_ACTION` / `UNSUPPORTED_CONDITION`
+  identity (rule, actions, resources, conditions, ...; not its position, so adding
+  a statement above it does not invalidate the entry; identical findings in one
+  file are told apart by an occurrence ordinal), so a broader grant is a new
+  result. An `UNKNOWN_ACTION` / `UNSUPPORTED_CONDITION`
   state's key includes the exact sorted action / condition-key list, so a new
   unknown action still fails closed.
 - Keys are bound to the file path: accepting a result in one file never accepts
@@ -253,7 +255,13 @@ What a baseline can and cannot do:
 - In the SARIF, every keyed result carries `properties.baselineId`; with a
   baseline applied, results also carry the standard `baselineState` (`unchanged`
   = accepted, `new` = not in the baseline), and accepted ones an `accepted`
-  external suppression. Fingerprints do not change.
+  external suppression.
+- Baseline format version 2 (tool release with `partialFingerprints` key `.../v2`)
+  does not read version 1 files: they are refused with exit `2` and a message to
+  regenerate. Re-run `baseline-output`, review the diff, commit. Code-scanning alerts
+  are re-opened once under the new fingerprint key; dismiss them again.
+- `baseline-output` warns on stderr when it writes `critical` entries; a baseline
+  accepts critical results too, so review those first.
 - Stale entries (accepted results that no longer occur) are counted in
   `baseline-stale-count` and noted in the log; prune them.
 - Each entry's `file`, `ruleId` and (for a finding) `severity` are **checked**
@@ -284,8 +292,11 @@ consumer cannot misread one for the other:
   exit `3`.
 
 Fingerprints (`partialFingerprints`) are computed on normalized semantic identity
-(finding type + family + statement identity + normalized
-action/resource/principal/condition), never on message text, line number, or key
+(finding type + family + normalized
+action/resource/principal/condition, plus the sorted offending set for
+`UNKNOWN_ACTION` / `UNSUPPORTED_CONDITION`; never the statement position, with an
+occurrence ordinal for identical results in one file). The value is SHA-256
+truncated to 128 bits, published under `iamBlastRadius/semanticIdentity/v2`, never on message text, line number, or key
 order, so results dedupe cleanly across whitespace and path-mode changes.
 
 The aggregate SARIF (one run per scanned file) is bounded by a **document-level

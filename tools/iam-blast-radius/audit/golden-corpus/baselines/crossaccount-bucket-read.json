@@ -109,7 +109,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0ee1a15b525bb909441987fcc8b3"
+                "iamBlastRadius/semanticIdentity/v2": "e1a880bcc2387760b52d810c6fd3c475"
               },
               "properties": {
                 "category": "security",
@@ -121,7 +121,7 @@
                 },
                 "jsonPointer": "/Statement/0",
                 "statementSid": "ReadOtherCorpBucket",
-                "baselineId": "28ac44e83efeb1d6e2ca361a10643dae9f6f7ab4460a45c87f162b06e585c726"
+                "baselineId": "1172813ae84c59f5acfde474248c11e12a4124599608a1e9119a01abc7782904"
               },
               "ruleIndex": 0
             }
