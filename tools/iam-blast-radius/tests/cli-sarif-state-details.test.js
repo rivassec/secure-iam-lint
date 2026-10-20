@@ -80,3 +80,16 @@ test('the state fingerprint does not depend on which actions are unknown', () =>
   }).find((r) => r.ruleId === 'analysis.UNKNOWN_ACTION').partialFingerprints[FINGERPRINT_KEY];
   assert.equal(fp('fakesvc:One'), fp('fakesvc:Two'));
 });
+
+test('the offending tokens also ride in a machine-readable, inert property', () => {
+  const unknown = stateRows({
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Action: ['sqs:SendMessage', 'fakesvc:DoThing'], Resource: '*' }],
+  }).find((r) => r.ruleId === 'analysis.UNKNOWN_ACTION');
+  assert.deepEqual(unknown.properties.unknownActions, ['fakesvc\\:DoThing', 'sqs\\:SendMessage']);
+  const cond = stateRows({
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Action: 's3:ListBucket', Resource: 'arn:aws:s3:::b', Condition: { StringEquals: { 'zzz:madeup': 'x' } } }],
+  }).find((r) => r.ruleId === 'analysis.UNSUPPORTED_CONDITION');
+  assert.deepEqual(cond.properties.unsupportedConditions, ['zzz\\:madeup']);
+});

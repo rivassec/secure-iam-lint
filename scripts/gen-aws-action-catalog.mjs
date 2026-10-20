@@ -24,11 +24,14 @@ import { dirname, join } from 'node:path';
 const BASE = 'https://servicereference.us-east-1.amazonaws.com/v1';
 
 // Services snapshotted in full. Chosen from real-world policies the curated slice
-// failed on: S3 data-plane/bucket config, and the global / account-level services a
-// region-deny SCP exempts via NotAction (AWS Organizations example SCP). Keep this
-// list explicit - adding a service changes which actions read as "known".
+// failed on: S3 data-plane/bucket config, EC2 (region-deny SCPs exempt concrete
+// ec2:Describe* calls), and the global / account-level / billing services a region-deny
+// SCP exempts via NotAction (AWS Organizations example SCP). Keep this list explicit -
+// adding a service changes which actions read as "known".
 const SERVICES = [
-  's3',
+  's3', 'ec2',
+  'consolidatedbilling', 'freetier', 'invoicing', 'payments', 'purchase-orders',
+  'savingsplans', 'sustainability', 'tag', 'tax',
   'account', 'acm', 'aws-marketplace', 'aws-marketplace-management', 'aws-portal',
   'billing', 'budgets', 'ce', 'cloudfront', 'cur', 'directconnect', 'fms',
   'globalaccelerator', 'health', 'importexport', 'networkmanager', 'organizations',
@@ -45,6 +48,16 @@ function accessLevel(action) {
   if (p.IsList) return 'LIST';
   return 'READ';
 }
+
+// Every IAM service prefix AWS publishes (the reference index), with no actions. Used
+// ONLY to recognize a whole-service `svc:*` carve-out in a Deny statement's NotAction
+// (catalog.js unrecognizedActions): its meaning ("every action of this real service")
+// does not depend on the action list. Nothing else treats these as known.
+const indexRes = await fetch(`https://servicereference.us-east-1.amazonaws.com/`);
+if (!indexRes.ok) throw new Error(`index: HTTP ${indexRes.status}`);
+const prefixes = (await indexRes.json()).map((e) => String(e.service).toLowerCase());
+if (prefixes.length < 300) throw new Error(`index: only ${prefixes.length} services`);
+for (const p of prefixes) if (!/^[a-z0-9-]+$/.test(p)) throw new Error(`index: odd prefix ${p}`);
 
 const data = {};
 const requiresWildcard = [];
@@ -85,9 +98,13 @@ lines.push('// READ-level actions with no resource types (grantable only on Reso
 lines.push('export const AWS_REF_REQUIRES_WILDCARD = Object.freeze(new Set([');
 for (const k of requiresWildcard.sort()) lines.push(`  '${k}',`);
 lines.push(']));', '');
+lines.push('// Every published IAM service prefix (see gen script: Deny NotAction `svc:*` only).');
+lines.push('export const AWS_SERVICE_PREFIXES = Object.freeze(new Set([');
+for (const p of [...new Set(prefixes)].sort()) lines.push(`  '${p}',`);
+lines.push(']));', '');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, '..', 'content', 'tools', 'iam-blast-radius', 'engine', 'catalog-aws-ref.js');
 writeFileSync(out, lines.join('\n'));
 const total = Object.values(data).reduce((n, s) => n + Object.keys(s).length, 0);
-console.log(`wrote ${out}: ${SERVICES.length} services, ${total} actions, ${requiresWildcard.length} wildcard-only reads`);
+console.log(`wrote ${out}: ${SERVICES.length} services, ${total} actions, ${requiresWildcard.length} wildcard-only reads, ${prefixes.length} prefixes`);

@@ -3053,7 +3053,10 @@
               "properties": {
                 "category": "analysis-state",
                 "failClosed": true,
-                "analysisState": "incomplete"
+                "analysisState": "incomplete",
+                "unknownActions": [
+                  "kinesis\\:GetRecords"
+                ]
               },
               "ruleIndex": 10
             }

@@ -121,3 +121,33 @@ test('the generated snapshot is pure data (no imports, no network)', () => {
   assert.doesNotMatch(src, /^\s*import\s/m);
   assert.doesNotMatch(src, /\bfetch\s*\(|require\s*\(/);
 });
+
+test('a Deny NotAction whole-service carve-out on any real AWS service prefix is analyzable', () => {
+  const result = scanPolicy({
+    Version: '2012-10-17',
+    Statement: [{
+      Effect: 'Deny',
+      NotAction: ['chime:*', 'savingsplans:*', 'tag:*', 'a4b:*', 'ec2:DescribeTransitGateways', 'sts:*'],
+      Resource: '*',
+      Condition: { StringNotEquals: { 'aws:RequestedRegion': ['us-east-1'] } },
+    }],
+  }, 'scp-rcp');
+  assert.ok(!stateCodes(result).includes('UNKNOWN_ACTION'), JSON.stringify(result.analysisStates));
+});
+
+test('the carve-out is narrow: made-up prefixes, partial patterns, Allow and Action lists stay unknown', () => {
+  const unknownFor = (stmt, family = 'scp-rcp') => {
+    const r = scanPolicy({ Version: '2012-10-17', Statement: [stmt] }, family);
+    const st = (r.analysisStates || []).find((s) => s.code === 'UNKNOWN_ACTION');
+    return st ? st.details.actions : [];
+  };
+  // A region guardrail: without a condition the SCP evaluator rejects the shape outright.
+  const deny = (notAction) => ({
+    Effect: 'Deny', NotAction: notAction, Resource: '*',
+    Condition: { StringNotEquals: { 'aws:RequestedRegion': ['us-east-1'] } },
+  });
+  assert.deepEqual(unknownFor(deny(['madeupsvc:*'])), ['madeupsvc:*']);
+  assert.deepEqual(unknownFor(deny(['chime:Get*'])), ['chime:Get*']);
+  assert.deepEqual(unknownFor({ Effect: 'Allow', NotAction: ['chime:*'], Resource: '*' }, 'identity'), ['chime:*']);
+  assert.deepEqual(unknownFor({ Effect: 'Allow', Action: ['chime:*'], Resource: '*' }, 'identity'), ['chime:*']);
+});

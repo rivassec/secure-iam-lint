@@ -357,6 +357,15 @@ function finalize(units, inputs, manifest) {
   };
 }
 
+// Fixed, tool-authored one-line hints for usage errors whose reason code alone does not say
+// how to fix the input. Keyed by reason code ONLY - never interpolating an input value -
+// because this line goes to the runner log, where an attacker-shaped value could forge a
+// `::workflow-command`.
+const FAILURE_HINTS = Object.freeze({
+  UNSAFE_SARIF_OUTPUT: 'use a workspace-relative path such as "iam-blast-radius.sarif" '
+    + '(absolute paths like /tmp/x.sarif and paths escaping the workspace are rejected)',
+});
+
 // --- Artifact emission (pure over injected sinks; testable) -------------------
 
 /**
@@ -526,7 +535,8 @@ export async function main() {
   // Fail the action iff the aggregate exit code is non-zero. A fail-closed exit 3
   // reaches here unchanged and fails the check - it is NEVER downgraded to 0.
   if (final.exitCode !== EXIT.CLEAN) {
-    process.stderr.write(`IAM Blast Radius failed (exit ${final.exitCode}): ${final.reason}\n`);
+    const hint = Object.hasOwn(FAILURE_HINTS, final.reason) ? ` - ${FAILURE_HINTS[final.reason]}` : '';
+    process.stderr.write(`IAM Blast Radius failed (exit ${final.exitCode}): ${final.reason}${hint}\n`);
     process.exitCode = final.exitCode;
   }
   return final.exitCode;

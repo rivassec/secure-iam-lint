@@ -797,15 +797,22 @@ function renderActionClause(actions) {
 // punctuation char escaped, so no markdown construct - not even inside a would-be code
 // span - can form), count-capped like a finding's action clause. Appended AFTER
 // sanitizeStateMessage so the engine prose cap cannot cut the list. The fingerprint is
-// untouched (stateIdentity never reads details).
-function stateDetailClause(s) {
+// untouched (stateIdentity never reads details). The same list also rides in a
+// machine-readable property (stateDetailOf().property) for consumers that parse SARIF.
+function stateDetailOf(s) {
   const d = s && s.details;
-  if (!d || typeof d !== 'object') return '';
-  let label;
-  let list;
-  if (s.code === 'UNKNOWN_ACTION') { label = 'actions'; list = d.actions; }
-  else if (s.code === 'UNSUPPORTED_CONDITION') { label = 'condition keys'; list = d.conditions; }
-  else return '';
+  if (!d || typeof d !== 'object') return null;
+  if (s.code === 'UNKNOWN_ACTION') return { label: 'actions', property: 'unknownActions', list: d.actions };
+  if (s.code === 'UNSUPPORTED_CONDITION') {
+    return { label: 'condition keys', property: 'unsupportedConditions', list: d.conditions };
+  }
+  return null;
+}
+
+function stateDetailClause(s) {
+  const detail = stateDetailOf(s);
+  if (!detail) return '';
+  const { label, list } = detail;
   const { shown, more } = capMessageTokens(list);
   const tokens = [];
   for (const v of shown) {
@@ -955,6 +962,13 @@ function stateResultRow(s, uri) {
   if (s && s.path != null) {
     const safePath = inertLeaf(s.path, MAX_STATE_MSG_LEN);
     if (safePath) properties.path = safePath;
+  }
+  // The offending tokens, count-capped with a truthful marker and markdown-inert like every
+  // other properties-bag token list (inertTokenList).
+  const detail = stateDetailOf(s);
+  if (detail) {
+    const tokens = inertTokenList(normList(detail.list));
+    if (tokens.length > 0) properties[detail.property] = tokens;
   }
   // R5-uri-trunc: a sliced (over-length) artifact URI is recorded via a SEPARATE flag, never
   // by mutating the location string. Same treatment as the finding rows below.

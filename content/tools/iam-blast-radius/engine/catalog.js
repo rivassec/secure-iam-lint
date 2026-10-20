@@ -37,7 +37,7 @@
 import { globMatch } from './glob.js';
 // Generated full-service snapshot (scripts/gen-aws-action-catalog.mjs) for the S3
 // and global/account-level services real-world policies hit. Pure data module.
-import { AWS_REF_ACTIONS, AWS_REF_REQUIRES_WILDCARD } from './catalog-aws-ref.js';
+import { AWS_REF_ACTIONS, AWS_REF_REQUIRES_WILDCARD, AWS_SERVICE_PREFIXES } from './catalog-aws-ref.js';
 
 // AWS access levels (from the service-authorization reference vocabulary). Used
 // as annotation only; the rules do not (yet) consume it, but every catalog entry
@@ -512,6 +512,19 @@ export function lookupAction(token, catalog) {
   return (catalog || defaultCatalog).lookup(token);
 }
 
+// A whole-service `svc:*` carve-out in a DENY statement's NotAction ("deny everything
+// except all of <svc>", the region-deny SCP shape) on a REAL AWS service prefix. Its
+// meaning does not depend on which of the service's actions the snapshot lists, so it is
+// analyzable even for a service the snapshot carries no actions for. Deliberately narrow:
+// only the exact `svc:*` form, only NotAction, only Effect "Deny"; a partial pattern
+// (svc:Get*), an Allow statement, or an Action-list wildcard still needs catalogued
+// actions, and an unpublished prefix (madeupsvc:*) stays unknown.
+function isDenyServiceCarveOut(stmt, token) {
+  if (!stmt || stmt.effect !== 'Deny') return false;
+  const m = /^([A-Za-z0-9-]+):\*$/.exec(String(token));
+  return !!m && AWS_SERVICE_PREFIXES.has(m[1].toLowerCase());
+}
+
 /**
  * Collect the sorted, de-duplicated set of actions in a model the catalog cannot
  * vouch for ("unknown actions"). Two classes are reported:
@@ -541,7 +554,12 @@ export function unrecognizedActions(model, catalog) {
   for (const stmt of statements) {
     const actions = [];
     if (stmt && Array.isArray(stmt.actions)) actions.push(...stmt.actions);
-    if (stmt && Array.isArray(stmt.notActions)) actions.push(...stmt.notActions);
+    if (stmt && Array.isArray(stmt.notActions)) {
+      for (const token of stmt.notActions) {
+        // Shipped-snapshot data only: a replacement provider keeps its own semantics.
+        if (!(cat === defaultCatalog && isDenyServiceCarveOut(stmt, token))) actions.push(token);
+      }
+    }
     for (const token of actions) {
       if (isWildcardAction(token)) {
         // A wildcard on an unknown service, or one that expands to no known
