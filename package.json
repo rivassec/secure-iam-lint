@@ -43,6 +43,7 @@
   },
   "scripts": {
     "test": "cd tools/iam-blast-radius && node --test \"tests/**/*.test.js\"",
-    "iam-br": "node cli/iam-br.mjs"
+    "iam-br": "node cli/iam-br.mjs",
+    "ci:local": "scripts/ci-local.sh"
   }
 }
