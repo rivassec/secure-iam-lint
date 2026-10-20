@@ -150,7 +150,8 @@ export function conditionSignals(condition, principals) {
           sig.sourceIp = true;
         }
       } else if (key.endsWith(':aud') || key === 'saml:aud') {
-        if (!negated && !bypassable) sig.audConstraint = true;
+        // Only a positive string match pins the audience; Null/Bool/Date/Numeric do not.
+        if (positiveStringMatch && !bypassable && values.length > 0 && !values.includes('*')) sig.audConstraint = true;
       } else if (key.endsWith(':sub') || key === 'saml:sub') {
         // Subject scope drives federated severity (trust-policy-semantics 4.4):
         // a value carrying a GLOB metacharacter - '*' (e.g. repo:org/*) OR the
@@ -165,8 +166,11 @@ export function conditionSignals(condition, principals) {
         // while conditions.js flagged it broad/uncredited, the exact
         // severity-vs-provenance contradiction the engine eliminates elsewhere
         // (adversarial-critic IAM-804 iteration 4 finding 1).
-        const broad = negated || bypassable || values.length === 0 || values.some((v) => hasGlob(v));
-        sig.subScope = broad ? 'broad' : 'tight';
+        // Tight needs a non-bypassable positive string match on literal values; Null/Bool/
+        // Date/Numeric never pin the subject. Operators AND, so any one tight entry wins regardless of key order.
+        const tight = positiveStringMatch && !bypassable && values.length > 0 && !values.some((v) => hasGlob(v));
+        if (tight) sig.subScope = 'tight';
+        else if (sig.subScope === null) sig.subScope = 'broad';
       }
     }
   }

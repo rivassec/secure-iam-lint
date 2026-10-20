@@ -4,6 +4,7 @@
   "analyze.js",
   "arn-util.js",
   "catalog-aws-ref.js",
+  "catalog-unmodeled.js",
   "catalog.js",
   "conditions.js",
   "correlate.js",

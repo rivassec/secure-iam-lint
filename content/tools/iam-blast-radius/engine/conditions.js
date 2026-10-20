@@ -554,7 +554,8 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
     const kind = boolKind(values);
     if (kind === 'true') {
       cls = meta.class; // constraint
-      credited = cls === CONDITION_CLASS.CONSTRAINT && !ifExists && !setOperator;
+      // Bool on a federated aud/sub claim compares no claim value, so it is not a guardrail.
+      credited = cls === CONDITION_CLASS.CONSTRAINT && !ifExists && !setOperator && !meta.federation;
       notes.push(`asserts ${meta.label}`);
     } else if (kind === 'false') {
       cls = CONDITION_CLASS.EXPANSION;
@@ -616,7 +617,7 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
     // correctly keeps HIGH (adversarial-critic IAM-804 iteration 5). Mirrors
     // trust.js scopesValue (positive-operator gate). The class stays CONSTRAINT
     // (the key IS a known scoping key), but credited flips off with a note.
-    if (credited && VALUE_SCOPING_TRUST_KEYS.has(keyLower) && !POSITIVE_STRING_MATCH_OPERATORS.has(base)) {
+    if (credited && (VALUE_SCOPING_TRUST_KEYS.has(keyLower) || meta.federation) && !POSITIVE_STRING_MATCH_OPERATORS.has(base)) {
       credited = false;
       notes.push(`operator "${operator}" is not a positive string/ARN match, so it does not scope ${meta.label} by value and is not credited as a guardrail`);
     }

@@ -35,6 +35,7 @@
 // action the snapshot knows?" (S2-airtight-incomplete fix (a)); it never evaluates
 // or authorizes anything.
 import { globMatch } from './glob.js';
+import { UNMODELED_ESCALATION } from './catalog-unmodeled.js';
 // Generated full-service snapshot (scripts/gen-aws-action-catalog.mjs) for the S3
 // and global/account-level services real-world policies hit. Pure data module.
 import { AWS_REF_ACTIONS, AWS_REF_REQUIRES_WILDCARD, AWS_SERVICE_PREFIXES } from './catalog-aws-ref.js';
@@ -305,13 +306,24 @@ function buildIndex(data) {
   return index;
 }
 
+// Reference actions that EXIST but that no detector models, so "known" would turn an
+// exit 3 into a clean exit 0 on a real escalation (generated list, see
+// scripts/gen-unmodeled-escalation.mjs). Keep an action here until a detector covers it.
+const UNMODELED_SET = new Set(UNMODELED_ESCALATION);
+
 // Merge the generated AWS-reference snapshot UNDER the curated data: an action the
 // curated map already names keeps its curated access level (the rules were tuned
 // against it); the reference only ADDS actions the curated slice lacks. Returns the
-// lowercased "service:action" keys that came from the reference, so their
-// wildcard-only bit is taken from the reference and never overrides a curated action.
+// lowercased "service:action" keys that came from the reference (so their
+// wildcard-only bit is taken from the reference and never overrides a curated action)
+// and the keys WITHHELD from the index: a reference Permissions-management action on a
+// service outside the curated slice, or one in UNMODELED_ESCALATION. Existence is not
+// modeling, so a withheld action stays unrecognized in an Allow (fail closed) and is
+// accepted only inside a Deny (see unrecognizedActions).
 function mergeReference(index, refData) {
   const added = new Set();
+  const withheld = new Set();
+  const curatedServices = new Set(index.keys());
   for (const service of Object.keys(refData)) {
     const svcLower = service.toLowerCase();
     if (!index.has(svcLower)) index.set(svcLower, new Map());
@@ -322,15 +334,28 @@ function mergeReference(index, refData) {
       if (actions.has(key)) continue;
       const accessLevel = ACCESS_LEVELS[set[action]];
       if (!accessLevel) continue; // unknown level token: leave the action unknown (fail closed)
+      const full = `${svcLower}:${key}`;
+      if (UNMODELED_SET.has(full)
+        || (accessLevel === ACCESS_LEVELS.PERMISSIONS && !curatedServices.has(svcLower))) {
+        withheld.add(full);
+        continue;
+      }
       actions.set(key, { service: svcLower, name: action, accessLevel });
-      added.add(`${svcLower}:${key}`);
+      added.add(full);
     }
   }
-  return added;
+  return { added, withheld };
 }
 
 const INDEX = buildIndex(CATALOG_DATA);
-const REFERENCE_KEYS = mergeReference(INDEX, AWS_REF_ACTIONS);
+const { added: REFERENCE_KEYS, withheld: WITHHELD } = mergeReference(INDEX, AWS_REF_ACTIONS);
+const WITHHELD_BY_SERVICE = new Map();
+for (const key of WITHHELD) {
+  const colon = key.indexOf(':');
+  const svc = key.slice(0, colon);
+  if (!WITHHELD_BY_SERVICE.has(svc)) WITHHELD_BY_SERVICE.set(svc, []);
+  WITHHELD_BY_SERVICE.get(svc).push(key.slice(colon + 1));
+}
 
 function requiresWildcardKey(key) {
   return REQUIRES_WILDCARD_RESOURCE.has(key)
@@ -437,6 +462,13 @@ export const defaultCatalog = Object.freeze({
       });
     }
     const entry = svc.get(parts.action);
+    if (!entry && WITHHELD.has(`${parts.service}:${parts.action}`)) {
+      return Object.freeze({
+        input, wildcard: false, known: false, knownService: true, withheld: true,
+        service: parts.service, name: null, accessLevel: null,
+        requiresWildcardResource: false,
+      });
+    }
     if (!entry) {
       return Object.freeze({
         input, wildcard: false, known: false, knownService: true,
@@ -474,9 +506,13 @@ export const defaultCatalog = Object.freeze({
    *     unrecognizedActions() routes it to coverage.summary.incomplete.
    * Never throws. Callers pass a token isWildcardAction() already accepted.
    *
+   * A pattern (other than "svc:*") that expands to a WITHHELD action is not `supported`
+   * (an Allow of it is unmodeled); `exemptableInDeny` marks it as harmless inside a Deny.
+   *
    * @param {string} token raw wildcard action string
    * @returns {{wildcard:true, allServices:boolean, service:(string|null),
-   *            knownService:boolean, matchesKnownAction:boolean, supported:boolean}}
+   *            knownService:boolean, matchesKnownAction:boolean,
+   *            matchesWithheld:boolean, supported:boolean, exemptableInDeny:boolean}}
    */
   classifyWildcard(token) {
     const parts = splitAction(String(token));
@@ -486,16 +522,21 @@ export const defaultCatalog = Object.freeze({
       // unknown SERVICE, so it does not flip coverage incomplete on its own.
       return Object.freeze({
         wildcard: true, allServices: true, service: null,
-        knownService: false, matchesKnownAction: false, supported: true,
+        knownService: false, matchesKnownAction: false, matchesWithheld: false,
+        supported: true, exemptableInDeny: false,
       });
     }
     const knownService = INDEX.has(parts.service);
     const matchesKnownAction = knownService
       && serviceWildcardMatchesKnownAction(parts.service, parts.action);
+    const matchesWithheld = (WITHHELD_BY_SERVICE.get(parts.service) || [])
+      .some((a) => globMatch(parts.action, a));
     return Object.freeze({
       wildcard: true, allServices: false, service: parts.service,
-      knownService, matchesKnownAction,
-      supported: knownService && matchesKnownAction,
+      knownService, matchesKnownAction, matchesWithheld,
+      // Whole-service "svc:*" is owned by WILDCARD-ACTION (never clean), so it stays supported.
+      supported: knownService && matchesKnownAction && (!matchesWithheld || parts.action === '*'),
+      exemptableInDeny: matchesWithheld,
     });
   },
 });
@@ -568,14 +609,16 @@ export function unrecognizedActions(model, catalog) {
         // wildcard (s3:Get*) and the all-actions "*" are analyzable and skipped.
         // Guarded so a replacement CatalogProvider lacking classifyWildcard still
         // works (it then behaves as the pre-fix blanket-skip for wildcards).
-        if (typeof cat.classifyWildcard === 'function'
-          && !cat.classifyWildcard(token).supported) {
-          out.add(String(token));
+        if (typeof cat.classifyWildcard === 'function') {
+          const c = cat.classifyWildcard(token);
+          if (!c.supported && !(c.exemptableInDeny === true && stmt.effect === 'Deny')) {
+            out.add(String(token));
+          }
         }
         continue;
       }
       const res = cat.lookup(token);
-      if (!res.known) out.add(String(token));
+      if (!res.known && !(res.withheld === true && stmt.effect === 'Deny')) out.add(String(token));
     }
   }
   return [...out].sort();
