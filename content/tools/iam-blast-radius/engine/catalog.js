@@ -35,6 +35,9 @@
 // action the snapshot knows?" (S2-airtight-incomplete fix (a)); it never evaluates
 // or authorizes anything.
 import { globMatch } from './glob.js';
+// Generated full-service snapshot (scripts/gen-aws-action-catalog.mjs) for the S3
+// and global/account-level services real-world policies hit. Pure data module.
+import { AWS_REF_ACTIONS, AWS_REF_REQUIRES_WILDCARD } from './catalog-aws-ref.js';
 
 // AWS access levels (from the service-authorization reference vocabulary). Used
 // as annotation only; the rules do not (yet) consume it, but every catalog entry
@@ -52,8 +55,8 @@ export const ACCESS_LEVELS = Object.freeze({
 const L = ACCESS_LEVELS;
 
 // Dated snapshot identity. Bump both when the curated set below changes.
-export const ACTION_CATALOG_VERSION = '2026.08.22';
-export const ACTION_CATALOG_DATE = '2026-08-22';
+export const ACTION_CATALOG_VERSION = '2026.10.20';
+export const ACTION_CATALOG_DATE = '2026-10-20';
 
 // The curated snapshot: service -> { actionName: accessLevel }. Keys use the
 // canonical AWS casing for readability; lookups are case-insensitive (AWS treats
@@ -302,7 +305,37 @@ function buildIndex(data) {
   return index;
 }
 
+// Merge the generated AWS-reference snapshot UNDER the curated data: an action the
+// curated map already names keeps its curated access level (the rules were tuned
+// against it); the reference only ADDS actions the curated slice lacks. Returns the
+// lowercased "service:action" keys that came from the reference, so their
+// wildcard-only bit is taken from the reference and never overrides a curated action.
+function mergeReference(index, refData) {
+  const added = new Set();
+  for (const service of Object.keys(refData)) {
+    const svcLower = service.toLowerCase();
+    if (!index.has(svcLower)) index.set(svcLower, new Map());
+    const actions = index.get(svcLower);
+    const set = refData[service];
+    for (const action of Object.keys(set)) {
+      const key = action.toLowerCase();
+      if (actions.has(key)) continue;
+      const accessLevel = ACCESS_LEVELS[set[action]];
+      if (!accessLevel) continue; // unknown level token: leave the action unknown (fail closed)
+      actions.set(key, { service: svcLower, name: action, accessLevel });
+      added.add(`${svcLower}:${key}`);
+    }
+  }
+  return added;
+}
+
 const INDEX = buildIndex(CATALOG_DATA);
+const REFERENCE_KEYS = mergeReference(INDEX, AWS_REF_ACTIONS);
+
+function requiresWildcardKey(key) {
+  return REQUIRES_WILDCARD_RESOURCE.has(key)
+    || (REFERENCE_KEYS.has(key) && AWS_REF_REQUIRES_WILDCARD.has(key));
+}
 
 // Split an action token into { service, action } (both lowercased) or null when
 // the token is not a well-formed "service:action". A bare "*" is NOT split here
@@ -414,7 +447,7 @@ export const defaultCatalog = Object.freeze({
     return Object.freeze({
       input, wildcard: false, known: true, knownService: true,
       service: entry.service, name: entry.name, accessLevel: entry.accessLevel,
-      requiresWildcardResource: REQUIRES_WILDCARD_RESOURCE.has(`${entry.service}:${parts.action}`),
+      requiresWildcardResource: requiresWildcardKey(`${entry.service}:${parts.action}`),
     });
   },
   /**

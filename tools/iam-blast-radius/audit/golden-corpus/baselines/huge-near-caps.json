@@ -3036,7 +3036,7 @@
               "kind": "fail",
               "level": "error",
               "message": {
-                "text": "One or more actions are not recognized by the action\\-catalog snapshot\\, so the analysis could not fully vouch for those grants \\(unsupported does NOT mean safe\\)\\."
+                "text": "One or more actions are not recognized by the action\\-catalog snapshot\\, so the analysis could not fully vouch for those grants \\(unsupported does NOT mean safe\\)\\. Offending actions: kinesis\\:GetRecords."
               },
               "locations": [
                 {

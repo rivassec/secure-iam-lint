@@ -759,6 +759,13 @@ function sanitizeUri(uri) {
 // full normalized action list still rides in partialFingerprints identity + properties.
 const MAX_MSG_ACTIONS = 12;
 
+// The first MAX_MSG_ACTIONS normalized tokens of a list, plus how many were elided -
+// the caller MUST render `more` as a truthful "(+N more)" so the cap is never silent.
+function capMessageTokens(list) {
+  const norm = normList(list);
+  return { shown: norm.slice(0, MAX_MSG_ACTIONS), more: Math.max(0, norm.length - MAX_MSG_ACTIONS) };
+}
+
 // Render an attacker-controlled action list for message.text. Each Action is just as
 // attacker-controlled as a Sid (a fork PR owns the whole policy JSON), and GitHub
 // renders message.text as MARKDOWN. So every action is neutralized with the SAME
@@ -770,18 +777,43 @@ const MAX_MSG_ACTIONS = 12;
 // bloat the message; the elided remainder is reported as a plain "(+N more)" count.
 // Returns '' (no `; actions:` clause) when nothing printable survives.
 function renderActionClause(actions) {
-  const norm = normList(actions);
-  if (norm.length === 0) return '';
-  const shown = norm.slice(0, MAX_MSG_ACTIONS);
+  const { shown, more } = capMessageTokens(actions);
+  if (shown.length === 0) return '';
   const tokens = [];
   for (const a of shown) {
     const safe = sanitizeSid(a);
     if (safe) tokens.push(`\`${safe}\``);
   }
   if (tokens.length === 0) return '';
-  const more = norm.length - shown.length;
   const suffix = more > 0 ? `, (+${more} more)` : '';
   return `; actions: ${tokens.join(', ')}${suffix}`;
+}
+
+// The offending tokens an analyzer-state names in its details (UNKNOWN_ACTION's actions,
+// UNSUPPORTED_CONDITION's condition keys). Without this a SARIF-only consumer sees "one or
+// more actions are not recognized" and has to bisect the policy to find which. The tokens
+// are attacker-controlled policy text appended to analyzer-state PROSE, so each one gets
+// the same bare-leaf treatment as the rest of that message (inertLeaf: every ASCII
+// punctuation char escaped, so no markdown construct - not even inside a would-be code
+// span - can form), count-capped like a finding's action clause. Appended AFTER
+// sanitizeStateMessage so the engine prose cap cannot cut the list. The fingerprint is
+// untouched (stateIdentity never reads details).
+function stateDetailClause(s) {
+  const d = s && s.details;
+  if (!d || typeof d !== 'object') return '';
+  let label;
+  let list;
+  if (s.code === 'UNKNOWN_ACTION') { label = 'actions'; list = d.actions; }
+  else if (s.code === 'UNSUPPORTED_CONDITION') { label = 'condition keys'; list = d.conditions; }
+  else return '';
+  const { shown, more } = capMessageTokens(list);
+  const tokens = [];
+  for (const v of shown) {
+    const safe = inertLeaf(v, MAX_SID_LEN);
+    if (safe) tokens.push(safe);
+  }
+  if (tokens.length === 0) return '';
+  return ` Offending ${label}: ${tokens.join(', ')}${more > 0 ? ` (+${more} more)` : ''}.`;
 }
 
 // A deterministic, one-line per-instance message. Deliberately carries the finding
@@ -936,7 +968,7 @@ function stateResultRow(s, uri) {
     // interpolate attacker-controlled policy text. GitHub renders message.text as MARKDOWN,
     // so it MUST be neutralized here - the single chokepoint every analyzer-state message
     // flows through - not at each engine call site. See sanitizeStateMessage.
-    message: { text: sanitizeStateMessage(s && s.message) },
+    message: { text: sanitizeStateMessage(s && s.message) + stateDetailClause(s) },
     locations: [location],
     partialFingerprints: { [FINGERPRINT_KEY]: hashIdentity(stateIdentity(s)) },
     properties,

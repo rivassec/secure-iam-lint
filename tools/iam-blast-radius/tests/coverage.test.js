@@ -200,7 +200,7 @@ test('Markdown export includes the coverage summary fields + unsupported!=safe w
   assert.match(md, /Rule version: 1/);
   // IAM-507: the ACTION-catalog version is now a dated snapshot, distinct from
   // the rule-catalog version (still 1).
-  assert.match(md, /Action-catalog version: 2026\.08\.22/);
+  assert.match(md, /Action-catalog version: 2026\.10\.20/);
   assert.match(md, /Unsupported does NOT mean safe/);
   // Blocked shape yields zero findings -> the flipped wording, not "No blast-radius".
   assert.match(md, /No findings in the supported subset/);
