@@ -10,6 +10,7 @@
       "family": "identity",
       "threshold": "low",
       "partitionAsserted": null,
+      "subjectAccountAsserted": "111122223333",
       "analysisStatus": "complete",
       "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
       "exitCode": 1,

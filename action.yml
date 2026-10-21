@@ -47,11 +47,16 @@ inputs:
       with paths; family, resource-* and baseline inputs are not used with it.
     required: false
   subject-account:
-    description: AWS account id (12 digits) for account-aware checks (e.g. PassRole viability).
+    description: >-
+      AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). For
+      family=role-trust it is the account that owns EVERY role in this run; split a paths
+      glob that spans accounts.
     required: false
   resource-arn:
     description: >-
-      For family=resource: the ARN of the resource the policy is ATTACHED to (e.g.
+      For family=role-trust: the role's own ARN, required to report a trust as
+      same-account (otherwise it stays cross-account high). For family=resource: the
+      ARN of the resource the policy is ATTACHED to (e.g.
       arn:aws:s3:::my-bucket). Required to analyze a resource policy; without it the
       resource family fails closed (RESOURCE_CONTEXT_REQUIRED, exit 3).
     required: false

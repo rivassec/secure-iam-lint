@@ -10,6 +10,7 @@
       "family": "identity",
       "threshold": "high",
       "partitionAsserted": null,
+      "subjectAccountAsserted": null,
       "analysisStatus": "partial",
       "reason": "COVERAGE_INCOMPLETE",
       "exitCode": 3,
