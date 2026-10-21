@@ -402,12 +402,12 @@ test('a bare "*" action surfaces every escalation path it contains (de-facto adm
   ]) {
     assert.ok(ids.has(want), `"*" must surface ${want}; got [${[...ids].join(', ')}]`);
   }
-  // The compound PassRole paths and the all-roles AssumeRole are critical; the
-  // standalone direct-IAM primitives are high. None is understated.
+  // The compound PassRole paths, the all-roles AssumeRole and (F6) the direct-IAM
+  // primitives on "*" are critical. None is understated.
   const bySeverity = (id) => r.findings.filter((f) => f.id === id).map((f) => f.severity);
   assert.ok(bySeverity('PASSROLE-LAMBDA').every((s) => s === 'critical'), 'PassRole path critical');
   assert.ok(bySeverity('ASSUME-ROLE-EXPANSION').every((s) => s === 'critical'), 'all-roles AssumeRole critical');
-  assert.ok(bySeverity('ATTACH-POLICY').every((s) => s === 'high'), 'attach-policy primitive high');
+  assert.ok(bySeverity('ATTACH-POLICY').every((s) => s === 'critical'), 'attach-policy primitive critical (F6)');
 });
 
 // ---------------------------------------------------------------------------
@@ -422,21 +422,21 @@ test('iam:CreatePolicyVersion -> POLICY-VERSION', () => {
 });
 
 // IAM-102: attach/put-policy-to-self are standalone direct-IAM primitives, so
-// they are HIGH, not critical (critical is reserved for compound paths).
-test('iam:AttachRolePolicy -> ATTACH-POLICY (high); iam:PutRolePolicy -> PUT-INLINE-POLICY (high)', () => {
+// on "*" they can target the caller itself, so they are critical (F6).
+test('iam:AttachRolePolicy -> ATTACH-POLICY; iam:PutRolePolicy -> PUT-INLINE-POLICY (critical on *, F6)', () => {
   const attach = analyzeEscalationsFromText(JSON.stringify({
     Statement: [{ Effect: 'Allow', Action: 'iam:AttachRolePolicy', Resource: '*' }],
   }));
   const af = attach.findings.find((f) => f.id === 'ATTACH-POLICY');
   assert.ok(af);
-  assert.equal(af.severity, 'high');
+  assert.equal(af.severity, 'critical');
 
   const put = analyzeEscalationsFromText(JSON.stringify({
     Statement: [{ Effect: 'Allow', Action: 'iam:PutRolePolicy', Resource: '*' }],
   }));
   const pf = put.findings.find((f) => f.id === 'PUT-INLINE-POLICY');
   assert.ok(pf);
-  assert.equal(pf.severity, 'high');
+  assert.equal(pf.severity, 'critical');
 });
 
 test('iam:UpdateAssumeRolePolicy -> TRUST-POLICY-MODIFY', () => {

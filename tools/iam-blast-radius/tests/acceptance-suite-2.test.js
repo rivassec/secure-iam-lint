@@ -225,19 +225,27 @@ test('suite-2 test 29: Deny + NotPrincipal fails closed AND surfaces the specifi
 test('suite-2 test 29: hazard surfaces under an explicit resource family selection too', () => {
   const { data } = hazardFixture();
   const text = fixtureText(data);
-  // Explicit resource selection must NOT downgrade the hazard to a plain
-  // unsupported-shape block: the NotPrincipal block stays authoritative and keeps
-  // the hazard marker + message (family.js leaves the recognized-but-unmodeled
-  // element block in place even when resource is explicitly selected).
-  const res = analyze(text, {
+  // F11: under an explicit resource selection the NotPrincipal Deny fails closed
+  // per statement (other statements keep their findings) instead of blocking the
+  // whole policy. It must still be incomplete and keep the hazard marker + message.
+  const opts = {
     family: 'resource',
     resourceContext: { type: 's3-bucket', arn: 'arn:aws:s3:::audit-archive' },
-  });
-  assert.equal(res.coverage.blocked, true, 'still fails closed under explicit resource');
-  assert.equal(res.findings.length, 0, 'still zero findings');
-  const np = res.coverage.blockingCodes.find((b) => b.code === 'UNSUPPORTED_NOTPRINCIPAL');
+  };
+  const res = analyze(text, opts);
+  assert.equal(res.coverage.blocked, false, 'analyzed per statement, not blocked');
+  assert.equal(res.coverage.summary.incomplete, true, 'still fails closed (incomplete)');
+  assert.equal(res.findings.length, 0, 'a Deny grants nothing');
+  const np = res.coverage.summary.resourceContext.reasons.find((r) => r.code === 'UNSUPPORTED_NOTPRINCIPAL');
   assert.ok(np && np.hazard === true, 'hazard marker preserved under explicit resource selection');
   assert.ok(String(np.message).includes('permissions boundary'), 'hazard message preserved');
+  assert.equal(np.path, 'Statement[0].NotPrincipal', 'located by path');
+  // A public Allow beside it keeps its finding (was wiped by the whole-policy block).
+  const both = JSON.parse(text);
+  both.Statement.push({ Effect: 'Allow', Principal: '*', Action: 's3:GetObject', Resource: 'arn:aws:s3:::audit-archive/*' });
+  const res2 = analyze(JSON.stringify(both), opts);
+  assert.ok(res2.findings.some((f) => f.id === 'PUBLIC-ACCESS' && f.severity === 'critical'), 'other statements keep findings');
+  assert.equal(res2.coverage.summary.incomplete, true, 'still incomplete');
 });
 
 test('suite-2 test 29: an Allow + NotPrincipal (invalid) stays the generic unmodeled block, no hazard', () => {

@@ -5,6 +5,10 @@ export const RESOURCE_CODES = Object.freeze({
   // family and was missing, empty, or not a parseable ARN. Fail closed - the
   // analyzer never guesses which resource a resource policy is attached to.
   RESOURCE_CONTEXT_REQUIRED: 'RESOURCE_CONTEXT_REQUIRED',
+  // T2-4: an Allow statement shape the resource evaluator does not model.
+  RESOURCE_STATEMENT_UNMODELED: 'RESOURCE_STATEMENT_UNMODELED',
+  // T2-4: a KMS key policy with no account delegation (effective access unknown).
+  KMS_SILENT_POLICY_UNKNOWN: 'KMS_SILENT_POLICY_UNKNOWN',
   // The context parsed to a valid ARN, but for a service whose resource-policy
   // shape this analyzer does not yet model (anything outside S3 / SNS / SQS /
   // KMS in this tranche). Fail closed rather than apply S3/KMS reasoning to a
@@ -71,6 +75,8 @@ export const RESOURCE_IDS = Object.freeze([
   // is surfaced fail-closed - it always yields >=1 finding, mirroring the trust
   // family's "fail closed toward surfacing" (TRUST-INVALID-PRINCIPAL).
   'RESOURCE-UNSUPPORTED-PRINCIPAL',
+  // T1-03: a condition compares a key with its own policy variable (always true).
+  'RESOURCE-CONDITION-TAUTOLOGY',
   // IAM-1402 (Phase 14): S3 per-service refinements, ADDITIVE to the generic
   // findings above (never a suppression of them). A bucket-CONTROL action
   // (s3:PutBucketPolicy / PutBucketAcl / PutBucketPublicAccessBlock /
@@ -228,3 +234,21 @@ export const RESOURCE_SERVICE_LABELS = Object.freeze({
   'kms-key': 'AWS KMS key',
   generic: 'Other AWS resource',
 });
+
+// IAM-1206: the high-confidence Deny + NotPrincipal hazard warning surfaced on
+// the blocking code (and, via coverage.js, on the unsupported-element entry and
+// in every export). It states the documented permissions-boundary trap and the
+// recommended safe rewrite. Kept as a single constant so the engine, coverage
+// summary, and UI all speak with one voice (docs/resource-policy-semantics.md
+// section 8; acceptance-suite-2 test 29).
+export const NOTPRINCIPAL_DENY_HAZARD_MESSAGE =
+  'SECURITY HAZARD: Deny with NotPrincipal is not an ordinary "deny everyone ' +
+  'except these" exclusion and cannot be modeled as one. AWS documents that a ' +
+  'NotPrincipal element with a Deny effect ALWAYS denies any IAM principal that ' +
+  'has a permissions boundary attached, regardless of the principals listed in ' +
+  'NotPrincipal - so principals you intended to EXEMPT can still be denied. It is ' +
+  'also easy to accidentally deny an entire account. This analyzer does not model ' +
+  'NotPrincipal, so it fails closed here rather than render a misleading ordinary-' +
+  'deny result. Recommended safe rewrite: Deny on Principal "*" with ' +
+  'ArnNotEquals on aws:PrincipalArn naming the allowed principal ARN(s) instead ' +
+  'of NotPrincipal.';

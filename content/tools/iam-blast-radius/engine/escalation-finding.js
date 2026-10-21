@@ -215,7 +215,7 @@ export function survivingGrantedActions(allows, denies, catalog) {
   for (const stmt of allows) {
     const m = grantedPatternsFor(stmt, catalog);
     if (m.length === 0) continue;
-    const d = applyDenyToActions(denies, m, stmt);
+    const d = applyDenyToActions(denies, m, stmt, catalog);
     chargeWork(d.actions.length);
     for (const a of d.actions) if (!seen.has(a)) { seen.add(a); found.push(a); }
   }

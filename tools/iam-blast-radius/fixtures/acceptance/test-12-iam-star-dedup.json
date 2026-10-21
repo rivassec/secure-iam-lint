@@ -1,6 +1,6 @@
 {
   "name": "Acceptance test 12 - wildcard action expansion (iam:* de-flood)",
-  "note": "IAM-705: iam:* covers every IAM action, so the rule + escalation engines expand it into WILDCARD-ACTION, WILDCARD-RESOURCE, DIRECT-IAM-ADMIN, and every specific IAM escalation primitive (ATTACH-POLICY, PUT-INLINE-POLICY, POLICY-VERSION, TRUST-POLICY-MODIFY, CREDENTIAL-CREATION) - 7 near-duplicate rows. The analyzer must present ONE primary broad-IAM-administration finding (DIRECT-IAM-ADMIN) with the specific primitives + the iam:* WILDCARD-ACTION folded in as subsumed techniques / risk factors (reusing the test-23 subsumption mechanism), not a flood of redundant rows. Severity stays high per the single documented IAM-102 scoring model (critical is reserved for compound privilege-boundary-crossing paths). The rule-catalog version must be surfaced on the result.",
+  "note": "IAM-705: iam:* covers every IAM action, so the rule + escalation engines expand it into WILDCARD-ACTION, WILDCARD-RESOURCE, DIRECT-IAM-ADMIN, and every specific IAM escalation primitive (ATTACH-POLICY, PUT-INLINE-POLICY, POLICY-VERSION, TRUST-POLICY-MODIFY, CREDENTIAL-CREATION) - 7 near-duplicate rows. The analyzer must present ONE primary broad-IAM-administration finding (DIRECT-IAM-ADMIN) with the specific primitives + the iam:* WILDCARD-ACTION folded in as subsumed techniques / risk factors (reusing the test-23 subsumption mechanism), not a flood of redundant rows. Severity is critical: iam:* on * can target the caller itself, one step to full admin (F6 parity with PassRole+launch). The rule-catalog version must be surfaced on the result.",
   "phase": 7,
   "story": "IAM-705",
   "acceptanceTest": 12,
@@ -24,7 +24,7 @@
   "dedupExpect": {
     "primaryId": "DIRECT-IAM-ADMIN",
     "primaryCount": 1,
-    "expectSeverity": "high",
+    "expectSeverity": "critical",
     "requireCatalogVersion": true,
     "subsumesIds": [
       "WILDCARD-ACTION", "WILDCARD-RESOURCE", "ATTACH-POLICY", "PUT-INLINE-POLICY",

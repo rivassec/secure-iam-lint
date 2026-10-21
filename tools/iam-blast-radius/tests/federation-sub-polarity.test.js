@@ -50,17 +50,19 @@ function ordered(entries) {
 for (const [name, [host, aud, sub]] of Object.entries(ISSUERS)) {
   const audEq = ['StringEquals', `${host}:aud`, aud];
   const subKey = `${host}:sub`;
+  // F5 (v1.2.0): GitHub is multi-tenant, so an unpinned subject is internet-open.
+  const broadSev = name === 'github' ? 'critical' : 'high';
 
   for (const [op, val] of NON_STRING) {
-    test(`${name}: ${op}:${val} on sub alone is a broad subject (high, exit 1)`, () => {
-      assert.deepEqual(run(policy(host, ordered([audEq, [op, subKey, val]]))), { exit: 1, ids: ['TRUST-FEDERATED:high'] });
+    test(`${name}: ${op}:${val} on sub alone is a broad subject (${broadSev}, exit 1)`, () => {
+      assert.deepEqual(run(policy(host, ordered([audEq, [op, subKey, val]]))), { exit: 1, ids: [`TRUST-FEDERATED:${broadSev}`] });
     });
 
     for (const broadPos of [['StringLike', subKey, '*'], ['StringLike', subKey, 'repo:*'], ['StringNotEquals', subKey, sub]]) {
-      test(`${name}: ${broadPos[0]} "${broadPos[2]}" with ${op}:${val} is high in both orders`, () => {
+      test(`${name}: ${broadPos[0]} "${broadPos[2]}" with ${op}:${val} is ${broadSev} in both orders`, () => {
         const a = run(policy(host, ordered([audEq, broadPos, [op, subKey, val]])));
         const b = run(policy(host, ordered([audEq, [op, subKey, val], broadPos])));
-        assert.deepEqual(a, { exit: 1, ids: ['TRUST-FEDERATED:high'] });
+        assert.deepEqual(a, { exit: 1, ids: [`TRUST-FEDERATED:${broadSev}`] });
         assert.deepEqual(b, a);
       });
     }

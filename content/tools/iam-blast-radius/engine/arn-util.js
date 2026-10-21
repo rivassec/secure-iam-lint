@@ -2,6 +2,7 @@
 // Extracted from resource.js (behavior-preserving pure move). NOTE: this parseArn returns
 // {...resource} and accepts empty resource segments; it is a DIFFERENT parser from
 // resource-arn.js's parseArn ({...resourceId}, rejects empty) - see docs/POST-V1-ISSUES.md.
+import { globMatch } from './glob.js';
 import { MODELED_RESOURCE_SERVICES, RESOURCE_CODES, RESOURCE_SERVICES } from './resource-catalogs.js';
 
 /**
@@ -61,6 +62,39 @@ export function serviceForArn(arn) {
     return /^key\//i.test(resource) ? RESOURCE_SERVICES.KMS_KEY : RESOURCE_SERVICES.GENERIC;
   }
   return RESOURCE_SERVICES.GENERIC;
+}
+
+// F14: type hint -> ARN service token; hints outside this map (e.g. "other") are not checked.
+const TYPE_HINT_SERVICE = Object.freeze({
+  's3': 's3', 's3-bucket': 's3', 's3-object': 's3', 'sns': 'sns', 'sqs': 'sqs', 'kms': 'kms', 'kms-key': 'kms',
+});
+
+// F14: message when the type hint contradicts the context ARN, else null.
+function contextMismatch(arn, typeHint, arnRaw) {
+  const want = typeHint ? TYPE_HINT_SERVICE[typeHint.trim().toLowerCase()] : undefined;
+  const svc = String(arn.service).toLowerCase();
+  if (want && want !== svc) {
+    return `The attached-resource type "${typeHint}" does not match the service of the attached-resource ARN "${arnRaw}" (${svc}). Fix the type or the ARN and analyze again.`;
+  }
+  return null;
+}
+
+// F14/V3-08: does this statement name a Resource outside the attached resource? Checked per statement.
+export function statementNamesForeignResource(stmt, arnRaw) {
+  const arn = parseArn(arnRaw);
+  if (!arn) return false;
+  const svc = String(arn.service).toLowerCase();
+  for (const res of Array.isArray(stmt && stmt.resources) ? stmt.resources : []) {
+    if (typeof res !== 'string' || res === '*' || res.includes('${')) continue;
+    const r = parseArn(res);
+    const ok = r === null
+      ? true // non-ARN Resource values are rejected elsewhere
+      : globMatch(r.service.toLowerCase(), svc) && (svc === 's3'
+        ? globMatch(r.resource.split('/')[0], arn.resource.split('/')[0])
+        : globMatch(res, arnRaw));
+    if (!ok) return true;
+  }
+  return false;
 }
 
 /**
@@ -133,6 +167,11 @@ export function parseResourceContext(context) {
         'S3/KMS-specific reasoning to a service whose semantics are unmodeled - ' +
         'unsupported does NOT mean safe.',
     };
+  }
+
+  const mismatch = contextMismatch(arn, typeHint, arnRaw);
+  if (mismatch) {
+    return { ok: false, code: RESOURCE_CODES.RESOURCE_CONTEXT_REQUIRED, service, arn: arnRaw, type: typeHint, message: mismatch };
   }
 
   // The owning account used for same-vs-cross-account classification: the explicit

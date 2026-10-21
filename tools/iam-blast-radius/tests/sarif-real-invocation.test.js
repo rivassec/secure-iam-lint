@@ -111,7 +111,7 @@ function assertBlockingSecurityResult(log) {
   assert.ok(blocking, 'a blocking security result (error-level) is present in the SARIF');
   assert.ok('security-severity' in blocking.properties,
     'the blocking result carries a security-severity (a real vulnerability, not an analyzer state)');
-  assert.equal(blocking.properties.severity, 'high', 'the blocking finding is at the high threshold');
+  assert.equal(blocking.properties.severity, 'critical', 'the blocking finding is critical (F6: iam:* on *), above the high threshold');
   // The rule descriptor for that result exists in the driver (ruleId -> reportingDescriptor).
   const driverRules = log.runs
     .find((run) => (run.results || []).includes(blocking))

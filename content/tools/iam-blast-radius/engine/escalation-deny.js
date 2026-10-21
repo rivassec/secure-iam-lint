@@ -4,11 +4,20 @@ import { chargeWork, globMatch } from './glob.js';
 import { grantTokenIsBroad, isStarResource } from './escalation-scope.js';
 import { hasNonEmptyCondition } from './escalation-conditions.js';
 
-// Does Deny pattern `d` match every action the (possibly wildcard) grant token `g` can
-// match? A wildcard in `g` is a set, not a literal, so `?` in `d` must not cover it.
-export function denyPatternCovers(d, g) {
-  const a = String(d).toLowerCase(); const b = String(g).toLowerCase();
-  if (!b.includes('*') && !b.includes('?')) return actionGrants(a, b);
+// Equivalent glob form: a wildcard run holding a '*' becomes '?'*k + '*' (T1-05).
+function canonGlob(s) {
+  return s.replace(/[*?]+/g, (r) => (r.includes('*') ? '?'.repeat(r.split('?').length - 1) + '*' : r));
+}
+// Real actions are svc:name with both parts non-empty, so a grant's bare '*' name
+// matches at least one character (T1-05).
+function realActionGrant(b) {
+  if (b === '*') return '?*:?*';
+  return /^[^:*?]+:\*$/.test(b) ? b.slice(0, -1) + '?*' : b;
+}
+
+// Does glob `a` match every string glob `b` can match? (both canonical)
+function globContains(a, b) {
+  if (!b.includes('*') && !b.includes('?')) return globMatch(a, b);
   chargeWork(a.length * (b.length + 1) + 1);
   const memo = new Map();
   const cov = (i, j) => {
@@ -24,6 +33,46 @@ export function denyPatternCovers(d, g) {
     return r;
   };
   return cov(0, 0);
+}
+
+// Does Deny pattern `d` match every action the (possibly wildcard) grant token `g` can
+// match? A wildcard in `g` is a set, not a literal, so `?` in `d` must not cover it.
+export function denyPatternCovers(d, g) {
+  const a = canonGlob(String(d).toLowerCase());
+  const b = canonGlob(realActionGrant(String(g).toLowerCase()));
+  if (!b.includes('*') && !b.includes('?')) return actionGrants(a, b);
+  return globContains(a, b);
+}
+
+// Can globs `a` and `b` match a common string? Product-automaton reachability.
+export function globsIntersectRaw(a, b) {
+  chargeWork((a.length + 1) * (b.length + 1));
+  const seen = new Set();
+  const stack = [[0, 0]];
+  const lit = (c) => c !== '*' && c !== '?';
+  while (stack.length > 0) {
+    const [i, j] = stack.pop();
+    const k = i * (b.length + 1) + j;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (i === a.length && j === b.length) return true;
+    if (a[i] === '*') stack.push([i + 1, j]);
+    if (b[j] === '*') stack.push([i, j + 1]);
+    if (i < a.length && j < b.length) {
+      const x = a[i]; const y = b[j];
+      if (!(lit(x) && lit(y) && x !== y)) stack.push([x === '*' ? i : i + 1, y === '*' ? j : j + 1]);
+    }
+  }
+  return false;
+}
+// A NotAction Deny leaves part of a broad grant allowed (narrows, never covers).
+export function notActionSparesGrant(deny, action) {
+  return deny.notActions.length > 0 && grantTokenIsBroad(action) &&
+    deny.notActions.some((p) => hasPolicyVariable(p) || globsIntersect(p, action));
+}
+
+function globsIntersect(p, g) {
+  return globsIntersectRaw(String(p).toLowerCase(), canonGlob(realActionGrant(String(g).toLowerCase())));
 }
 
 export function denyActionApplies(stmt, action) {
@@ -146,9 +195,17 @@ export function denyResourceCoverage(denyStmt, allowStmt) {
   // some concrete Deny pattern matches. Otherwise the coverage is uncertain.
   let anyOverlap = false;
   const allCovered = allowRes.every((ar) => {
-    if (hasPolicyVariable(ar) || ar.includes('*') || ar.includes('?')) {
-      // Wildcarded / variable Allow scope: a concrete Deny may still overlap
-      // part of it, but cannot be proven to cover all -> not full.
+    if (hasPolicyVariable(ar)) {
+      if (denyResourcesCover(denyStmt.resources, ar)) anyOverlap = true;
+      return false;
+    }
+    if (ar.includes('*') || ar.includes('?')) {
+      // N2: full only when a concrete Deny pattern contains the whole Allow pattern.
+      const g = canonGlob(String(ar));
+      if (denyStmt.resources.some((dr) => !hasPolicyVariable(dr) && globContains(canonGlob(String(dr)), g))) {
+        anyOverlap = true;
+        return true;
+      }
       if (denyResourcesCover(denyStmt.resources, ar)) anyOverlap = true;
       return false;
     }
@@ -180,7 +237,8 @@ export function denyEffectOnAction(denies, action, allowStmt) {
     // can only narrow, never block. Full action coverage - the precondition for
     // a hard block - therefore requires either a positive-Action Deny (whose
     // pattern demonstrably covers the grant token) or a concrete grant token.
-    const notActionVsBroadGrant = deny.notActions.length > 0 && grantTokenIsBroad(action);
+    // d18: it CAN block when no exclusion pattern intersects the grant (T1-05).
+    const notActionVsBroadGrant = notActionSparesGrant(deny, action);
     if (!conditioned && a.certain && coverage === 'full' && !notActionVsBroadGrant) {
       return 'blocked'; // definitive, in-scope explicit Deny -> path removed
     }
@@ -189,19 +247,53 @@ export function denyEffectOnAction(denies, action, allowStmt) {
   return result;
 }
 
+// Only an unconditional Deny with a concrete action pattern can block definitively.
+const BLOCKERS = new WeakMap();
+function blockingDenies(denies) {
+  let b = BLOCKERS.get(denies);
+  if (!b) {
+    chargeWork(denies.length);
+    b = denies.filter((d) => !hasNonEmptyCondition(d) &&
+      (d.notActions.length > 0 || d.actions.some((p) => !hasPolicyVariable(p))));
+    BLOCKERS.set(denies, b);
+  }
+  return b;
+}
+
 // Apply same-policy Deny precedence to a finding's matched concrete actions.
 // Returns { actions, blocked, narrowed }:
 //   - actions : matched actions with definitively-blocked ones removed
 //   - blocked : true if EVERY matched action was definitively blocked (suppress)
 //   - narrowed: true if any action was removed or may be blocked (downgrade)
-export function applyDenyToActions(denies, matchedActions, allowStmt) {
+// The grant `g` within service `svc` (a superset when unsure).
+function grantInService(g, svc) {
+  const i = g.indexOf(':');
+  if (i < 0 || g.indexOf(':', i + 1) >= 0) return `${svc}:*`;
+  return /[*?]/.test(g.slice(0, i)) ? `${svc}:${g.slice(i + 1)}` : g;
+}
+
+// With `catalog`, a wildcard grant is judged by the services its catalog actions
+// sit in: blocked only when the Deny covers the whole grant in each of them (T1-04).
+// The catalog is not the wildcard's full reach, so it only narrows (V2-1).
+export function applyDenyToActions(denies, matchedActions, allowStmt, catalog) {
   if (denies.length === 0) {
     return { actions: matchedActions.slice(), blocked: false, narrowed: false };
   }
   const kept = [];
   let narrowed = false;
   for (const a of matchedActions) {
-    const e = denyEffectOnAction(denies, a, allowStmt);
+    let e = denyEffectOnAction(denies, a, allowStmt);
+    const blockers = Array.isArray(catalog) && e !== 'blocked' && grantTokenIsBroad(a) ? blockingDenies(denies) : [];
+    if (blockers.length > 0) {
+      const reached = catalog.filter((c) => actionGrants(a, c));
+      chargeWork(catalog.length);
+      if (reached.length > 0) {
+        const svcs = [...new Set(reached.map((c) => String(c).split(':')[0].toLowerCase()))];
+        const g = String(a);
+        if (svcs.every((s) => denyEffectOnAction(blockers, grantInService(g, s), allowStmt) === 'blocked')) e = 'blocked';
+        else if (reached.some((c) => denyEffectOnAction(blockers, c, allowStmt) !== 'clear')) e = 'may-block';
+      }
+    }
     if (e === 'blocked') { narrowed = true; continue; }
     if (e === 'may-block') narrowed = true;
     kept.push(a);

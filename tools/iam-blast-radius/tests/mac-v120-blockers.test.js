@@ -78,7 +78,9 @@ test('operatorPermitsService: variables, partitions and literal operators', () =
 test('F3: a baseline acceptance dies when any condition value in the statement changes', () => {
   const rcp = (org, svc) => JSON.stringify({ Version: '2012-10-17', Statement: [{
     Effect: 'Deny', Principal: '*', Action: 's3:*', Resource: '*',
-    Condition: { StringNotEqualsIfExists: { 'aws:PrincipalOrgID': org }, BoolIfExists: { 'aws:PrincipalIsAWSService': svc } },
+    // v1.2.0 F12 models the Bool form; a string-operator flag stays unmodeled, so the
+    // document still needs a baseline and the binding invariant is still exercised.
+    Condition: { StringNotEqualsIfExists: { 'aws:PrincipalOrgID': org }, StringEqualsIfExists: { 'aws:PrincipalIsAWSService': svc } },
   }] });
   const scanRcp = (text) => scan({ text, family: 'rcp', partition: 'aws', threshold: 'high' });
   const good = applyBaseline(scanRcp(rcp('o-abc123def4', 'false')), 'pol/rcp.json', null, 'high');

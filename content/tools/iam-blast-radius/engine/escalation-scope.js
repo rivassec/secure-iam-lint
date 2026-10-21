@@ -140,3 +140,18 @@ export function grantTokenIsBroad(action) {
   const a = String(action);
   return a.includes('*') || a.includes('?');
 }
+
+// F6: can an IAM self-admin primitive target the caller itself? True for "*",
+// NotResource, an ARN whose id is wildcard-only (optionally after one type/ segment),
+// or one naming the caller via ${aws:username}/${aws:userid}.
+export function iamTargetIsAllOrSelf(stmt) {
+  if (stmt.notResources.length > 0 || stmt.resources.length === 0) return true;
+  return stmt.resources.some((r) => {
+    const v = String(r);
+    chargeWork(v.length + 1);
+    if (v === '*' || /\$\{aws:(username|userid)\}/i.test(v)) return true;
+    const segs = v.split(':');
+    if (segs.length < 6) return false;
+    return /^([a-z-]+\/)?[*?/]+$/i.test(segs.slice(5).join(':'));
+  });
+}

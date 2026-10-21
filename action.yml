@@ -31,7 +31,8 @@ inputs:
   family:
     description: >-
       Policy family (REQUIRED; never auto-detected): identity | role-trust |
-      resource | permissions-boundary | session | scp | rcp. Mixed repos run the
+      resource | permissions-boundary | session | scp | rcp | scp-rcp
+      (trust = role-trust). Mixed repos run the
       action multiple times with different globs/families.
     required: true
   subject-account:

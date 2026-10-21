@@ -92,7 +92,7 @@ const MANIFEST = {
   // no-context fail-closed path stays covered by
   // fixtures/family-selection/69-resource-family-unsupported.json via
   // tests/phase10-family-selection.test.js.)
-  69: { campaign: 'B', verdict: 'COMPLETE_WITH_WARNINGS', ...fx('resource/suite3-test-69-public-resource-analyzed.json') },
+  69: { campaign: 'B', verdict: 'COMPLETE', ...fx('resource/suite3-test-69-public-resource-analyzed.json') },
   70: { campaign: 'B', verdict: 'COMPLETE', ...proc('tests/phase10-family-selection.test.js', 'tests/e2e/ui-shell.spec.js') },
   71: { campaign: 'B', verdict: 'COMPLETE', ...proc('tests/phase10-family-selection.test.js') },
 
@@ -119,7 +119,7 @@ const MANIFEST = {
   // wildcard not mis-flagged as an invalid Principal" guard stays covered by
   // fixtures/acceptance-3/test-85-principalarn-condition-wildcard-not-rejected.json
   // via tests/acceptance-suite-3-fixtures.test.js.)
-  85: { campaign: 'D', verdict: 'COMPLETE_WITH_WARNINGS', ...fx('resource/suite3-test-85-star-narrowed-principalarn-analyzed.json') },
+  85: { campaign: 'D', verdict: 'COMPLETE', ...fx('resource/suite3-test-85-star-narrowed-principalarn-analyzed.json') },
 
   // Campaign E - IAM and ECS semantic precision.
   86: { campaign: 'E', verdict: 'COMPLETE', ...fx('acceptance-3/test-86-add-user-to-group-membership.json') },

@@ -25,7 +25,8 @@ test('${...} reads as *; literal parts kept; never tight', () => {
 test('a self-reference scores as absent and is named', () => {
   const r = trust(gh, 'sts:AssumeRoleWithWebIdentity', { StringEquals: { [`${GH}:aud`]: 'sts.amazonaws.com', [`${GH}:sub`]: `\${${GH}:sub}` } });
   assert.equal(r.exitCode, EXIT.FINDINGS);
-  assert.ok(ids(r).includes('TRUST-FEDERATED:high'));
+  // Absent sub on multi-tenant GitHub is internet-open (F5).
+  assert.ok(ids(r).includes('TRUST-FEDERATED:critical'), ids(r).join(','));
   const t = r.findings.find((f) => f.id === 'TRUST-CONDITION-TAUTOLOGY');
   assert.ok(t && t.why.includes(`${GH}:sub`));
 });

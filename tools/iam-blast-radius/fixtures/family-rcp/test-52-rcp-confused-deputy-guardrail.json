@@ -35,8 +35,8 @@
     "blocked": false,
     "family": "scp-rcp",
     "override": "scp-rcp",
-    "status": "warned",
-    "note": "warned (not ok): the curated action catalog / condition classifier does not recognize the org-scope confused-deputy keys and the s3:* wildcard, an honest coverage gap - it does not weaken the guardrail semantics.",
+    "status": "ok",
+    "note": "ok since v1.2.0 F12: the RCP evaluator models aws:SourceOrgID (concrete o- ids) and aws:PrincipalIsAWSService (Bool), so the canonical confused-deputy template analyzes complete.",
     "findingIds": [
       "RCP-GUARDRAIL"
     ],

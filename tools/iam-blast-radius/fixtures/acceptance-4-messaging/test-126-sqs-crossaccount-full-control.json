@@ -17,7 +17,7 @@
   },
   "expect": { "valid": true },
   "expectMessaging": {
-    "coverageIncomplete": true,
+    "coverageIncomplete": false,
     "findingIds": ["RESOURCE-CROSS-ACCOUNT", "MESSAGING-POLICY-TAKEOVER"],
     "findingSeverities": { "RESOURCE-CROSS-ACCOUNT": "high", "MESSAGING-POLICY-TAKEOVER": "high" },
     "notFindingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE", "RESOURCE-CONFUSED-DEPUTY", "RESOURCE-SAME-ACCOUNT-GRANT"],

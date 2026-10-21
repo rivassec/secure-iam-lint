@@ -1,6 +1,6 @@
 // rules-finding.js - rule finding factory + resource-scope/broadness helpers + deny-fence suppression (makeFinding, resourceScope, denyFencesToNarrow, ruleFindingDenySuppressed, survivingBroadReadActions). Extracted (behavior-preserving).
-import { actionGrants, actionVerb, isFullWildcard, isServiceWildcard, lowerConfidence, statementSid, CAPABILITY_LIMIT, CONDITION_LIMIT, COMPLEMENT_LIMIT, READ_VERB, BULK_READ_ACTIONS } from './rules-classify.js';
-import { applyDenyToActions, denyActionApplies } from './escalation-deny.js';
+import { actionGrants, actionVerb, isFullWildcard, isServiceWildcard, lowerConfidence, statementSid, CAPABILITY_LIMIT, CONDITION_LIMIT, COMPLEMENT_LIMIT, READ_VERB, BULK_READ_ACTIONS, DB_AUTH_ACTIONS, DETECTION_ACTIONS, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, KMS_DECRYPT_ACTIONS, OBJECT_ACL_WRITE_ACTIONS, RESOURCE_POLICY_WRITE_ACTIONS, SECRET_READ_ACTIONS } from './rules-classify.js';
+import { applyDenyToActions, denyActionApplies, notActionSparesGrant } from './escalation-deny.js';
 import { hasNonEmptyCondition } from './escalation-conditions.js';
 import { classifyResource, RESOURCE_CLASS } from './resource-arn.js';
 import { chargeWork } from './glob.js';
@@ -227,6 +227,7 @@ export function denyFencesToNarrow(denies, action, allowStmt) {
       chargeWork(String(r == null ? '' : r).length + 1);
       return classifyResource(r) !== RESOURCE_CLASS.NARROW;
     })) continue;
+    if (notActionSparesGrant(deny, action)) continue; // A-1: spared actions stay broad
     const a = denyActionApplies(deny, action);
     if (a.applies && a.certain) return true;
   }
@@ -241,6 +242,19 @@ export function denyFencesToNarrow(denies, action, allowStmt) {
 export function isBulkReadAction(action) {
   return BULK_READ_ACTIONS.some((concrete) => actionGrants(action, concrete));
 }
+
+// Catalog each rule's actions came from, so a wildcard grant is judged by the
+// actions it actually reaches (T1-04/T1-05).
+const RULE_DENY_CATALOGS = Object.freeze({
+  'DIRECT-IAM-ADMIN': IAM_ADMIN_ACTIONS,
+  'RESOURCE-POLICY-WRITE': RESOURCE_POLICY_WRITE_ACTIONS,
+  'OBJECT-ACL-WRITE': OBJECT_ACL_WRITE_ACTIONS,
+  'DATA-EXFIL': SECRET_READ_ACTIONS.concat(BULK_READ_ACTIONS),
+  'DB-AUTH': DB_AUTH_ACTIONS,
+  'KMS-DECRYPT': KMS_DECRYPT_ACTIONS,
+  'DETECTION-IMPAIRMENT': DETECTION_ACTIONS,
+  'GROUP-MEMBERSHIP': GROUP_MEMBERSHIP_ACTIONS,
+});
 
 /**
  * Does same-policy explicit-Deny precedence fully remove the capability a RULE
@@ -277,7 +291,7 @@ export function ruleFindingDenySuppressed(finding, model) {
   if (actions.length === 0) return false;
 
   // Drop the actions an unconditional, in-scope Deny definitively blocks.
-  const survivors = applyDenyToActions(denies, actions, allowStmt).actions;
+  const survivors = applyDenyToActions(denies, actions, allowStmt, RULE_DENY_CATALOGS[finding.id]).actions;
 
   // A broad bulk-read whose scope a NotResource Deny fences to a narrow set no
   // longer holds as a broad-exfil capability (secret reads are unaffected).

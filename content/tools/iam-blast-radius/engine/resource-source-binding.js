@@ -2,6 +2,7 @@
 import { parseArn } from './arn-util.js';
 import { parseOperator, NEGATED_OPERATORS } from './conditions.js';
 import { chargeWork } from './glob.js';
+import { substitutePolicyVars } from './trust-conditions.js';
 
 export const POSITIVE_MATCH_OPERATORS = Object.freeze(new Set([
   'stringequals', 'stringequalsignorecase', 'stringlike', 'arnequals', 'arnlike',
@@ -108,6 +109,9 @@ export function sourceBindingAnalysis(condition) {
     // sourceArn/sourceAccount so it never participates in the SourceArn-vs-SourceAccount
     // mismatch determination (it is a distinct key), only in whether ANY binding exists.
     sourceOwner: false,
+    // Per bound account-bearing key: the accounts it pins and whether every value
+    // resolved to one (an account-less ARN or a wildcard account does not).
+    pins: [],
     boundKeys: [],
     bypassedKeys: [],
   };
@@ -135,7 +139,8 @@ export function sourceBindingAnalysis(condition) {
         key === 'aws:sourceorgid' || key === 'aws:sourceorgpaths' ||
         key === 'aws:sourceowner';
       if (!isSourceKey) continue;
-      const values = toSourceValueList(inner[rawKey]);
+      // T1-03: ${...} is caller-controlled; read it as '*' (so key == ${key} binds nothing).
+      const values = toSourceValueList(inner[rawKey]).map(substitutePolicyVars);
       const binds = positive && !negated && !bypassable &&
         values.length > 0 && values.every((v) => !isMatchAllSourceValue(v));
       if (!binds) {
@@ -143,6 +148,13 @@ export function sourceBindingAnalysis(condition) {
         continue;
       }
       out.boundKeys.push(rawKey);
+      if (key === 'aws:sourcearn' || key === 'aws:sourceaccount' || key === 'aws:sourceowner') {
+        out.pins.push({
+          key: rawKey,
+          accounts: sourceAccountSet(values),
+          allResolved: values.every((v) => accountFromSourceValue(v) !== null),
+        });
+      }
       if (key === 'aws:sourcearn') {
         out.sourceArn.bound = true;
         out.sourceArn.account = commonSourceAccount(values);

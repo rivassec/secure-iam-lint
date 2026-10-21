@@ -293,6 +293,13 @@ export function enrichCoverage(coverage, context) {
       ),
       incomplete: !!rcov.incomplete,
       note: rcov.note != null ? String(rcov.note) : '',
+      // T2-4: what made it incomplete (empty when every Allow statement was modeled).
+      reasons: Object.freeze((Array.isArray(rcov.reasons) ? rcov.reasons : []).map((r) => Object.freeze({
+        code: String(r.code),
+        path: r.path == null ? null : String(r.path),
+        message: String(r.message || ''),
+        hazard: !!r.hazard,
+      }))),
     })
     : null;
 
@@ -424,6 +431,7 @@ export function enrichCoverage(coverage, context) {
   // (service-specific resource rules not yet implemented in this tranche).
   if (resourceContextSummary && resourceContextSummary.incomplete) {
     codes.push(COVERAGE_CODES.RESOURCE_ANALYSIS_INCOMPLETE || 'RESOURCE_ANALYSIS_INCOMPLETE');
+    for (const r of resourceContextSummary.reasons) if (!codes.includes(r.code)) codes.push(r.code);
   }
   // IAM-1508: one stable code per DISTINCT masked-grant code present (dedup keeps
   // the codes list stable when a shape recurs across statements).

@@ -535,8 +535,11 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
   const { base, setOperator, ifExists } = parseOperator(operator);
   const keyStr = String(key);
   const keyLower = keyStr.toLowerCase();
-  // ${...} is caller-controlled: score it as '*' (mirrors trust-conditions).
-  const values = toValueArray(value).map((v) => String(v).replace(/\$\{[^}]*\}/g, '*'));
+  // ${*} ${?} ${$} are literal escapes (T1-06); any other ${...} is caller-controlled:
+  // score it as '*' (mirrors trust-conditions decodeLiteralEscapes).
+  const values = toValueArray(value).map((v) => String(v)
+    .replace(/\$\{([*?$])\}/g, (_, c) => (c === '*' ? '%2A' : c === '?' ? '%3F' : '$'))
+    .replace(/\$\{[^}]*\}/g, '*'));
   // Exact-match modeled keys first, then the federation aud/sub resolver (whose
   // keys carry a provider-host prefix). Anything neither knows stays unknown ->
   // context-required, surfaced in coverage (unsupported does NOT mean safe).
@@ -826,14 +829,20 @@ function canonicalCondition(cond) {
   return JSON.stringify(walk(cond));
 }
 
-export function unsupportedConditionBindings(model) {
+// `modeled(stmt, key)`: a family evaluator that fully models a key (F12) drops it.
+const unmodeledKeys = (stmt, modeled) => {
+  const federated = stmt && stmt.principal && stmt.principal.byType
+    ? stmt.principal.byType.Federated : null;
+  const keys = classifyConditions(stmt && stmt.condition, oidcProviderHosts(federated))
+    .contextRequiredKeys;
+  return modeled ? keys.filter((k) => !modeled(stmt, k)) : keys;
+};
+
+export function unsupportedConditionBindings(model, modeled = null) {
   const out = new Set();
   const statements = model && Array.isArray(model.statements) ? model.statements : [];
   for (const stmt of statements) {
-    const federated = stmt && stmt.principal && stmt.principal.byType
-      ? stmt.principal.byType.Federated : null;
-    const cc = classifyConditions(stmt && stmt.condition, oidcProviderHosts(federated));
-    if (cc.contextRequiredKeys.length === 0) continue;
+    if (unmodeledKeys(stmt, modeled).length === 0) continue;
     out.add(canonicalCondition(stmt.condition || {}));
   }
   return [...out].sort();
@@ -847,16 +856,31 @@ export function unsupportedConditionBindings(model) {
  * @param {object|null} model normalized model (from buildModel)
  * @returns {Array<string>} sorted unique unmodelled condition keys
  */
-export function unsupportedConditionKeys(model) {
+export function unsupportedConditionKeys(model, modeled = null) {
   const out = new Set();
   const statements = model && Array.isArray(model.statements) ? model.statements : [];
   for (const stmt of statements) {
-    const federated = stmt && stmt.principal && stmt.principal.byType
-      ? stmt.principal.byType.Federated : null;
-    const cc = classifyConditions(stmt && stmt.condition, oidcProviderHosts(federated));
-    for (const k of cc.contextRequiredKeys) out.add(k);
+    for (const k of unmodeledKeys(stmt, modeled)) out.add(k);
   }
   return [...out].sort();
+}
+
+// SCP/RCP: a Deny is judged by the family's own allow-list (`denyUnmodeled(stmt)`),
+// never by the identity set; Allow statements keep the identity reading.
+export function guardrailUnsupported(model, denyUnmodeled) {
+  const keys = new Set();
+  const bindings = new Set();
+  const statements = model && Array.isArray(model.statements) ? model.statements : [];
+  for (const stmt of statements) {
+    const ks = stmt.effect === 'Deny' ? denyUnmodeled(stmt) : unmodeledKeys(stmt, null);
+    if (ks.length === 0) continue;
+    for (const k of ks) keys.add(k);
+    bindings.add(canonicalCondition(stmt.condition || {}));
+  }
+  return {
+    unsupportedConditions: [...keys].sort(),
+    unsupportedConditionBindings: [...bindings].sort(),
+  };
 }
 
 export default classifyConditions;

@@ -12,9 +12,13 @@ export function parseOperatorParts(op) {
   return { base: o, setOperator, ifExists };
 }
 
-// A ${...} policy variable is caller-controlled: read it as '*', keep the literal parts.
+// ${*} ${?} ${$} are literal-character escapes, never globs (T1-06): map them to
+// non-glob text first. Any other ${...} is caller-controlled: read it as '*'.
+export function decodeLiteralEscapes(v) {
+  return String(v).replace(/\$\{([*?$])\}/g, (_, c) => (c === '*' ? '%2A' : c === '?' ? '%3F' : '$'));
+}
 export function substitutePolicyVars(v) {
-  return String(v).replace(/\$\{[^}]*\}/g, '*');
+  return decodeLiteralEscapes(v).replace(/\$\{[^}]*\}/g, '*');
 }
 
 const CONCRETE_ACCOUNT_RE = /^[0-9]{12}$/;
@@ -32,6 +36,7 @@ export function substituteResourceVars(v, subjectAccount) {
 }
 
 // Keys whose value is exactly their own policy variable (key == ${key}): always true.
+// No trim: AWS compares the literal, so ' ${key} ' is not a tautology (T1-09).
 export function selfReferenceKeys(condition) {
   const out = [];
   if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return out;
@@ -39,7 +44,7 @@ export function selfReferenceKeys(condition) {
     if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
     for (const rawKey of Object.keys(inner)) {
       const self = `\${${String(rawKey).toLowerCase()}}`;
-      if (toValues(inner[rawKey]).some((v) => v.trim().toLowerCase() === self)) out.push(String(rawKey));
+      if (toValues(inner[rawKey]).some((v) => v.toLowerCase() === self)) out.push(String(rawKey));
     }
   }
   return [...new Set(out)].sort();
@@ -53,7 +58,18 @@ export function toValues(v) {
 
 // Walk a statement's Condition block and derive the trust-relevant polarity
 // signals. Text-only: it reports how the condition READS, never a runtime match.
-export function conditionSignals(condition, principals, subjectAccount = null) {
+// A subject value any token can satisfy: a glob whose literal prefix is empty or
+// only "repo:" (any GitHub owner). Literal values and owner-pinned globs scope.
+function subValueOpen(v) {
+  if (!hasGlob(v)) return false;
+  const prefix = String(v).split(/[*?]/)[0];
+  return prefix === '' || prefix.toLowerCase() === 'repo:';
+}
+const COGNITO_HOST = 'cognito-identity.amazonaws.com';
+
+// `alwaysPresentKeys` (lowercased): keys every request this statement admits
+// carries, so IfExists / ForAllValues cannot be bypassed on them (T1-07).
+export function conditionSignals(condition, principals, subjectAccount = null, alwaysPresentKeys = null) {
   // Does the named Principal already pin the account? Used to intersect a
   // positive aws:PrincipalArn scoping value with the Principal so a wildcard the
   // Principal already pins (the account segment) does not inflate breadth.
@@ -90,6 +106,13 @@ export function conditionSignals(condition, principals, subjectAccount = null) {
     // finding that STAYS high can NAME the qualifier in its why text instead of
     // silently ignoring it (adversarial-critic IAM-803 iteration 2 defect 1).
     bypassedQualifiers: [],
+    // F5: some positive sub entry pins an owner/workload (not open to any token).
+    // Qualifier-blind: the provider always sends sub, so this only gates "open".
+    subScoped: false,
+    // F5/T2-7: Cognito aud pinned to literal pool id(s); amr sign-in state.
+    cognitoAudPinned: false, // credited (non-bypassable) pin
+    cognitoAudPresent: false, // any literal pin, qualifier-blind (openness only)
+    cognitoAmr: null, // 'authenticated' | 'unauthenticated' | 'mixed' | null
   };
   if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return sig;
 
@@ -104,9 +127,10 @@ export function conditionSignals(condition, principals, subjectAccount = null) {
     // by omitting the key and must NOT be credited as effective. ForAnyValue: is
     // NOT a bypass (it needs a supplied value to match). Mirrors conditions.js
     // lines 296-300 so trust severity and conditionClassification.credited agree.
-    const bypassable = ifExists || setOperator === 'ForAllValues';
+    const opBypassable = ifExists || setOperator === 'ForAllValues';
     for (const rawKey of Object.keys(inner)) {
       const key = String(rawKey).toLowerCase();
+      const bypassable = opBypassable && !(alwaysPresentKeys && alwaysPresentKeys.has(key));
       const values = toValues(inner[rawKey])
         .map((v) => substitutePolicyVars(substituteResourceVars(v, subjectAccount)));
       // A real value-scoping constraint requires a positive string/ARN match
@@ -203,7 +227,21 @@ export function conditionSignals(condition, principals, subjectAccount = null) {
       } else if (key.endsWith(':aud') || key === 'saml:aud') {
         // Only a positive string match pins the audience; Null/Bool/Date/Numeric do not.
         if (positiveStringMatch && !bypassable && values.length > 0 && !values.includes('*')) sig.audConstraint = true;
+        if (key === `${COGNITO_HOST}:aud` && positiveStringMatch && values.length > 0 &&
+            values.every((v) => !hasGlob(v))) {
+          sig.cognitoAudPresent = true;
+          if (!bypassable) sig.cognitoAudPinned = true;
+        }
+      } else if (key === `${COGNITO_HOST}:amr`) {
+        // T2-7: only a non-bypassable positive match on the two defined states counts.
+        if (positiveStringMatch && !bypassable && values.length > 0) {
+          const auth = values.every((v) => v === 'authenticated');
+          const unauth = values.some((v) => v === 'unauthenticated');
+          const state = auth ? 'authenticated' : unauth ? 'unauthenticated' : 'mixed';
+          sig.cognitoAmr = sig.cognitoAmr && sig.cognitoAmr !== state ? 'mixed' : state;
+        }
       } else if (key.endsWith(':sub') || key === 'saml:sub') {
+        if (positiveStringMatch && values.length > 0 && values.every((v) => !subValueOpen(v))) sig.subScoped = true;
         // Subject scope drives federated severity (trust-policy-semantics 4.4):
         // a value carrying a GLOB metacharacter - '*' (e.g. repo:org/*) OR the
         // single-char '?' (e.g. repo:org/myrep? or repo:org/?????????? - matches
@@ -271,14 +309,21 @@ export function publicScopeConstraint(sig) {
   if (sig.principalArnScope) names.push('aws:PrincipalArn');
   if (sig.principalAccount) names.push('aws:PrincipalAccount');
   if (names.length === 0) return null;
-  const broad = sig.orgConstraint || sig.principalAccount || sig.principalArnScope === 'broad';
+  // Conditions AND: a tight pin bounds the intersection to one principal whatever
+  // org/account condition sits beside it (T1-08).
+  const tight = sig.principalArnScope === 'tight';
+  const broad = !tight && (sig.orgConstraint || sig.principalAccount || sig.principalArnScope === 'broad');
   // A tight pin is equivalent to NAMING that principal, which scores TRUST-CROSS-ACCOUNT
   // high - so the "*"-form must not score lower (gate-bypass parity). An exact
-  // ExternalId/SourceArn correlation lowers it to medium, mirroring the named form.
-  const tightUnconstrained = !broad && !(sig.externalId || sig.sourceArnAccount);
+  // ExternalId/SourceArn correlation (or, beside a tight pin, PrincipalOrgID, as
+  // hasConfusedDeputyConstraint credits it on the named form) lowers it to medium.
+  const tightUnconstrained = !broad &&
+    !(sig.externalId || sig.sourceArnAccount || (tight && sig.orgConstraint));
   // Describe the DOMINANT (broadest) surviving scope accurately, so a whole-account
   // aws:PrincipalAccount is never mislabeled "a specific principal".
-  const breadthDesc = sig.orgConstraint
+  const breadthDesc = tight
+    ? 'a specific principal - equivalent to naming that principal directly, so this trust is scored like the named cross-account form'
+    : sig.orgConstraint
     ? 'an organization-wide set of principals'
     : sig.principalAccount
       ? 'an entire AWS account - aws:PrincipalAccount is account-granularity, equivalent to naming that account as the Principal, so the whole account is trusted'

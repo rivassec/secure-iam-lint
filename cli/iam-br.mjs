@@ -236,8 +236,9 @@ context; it never claims effective permissions.
 
 REQUIRED
   --family <f>          Policy family. One of:
-                          identity | resource | role-trust |
-                          permissions-boundary | scp-rcp | session
+                          identity | resource | role-trust | trust |
+                          permissions-boundary | scp-rcp | scp | rcp | session
+                        (trust = role-trust; scp and rcp = scp-rcp.)
                         The family is NEVER auto-detected; omitting it is a
                         usage error (exit 2).
 
@@ -403,7 +404,7 @@ export function parseArgs(argv) {
   if (!isNonEmptyString(opts.family)) {
     return usage(
       'the --family option is required and is never auto-detected ' +
-      '(identity | resource | role-trust | permissions-boundary | scp-rcp | session)',
+      '(identity | resource | role-trust | trust | permissions-boundary | scp-rcp | scp | rcp | session)',
     );
   }
   // Validate the family VALUE here too (like --format) so a bad value is a usage
@@ -412,11 +413,11 @@ export function parseArgs(argv) {
   const familyLower = opts.family.trim().toLowerCase();
   if (familyLower === 'auto' || familyLower === 'auto-detect') {
     return usage('family auto-detection is not permitted; select an explicit family '
-      + '(identity | resource | role-trust | permissions-boundary | scp-rcp | session)');
+      + '(identity | resource | role-trust | trust | permissions-boundary | scp-rcp | scp | rcp | session)');
   }
   if (!SELECTABLE_FAMILIES.has(familyLower)) {
     return usage(`unknown --family '${opts.family}' `
-      + '(expected: identity | resource | role-trust | permissions-boundary | scp-rcp | session)');
+      + '(expected: identity | resource | role-trust | trust | permissions-boundary | scp-rcp | scp | rcp | session)');
   }
   // Format is a CLI-level concern (scan does not see it), so validate it here.
   if (!FORMATS.has(opts.format)) {

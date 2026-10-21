@@ -480,13 +480,12 @@ test('Resource family without an attached-resource context fails closed RESOURCE
   // Supplying the attached-resource ARN accepts + routes to the resource
   // evaluator. The blocking notice clears; this Principal:"*" grant on the named
   // bucket is analyzed as a PUBLIC-ACCESS finding (IAM-1202), so the findings
-  // table now renders that finding. Status stays 'warned' because resource
-  // analysis is INCOMPLETE (service-specific rules are a later tranche), but the
-  // public-access capability is surfaced rather than dropped.
+  // table now renders that finding. Status is 'ok' (complete coverage, v1.2.0
+  // T2-4); the public-access finding is what flags it.
   await page.fill('#resource-arn', 'arn:aws:s3:::public/*');
   await page.locator('#resource-arn').blur();
   await expect(page.locator('#findings .coverage-blocked')).toHaveCount(0);
-  await expect(page.locator('#status')).toHaveAttribute('data-status', 'warned');
+  await expect(page.locator('#status')).toHaveAttribute('data-status', 'ok');
   await expect(page.locator('#findings table')).toContainText(/public/i);
 });
 

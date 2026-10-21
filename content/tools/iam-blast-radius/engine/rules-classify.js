@@ -124,6 +124,19 @@ export const RESOURCE_POLICY_WRITE_ACTIONS = Object.freeze([
   'codeartifact:PutDomainPermissionsPolicy',
   'codeartifact:PutRepositoryPermissionsPolicy',
   'ses:PutIdentityPolicy',
+  // F15: snapshot / AMI sharing grants another account (or everyone) a copy.
+  'ec2:ModifySnapshotAttribute',
+  'ec2:ModifyImageAttribute',
+  'rds:ModifyDBSnapshotAttribute',
+  'rds:ModifyDBClusterSnapshotAttribute',
+]);
+
+// F15: actions that share a resource copy rather than rewrite its policy.
+export const RESOURCE_SHARE_ACTIONS = Object.freeze([
+  'ec2:ModifySnapshotAttribute',
+  'ec2:ModifyImageAttribute',
+  'rds:ModifyDBSnapshotAttribute',
+  'rds:ModifyDBClusterSnapshotAttribute',
 ]);
 
 // F1-01/F1-02: object-ACL writes. Object-scoped (not resource-policy writes, G10),
@@ -169,7 +182,29 @@ export const IAM_ADMIN_ACTIONS = Object.freeze([
   'iam:DetachUserPolicy',
   'iam:DetachRolePolicy',
   'iam:DetachGroupPolicy',
+  // F15: federation-provider writes add or repoint an identity provider that role
+  // trusts may already name - a federation backdoor.
+  'iam:CreateOpenIDConnectProvider',
+  'iam:UpdateOpenIDConnectProviderThumbprint',
+  'iam:AddClientIDToOpenIDConnectProvider',
+  'iam:CreateSAMLProvider',
+  'iam:UpdateSAMLProvider',
+  // F15: tag writes change aws:PrincipalTag / iam:ResourceTag (ABAC) authorization.
+  'iam:TagRole',
+  'iam:TagUser',
 ]);
+
+export const IAM_FEDERATION_ACTIONS = Object.freeze([
+  'iam:CreateOpenIDConnectProvider',
+  'iam:UpdateOpenIDConnectProviderThumbprint',
+  'iam:AddClientIDToOpenIDConnectProvider',
+  'iam:CreateSAMLProvider',
+  'iam:UpdateSAMLProvider',
+]);
+export const IAM_TAG_ACTIONS = Object.freeze(['iam:TagRole', 'iam:TagUser']);
+
+// F15: destructive actions whose verb doesn't say so (DESTRUCTIVE_VERB misses them).
+export const DESTRUCTIVE_EXTRA_ACTIONS = Object.freeze(['kms:ScheduleKeyDeletion']);
 
 // IAM-1005: group-membership privilege assignment. iam:AddUserToGroup adds a user
 // (named in the API request, NOT resource-scoped by this ARN) to the group named

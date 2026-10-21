@@ -41,6 +41,8 @@
 // as protective. Reuse the canonical parser so every polarity check sees through
 // the qualifier prefix.
 import { parseOperator } from './conditions.js';
+import { globMatch, isGlobBudgetError } from './glob.js';
+import { scpDenyShape } from './guardrail-deny.js';
 
 // Finding ids emitted by this evaluator. Kept distinct from the identity
 // RULE_IDS / ESCALATION_IDS, the trust TRUST_IDS, and the envelope ENVELOPE_IDS:
@@ -202,6 +204,66 @@ function hasGlobalServiceCarveOut(stmt) {
   });
 }
 
+// F1: probes every real action / region matches. A token or value matching all of
+// them matches everything, so the Deny it carves out or gates never fires.
+const PROBE_ACTIONS = ['s3:getobject', 'iam:createuser', 'ec2:runinstances',
+  'organizations:leaveorganization', 'a:b'];
+
+// F4: Bool gates where a Deny on "true" inverts the control (correct form is false).
+const INVERTED_TRUE_GATES = new Set(['aws:multifactorauthpresent', 'aws:securetransport']);
+
+const VACUOUS_WHY = {
+  notaction: 'This Deny\'s NotAction carve-out matches every action, so the Deny covers no ' +
+    'action at all. ',
+  region: 'This Deny is gated by a negated operator on aws:RequestedRegion whose values ' +
+    'together match every region, so the condition is never true when the key is present. ',
+  principal: 'This Deny\'s negated principal carve-out matches every principal, so no caller ' +
+    'is ever denied. ',
+  'null-present': 'This Deny requires an always-present key to be absent (Null "true"), so ' +
+    'the condition is never true. ',
+  contradiction: 'This Deny requires one key to hold two different values, so the condition ' +
+    'is never true. ',
+  notresource: 'This Deny\'s NotResource excludes every resource the denied actions can ' +
+    'reach, so it applies to nothing. ',
+  'resource-service': 'This Deny\'s Resource names a different service than its actions, so ' +
+    'it can never match a request. ',
+  'resource-unreachable': 'This Deny\'s Resource can never match a request (wrong partition, ' +
+    'a region-less service ARN with a region, or a region the fence allows), so it applies to nothing. ',
+  'principal-foreign': 'This Deny is limited to principals outside the subject account, so it ' +
+    'never governs the subject. ',
+  'principal-shape': 'This Deny is limited to aws:PrincipalArn/aws:PrincipalAccount values no ' +
+    'request carries (a literal * under an Equals operator, or an sts assumed-role ARN), so it never fires. ',
+};
+
+// F1/F4 Deny-level hazards: a no-op guardrail (never fires) or an inverted Bool
+// gate. Returns { vacuous: reason|null, invertedGate: key|null }.
+function denyGateHazards(stmt, opts) {
+  const shape = scpDenyShape(stmt, opts);
+  const out = { vacuous: null, invertedGate: null, bypassGate: shape.bypassGate,
+    roleCarveOut: shape.roleCarveOut };
+  const na = Array.isArray(stmt.notActions) ? stmt.notActions : [];
+  // V3-03: the carve-out list is OR'd, so test the union.
+  const nal = na.map((a) => String(a).toLowerCase());
+  if (nal.length > 0 && PROBE_ACTIONS.every((x) => nal.some((a) => globMatch(a, x)))) out.vacuous = 'notaction';
+  else out.vacuous = shape.vacuous;
+  const cond = stmt.condition;
+  if (!cond || typeof cond !== 'object') return out;
+  for (const op of Object.getOwnPropertyNames(cond)) {
+    const inner = cond[op];
+    if (!inner || typeof inner !== 'object') continue;
+    const { base } = parseOperator(op);
+    for (const key of Object.getOwnPropertyNames(inner)) {
+      const k = String(key).toLowerCase();
+      const raw = inner[key];
+      const vals = (Array.isArray(raw) ? raw : [raw]).map((v) => String(v).toLowerCase());
+      if (INVERTED_TRUE_GATES.has(k) && base === 'bool' && vals.includes('true')) {
+        out.invertedGate = String(key);
+      }
+    }
+  }
+  return out;
+}
+
 // --- Finding builders --------------------------------------------------------
 
 function buildCeilingFinding(stmt) {
@@ -248,7 +310,7 @@ function buildCeilingFinding(stmt) {
   return finding;
 }
 
-function buildGuardrailFinding(stmt) {
+function buildGuardrailFinding(stmt, opts) {
   const region = inspectRegionCondition(stmt.condition);
   const isRegion = region.present;
   const isOrg = hasOrgControlAction(stmt);
@@ -266,6 +328,9 @@ function buildGuardrailFinding(stmt) {
   // and must NEVER be credited as a protective lock. It is still a Deny (grants
   // nothing). Positive and negated-IfExists polarity are mutually exclusive.
   const invertedRegionHazard = isRegion && region.positive;
+  const gate = denyGateHazards(stmt, opts);
+  const blocking = invertedRegionHazard || !!gate.vacuous || !!gate.invertedGate ||
+    !!gate.bypassGate || gate.roleCarveOut;
 
   let guardrailKind;
   if (isRegion) guardrailKind = 'region';
@@ -371,12 +436,11 @@ function buildGuardrailFinding(stmt) {
   const finding = {
     id: 'SCP-GUARDRAIL',
     // A guardrail is protective (informational) - it subtracts from the ceiling.
-    // Two exceptions are misconfiguration HAZARDS raised to medium so they are
-    // visible (never high/critical - a guardrail is not an attack path):
-    //   - the over-broad regional-Deny (negated ...IfExists, no global carve-out);
-    //   - the INVERTED region fence (positive operator: denies inside the listed
-    //     regions and permits everything outside - the inverse of a region lock).
-    severity: (overBroadRegionHazard || invertedRegionHazard) ? 'medium' : 'info',
+    // Hazards: the over-broad regional Deny (negated ...IfExists, no global
+    // carve-out) is medium; an inverted fence/gate or a no-op Deny is high, since
+    // it reads as a control that is not there. Never critical (grants nothing).
+    // v1.2.0 (F1/F4): no-op and inverted guardrails block (high); over-broad stays medium.
+    severity: blocking ? 'high' : (overBroadRegionHazard ? 'medium' : 'info'),
     title,
     statementSid: statementSid(stmt),
     statementIndex: stmt.index,
@@ -411,7 +475,35 @@ function buildGuardrailFinding(stmt) {
       finding.allowedRegions = region.regions.slice();
     }
   }
-  if (overBroadRegionHazard || invertedRegionHazard) finding.hazard = true;
+  if (overBroadRegionHazard || blocking) finding.hazard = true;
+  if (gate.vacuous) {
+    finding.vacuous = gate.vacuous;
+    finding.title = 'SCP guardrail that never fires (no-op Deny)';
+    finding.why = (VACUOUS_WHY[gate.vacuous] || VACUOUS_WHY.region) +
+      'The guardrail is a no-op: it looks protective but removes nothing from the ceiling.';
+    finding.remediation = 'Remove the match-everything pattern so the Deny covers the ' +
+      'actions / regions you intend; a guardrail that never fires gives no protection.';
+  } else if (gate.bypassGate) {
+    finding.bypassGateKey = gate.bypassGate;
+    finding.title = 'SCP guardrail a caller can bypass (Bool false on an optional key)';
+    finding.why = `${gate.bypassGate} is absent for requests signed with long-term access ` +
+      'keys, so a plain Bool "false" does not match them and the Deny is skipped. ' + finding.why;
+    finding.remediation = `Use BoolIfExists ${gate.bypassGate} = false, so a missing key also denies.`;
+  } else if (gate.roleCarveOut) {
+    finding.roleCarveOut = true;
+    finding.title = 'SCP guardrail that exempts every role';
+    finding.why = 'The negated aws:PrincipalArn carve-out matches every IAM role, so every ' +
+      'workload and SSO principal is exempt and the Deny binds only users and root. ' + finding.why;
+    finding.remediation = 'Name the specific break-glass role(s) in the carve-out, not role/*.';
+  } else if (gate.invertedGate) {
+    finding.invertedGateKey = gate.invertedGate;
+    finding.title = 'SCP guardrail gated on the wrong polarity (inverted Bool Deny)';
+    finding.why = `This Deny applies only when ${gate.invertedGate} is true, so callers ` +
+      'WITHOUT it (no MFA / no TLS) are not denied - the inverse of the usual control. ' +
+      finding.why;
+    finding.remediation = `Gate the Deny on ${gate.invertedGate} = false (BoolIfExists ` +
+      'false, so a missing key also denies), not true.';
+  }
   return finding;
 }
 
@@ -443,15 +535,16 @@ function deepFreeze(value) {
  * Never throws. Deterministic (findings ordered by originating statement index).
  *
  * @param {object} model normalized, frozen model (from modelFromText)
+ * @param {{subjectAccount?:string|null}} [opts]
  * @returns {{ok:boolean, errors:Array, findings:Array<object>}}
  */
-export function analyzeScp(model) {
+export function analyzeScp(model, opts = {}) {
   try {
     const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
     const findings = [];
     for (const stmt of statements) {
       if (stmt.effect === 'Deny') {
-        findings.push(buildGuardrailFinding(stmt));
+        findings.push(buildGuardrailFinding(stmt, opts));
       } else {
         findings.push(buildCeilingFinding(stmt));
       }
@@ -463,6 +556,7 @@ export function analyzeScp(model) {
       findings: deepFreeze(findings),
     });
   } catch (e) {
+    if (isGlobBudgetError(e)) throw e;
     return Object.freeze({
       ok: false,
       errors: Object.freeze([

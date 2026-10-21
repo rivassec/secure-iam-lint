@@ -1,6 +1,6 @@
 // escalation-families.js - the non-passrole escalation detectors (policy-version, attach/put-inline policy, trust-modify, credential-creation, assume-role-expansion, cross-account-scoped-assume). Extracted (behavior-preserving).
 import { applyDenyToActions } from './escalation-deny.js';
-import { assumeAccountReach, assumeScopeIsAllRoles, resourceListIsBroadForAssume, resourceScope } from './escalation-scope.js';
+import { assumeAccountReach, assumeScopeIsAllRoles, iamTargetIsAllOrSelf, resourceListIsBroadForAssume, resourceScope } from './escalation-scope.js';
 import { concreteRoleTargetAccount } from './escalation-reachability.js';
 import { evidenceOf, makeEscalation, prereqGroup, prereqTechnique, prerequisitesOf } from './escalation-finding.js';
 import { grantedPatternsFor } from './escalation-action-grants.js';
@@ -11,12 +11,12 @@ export function detectPolicyVersion(allows, out, denies) {
   for (const stmt of allows) {
     const matched = grantedPatternsFor(stmt, POLICY_VERSION_ACTIONS);
     if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
+    const deny = applyDenyToActions(denies, matched, stmt, POLICY_VERSION_ACTIONS);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
     const actions = deny.actions;
     out.push(
       makeEscalation('POLICY-VERSION', stmt, {
-        severity: 'high',
+        severity: iamTargetIsAllOrSelf(stmt) ? 'critical' : 'high', // F6
         // Direct self-administration: the grant is present (evidence high) and
         // the principal can directly set a policy version it controls, so the
         // capability is exploitable without any unknown target role gating it.
@@ -55,7 +55,7 @@ export function detectAttachPolicy(allows, out, denies) {
   for (const stmt of allows) {
     const matched = grantedPatternsFor(stmt, ATTACH_POLICY_ACTIONS);
     if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
+    const deny = applyDenyToActions(denies, matched, stmt, ATTACH_POLICY_ACTIONS);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
     const actions = deny.actions;
     out.push(
@@ -63,7 +63,7 @@ export function detectAttachPolicy(allows, out, denies) {
         // High, not critical (IAM-102): attaching a managed policy to self is a
         // standalone direct-IAM primitive, not a compound privilege-boundary
         // crossing. Critical is reserved for compound escalation paths.
-        severity: 'high',
+        severity: iamTargetIsAllOrSelf(stmt) ? 'critical' : 'high', // F6
         // Direct self-administration: grant present (evidence high); attaching a
         // managed policy (e.g. AdministratorAccess) directly grants permissions,
         // no unknown target role gates it -> exploitability high.
@@ -99,7 +99,7 @@ export function detectPutInlinePolicy(allows, out, denies) {
   for (const stmt of allows) {
     const matched = grantedPatternsFor(stmt, PUT_INLINE_POLICY_ACTIONS);
     if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
+    const deny = applyDenyToActions(denies, matched, stmt, PUT_INLINE_POLICY_ACTIONS);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
     const actions = deny.actions;
     out.push(
@@ -107,7 +107,7 @@ export function detectPutInlinePolicy(allows, out, denies) {
         // High, not critical (IAM-102): writing an inline policy on self is a
         // standalone direct-IAM primitive, not a compound privilege-boundary
         // crossing. Critical is reserved for compound escalation paths.
-        severity: 'high',
+        severity: iamTargetIsAllOrSelf(stmt) ? 'critical' : 'high', // F6
         // Direct self-administration: grant present (evidence high); writing an
         // arbitrary inline Allow policy directly grants permissions with no
         // unknown target role in the way -> exploitability high.
@@ -143,7 +143,7 @@ export function detectTrustModify(allows, out, denies) {
   for (const stmt of allows) {
     const matched = grantedPatternsFor(stmt, TRUST_MODIFY_ACTIONS);
     if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
+    const deny = applyDenyToActions(denies, matched, stmt, TRUST_MODIFY_ACTIONS);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
     const actions = deny.actions;
     out.push(
@@ -183,7 +183,7 @@ export function detectCredentialCreation(allows, out, denies) {
   for (const stmt of allows) {
     const matched = grantedPatternsFor(stmt, CREDENTIAL_ACTIONS);
     if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
+    const deny = applyDenyToActions(denies, matched, stmt, CREDENTIAL_ACTIONS);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
     const actions = deny.actions;
     out.push(
@@ -259,6 +259,8 @@ const COMPUTE_CODE_OVERWRITE_ACTIONS = Object.freeze([
   // standalone code-exec primitive needing no iam:PassRole, same shape as glue:UpdateJob.
   'glue:UpdateDevEndpoint',
   'cloudformation:UpdateStack',
+  // F15: new user data runs at next boot under the instance's existing role.
+  'ec2:ModifyInstanceAttribute',
 ]);
 
 export function detectComputeCodeOverwrite(allows, out, denies) {
@@ -270,7 +272,7 @@ export function detectComputeCodeOverwrite(allows, out, denies) {
     // a meaningless service:"*".
     const matched = grantedPatternsFor(stmt, COMPUTE_CODE_OVERWRITE_ACTIONS).filter((a) => a !== '*');
     if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
+    const deny = applyDenyToActions(denies, matched, stmt, COMPUTE_CODE_OVERWRITE_ACTIONS);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
     // Dedup: when a VIABLE iam:PassRole->service path already credited THIS statement's
     // overwrite grant, detectPassRolePaths (which runs first) has emitted a PASSROLE-*
@@ -365,7 +367,7 @@ export function detectComputeSessionTakeover(allows, out, denies) {
     // capability). Mirrors the overwrite detector's isFullWildcard skip.
     const matched = grantedPatternsFor(stmt, COMPUTE_SESSION_TAKEOVER_ACTIONS).filter((a) => a !== '*');
     if (matched.length === 0) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
+    const deny = applyDenyToActions(denies, matched, stmt, COMPUTE_SESSION_TAKEOVER_ACTIONS);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
     const actions = deny.actions;
     if (actions.length === 0) continue;
@@ -416,7 +418,7 @@ export function detectAssumeRoleExpansion(allows, out, denies) {
     // Only a broad / wildcard role scope is an expansion path; assuming one
     // specific named role is the intended, routine use of AssumeRole.
     if (!resourceListIsBroadForAssume(stmt)) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
+    const deny = applyDenyToActions(denies, matched, stmt, ASSUME_ROLE_ACTIONS);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
     const actions = deny.actions;
     const reach = assumeAccountReach(stmt);
@@ -511,7 +513,7 @@ export function detectCrossAccountScopedAssume(allows, out, denies, ctx) {
     // emitted, with its own cross-account reasoning). Here we handle ONLY the
     // scoped-but-cross-account case that detector skips.
     if (resourceListIsBroadForAssume(stmt)) continue;
-    const deny = applyDenyToActions(denies, matched, stmt);
+    const deny = applyDenyToActions(denies, matched, stmt, ASSUME_ROLE_ACTIONS);
     if (deny.blocked) continue; // same-policy explicit Deny removes the path
     const crossAccounts = [];
     // Collect the concrete cross-account role ARN(s) actually matched, in policy

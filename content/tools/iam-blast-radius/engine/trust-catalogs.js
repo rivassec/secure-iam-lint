@@ -1,4 +1,5 @@
 // trust-catalogs.js - trust/assume action sets + operator/principal catalogs. Extracted (behavior-preserving; pure frozen data).
+import { globMatch } from './glob.js';
 
 export const TRUST_ACTIONS = Object.freeze(new Set([
   'sts:assumerole',
@@ -7,6 +8,33 @@ export const TRUST_ACTIONS = Object.freeze(new Set([
   'sts:tagsession',
   'sts:setsourceidentity',
 ]));
+
+const TRUST_ACTION_NAMES = Object.freeze([
+  'sts:AssumeRole', 'sts:AssumeRoleWithSAML', 'sts:AssumeRoleWithWebIdentity',
+  'sts:TagSession', 'sts:SetSourceIdentity',
+]);
+const covers = (pat, name) => globMatch(String(pat).toLowerCase(), name.toLowerCase());
+
+// F9/T2-8: the concrete trust actions a statement's Action/NotAction covers
+// (sts:*, *, sts:AssumeRole*, NotAction). null when the statement is not a
+// trust statement: no Action at all, an Action pattern covering no trust action,
+// or a NotAction leaving none - those keep failing closed.
+export function expandTrustActions(stmt) {
+  const actions = Array.isArray(stmt.actions) ? stmt.actions : [];
+  const notActions = Array.isArray(stmt.notActions) ? stmt.notActions : [];
+  if (actions.length > 0 && notActions.length > 0) return null;
+  let out;
+  if (notActions.length > 0) {
+    out = TRUST_ACTION_NAMES.filter((n) => !notActions.some((p) => covers(p, n)));
+  } else {
+    if (actions.length === 0) return null;
+    for (const a of actions) {
+      if (!TRUST_ACTION_NAMES.some((n) => covers(a, n))) return null;
+    }
+    out = TRUST_ACTION_NAMES.filter((n) => actions.some((a) => covers(a, n)));
+  }
+  return out.length > 0 ? out : null;
+}
 
 // The subset of TRUST_ACTIONS that actually grant the ability to ASSUME the role
 // (trust-policy-semantics.md section 3). These are the ONLY actions that convey a

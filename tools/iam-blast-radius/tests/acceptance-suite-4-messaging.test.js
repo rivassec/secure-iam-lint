@@ -72,10 +72,11 @@ for (const { file, data } of FIXTURES) {
     assert.equal(res.ok, true, `${file}: ok`);
     assert.equal(res.family, 'resource', `${file}: resource family`);
     assert.ok(res.coverage && res.coverage.blocked === false, `${file}: not blocked`);
-    if (e.coverageIncomplete) {
+    if (typeof e.coverageIncomplete === 'boolean') {
+      // T2-4: pinned both ways - a fully modeled policy is complete.
       assert.equal(
-        res.coverage.summary && res.coverage.summary.incomplete, true,
-        `${file}: coverage stays INCOMPLETE (never "safe")`,
+        !!(res.coverage.summary && res.coverage.summary.incomplete), e.coverageIncomplete,
+        `${file}: coverage incomplete`,
       );
     }
 
@@ -226,6 +227,6 @@ test('a messaging service principal is never classified public write (unbound or
     opt,
   );
   const cd = unbound.findings.find((f) => f.id === 'RESOURCE-CONFUSED-DEPUTY');
-  assert.ok(cd && cd.severity === 'medium', 'unbound service send is a medium confused-deputy exposure');
+  assert.ok(cd && cd.severity === 'high', 'unbound service send is a high confused-deputy exposure (F13)');
   assert.ok(!unbound.findings.some((f) => f.id === 'PUBLIC-ACCESS' || f.id === 'MESSAGING-PUBLIC-EXPOSURE'), 'a service principal never triggers a public-access finding');
 });

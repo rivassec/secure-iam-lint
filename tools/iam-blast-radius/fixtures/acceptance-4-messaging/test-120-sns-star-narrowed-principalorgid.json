@@ -23,7 +23,7 @@
   },
   "expect": { "valid": true },
   "expectMessaging": {
-    "coverageIncomplete": true,
+    "coverageIncomplete": false,
     "findingIds": ["PUBLIC-ACCESS"],
     "findingSeverities": { "PUBLIC-ACCESS": "high" },
     "notCritical": ["PUBLIC-ACCESS"],

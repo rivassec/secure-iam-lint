@@ -98,7 +98,7 @@ No suite-3 test currently returns a false or overstated result.
 | 66 | Session policy selected | COMPLETE | `SESSION-CEILING` (info); session restriction, no positive capability edge without parent context |
 | 67 | Identity mode rejects Principal | BLOCKED | `UNSUPPORTED_PRINCIPAL` at `Statement[0].Principal`; Principal never dropped |
 | 68 | Trust mode rejects Resource | BLOCKED | `UNSUPPORTED_TRUST_RESOURCE` at `Statement[0].Resource` |
-| 69 | Resource policy selected | COMPLETE_WITH_WARNINGS (flipped IAM-1207) | resource family shipped: with the explicit attached-resource context, Principal `*` -> `PUBLIC-ACCESS` critical, routed to the resource evaluator (not identity), coverage INCOMPLETE. The no-context path still fails closed `RESOURCE_CONTEXT_REQUIRED` (`fixtures/family-selection/69-resource-family-unsupported.json`). |
+| 69 | Resource policy selected | COMPLETE (flipped IAM-1207; complete since v1.2.0 T2-4) | resource family shipped: with the explicit attached-resource context, Principal `*` -> `PUBLIC-ACCESS` critical, routed to the resource evaluator (not identity); every Allow statement is modeled, so coverage is complete. The no-context path still fails closed `RESOURCE_CONTEXT_REQUIRED` (`fixtures/family-selection/69-resource-family-unsupported.json`). |
 | 70 | Family switching clears prior analysis | procedure | `tests/phase10-family-selection.test.js` + `tests/e2e/ui-shell.spec.js`: same bytes under two families differ; prior state invalidated |
 | 71 | Family + status survive every export | procedure | `tests/phase10-family-selection.test.js`: selected family + status + catalog version + warnings in JSON/MD; statuses agree; blocked export never authoritative |
 
@@ -124,7 +124,7 @@ No suite-3 test currently returns a false or overstated result.
 | 82 | Question-mark wildcard inside user Principal ARN | COMPLETE_WITH_WARNINGS | `TRUST-INVALID-PRINCIPAL`; validation covers `?` as well as `*` |
 | 83 | One invalid member poisons a Principal array | COMPLETE_WITH_WARNINGS | invalid member flagged at array index 1 (`TRUST-INVALID-PRINCIPAL`), valid member not silently dropped |
 | 84 | Short-form account principal remains valid | COMPLETE | `TRUST-CROSS-ACCOUNT`; 12-digit account id not misclassified as an invalid ARN |
-| 85 | Principal `*` narrowed by PrincipalArn condition | COMPLETE_WITH_WARNINGS (flipped IAM-1207) | resource family shipped: `*` NARROWED by `ArnLike aws:PrincipalArn` -> `PUBLIC-ACCESS` high (not unconditioned-critical), scoping key recorded, condition-value wildcard preserved (not mis-flagged as an invalid Principal). |
+| 85 | Principal `*` narrowed by PrincipalArn condition | COMPLETE (flipped IAM-1207; complete since v1.2.0 T2-4) | resource family shipped: `*` NARROWED by `ArnLike aws:PrincipalArn` -> `PUBLIC-ACCESS` high (not unconditioned-critical), scoping key recorded, condition-value wildcard preserved (not mis-flagged as an invalid Principal). |
 
 ## Campaign E - IAM and ECS semantic precision
 

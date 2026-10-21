@@ -13,10 +13,95 @@
       "analysisStatus": "complete",
       "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
       "exitCode": 1,
-      "findingsCount": 2,
-      "blockingCount": 2,
+      "findingsCount": 3,
+      "blockingCount": 3,
       "analysisStates": [],
       "findings": [
+        {
+          "id": "COMPUTE-CODE-OVERWRITE",
+          "severity": "high",
+          "title": "Overwrite existing compute code/config (runs under its existing role, no PassRole)",
+          "statementSid": "WildcardArnWrite",
+          "statementIndex": 0,
+          "actions": [
+            "ec2:*"
+          ],
+          "resources": [
+            "arn:aws:*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants an \"update existing compute\" action (e.g. lambda:UpdateFunctionCode / UpdateFunctionConfiguration, codebuild:UpdateProject, glue:UpdateJob, cloudformation:UpdateStack). Overwriting the code (or code-selecting configuration) of an EXISTING resource runs attacker-supplied code under that resource's already-bound execution/service role - no iam:PassRole is required. Whether that role is more privileged than the caller is not known from this policy, but the code-execution primitive is present.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope these update actions to specific resource ARNs, restrict them to a dedicated deployment role, and protect high-value compute (whose execution roles are privileged) with change review and a permission boundary.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/lambda/latest/api/API_UpdateFunctionCode.html",
+          "escalation": {
+            "technique": "overwrite-existing-compute-code",
+            "service": "ec2",
+            "requiredActions": [
+              "ec2:*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "overwrite-existing-compute-code",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "ec2:*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "WildcardArnWrite",
+              "role": "primitive",
+              "actions": [
+                "ec2:*"
+              ],
+              "resources": [
+                "arn:aws:*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "WildcardArnWrite",
+              "actions": [
+                "ec2:*"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
         {
           "id": "WILDCARD-ACTION",
           "severity": "high",
@@ -102,6 +187,24 @@
               "informationUri": "https://rivassec.com/tools/iam-blast-radius/",
               "rules": [
                 {
+                  "id": "COMPUTE-CODE-OVERWRITE",
+                  "name": "COMPUTE-CODE-OVERWRITE",
+                  "shortDescription": {
+                    "text": "Overwrite existing compute code/config (runs under its existing role, no PassRole)"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type COMPUTE-CODE-OVERWRITE. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/lambda/latest/api/API_UpdateFunctionCode.html"
+                },
+                {
                   "id": "WILDCARD-ACTION",
                   "name": "WILDCARD-ACTION",
                   "shortDescription": {
@@ -143,10 +246,57 @@
           "properties": {
             "analysisStatus": "complete",
             "exitCode": 1,
-            "blockingCount": 2,
-            "findingsCount": 2
+            "blockingCount": 3,
+            "findingsCount": 3
           },
           "results": [
+            {
+              "ruleId": "COMPUTE-CODE-OVERWRITE",
+              "level": "error",
+              "message": {
+                "text": "Overwrite existing compute code/config (runs under its existing role, no PassRole) [identity policy] at statement `WildcardArnWrite`; actions: `ec2:*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v2": "bfac2d026197e244f35455d5086fc32f"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "WildcardArnWrite",
+                    "role": "primitive",
+                    "actions": [
+                      "ec2\\:\\*"
+                    ],
+                    "resources": [
+                      "arn\\:aws\\:\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "WildcardArnWrite",
+                "baselineId": "5e6824e6562c1c4d57748d3fbaa710d1075adea00960b263fa07fa194e782c69"
+              },
+              "ruleIndex": 0
+            },
             {
               "ruleId": "WILDCARD-ACTION",
               "level": "error",
@@ -178,7 +328,7 @@
                 "statementSid": "WildcardArnWrite",
                 "baselineId": "175b5584f57dcd6d41c0ca632258a2dde0ef2345fe943cb15142fc23466adc90"
               },
-              "ruleIndex": 0
+              "ruleIndex": 1
             },
             {
               "ruleId": "WILDCARD-RESOURCE",
@@ -211,7 +361,7 @@
                 "statementSid": "WildcardArnWrite",
                 "baselineId": "ea76cb63f7f03f75c7f979b69d1e5ab0abec00723f6b03132c0797b4c53fe050"
               },
-              "ruleIndex": 1
+              "ruleIndex": 2
             }
           ]
         }
@@ -239,6 +389,20 @@
       }
     },
     "findings": [
+      {
+        "id": "COMPUTE-CODE-OVERWRITE",
+        "severity": "high",
+        "title": "Overwrite existing compute code/config (runs under its existing role, no PassRole)",
+        "statementIndex": 0,
+        "actions": [
+          "ec2:*"
+        ],
+        "resources": [
+          "arn:aws:*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "16ca157132fc8433"
+      },
       {
         "id": "WILDCARD-ACTION",
         "severity": "high",

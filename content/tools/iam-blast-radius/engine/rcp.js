@@ -46,6 +46,8 @@
 // fence as protective. Reuse the canonical parser so every polarity check sees
 // through the qualifier prefix.
 import { parseOperator } from './conditions.js';
+import { isGlobBudgetError } from './glob.js';
+import { rcpDenyShape } from './guardrail-deny.js';
 
 // Finding ids emitted by this evaluator. Kept distinct from the identity RULE_IDS
 // / ESCALATION_IDS, the trust TRUST_IDS, the envelope ENVELOPE_IDS, and the SCP
@@ -104,8 +106,21 @@ function resourceSummary(stmt) {
 
 const ORG_SOURCE_KEYS = new Set(['aws:sourceorgid', 'aws:sourceorgpaths']);
 const PRINCIPAL_ORG_KEY = 'aws:principalorgid';
+const PRINCIPAL_ORG_PATHS_KEY = 'aws:principalorgpaths';
 const IS_AWS_SERVICE_KEY = 'aws:principalisawsservice';
 const SOURCE_ACCOUNT_KEY = 'aws:sourceaccount';
+
+// F2: an org value under a negated *Like that is not pinned to one concrete org
+// (any wildcard in an org id; a path not rooted at a concrete o-... id) admits
+// principals from other orgs, so the perimeter does not hold.
+const ORG_ID_RE = /^o-[a-z0-9]{10,32}$/;
+function orgValuesAdmitAnyOrg(keyLower, raw) {
+  const vals = (Array.isArray(raw) ? raw : [raw]).map((v) => String(v).toLowerCase());
+  if (keyLower.endsWith('orgpaths')) {
+    return vals.some((v) => !ORG_ID_RE.test(v.split('/')[0]));
+  }
+  return vals.some((v) => /[*?]/.test(v));
+}
 
 // Walk the normalized condition map once and record which guardrail signals are
 // present, preserving the operator each key rides under (evidence, not grants):
@@ -131,6 +146,8 @@ function inspectRcpConditions(condition) {
     principalOrgId: false,
     principalIsAwsService: null, // null=absent, 'true'/'false'=value
     sourceAccountNullValue: null, // null=absent, 'true'/'false'=Null-check value
+    sourceOrgKey: false, // aws:SourceOrgID/Paths present (confused-deputy shape)
+    wildcardOrgPerimeter: false, // F2: negated *Like org value admits any org
     keys: [],
   };
   if (!condition || typeof condition !== 'object') return out;
@@ -162,14 +179,17 @@ function inspectRcpConditions(condition) {
     for (const key of Object.getOwnPropertyNames(inner)) {
       const keyLower = String(key).toLowerCase();
       out.keys.push(String(key));
-      if (ORG_SOURCE_KEYS.has(keyLower)) {
+      if (ORG_SOURCE_KEYS.has(keyLower) || keyLower === PRINCIPAL_ORG_KEY || keyLower === PRINCIPAL_ORG_PATHS_KEY) {
         recordOrgScope(key);
-      } else if (keyLower === PRINCIPAL_ORG_KEY) {
-        recordOrgScope(key);
-        out.principalOrgId = true;
+        if (keyLower === PRINCIPAL_ORG_KEY || keyLower === PRINCIPAL_ORG_PATHS_KEY) out.principalOrgId = true;
+        else out.sourceOrgKey = true;
+        if (base === 'stringnotlike' && orgValuesAdmitAnyOrg(keyLower, inner[key])) {
+          out.wildcardOrgPerimeter = true;
+        }
       } else if (keyLower === IS_AWS_SERVICE_KEY) {
         const v = inner[key];
-        out.principalIsAwsService = Array.isArray(v) ? String(v[0]) : String(v);
+        out.principalIsAwsService = (Array.isArray(v) ? String(v[0]) : String(v)).toLowerCase();
+        out.isAwsServiceSingle = !Array.isArray(v) || v.length === 1;
       } else if (keyLower === SOURCE_ACCOUNT_KEY && opLower === 'null') {
         const v = inner[key];
         out.sourceAccountNullValue = Array.isArray(v) ? String(v[0]) : String(v);
@@ -194,7 +214,7 @@ function principalIsWildcard(stmt) {
 
 // --- Finding builder ---------------------------------------------------------
 
-function buildGuardrailFinding(stmt) {
+function buildGuardrailFinding(stmt, opts) {
   const info = inspectRcpConditions(stmt.condition);
   const confusedDeputy = isConfusedDeputy(info);
   const wildcardPrincipal = principalIsWildcard(stmt);
@@ -206,7 +226,15 @@ function buildGuardrailFinding(stmt) {
   // the org matches - it denies your OWN organization and leaves outsiders
   // un-guardrailed, the INVERSE of confused-deputy / org-perimeter protection.
   // Flag it as a likely misconfiguration; it is still a Deny (never a grant).
-  const invertedOrgScopeHazard = info.orgScopeKeys.length > 0 && info.orgScopePositive;
+  const shape = rcpDenyShape(stmt, opts);
+  const invertedOrgScopeHazard = (info.orgScopeKeys.length > 0 && info.orgScopePositive) || shape.inverted;
+  if (shape.admitsAnyOrg) info.wildcardOrgPerimeter = true;
+  // F12: a principal-org perimeter that denies only AWS service principals lets
+  // every non-service outsider through (the correct template uses false).
+  const servicePolarityHazard = info.principalOrgId && !info.sourceOrgKey &&
+    !info.orgScopePositive && info.isAwsServiceSingle && info.principalIsAwsService === 'true';
+  const blocking = invertedOrgScopeHazard || servicePolarityHazard || info.wildcardOrgPerimeter ||
+    !!shape.vacuous || !!shape.sourcePolarity;
 
   let guardrailKind;
   if (confusedDeputy) guardrailKind = 'confused-deputy';
@@ -229,7 +257,8 @@ function buildGuardrailFinding(stmt) {
       (invertedOrgScopeHazard
         ? 'whose org-scope condition uses a POSITIVE operator, so it does NOT ' +
           'implement standard confused-deputy protection. '
-        : 'implementing confused-deputy protection. ') +
+        : blocking ? 'shaped like confused-deputy protection, which it does not provide (see above). '
+          : 'implementing confused-deputy protection. ') +
       'Its conditions act TOGETHER (logical AND), as a ' +
       'single guardrail - not three independent denies: it denies access to the ' +
       'in-scope organization resources ' +
@@ -337,13 +366,10 @@ function buildGuardrailFinding(stmt) {
 
   const finding = {
     id: 'RCP-GUARDRAIL',
-    // A guardrail is protective (informational): it subtracts from the resource
-    // ceiling and grants nothing. The one exception is the inverted org-scope Deny
-    // hazard (a positive-operator org-scope comparator that denies your OWN org and
-    // leaves outsiders un-guardrailed): a misconfiguration - raise it to medium so
-    // it is visible. Never high/critical - an RCP is not an attack path and a
-    // ceiling can never be a compound escalation.
-    severity: invertedOrgScopeHazard ? 'medium' : 'info',
+    // A guardrail is protective (informational) and grants nothing. An inverted,
+    // service-polarity-inverted or wildcard-org perimeter reads as a control that
+    // is not there: high (F2/F4/F12). Never critical (an RCP is not a path).
+    severity: blocking ? 'high' : 'info',
     title,
     statementSid: statementSid(stmt),
     statementIndex: stmt.index,
@@ -386,6 +412,50 @@ function buildGuardrailFinding(stmt) {
     finding.hazard = true;
     finding.orgScopePositiveOperator = true;
   }
+  if (blocking) finding.hazard = true;
+  if (shape.vacuous) {
+    finding.vacuous = shape.vacuous;
+    finding.title = 'RCP guardrail that never fires (no-op Deny)';
+    finding.why = (shape.vacuous === 'contradiction'
+      ? 'This Deny requires one key to hold two different values, so it never fires. '
+      : 'This Deny\'s resource scope matches none of the resources its actions reach, so ' +
+        'it applies to nothing. ') + finding.why;
+    finding.remediation = 'Fix the condition or resource scope so the perimeter Deny can fire.';
+  } else if (info.wildcardOrgPerimeter) {
+    finding.wildcardOrgPerimeter = true;
+    finding.title = 'RCP organization perimeter that admits any organization';
+    finding.why = 'The org value under the negated *Like is a wildcard not pinned to ' +
+      'one organization, so principals from other AWS organizations match it and the ' +
+      'Deny never fires for them: the perimeter admits any org. ' + finding.why;
+    finding.remediation = 'Pin the org condition to your concrete organization id ' +
+      '(o-...) with StringNotEqualsIfExists, or root org paths at that id.';
+  } else if (servicePolarityHazard) {
+    finding.servicePolarityInverted = true;
+    finding.title = 'RCP organization perimeter that exempts every non-service caller';
+    finding.why = 'aws:PrincipalIsAWSService = true limits this Deny to AWS service ' +
+      'principals, so human and workload principals from ANY organization are never ' +
+      'denied - the inverse of the AWS perimeter template (which uses false to exempt ' +
+      'only service principals). ' + finding.why;
+    finding.remediation = 'Use BoolIfExists aws:PrincipalIsAWSService = false so the ' +
+      'perimeter denies every non-service principal outside your organization.';
+  }
+  if (!shape.vacuous && !info.wildcardOrgPerimeter && !servicePolarityHazard && shape.sourcePolarity) {
+    finding.sourcePolarityInverted = shape.sourcePolarity;
+    const posAcct = shape.sourcePolarity === 'positive-source-account';
+    finding.title = posAcct ? 'RCP confused-deputy guardrail limited to the named source accounts'
+      : 'RCP confused-deputy guardrail that never denies service calls';
+    finding.why = (posAcct
+      ? 'A positive aws:SourceAccount comparator limits this Deny to the named source ' +
+        'accounts, so service calls made on behalf of every other account are not denied. '
+      : shape.sourcePolarity === 'service-false'
+      ? 'aws:PrincipalIsAWSService = false limits this Deny to non-service callers, but ' +
+        'those never carry source-org context, so service calls on behalf of other orgs ' +
+        'are not denied. '
+      : 'Null aws:SourceAccount = true limits this Deny to calls WITHOUT source context, ' +
+        'so service calls made on behalf of foreign accounts are never denied. ') + finding.why;
+    finding.remediation = 'Use the AWS template: Bool aws:PrincipalIsAWSService = true and ' +
+      'Null aws:SourceAccount = false.';
+  }
   if (wildcardPrincipal) finding.wildcardPrincipalSubject = true;
   if (hasCarveList) finding.excludedActions = stmt.notActions.slice();
   if (Array.isArray(stmt.notResources) && stmt.notResources.length > 0) {
@@ -427,7 +497,7 @@ function deepFreeze(value) {
  * @param {object} model normalized, frozen model (from modelFromText)
  * @returns {{ok:boolean, errors:Array, findings:Array<object>}}
  */
-export function analyzeRcp(model) {
+export function analyzeRcp(model, opts = {}) {
   try {
     const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
     const findings = [];
@@ -436,7 +506,7 @@ export function analyzeRcp(model) {
       // (RCPFullAWSAccess) - it is not a guardrail and never a grant, so it
       // contributes no finding (there is nothing the ceiling forbids).
       if (stmt.effect === 'Deny') {
-        findings.push(buildGuardrailFinding(stmt));
+        findings.push(buildGuardrailFinding(stmt, opts));
       }
     }
     findings.sort((a, b) => a.statementIndex - b.statementIndex);
@@ -446,6 +516,7 @@ export function analyzeRcp(model) {
       findings: deepFreeze(findings),
     });
   } catch (e) {
+    if (isGlobBudgetError(e)) throw e;
     return Object.freeze({
       ok: false,
       errors: Object.freeze([

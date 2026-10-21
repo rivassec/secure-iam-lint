@@ -98,7 +98,7 @@ import {
 } from './escalation-finding.js';
 export * from './escalation-finding.js';
 import {
-  denyActionApplies, denyResourcesCover, denyResourceCoverage, denyEffectOnAction, applyDenyToActions,
+  denyActionApplies, denyResourcesCover, denyResourceCoverage, denyEffectOnAction, applyDenyToActions, globsIntersectRaw,
 } from './escalation-deny.js';
 export * from './escalation-deny.js';
 import {
@@ -107,7 +107,7 @@ import {
 export * from './escalation-consts.js';
 import { concreteRoleTargetAccount, isConcreteRoleArn, resourceCoversRole, isAllRolesAssumeScope, specificAccountsInRoleArns, parsePassResource, partitionReaches, accountReaches, partitionModelable, subjectPartitionKnown, accountModelable, otherResourceIsUnmodelable, isUnmodelablePassResource, isConfidentPinnedResource, globCanProducePrefix, subjectRoleArnPrefix, resourceReachesSubject, rolePathIsWildcardEquivalent, principalPinsOf, constraintContains, keyConstraintsSatisfiable, principalPinsOfMemo, pinsJointlySatisfiable, principalConditionsSatisfiable, ROLE_ARN_PARTS_RE, KNOWN_PARTITIONS, IAM_ARN_LENIENT_RE, PRINCIPAL_INVARIANT_KEYS, EXACT_EQUALITY_PIN_OPERATORS, NEGATED_EQUALITY_PIN_OPERATORS, CASE_INSENSITIVE_PIN_OPERATORS, SATISFIABILITY_TRIPLE_WORK } from './escalation-reachability.js';
 export * from './escalation-reachability.js';
-import { passedToServiceEntries, normalizeOperator, operatorPermitsService, passRolePermitsService, hasNonEmptyCondition, UNASSERTED_PARTITION } from './escalation-conditions.js';
+import { passedToServiceEntries, normalizeOperator, operatorPermitsService, passRolePermitsService, hasNonEmptyCondition, denyCertainForService, UNASSERTED_PARTITION } from './escalation-conditions.js';
 export { hasNonEmptyCondition } from './escalation-conditions.js';
 import { statementSid } from './escalation-statement.js';
 import { resourceScope, isStarResource, grantTokenIsBroad, resourceListIsBroadForAssume, assumeScopeIsAllRoles, assumeAccountReach, roleNameAxisUnconstrained } from './escalation-scope.js';
@@ -293,6 +293,35 @@ function resolveArnEvidence(ev) {
   return ev.parts.size === 0 ? UNASSERTED_PARTITION : [...ev.parts][0];
 }
 
+// T2-3: a bare service wildcard (iam:*) that grants only explicitOnly exec actions.
+function onlyViaServiceWildcard(p, svc) {
+  if (!svc.explicitOnly || !/^[^:*?]+:\*$/.test(String(p))) return false;
+  return !svc.execActions.some((a) => !svc.explicitOnly.includes(a) && actionGrants(p, a));
+}
+
+// T2-6: a PassRole grant only on non-role ARNs (user/, group/, another service)
+// cannot pass a role. Variables, NotResource and non-ARN text stay in (fail closed).
+// A role ARN has exactly five colons, so match per segment: service iam, resource role/.
+function passMayReachRole(stmt) {
+  if (stmt.notResources.length > 0 || stmt.resources.length === 0) return true;
+  return stmt.resources.some((r) => {
+    const v = String(r);
+    chargeWork(v.length + 1);
+    if (!v.startsWith('arn:') || v.includes('${')) return true;
+    const segs = v.split(':');
+    if (segs.length < 6) return true;
+    return globsIntersectRaw(segs[2], 'iam') && globsIntersectRaw(segs.slice(5).join(':'), 'role/*');
+  });
+}
+
+// T2-6: per service, a PassedToService-only Deny that certainly matches it counts
+// as unconditional.
+function denyForService(denies, principal, partition) {
+  return denies.map((d) => (hasNonEmptyCondition(d) && denyCertainForService(d.condition, principal, partition)
+    ? { ...d, condition: {} }
+    : d));
+}
+
 function detectPassRolePaths(allows, out, denies, ctx) {
   const rawSubjectAccount = ctx && ctx.subjectAccount != null ? String(ctx.subjectAccount) : null;
   const subjectAccount = rawSubjectAccount && CONCRETE_ACCOUNT_ID_RE.test(rawSubjectAccount)
@@ -339,7 +368,7 @@ function detectPassRolePaths(allows, out, denies, ctx) {
   const passStmts = [];
   for (const stmt of allows) {
     const matched = grantedPatternsFor(stmt, [PASS_ROLE_ACTION]);
-    if (matched.length > 0) passStmts.push(stmt);
+    if (matched.length > 0 && passMayReachRole(stmt)) passStmts.push(stmt);
   }
   if (passStmts.length === 0) return; // PassRole alone is never flagged, and
   // without any PassRole grant there is no pass path at all.
@@ -387,10 +416,10 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     let execAnyCandidate = false;
     const execArnStmts = []; // every surviving candidate feeds partition evidence (F2-01)
     for (const stmt of allows) {
-      const m = grantedPatternsFor(stmt, svc.execActions);
+      const m = grantedPatternsFor(stmt, svc.execActions).filter((p) => !onlyViaServiceWildcard(p, svc));
       if (m.length === 0) continue;
       execAnyCandidate = true;
-      const d = applyDenyToActions(denies, m, stmt);
+      const d = applyDenyToActions(denies, m, stmt, svc.execActions);
       if (d.blocked) continue; // this exec statement is fully, in-scope denied
       execArnStmts.push(stmt);
       // MOST-SEVERE first: a launch-capable exec (critical) outranks a staging-only
@@ -445,10 +474,10 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     for (const stmt of passStmts) {
       // Unasserted partition: derive the matching world from the path's own ARNs
       // (viability still treats the partition as unasserted).
-      let p = passRolePermitsService(stmt.condition, svc.principal,
-        partitionKnown
-          ? subjectPartition
-          : resolveArnEvidence(mergeArnEvidence(mergeArnEvidence({ parts: new Set(), poison: false }, evidenceOfStmt(stmt)), execEv)));
+      const passPart = partitionKnown
+        ? subjectPartition
+        : resolveArnEvidence(mergeArnEvidence(mergeArnEvidence({ parts: new Set(), poison: false }, evidenceOfStmt(stmt)), execEv));
+      let p = passRolePermitsService(stmt.condition, svc.principal, passPart);
       if (!p.permits && partitionKnown) {
         // R2-05: a pin that misses the asserted partition but matches the ROLE
         // ARNs' own world keeps the path, so the cross-partition demotion (and
@@ -463,7 +492,7 @@ function detectPassRolePaths(allows, out, denies, ctx) {
       }
       if (!p.permits) continue;
       passAnyPermits = true;
-      const eff = denyEffectOnAction(denies, PASS_ROLE_ACTION, stmt);
+      const eff = denyEffectOnAction(denyForService(denies, svc.principal, passPart), PASS_ROLE_ACTION, stmt);
       if (eff === 'blocked') continue; // this PassRole grant is fully, in-scope denied
       const narrowed = eff === 'may-block';
       // Rank by viability TIER: 2 = confidently viable same-account (stays critical),

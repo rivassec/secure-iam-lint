@@ -17,9 +17,9 @@
   },
   "expect": { "valid": true },
   "expectMessaging": {
-    "coverageIncomplete": true,
+    "coverageIncomplete": false,
     "findingIds": ["RESOURCE-CONFUSED-DEPUTY"],
-    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "medium" },
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "high" },
     "notFindingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE", "MESSAGING-POLICY-TAKEOVER", "RESOURCE-CROSS-ACCOUNT"],
     "sourceBindingState": { "RESOURCE-CONFUSED-DEPUTY": "unbound" },
     "whyIncludes": { "RESOURCE-CONFUSED-DEPUTY": ["confused-deputy", "NOT public write"] },

@@ -73,6 +73,12 @@ export * from './trust-catalogs.js';
 // graceful fail-closed mapping and the CLI clock re-throw).
 import { chargeWork, isGlobBudgetError } from './glob.js';
 
+const ALWAYS_PRESENT_ON_ASSUME_ROLE = Object.freeze(new Set(['aws:principalarn', 'aws:principalaccount', 'aws:principaltype']));
+// Multi-tenant providers: anyone on the internet can obtain a token (F5).
+const GITHUB_OIDC_HOST = 'token.actions.githubusercontent.com';
+const COGNITO_FED_HOST = 'cognito-identity.amazonaws.com';
+const fedHost = (v) => String(v).toLowerCase().replace(/^arn:[^:]*:iam::[^:]*:oidc-provider\//, '');
+
 // The sts: action set that makes a statement a TRUST statement (compared
 // case-insensitively). Mirrors docs/trust-policy-semantics.md section 3 and the
 // TRUST_ACTIONS set family.js uses to detect the role-trust shape.
@@ -281,7 +287,12 @@ function findingsForStatement(stmt, subjectAccount = null) {
     if (principals.entries.length === 0) return found;
   }
 
-  const sig = conditionSignals(stmt.condition, principals, subjectAccount);
+  // T1-07: plain sts:AssumeRole is always signed by an AWS principal, so these keys
+  // are always present; WithSAML / WithWebIdentity requests may lack them.
+  const assumeActs = stmt.actions.map((a) => String(a).toLowerCase()).filter((a) => ASSUME_ACTIONS.has(a));
+  const alwaysPresent = assumeActs.length > 0 && assumeActs.every((a) => a === 'sts:assumerole')
+    ? ALWAYS_PRESENT_ON_ASSUME_ROLE : null;
+  const sig = conditionSignals(stmt.condition, principals, subjectAccount, alwaysPresent);
   const who = principalSummary(principals);
   // A would-be constraint carrying a bypassable qualifier (...IfExists /
   // ForAllValues:) is NOT credited above and does not lower severity; name it so
@@ -444,29 +455,69 @@ function findingsForStatement(stmt, subjectAccount = null) {
     const fed = subsetPrincipals(principals, ['federated-oidc', 'federated-saml']);
     const fedWho = principalSummary(fed);
     const broad = sig.subScope !== 'tight'; // broad, or no subject condition at all
+    const hosts = fed.entries.map((e) => fedHost(e.value)); // exact host per entry
+    // F5: GitHub with an open sub, or Cognito with no literal pool id, is satisfiable
+    // by anyone on the internet - public-equivalent.
+    const openGithub = hosts.some((h) => h === GITHUB_OIDC_HOST) && !sig.subScoped;
+    const openCognito = hosts.some((h) => h === COGNITO_FED_HOST) && !sig.cognitoAudPresent;
+    const internetOpen = broad && (openGithub || openCognito);
+    // T2-7: the documented pattern (pinned pool + amr authenticated) bounds trust to
+    // that pool's signed-in users: a population, so medium, never low.
+    const cognitoOnly = hosts.length > 0 && hosts.every((h) => h === COGNITO_FED_HOST);
+    const poolSignedIn = broad && !internetOpen && cognitoOnly &&
+      sig.cognitoAudPinned && sig.cognitoAmr === 'authenticated';
+    const guestNote = hosts.some((h) => h === COGNITO_FED_HOST) &&
+      (sig.cognitoAmr === 'unauthenticated' || sig.cognitoAmr === 'mixed')
+      ? 'The amr condition admits the UNAUTHENTICATED (guest) audience: anyone who ' +
+        'knows the identity pool id can obtain these credentials. '
+      : '';
+    const fedSeverity = internetOpen ? 'critical' : poolSignedIn ? 'medium' : broad ? 'high' : 'low';
     found.push(makeFinding(stmt, fed, {
       id: 'TRUST-FEDERATED',
-      severity: broad ? 'high' : 'low',
+      severity: fedSeverity,
       title: 'Federated identity role trust',
-      why: broad
+      why: internetOpen
+        ? 'The trust policy federates assume-role to a MULTI-TENANT identity provider ' +
+          `(${fedWho}) without a condition that pins the trusted tenant: ` +
+          (openGithub
+            ? 'the subject (sub) is absent or open to every repository owner, so any ' +
+              'GitHub repository in the world can mint a matching token. '
+            : 'no literal Cognito identity pool id (aud) is required, so identities from ' +
+              'any identity pool in any AWS account can assume the role. ') +
+          'This is public-equivalent trust. ' + guestNote + bypassNote
+        : poolSignedIn
+        ? 'The trust policy federates assume-role to Cognito, pinned to a specific ' +
+          `identity pool (aud) and to its AUTHENTICATED users (amr) (${fedWho}). Every ` +
+          'signed-in user of that pool holds this role - a population-scale audience, ' +
+          'so permissions must be safe for all of them. Population-scale reach: this ' +
+          'trust analysis does not see the role\'s attached policies; review them, since ' +
+          'any data access they grant reaches every authenticated pool user.'
+        : broad
         ? 'The trust policy federates assume-role to an external identity provider ' +
           `(${fedWho}) with a BROAD or absent subject scope. A subject such as ` +
           'repo:org/* (or no subject condition) trusts an organization-wide set of ' +
           'workloads rather than one specific workload. ' +
           (sig.audConstraint ? 'The audience (aud) check is a valid constraint and is recognized. ' : '') +
-          bypassNote
+          guestNote + bypassNote
         : 'The trust policy federates assume-role to an external identity provider ' +
           `(${fedWho}) with a TIGHTLY-scoped subject (bound to a specific ` +
           'repository + ref/branch/environment). ' +
           (sig.audConstraint ? 'The audience (aud) check is a valid constraint and is recognized. ' : ''),
-      remediation: broad
+      remediation: openCognito && internetOpen
+        ? 'Require the specific identity pool id with StringEquals on ' +
+          'cognito-identity.amazonaws.com:aud, and ForAnyValue:StringLike ' +
+          'cognito-identity.amazonaws.com:amr "authenticated" for signed-in users.'
+        : poolSignedIn
+        ? 'Keep the aud and amr conditions; scope the role permissions to what every ' +
+          'signed-in pool user may do (prefer per-identity resource variables).'
+        : broad
         ? 'Constrain the subject (sub) condition to the intended repository AND ' +
           'branch/environment (e.g. repo:org/repo:ref:refs/heads/main), not an ' +
           'org-wide wildcard. Keep the audience (aud) check in place.'
         : 'Subject scope looks specific; keep the audience (aud) and subject (sub) ' +
           'conditions in place and review periodically.',
       docRef: DOC_OIDC,
-      pathExploitability: broad ? 'medium' : 'low',
+      pathExploitability: internetOpen ? 'high' : broad && !poolSignedIn ? 'medium' : 'low',
     }));
   }
 

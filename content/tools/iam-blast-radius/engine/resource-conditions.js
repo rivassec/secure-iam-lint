@@ -2,6 +2,52 @@
 import { chargeWork } from './glob.js';
 import { parseOperator, NEGATED_OPERATORS } from './conditions.js';
 import { RESOURCE_SERVICES } from './resource-catalogs.js';
+import { selfReferenceKeys, substitutePolicyVars, toValues } from './trust-conditions.js';
+import { accountOrOrgValueNarrows, isAllGlobOrEmpty } from './trust-principal-helpers.js';
+
+// Every AWS condition operator base (after ForAllValues:/ForAnyValue: and IfExists).
+export const KNOWN_CONDITION_OPERATORS = Object.freeze(new Set([
+  'stringequals', 'stringnotequals', 'stringequalsignorecase', 'stringnotequalsignorecase',
+  'stringlike', 'stringnotlike',
+  'numericequals', 'numericnotequals', 'numericlessthan', 'numericlessthanequals',
+  'numericgreaterthan', 'numericgreaterthanequals',
+  'dateequals', 'datenotequals', 'datelessthan', 'datelessthanequals',
+  'dategreaterthan', 'dategreaterthanequals',
+  'bool', 'binaryequals', 'ipaddress', 'notipaddress',
+  'arnequals', 'arnlike', 'arnnotequals', 'arnnotlike', 'null',
+]));
+
+// T2-4: operators/blocks the resource evaluator cannot read (no policy text echoed). An unknown operator
+// would otherwise fall through as "positive" and be credited as narrowing.
+export function conditionShapeProblems(condition) {
+  if (condition === null || condition === undefined) return [];
+  if (typeof condition !== 'object' || Array.isArray(condition)) return ['a malformed Condition block'];
+  const out = [];
+  for (const op of Object.keys(condition)) {
+    const inner = condition[op];
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) out.push('a malformed operator block');
+    else if (!KNOWN_CONDITION_OPERATORS.has(parseOperator(op).base)) out.push('an unknown operator');
+  }
+  return out;
+}
+
+const ACCOUNT_LIKE_KEYS = new Set(['aws:principalaccount', 'aws:sourceaccount', 'aws:principalorgid', 'kms:calleraccount']);
+
+// T2-5: does this value actually narrow the scoping key? ${...} reads as '*'.
+// An ARN narrows only with a concrete account, or (account-less) a literal resource.
+function scopingValueNarrows(keyLower, raw) {
+  const s = substitutePolicyVars(raw);
+  if (ACCOUNT_LIKE_KEYS.has(keyLower)) return accountOrOrgValueNarrows(s);
+  if (keyLower === 'aws:principalarn' || keyLower === 'aws:sourcearn') {
+    const segs = s.split(':');
+    if (segs.length < 6 || segs[0].toLowerCase() !== 'arn') return false;
+    const account = segs[4];
+    const resource = segs.slice(5).join(':');
+    if (/^[0-9]{12}$/.test(account)) return true;
+    return account === '' && resource !== '' && !/[*?]/.test(resource);
+  }
+  return !isAllGlobOrEmpty(s);
+}
 
 export const PRINCIPAL_SCOPING_KEYS = Object.freeze(new Set([
   'aws:principalarn',
@@ -65,16 +111,18 @@ export function operatorNegatesScope(operator, value) {
 // Analyze the principal-scoping condition keys on a statement, separating those that
 // genuinely NARROW an anonymous "*" grant (a principal-identity key under a positive
 // operator) from those that EXPAND it (the same key under a negated/absent operator,
-// which reads "everyone EXCEPT ..." and does not exclude anonymous). Both lists are
-// original-cased, sorted, deduped. Never rejects or interprets the condition VALUE -
-// a wildcard inside e.g. aws:PrincipalArn is a valid condition value, not a
-// partial-ARN principal wildcard (test 85); only the OPERATOR polarity is read.
+// which reads "everyone EXCEPT ..." and does not exclude anonymous). Lists are
+// original-cased, sorted, deduped. A wildcard inside e.g. aws:PrincipalArn is a valid
+// condition value, not a partial-ARN principal wildcard (test 85), but a value that
+// narrows nothing lands in openKeys (T2-5).
 export function principalScopingAnalysis(condition, service) {
   const scoping = new Set();
   const expanding = new Set();
   const bypassing = new Set();
+  // T2-5: a positive match whose value narrows nothing (*, ${...}, Null:false).
+  const open = new Set();
   if (!condition || typeof condition !== 'object' || Array.isArray(condition)) {
-    return { scopingKeys: [], expansionKeys: [], bypassKeys: [] };
+    return { scopingKeys: [], expansionKeys: [], bypassKeys: [], openKeys: [], tautologyKeys: [] };
   }
   for (const op of Object.keys(condition)) {
     const inner = condition[op];
@@ -94,17 +142,30 @@ export function principalScopingAnalysis(condition, service) {
     // critical; only the positive-but-bypassable case is diverted here.
     const lowerOp = String(op).toLowerCase();
     const bypassable = lowerOp.includes('ifexists') || lowerOp.startsWith('forallvalues:');
+    const isNull = parseOperator(op).base === 'null';
     for (const key of keys) {
-      if (!isPrincipalScopingKey(String(key).toLowerCase(), service)) continue;
+      const keyLower = String(key).toLowerCase();
+      if (!isPrincipalScopingKey(keyLower, service)) continue;
       if (operatorNegatesScope(op, inner[key])) expanding.add(key);
       else if (bypassable) bypassing.add(key);
-      else scoping.add(key);
+      else if (isNull) open.add(key); // Null:false only asks the key exist
+      else if (!/^(string|arn)/.test(parseOperator(op).base)) open.add(key); // V1-7: numeric/date/binary ranges pin nothing
+      else {
+        const vals = toValues(inner[key]);
+        chargeWork(vals.length);
+        if (vals.length > 0 && vals.every((v) => scopingValueNarrows(keyLower, v))) scoping.add(key);
+        else open.add(key);
+      }
     }
   }
+  const scopingKeys = [...scoping].sort();
+  const scopingSet = new Set(scopingKeys);
   return {
-    scopingKeys: [...scoping].sort(),
+    scopingKeys,
     expansionKeys: [...expanding].sort(),
     bypassKeys: [...bypassing].sort(),
+    openKeys: [...open].filter((k) => !scopingSet.has(k)).sort(),
+    tautologyKeys: selfReferenceKeys(condition),
   };
 }
 

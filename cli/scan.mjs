@@ -353,13 +353,19 @@ function incompleteStatesFromCoverage(coverage) {
     ));
   }
   if (s.resourceContext && s.resourceContext.incomplete) {
-    out.push(state(
-      ANALYSIS_STATE.INCOMPLETE,
-      'RESOURCE_ANALYSIS_INCOMPLETE',
-      s.resourceContext.note ||
-        'Resource policy accepted, but service-specific resource rules are not yet ' +
-        'implemented (zero findings does NOT mean safe).',
-    ));
+    // T2-4: one state per unmodeled part, located by path.
+    const reasons = Array.isArray(s.resourceContext.reasons) ? s.resourceContext.reasons : [];
+    if (reasons.length === 0) {
+      out.push(state(
+        ANALYSIS_STATE.INCOMPLETE,
+        'RESOURCE_ANALYSIS_INCOMPLETE',
+        s.resourceContext.note ||
+          'Resource policy accepted, but part of it is not modeled (zero findings does NOT mean safe).',
+      ));
+    }
+    for (const r of reasons) {
+      out.push(state(ANALYSIS_STATE.INCOMPLETE, r.code, r.message, { path: r.path }));
+    }
   }
   for (const u of (s.broadUndecidableUncovered || [])) {
     const axis = u.axis === 'NotResource' ? 'NotResource' : 'Resource';
@@ -480,7 +486,7 @@ export function scan(input) {
     return usageError(
       'MISSING_FAMILY',
       'A policy family is required (identity, resource, role-trust, ' +
-        'permissions-boundary, scp-rcp, or session). This tool does not auto-detect ' +
+        'trust, permissions-boundary, scp-rcp, scp, rcp, or session). This tool does not auto-detect ' +
         'the family.',
     );
   }
@@ -502,7 +508,7 @@ export function scan(input) {
     return usageError(
       'UNKNOWN_FAMILY',
       `Unknown policy family '${familyToken}' (expected one of: identity, ` +
-        'resource, role-trust, permissions-boundary, scp-rcp, session).',
+        'resource, role-trust, trust, permissions-boundary, scp-rcp, scp, rcp, session).',
     );
   }
 

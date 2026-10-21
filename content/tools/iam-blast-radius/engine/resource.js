@@ -53,7 +53,7 @@ import {
 } from './resource-principal-classification.js';
 export * from './resource-principal-classification.js';
 import {
-  PRINCIPAL_SCOPING_KEYS, KMS_PRINCIPAL_SCOPING_KEYS, isPrincipalScopingKey, operatorNegatesScope, principalScopingAnalysis, NETWORK_SELECTOR_KEYS, selectorCategory, conditionKeyInventory, describeConditionComposition,
+  PRINCIPAL_SCOPING_KEYS, KMS_PRINCIPAL_SCOPING_KEYS, isPrincipalScopingKey, operatorNegatesScope, principalScopingAnalysis, NETWORK_SELECTOR_KEYS, selectorCategory, conditionKeyInventory, describeConditionComposition, conditionShapeProblems,
 } from './resource-conditions.js';
 export * from './resource-conditions.js';
 import {
@@ -61,14 +61,15 @@ import {
 } from './resource-source-binding.js';
 export * from './resource-source-binding.js';
 import {
-  parseArn, serviceForArn, parseResourceContext,
+  parseArn, serviceForArn, parseResourceContext, statementNamesForeignResource,
 } from './arn-util.js';
 export * from './arn-util.js';
 import {
-  RESOURCE_CODES, RESOURCE_SERVICES, MODELED_RESOURCE_SERVICES, RESOURCE_IDS, RESOURCE_RULE_VERSION, RESOURCE_LIMIT, DOC_PRINCIPAL, DOC_CROSS_ACCOUNT, DOC_S3_BPA, DOC_CONFUSED_DEPUTY, DOC_EVAL_LOGIC, DOC_S3_ACTIONS, DOC_S3_POLICY_KEYS, DOC_KMS_KEY_POLICY, DOC_KMS_OVERVIEW, DOC_KMS_CONDITIONS, DOC_KMS_GRANTS, DOC_SNS_ACCESS, DOC_SQS_ACCESS, RESOURCE_SERVICE_LABELS,
+  RESOURCE_CODES, RESOURCE_SERVICES, MODELED_RESOURCE_SERVICES, RESOURCE_IDS, RESOURCE_RULE_VERSION, RESOURCE_LIMIT, DOC_PRINCIPAL, DOC_CROSS_ACCOUNT, DOC_S3_BPA, DOC_CONFUSED_DEPUTY, DOC_EVAL_LOGIC, DOC_S3_ACTIONS, DOC_S3_POLICY_KEYS, DOC_KMS_KEY_POLICY, DOC_KMS_OVERVIEW, DOC_KMS_CONDITIONS, DOC_KMS_GRANTS, DOC_SNS_ACCESS, DOC_SQS_ACCESS, RESOURCE_SERVICE_LABELS, NOTPRINCIPAL_DENY_HAZARD_MESSAGE,
 } from './resource-catalogs.js';
 export * from './resource-catalogs.js';
 import { parseOperator, NEGATED_OPERATORS } from './conditions.js';
+import { selfReferenceKeys } from './trust-conditions.js';
 // S3-dos-budget-all: the resource family analyzer is the sibling of trust.js/
 // escalation.js and must participate in the SAME deterministic work / wall-clock budget
 // so no family surface is a budget-blind fail-open (threat-model T5/T8, the "fix the
@@ -127,9 +128,50 @@ function resourceFindings(model, ctx) {
     // positive grants (a transport-only Deny is handled as an annotation, not a
     // finding; general Deny suppression is out of this tranche's scope).
     if (!stmt || stmt.effect !== 'Allow') continue;
+    // F11: Allow + NotPrincipal grants everyone EXCEPT the listed principals,
+    // anonymous callers included. Never read it as narrow.
+    if (stmt.notPrincipal != null) {
+      findings.push(makeResourceFinding(stmt, [{ type: 'anonymous', value: '*' }], {
+        id: 'PUBLIC-ACCESS',
+        severity: 'critical',
+        title: 'Public resource access via Allow with NotPrincipal',
+        why: `The resource policy allows ${stmt.actions.join(', ')} on this ${serviceLabel} ` +
+          'to every principal EXCEPT those listed in NotPrincipal, including anonymous ' +
+          'callers. AWS does not support Allow with NotPrincipal; it must not be read as ' +
+          'a narrow grant.',
+        remediation: 'Replace NotPrincipal with a Principal element naming exactly the ' +
+          'principals that need access.',
+        docRef: DOC_PRINCIPAL,
+        pathExploitability: 'high',
+        service,
+        attachedArn,
+        transportOnlyDeny,
+      }));
+      continue;
+    }
     const c = classifyPrincipals(stmt.principal);
     const conditioned = stmt.condition && typeof stmt.condition === 'object'
       && !Array.isArray(stmt.condition) && Object.keys(stmt.condition).length > 0;
+
+    // T1-03: key == ${key} is always true; the grant is scored as if it were absent.
+    const selfRefs = selfReferenceKeys(stmt.condition);
+    if (selfRefs.length > 0) {
+      findings.push(makeResourceFinding(stmt, c.entries, {
+        id: 'RESOURCE-CONDITION-TAUTOLOGY',
+        severity: 'info',
+        title: 'Condition compares a key with its own policy variable',
+        why: `The condition on ${selfRefs.join(', ')} tests the key against its own value ` +
+          '(key == ${key}), which is always true, so it constrains nothing. The grant is ' +
+          'scored as if the condition were absent.',
+        remediation: 'Replace the policy variable with the literal value the key must have.',
+        docRef: DOC_PRINCIPAL,
+        policyEvidence: 'high',
+        pathExploitability: 'low',
+        service,
+        attachedArn,
+        transportOnlyDeny,
+      }));
+    }
 
     // 0) Fail-closed unmodeled / invalid Principal types (IAM-1208 fix 4). Emitted
     // FIRST - before the anonymous branch's `continue` below - so a CanonicalUser or
@@ -177,7 +219,7 @@ function resourceFindings(model, ctx) {
     // this narrowing (section 5).
     if (c.anonymous) {
       const anonEntries = c.entries.filter((e) => e.type === 'anonymous');
-      const { scopingKeys, expansionKeys, bypassKeys } = principalScopingAnalysis(stmt.condition, service);
+      const { scopingKeys, expansionKeys, bypassKeys, openKeys } = principalScopingAnalysis(stmt.condition, service);
       // A KMS key policy's "*" is NOT anonymous/public: KMS has no unauthenticated
       // request path, so "*" = every AWS identity in every account (cross-account
       // still double-authorized). This service-scoped reframe changes ONLY the KMS
@@ -203,6 +245,10 @@ function resourceFindings(model, ctx) {
       // bypassable condition drive the finding.
       const principalBypassed =
         !principalExpanded && !principalScoped && bypassKeys.length > 0;
+      // T2-5/T1-03: a positive match that narrows nothing (*, ${...}, key == ${key},
+      // Null:false, an any-account ARN) - every authenticated principal matches.
+      const principalOpen =
+        !principalExpanded && !principalScoped && !principalBypassed && openKeys.length > 0;
       let title;
       let severity;
       let why;
@@ -285,6 +331,22 @@ function resourceFindings(model, ctx) {
           'accounts, roles, or services in the Principal element, or use a POSITIVE, ' +
           'non-IfExists match (e.g. StringEquals aws:PrincipalOrgID) that fails closed ' +
           'when the key is absent.';
+      } else if (principalOpen && !isKms) {
+        severity = 'critical';
+        title = 'Broad principal syntax ("*") with a principal condition that does not narrow';
+        why =
+          `The resource policy grants Principal "*" permission to ${stmt.actions.join(', ')} ` +
+          `on this ${serviceLabel}, gated by a principal condition (${openKeys.join(', ')}) ` +
+          'whose value narrows nothing: a wildcard, a caller-controlled ${...} policy ' +
+          'variable (including a key compared with its own variable, which is always ' +
+          'true), a Null:false presence test, or an ARN with no concrete account. ' +
+          'Anonymous callers lack the key and are excluded, but every authenticated ' +
+          'principal in every AWS account satisfies the condition, so it must not be ' +
+          'read as scoping the grant.';
+        remediation =
+          'Replace the condition value with the literal account, organization ID, or ' +
+          'principal ARN the grant is meant for, or name those principals in the ' +
+          'Principal element instead of "*".';
       } else if (isKms) {
         // KMS "*" is a severe over-grant but is NOT anonymous/public: KMS has no
         // unauthenticated path, so "*" = every AWS identity in every account. Drop the
@@ -339,7 +401,7 @@ function resourceFindings(model, ctx) {
         // The transport Deny does not neutralize the Allow. Its framing depends on
         // whether the Allow is public (bare "*") or already principal-scoped, and (for
         // KMS) avoids the "publicly accessible" wording the KMS "*" is not.
-        if (principalScoped) {
+        if (principalScoped || principalOpen) {
           why +=
             ' A same-policy Deny gated only on aws:SecureTransport=false is a ' +
             'TRANSPORT constraint (it forces HTTPS) and constrains transport, not WHO ' +
@@ -390,7 +452,7 @@ function resourceFindings(model, ctx) {
         // resource-enrichment `anonymous` flag is cleared for KMS - the metadata must
         // not contradict the finding text (trap 1). S3/SNS/SQS keep the structural
         // anonymous flag.
-        anonymousReach: isKms ? false : undefined,
+        anonymousReach: (isKms || principalOpen) ? false : undefined,
       }));
       continue;
     }
@@ -679,6 +741,11 @@ function resourceFindings(model, ctx) {
         arnAccounts.every((a) => !acctAccountSet.has(a));
       const anyBinding = binding.sourceArn.bound || binding.sourceAccount.bound ||
         binding.sourceOrg || binding.sourceOwner;
+      // Credited only when some ANDed key pins every value to the owning account.
+      const ownBound = resourceAccount !== null && binding.pins.some((p) => p.allResolved &&
+        p.accounts.length > 0 && p.accounts.every((a) => a === resourceAccount));
+      const foreignSource = [...new Set(binding.pins.flatMap((p) => p.accounts))]
+        .filter((a) => a !== resourceAccount).sort();
       const bypassedNote = binding.bypassedKeys.length > 0
         ? ` A source condition key IS present (${binding.bypassedKeys.join(', ')}) but ` +
           'does NOT bind the source: it uses a negated operator, a bypassable ' +
@@ -720,6 +787,32 @@ function resourceFindings(model, ctx) {
           'aws:SourceArn value must equal the aws:SourceAccount value. Set them to the ' +
           'account that actually owns the calling source resource, then re-verify the ' +
           'confused-deputy binding.';
+      } else if (anyBinding && !ownBound) {
+        // F13/T2-4: bound, but not provably to this account's sources (a foreign
+        // account, an account-less ARN, an org, or an unknown owning account).
+        state = 'source-unverified';
+        severity = 'high';
+        pathExploitability = 'medium';
+        title = foreignSource.length > 0
+          ? 'Service principal grant is source-bound to another account'
+          : 'Service principal grant is source-bound, but not provably to this account';
+        why =
+          `The resource policy grants an AWS service principal (${svcWho}) permission ` +
+          `to ${acts} on this ${serviceLabel}, constrained by a source condition ` +
+          `(${binding.boundKeys.join(', ')}). ` +
+          (foreignSource.length > 0
+            ? `The binding admits sources in account ${foreignSource.join(', ')}, which ` +
+              `is not the resource-owning account ${resourceAccount}, so resources in ` +
+              'that account can drive the service into this resource.'
+            : 'No bound key pins the source to the resource-owning account' +
+              (resourceAccount === null ? ' (which could not be determined)' : '') +
+              ': an account-less source ARN (an S3 bucket name can be re-registered by ' +
+              'another account after deletion), an organization, or a wildcard account ' +
+              'does not prove the source is this account\'s own.');
+        remediation =
+          'Add aws:SourceAccount (StringEquals) set to the account that owns the ' +
+          'calling source alongside aws:SourceArn, and confirm any other-account source ' +
+          'is intended.';
       } else if (anyBinding) {
         // Test 27: a proper source binding (positive SourceArn / SourceAccount /
         // SourceOrgID). Negative control - informational/low; NO missing-binding
@@ -749,7 +842,7 @@ function resourceFindings(model, ctx) {
         // deputy exposure. NOT public write (a service is not "*"). Name the missing
         // aws:SourceArn / aws:SourceAccount binding; subject to service support.
         state = 'unbound';
-        severity = 'medium';
+        severity = 'high'; // F13: any account's resources can drive the service here
         pathExploitability = 'medium';
         title = 'Service principal grant without a confused-deputy source binding';
         why =
@@ -992,6 +1085,77 @@ export function dispatchPerServiceRules(model, ctx) {
   return Array.isArray(out) ? out : [];
 }
 
+// T2-4: the parts of a resource policy the evaluator cannot read. Resource findings
+// are principal-centric and a Deny only ever annotates them (never removes or lowers
+// one), so ignoring a Deny over-reports; only Allow statements and NotPrincipal
+// decide completeness. Empty -> the analysis is complete.
+const MODELED_PRINCIPAL_TYPES = new Set(['anonymous', 'aws-account', 'aws-root', 'aws-principal-arn', 'service']);
+const SERVICE_ACTION_PREFIX = Object.freeze({
+  [RESOURCE_SERVICES.S3_BUCKET]: 's3',
+  [RESOURCE_SERVICES.S3_OBJECT]: 's3',
+  [RESOURCE_SERVICES.SNS]: 'sns',
+  [RESOURCE_SERVICES.SQS]: 'sqs',
+  [RESOURCE_SERVICES.KMS_KEY]: 'kms',
+});
+function unmodeledReasons(model, ctx) {
+  const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
+  const out = [];
+  const add = (code, path, message, hazard) => out.push(Object.freeze({ code, path, message, hazard: !!hazard }));
+  const prefix = SERVICE_ACTION_PREFIX[ctx.service];
+  if (!prefix) {
+    add(RESOURCE_CODES.RESOURCE_ANALYSIS_INCOMPLETE, null,
+      'The attached resource\'s service has no modeled resource-policy rules.');
+  }
+  // A key policy without account delegation leaves effective access UNKNOWN
+  // (KMS-SILENT-POLICY-UNKNOWN), so it can never read as complete.
+  if (ctx.service === RESOURCE_SERVICES.KMS_KEY && statements.length > 0 &&
+    !kmsHasAccountDelegation(statements) && !kmsHasAnonymousAllow(statements)) {
+    add(RESOURCE_CODES.KMS_SILENT_POLICY_UNKNOWN, null,
+      'The KMS key policy omits the account-delegation statement, so effective access to ' +
+      'the key cannot be determined from the key policy alone.');
+  }
+  chargeWork(statements.length);
+  for (const s of statements) {
+    if (!s) continue;
+    const at = `Statement[${s.index}]`;
+    if (s.notPrincipal != null) {
+      if (s.effect === 'Deny') add('UNSUPPORTED_NOTPRINCIPAL', `${at}.NotPrincipal`, NOTPRINCIPAL_DENY_HAZARD_MESSAGE, true);
+      else add('UNSUPPORTED_NOTPRINCIPAL', `${at}.NotPrincipal`,
+        'Allow with NotPrincipal is reported as public access; NotPrincipal is not modeled.');
+      continue;
+    }
+    if (s.effect !== 'Allow' && s.effect !== 'Deny') {
+      add(RESOURCE_CODES.RESOURCE_STATEMENT_UNMODELED, `${at}.Effect`,
+        'A statement has no recognized Effect, so its reach could not be analyzed.');
+      continue;
+    }
+    if (s.effect !== 'Allow') continue; // a Deny naming another resource cannot widen access
+    if (statementNamesForeignResource(s, ctx.arn)) {
+      add(RESOURCE_CODES.RESOURCE_CONTEXT_REQUIRED, `${at}.Resource`,
+        `An Allow statement names a Resource outside the attached resource "${ctx.arn}", so the ` +
+        'attachment point is ambiguous. Attach the policy to the resource it names (or fix the context).');
+    }
+    const unmodeled = (what, path) => add(RESOURCE_CODES.RESOURCE_STATEMENT_UNMODELED, path,
+      `An Allow statement uses ${what}, which the resource evaluator does not model, so ` +
+      'its reach could not be fully analyzed (unsupported does NOT mean safe).');
+    if (Array.isArray(s.notActions) && s.notActions.length > 0) unmodeled('NotAction', `${at}.NotAction`);
+    if (Array.isArray(s.notResources) && s.notResources.length > 0) unmodeled('NotResource', `${at}.NotResource`);
+    for (const p of conditionShapeProblems(s.condition)) unmodeled(`a condition it cannot read (${p})`, `${at}.Condition`);
+    const c = classifyPrincipals(s.principal);
+    const odd = [...new Set(c.entries.map((e) => e.type).filter((t) => !MODELED_PRINCIPAL_TYPES.has(t))
+      .concat(c.unknownTypes || []))].sort();
+    if (odd.length > 0) unmodeled('an unmodeled principal type', `${at}.Principal`);
+    const actions = Array.isArray(s.actions) ? s.actions : [];
+    chargeWork(actions.length);
+    const foreign = actions.filter((a) => {
+      const t = String(a);
+      return t !== '*' && t.split(':')[0].toLowerCase() !== prefix;
+    });
+    if (prefix && foreign.length > 0) unmodeled("actions outside this resource's service", `${at}.Action`);
+  }
+  return out;
+}
+
 /**
  * Analyze a resource-based policy from the resource's perspective.
  *
@@ -1006,8 +1170,8 @@ export function dispatchPerServiceRules(model, ctx) {
  * grants + S3 bucket-vs-object typing; IAM-1205 adds KMS key-policy account
  * delegation (Resource:* = the attached key only, test 51) + resource-policy
  * condition composition (AND across keys, OR within values, test 49). Never runs
- * identity rules. Coverage stays INCOMPLETE (the remaining service-specific family -
- * the Deny + NotPrincipal hazard - is IAM-1206). Never throws.
+ * identity rules. Coverage is INCOMPLETE whenever unmodeledReasons() names a part it
+ * cannot read (T2-4). Never throws.
  *
  * @param {object} model normalized, frozen model
  * @param {{type?:string, arn?:string}|null} resourceContext attached-resource context
@@ -1068,21 +1232,17 @@ export function analyzeResource(model, resourceContext) {
   const perServiceFindings = dispatchPerServiceRules(model, parsed);
   const findings = genericFindings.concat(perServiceFindings);
 
+  const reasons = unmodeledReasons(model, parsed);
+  const incomplete = reasons.length > 0;
   const note =
     'Resource-based policy accepted and routed to the resource evaluator (never ' +
-    'the identity rules). The attached-resource context is recorded, the principals ' +
-    'named are enumerated, and public-access + external-cross-account + same-account ' +
-    'direct grants + service-principal confused-deputy grants are reported, plus S3 ' +
-    'object-action / bucket-resource type mismatches, KMS key-policy account ' +
-    'delegation (Resource:* = the attached key only), and resource-policy condition ' +
-    'composition (AND across distinct keys, OR within a key\'s values). The policy is ' +
-    'additionally routed to the per-service rule set for its detected service ' +
-    '(Amazon S3, KMS, SNS, or SQS) alongside the generic evaluator; the S3 ' +
-    'bucket-policy, KMS key-policy, and shared SNS topic / SQS queue messaging ' +
-    'per-service finding rules are applied. The remaining ' +
-    'service-specific resource rules (the Deny + NotPrincipal ' +
-    'hazard) are not yet applied, so this analysis is ' +
-    'INCOMPLETE: the absence of a finding does NOT mean the resource is safe. ' +
+    'the identity rules): the principals named are enumerated and public-access, ' +
+    'cross-account, same-account, service-principal confused-deputy, KMS account ' +
+    'delegation and the S3 / KMS / SNS / SQS per-service rules are applied. ' +
+    (incomplete
+      ? 'Part of the policy is not modeled, so this analysis is INCOMPLETE: the ' +
+        'absence of a finding does NOT mean the resource is safe. '
+      : 'Every Allow statement was modeled. ') +
     'Effective access also depends on identity policies, permissions boundaries, ' +
     'session policies, SCPs/RCPs, and service controls that are not supplied here.';
 
@@ -1110,8 +1270,9 @@ export function analyzeResource(model, resourceContext) {
       principalTypes: Object.freeze(principals.types),
       anonymousPresent: principals.anonymousPresent,
       unknownPrincipalTypes: Object.freeze(principals.unknownTypes),
-      incomplete: true,
-      code: RESOURCE_CODES.RESOURCE_ANALYSIS_INCOMPLETE,
+      incomplete,
+      code: incomplete ? reasons[0].code : null,
+      reasons: Object.freeze(reasons),
       note,
     }),
   };

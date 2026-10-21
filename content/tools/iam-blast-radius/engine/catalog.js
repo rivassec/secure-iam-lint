@@ -56,7 +56,7 @@ export const ACCESS_LEVELS = Object.freeze({
 const L = ACCESS_LEVELS;
 
 // Dated snapshot identity. Bump both when the curated set below changes.
-export const ACTION_CATALOG_VERSION = '2026.10.20.1';
+export const ACTION_CATALOG_VERSION = '2026.10.20.2';
 export const ACTION_CATALOG_DATE = '2026-10-20';
 
 // The curated snapshot: service -> { actionName: accessLevel }. Keys use the
@@ -94,6 +94,16 @@ const CATALOG_DATA = Object.freeze({
     UpdateLoginProfile: L.WRITE,
     AddUserToGroup: L.WRITE,
     CreateServiceLinkedRole: L.WRITE,
+    // F15: federation-provider and ABAC-tag writes (DIRECT-IAM-ADMIN).
+    CreateOpenIDConnectProvider: L.WRITE,
+    UpdateOpenIDConnectProviderThumbprint: L.WRITE,
+    AddClientIDToOpenIDConnectProvider: L.WRITE,
+    CreateSAMLProvider: L.WRITE,
+    UpdateSAMLProvider: L.WRITE,
+    TagRole: L.TAGGING,
+    TagUser: L.TAGGING,
+    // T2-3: needs iam:PassRole; with it, an instance-profile role swap (PASSROLE-EC2).
+    AddRoleToInstanceProfile: L.WRITE,
     // Read/List surface (common enumeration).
     GetRole: L.READ,
     GetRolePolicy: L.READ,
@@ -167,6 +177,7 @@ const CATALOG_DATA = Object.freeze({
     ReEncryptTo: L.WRITE,
     CreateGrant: L.PERMISSIONS,
     PutKeyPolicy: L.PERMISSIONS,
+    ScheduleKeyDeletion: L.WRITE, // F15: DESTRUCTIVE-ACTION
     DescribeKey: L.READ,
     ListKeys: L.LIST,
   },
@@ -263,6 +274,9 @@ const CATALOG_DATA = Object.freeze({
   rds: {
     DeleteDBInstance: L.WRITE,
     CreateDBInstance: L.WRITE,
+    // F15: snapshot sharing (RESOURCE-POLICY-WRITE).
+    ModifyDBSnapshotAttribute: L.WRITE,
+    ModifyDBClusterSnapshotAttribute: L.WRITE,
     DescribeDBInstances: L.LIST,
     DescribeDBClusters: L.LIST,
   },
