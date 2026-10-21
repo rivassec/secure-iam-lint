@@ -119,6 +119,8 @@ function isPolicyShaped(o) {
   }
   return own(o, 'Effect') && ['Principal', 'NotPrincipal', 'Action', 'NotAction'].some((k) => own(o, k));
 }
+const TEXT_STATEMENT = [/^\s*-?\s*["']?Statement["']?\s*:/im, /"Statement"\s*:/i];
+const TEXT_EFFECT = [/^\s*-?\s*["']?Effect["']?\s*:/im, /"Effect"\s*:/i];
 const docKey = (k) => k != null && (DOC_KEY_RE.test(k) || k.toLowerCase() === 'statement')
   && !/(arn|arns|name|names|id|ids|type)$/i.test(k);
 
@@ -357,8 +359,9 @@ function itemFromStep(step, index, states) {
   }
   const provider = isStr(ns.provider) ? ns.provider : (old && isStr(old.provider) ? old.provider : null);
   // G-01: prior outputs describe the new resource only for an in-place op on the same provider.
+  // H-3: the full provider reference (urn::id) must match; an unknown id is a new provider.
   const oldUsable = !!old && op !== 'replace' && op !== 'create-replacement'
-    && (!isStr(old.provider) || providerUrnOf(old.provider) === providerUrnOf(provider));
+    && (!isStr(old.provider) || (old.provider === provider && !taint(provider)));
   return {
     urn: step.urn,
     op,
@@ -405,17 +408,13 @@ function providerUrnOf(ref) {
 }
 
 const ARN_ACCOUNT_RE = /^arn:([a-z-]+):[a-z0-9-]+:[a-z0-9-]*:(\d{12}):/;
-// F-4/G-02: types whose `arn` output is their own ARN, computed in the provider's account.
-// Others (EventTarget, TopicSubscription...) can echo or point at another account's ARN.
+// F-4/G-02/H-1: only IAM resources prove the provider's account: they are always in the caller's
+// account. SNS/SQS/KMS/Lambda/... can be imported or read by ARN from another account.
 const OWN_ARN_TYPES = new Set([
   'aws:iam/role:Role', 'aws:iam/user:User', 'aws:iam/group:Group', 'aws:iam/policy:Policy',
-  'aws:iam/instanceProfile:InstanceProfile', 'aws:sqs/queue:Queue', 'aws:sns/topic:Topic', 'aws:kms/key:Key',
-  'aws:lambda/function:Function', 'aws:secretsmanager/secret:Secret', 'aws:ecr/repository:Repository',
-  'aws:dynamodb/table:Table',
+  'aws:iam/instanceProfile:InstanceProfile',
   'aws-native:iam:Role', 'aws-native:iam:User', 'aws-native:iam:Group', 'aws-native:iam:ManagedPolicy',
-  'aws-native:iam:InstanceProfile', 'aws-native:sqs:Queue', 'aws-native:sns:Topic', 'aws-native:kms:Key',
-  'aws-native:lambda:Function', 'aws-native:secretsmanager:Secret', 'aws-native:ecr:Repository',
-  'aws-native:dynamodb:Table',
+  'aws-native:iam:InstanceProfile',
 ]);
 
 // Per provider: region-derived partition and account evidence from the stack itself.
@@ -443,7 +442,7 @@ function providerFacts(items) {
   for (const it of items) {
     // A read/external resource may live in another account: never account evidence.
     if (it.type.startsWith('pulumi:providers:') || it.external) continue;
-    if (!OWN_ARN_TYPES.has(it.type) || own(it.inputs, 'arn')) continue; // an echoed arn proves nothing
+    if (!OWN_ARN_TYPES.has(it.type) || own(it.inputs, 'arn') || it.op === 'import') continue; // an echo or an adoption proves nothing
     const p = providerUrnOf(it.provider);
     if (!p) continue;
     const arn = it.outputs.arn;
@@ -685,10 +684,10 @@ function findUnanalyzedDocs(inputs, consumed, budget) {
     }
     if (isStr(v)) {
       const s = v.trimStart();
-      if (s[0] !== '{' && s[0] !== '[') return;
-      const p = parseJsonStrict(v, 32);
-      if (p.ok) walk(p.value, path, key, depth + 1);
-      else if (/statement/i.test(v) && /effect/i.test(v)) hits.push({ path, code: 'PULUMI_UNSUPPORTED_TYPE' });
+      const p = s[0] === '{' || s[0] === '[' ? parseJsonStrict(v, 32) : null;
+      if (p && p.ok) { walk(p.value, path, key, depth + 1); return; }
+      // H-2: non-JSON text (YAML templates/documents) or broken JSON: Statement and Effect as keys.
+      if (TEXT_STATEMENT.some((re) => re.test(v)) && TEXT_EFFECT.some((re) => re.test(v))) hits.push({ path, code: 'PULUMI_UNSUPPORTED_TYPE' });
       return;
     }
     if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${path}[${i}]`, key, depth + 1)); return; }

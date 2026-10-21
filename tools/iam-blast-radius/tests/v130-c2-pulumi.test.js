@@ -138,3 +138,31 @@ test('B (F-5): nesting past the backstop depth fails closed', () => {
   for (let i = 0; i < 40; i++) v = { n: v };
   assert.ok(has(unmapped({ cfg: v }), 'PULUMI_LIMIT'));
 });
+
+// --- Round-3 review: H-1 (adopted foreign resources), H-2 (YAML text), H-3 (provider id) ---
+test('H-1: an imported or ARN-adoptable resource never proves the account', () => {
+  const topic = (op) => ({ op, urn: U('aws:sns/topic:Topic', 'shared'),
+    newState: { urn: U('aws:sns/topic:Topic', 'shared'), type: 'aws:sns/topic:Topic', inputs: { name: 'shared' }, outputs: { arn: `arn:aws:sns:us-east-2:${V}:shared` }, provider: `${PROV}::id1` } });
+  for (const op of ['update', 'import']) {
+    const r = runBare(topic(op), roleCreate, perm({ principal: V }));
+    assert.ok(!trustIds(r).includes('TRUST-SAME-ACCOUNT'), op);
+    assert.ok(!r.unanalyzed.some((u) => u.reason === 'own-account-principal'), op);
+    assert.equal(r.exitCode, EXIT.FAIL_CLOSED, op);
+  }
+  const imported = { ...proof, op: 'import' };
+  assert.ok(runBare(imported, roleCreate).analysisStates.some((s) => s.code === 'PULUMI_ACCOUNT_UNRESOLVED'));
+});
+
+test('H-2: an IAM policy in YAML text fails closed; non-policy text does not', () => {
+  const cfn = 'Resources:\n  P:\n    Type: AWS::IAM::ManagedPolicy\n    Properties:\n      PolicyDocument:\n        Statement:\n          - Effect: Allow\n            Action: "*"\n            Resource: "*"\n';
+  assert.ok(has(runBare(step('aws:cloudformation/stack:Stack', 'cfn', { name: 'x', templateBody: cfn })), 'PULUMI_UNSUPPORTED_TYPE'));
+  const quiet = runBare(step('aws:cloudwatch/dashboard:Dashboard', 'd', { dashboardBody: 'This statement has no effect on anything.' }));
+  assert.ok(!has(quiet, 'PULUMI_UNSUPPORTED_TYPE'));
+});
+
+test('H-3: prior outputs are not reused across a provider id change', () => {
+  const urn = U('aws:iam/role:Role', 'r');
+  const s = { op: 'update', urn, newState: { urn, type: 'aws:iam/role:Role', inputs: { name: 'r', assumeRolePolicy: FOREIGN_ROOT }, provider: `${PROV}::id2` },
+    oldState: { provider: `${PROV}::id1`, outputs: { arn: `arn:aws:iam::${V}:role/r` } } };
+  assert.ok(!trustIds(runBare(s)).includes('TRUST-SAME-ACCOUNT'));
+});
