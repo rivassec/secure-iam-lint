@@ -654,7 +654,6 @@ const REQUIRED_WILDCARD_READS_STAY_CLEAN = [
   's3:ListAllMyBuckets',        // catalog List
   'iam:ListRoles',              // catalog List
   'ec2:Describe*',              // wildcard pattern (spans List + Read) - not a concrete scopable read
-  'iam:Get*',                   // wildcard pattern
   'ec2:DescribeTags',           // catalog READ, but requires "*" (no resource-level support)
   'cloudtrail:LookupEvents',    // catalog READ, requires "*"
   'cloudtrail:DescribeTrails',  // catalog READ, requires "*"
@@ -672,6 +671,12 @@ test('anti-over-correction (read @ "*"): required-wildcard enumeration reads sta
       `${action}: no broad-undecidable signal on a required-wildcard read`);
     assert.equal(scan({ text, family: 'identity' }).exitCode, EXIT.CLEAN, `${action}: scan must exit 0`);
   }
+});
+
+// v1.3.0: iam:Get* reaches the withheld account-wide dumps (GetAccountAuthorizationDetails,
+// GetCredentialReport), so it fails closed until an IAM-RECON finding models them.
+test('iam:Get* @ "*" fails closed (reaches withheld IAM dumps)', () => {
+  assert.equal(scan({ text: policy('iam:Get*', '*'), family: 'identity' }).exitCode, EXIT.FAIL_CLOSED);
 });
 
 test('anti-over-correction (read @ "*"): a MUTATING action on "*" still fires WILDCARD-RESOURCE (not this net)', () => {

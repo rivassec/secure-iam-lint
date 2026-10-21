@@ -64,3 +64,17 @@ for (const action of NOT_IN_ALLOW) {
     assert.equal(run(allow(action), 'identity').exitCode, EXIT.FAIL_CLOSED);
   });
 }
+
+// Mac round-1 decision: ABAC tag writes and account-wide IAM dumps fail closed in an Allow.
+for (const action of ['iam:UntagRole', 'iam:UntagUser', 'iam:TagPolicy', 'iam:GetAccountAuthorizationDetails',
+  'iam:GetCredentialReport', 'iam:GenerateCredentialReport']) {
+  test(`${action} in an Allow fails closed; known in a Deny`, () => {
+    assert.equal(run(allow(action), 'identity').exitCode, EXIT.FAIL_CLOSED);
+    assert.ok(!unknown(run(deny(action), 'scp-rcp')));
+  });
+}
+test('curated iam:TagRole / iam:TagUser keep DIRECT-IAM-ADMIN', () => {
+  for (const a of ['iam:TagRole', 'iam:TagUser']) {
+    assert.ok(run(allow(a), 'identity').findings.some((f) => f.id === 'DIRECT-IAM-ADMIN'), a);
+  }
+});
