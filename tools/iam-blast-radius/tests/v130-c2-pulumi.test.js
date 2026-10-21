@@ -81,3 +81,60 @@ test('Lambda permission: own-account needs a proven account, not just --subject-
   const text = JSON.stringify({ steps: [prov, perm({ principal: ACCT })] });
   assert.ok(scanPulumi({ text, partition: 'aws', subjectAccount: ACCT }).analysisStates.some((s) => s.code === 'PULUMI_UNMODELED_PERMISSION'));
 });
+
+// --- Round-2 review root cause A: only a resource's own computed ARN proves the account ---
+const FOREIGN_ROOT = JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: `arn:aws:iam::${V}:root` }, Action: 'sts:AssumeRole' }] });
+const runBare = (...steps) => scanPulumi({ text: JSON.stringify({ steps: [prov, ...steps] }), partition: 'aws' });
+const roleCreate = { op: 'create', urn: U('aws:iam/role:Role', 'r'), newState: { urn: U('aws:iam/role:Role', 'r'), type: 'aws:iam/role:Role', inputs: { name: 'r', assumeRolePolicy: FOREIGN_ROOT }, provider: `${PROV}::id1` } };
+const trustIds = (r) => r.documents.find((d) => d.artifact.endsWith('r#assumeRolePolicy')).result.findings.map((f) => f.id);
+
+test('A (F-4/G-02): EventTarget and SNS subscription ARNs never prove the account', () => {
+  for (const s of [
+    step('aws:cloudwatch/eventTarget:EventTarget', 't', { rule: 'x', arn: `arn:aws:events:us-east-1:${V}:event-bus/b` }, { arn: `arn:aws:events:us-east-1:${V}:event-bus/b` }),
+    step('aws:sns/topicSubscription:TopicSubscription', 's', { topic: 'x' }, { arn: `arn:aws:sns:us-east-1:${V}:t:sub` }),
+    step('aws:sqs/queue:Queue', 'echo', { arn: `arn:aws:sqs:us-east-1:${V}:q` }, { arn: `arn:aws:sqs:us-east-1:${V}:q` }),
+  ]) {
+    const r = runBare(s, roleCreate);
+    assert.ok(!trustIds(r).includes('TRUST-SAME-ACCOUNT'), s.urn);
+    assert.notEqual(r.exitCode, EXIT.CLEAN, s.urn);
+  }
+});
+
+test('A (G-01): stale oldState outputs never carry across a replace or a provider move', () => {
+  const P2 = 'urn:pulumi:dev::p::pulumi:providers:aws::other';
+  const prov2 = { op: 'update', urn: P2, newState: { urn: P2, type: 'pulumi:providers:aws', inputs: { region: 'us-east-1' } } };
+  const urn = U('aws:iam/role:Role', 'r');
+  for (const [op, oldProv] of [['update', `${P2}::old`], ['replace', `${PROV}::id1`], ['create-replacement', `${PROV}::id1`]]) {
+    const s = { op, urn, newState: { urn, type: 'aws:iam/role:Role', inputs: { name: 'r', assumeRolePolicy: FOREIGN_ROOT }, provider: `${PROV}::id1` },
+      oldState: { provider: oldProv, outputs: { arn: `arn:aws:iam::${V}:role/r` } } };
+    const r = scanPulumi({ text: JSON.stringify({ steps: [prov, prov2, s] }), partition: 'aws' });
+    assert.ok(!trustIds(r).includes('TRUST-SAME-ACCOUNT'), op);
+  }
+});
+
+// --- Root cause B: the backstop decodes, reports secrets/unknowns, and fails closed past its budget ---
+const unmapped = (inputs) => runBare(step('aws:opensearch/domainPolicy:DomainPolicy', 'd', inputs));
+const has = (r, code) => r.analysisStates.some((s) => s.code === code);
+
+test('B (F-2): a secret or unknown policy on an unmapped type fails closed', () => {
+  assert.ok(has(unmapped({ accessPolicies: '[secret]' }), 'PULUMI_SECRET'));
+  assert.ok(has(unmapped({ accessPolicies: { '4dabf18193072939515e22adb298388d': '1b47061264138c4ac30d75fd1eb44270', ciphertext: 'x' } }), 'PULUMI_SECRET'));
+  assert.ok(has(unmapped({ accessPolicies: '04da6b54-80e4-46f7-96ec-b56ff0331ba9' }), 'PULUMI_UNKNOWN'));
+});
+
+test('B (F-3): a bare statement object (aws-native EventBusPolicy) fails closed', () => {
+  const r = runBare(step('aws-native:events:EventBusPolicy', 'eb', { statementId: 's', statement: { Effect: 'Allow', Principal: '*', Action: 'events:PutEvents', Resource: '*' } }));
+  assert.ok(has(r, 'PULUMI_UNSUPPORTED_TYPE'));
+  assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
+});
+
+test('B (F-1): an escaped Statement key in a JSON string is still found', () => {
+  const r = unmapped({ body: '{"\\u0053tatement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}' });
+  assert.ok(has(r, 'PULUMI_UNSUPPORTED_TYPE'));
+});
+
+test('B (F-5): nesting past the backstop depth fails closed', () => {
+  let v = { Effect: 'Allow', Action: '*' };
+  for (let i = 0; i < 40; i++) v = { n: v };
+  assert.ok(has(unmapped({ cfg: v }), 'PULUMI_LIMIT'));
+});
