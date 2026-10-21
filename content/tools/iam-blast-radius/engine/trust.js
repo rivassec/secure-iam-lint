@@ -155,9 +155,46 @@ const fedHost = (v) => String(v).toLowerCase().replace(/^arn:[^:]*:iam::[^:]*:oi
 // IAM-804 iteration 4 finding 2). Only a value carrying at least one LITERAL
 // character narrows (a partial ExternalId still forces the caller to present that
 // literal substring). Mirrors conditions.js valueNarrowsKey default arm.
+// R5-5: Principal "*" pinned by ONE positive exact ArnEquals/StringEquals on
+// aws:PrincipalArn (no IfExists, no set operator) to concrete principal ARNs is the
+// named-principal trust. Returns the statement rewritten to name them, or null.
+const EXACT_PIN_OPS = new Set(['arnequals', 'stringequals']);
+const PINNED_ARN = /^arn:[a-z-]+:(?:iam::\d{12}:(?:role|user)|sts::\d{12}:(?:assumed-role|federated-user))\/[\w+=,.@/-]+$/;
+function exactPinRewrite(stmt) {
+  const cond = stmt.condition;
+  if (!cond || typeof cond !== 'object') return null;
+  let pin = null;
+  for (const op of Object.keys(cond)) {
+    const inner = cond[op];
+    if (!inner || typeof inner !== 'object') return null;
+    for (const k of Object.keys(inner)) {
+      if (String(k).toLowerCase() !== 'aws:principalarn') continue;
+      const p = parseOperatorParts(op);
+      if (pin || p.setOperator || p.ifExists || !EXACT_PIN_OPS.has(p.base)) return null;
+      const vals = toValues(inner[k]);
+      if (vals.length === 0 || !vals.every((v) => typeof v === 'string' && PINNED_ARN.test(v))) return null;
+      pin = { op, key: k, vals };
+    }
+  }
+  if (!pin) return null;
+  const rest = {};
+  for (const op of Object.keys(cond)) {
+    const inner = {};
+    for (const k of Object.keys(cond[op])) if (!(op === pin.op && k === pin.key)) inner[k] = cond[op][k];
+    if (Object.keys(inner).length > 0) rest[op] = inner;
+  }
+  return { ...stmt, principal: { anyPrincipal: false, byType: { AWS: [...pin.vals] } }, condition: rest };
+}
+const EXACT_PIN_NOTE = ' The policy names Principal "*", but an exact aws:PrincipalArn condition pins it to these ' +
+  'principals, so it is rated as if they were named directly.';
+
 function findingsForStatement(stmt, subjectAccount = null, evidence = null) {
   const allPrincipals = classifyPrincipals(stmt.principal);
   const found = [];
+  if (allPrincipals.anonymous) {
+    const named = exactPinRewrite(stmt);
+    if (named) return findingsForStatement(named, subjectAccount, evidence).map((f) => ({ ...f, why: f.why + EXACT_PIN_NOTE }));
+  }
 
   // S3-trust-calibration (1) - defense in depth. model.js normalizePrincipal() now
   // rejects an empty principal object / empty value array before analysis, so a

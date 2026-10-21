@@ -212,7 +212,7 @@ test('(3) CONTROL: root:9999 + account-pinned wildcard aws:PrincipalArn (role/de
     'a wildcard-account PrincipalArn fixed by the Principal is same-account -> medium, not foreign');
 });
 
-test('(3) CONTROL: Principal "*" + exact aws:PrincipalArn (one role) stays a scoped TRUST-PUBLIC, not critical', () => {
+test('(3) CONTROL: Principal "*" + exact aws:PrincipalArn (one role) is the named form (R5-5), not critical', () => {
   // publicScopeConstraint path: no named reference account, so the single-principal
   // narrowing of "*" is unaffected by the foreign-account check.
   const r = trust([{
@@ -221,7 +221,7 @@ test('(3) CONTROL: Principal "*" + exact aws:PrincipalArn (one role) stays a sco
     Action: 'sts:AssumeRole',
     Condition: { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::111122223333:role/App' } },
   }]);
-  const f = find(r, 'TRUST-PUBLIC');
+  const f = find(r, 'TRUST-CROSS-ACCOUNT');
   assert.ok(f);
   assert.notEqual(f.severity, 'critical');
 });

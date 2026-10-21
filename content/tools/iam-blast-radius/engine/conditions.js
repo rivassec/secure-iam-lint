@@ -104,6 +104,10 @@ const KNOWN_KEYS = Object.freeze({
   // S3_RESOURCE_ACCOUNT_KEYS semantics (bucket-owner account, never the caller).
   's3:resourceaccount': { class: CONDITION_CLASS.CONSTRAINT, role: 'resource-account', label: 'Resource owner account' },
   'aws:resourceaccount': { class: CONDITION_CLASS.CONSTRAINT, role: 'resource-account', label: 'Resource owner account' },
+  // C-3: the AWS-managed key-policy shapes. GrantIsForAWSResource "true" limits grants to
+  // ones an AWS service creates for a resource; CallerAccount pins the calling account.
+  'kms:grantisforawsresource': { class: CONDITION_CLASS.CONSTRAINT, role: 'grant-scope', label: 'KMS grant created by an AWS service' },
+  'kms:calleraccount': { class: CONDITION_CLASS.CONSTRAINT, role: 'principal', label: 'KMS caller account' },
 });
 
 // Recognized federation PROVIDER HOSTS (docs/trust-policy-semantics.md 4.4/4.5).
@@ -248,6 +252,7 @@ const VALUE_SCOPING_TRUST_KEYS = new Set([
   'aws:principalarn',
   'aws:principalaccount',
   'aws:principalorgid',
+  'kms:calleraccount',
 ]);
 
 // Resource-account keys credit only under a positive string match, like the
@@ -451,6 +456,7 @@ function valueNarrowsKey(keyLower, value) {
     case 'aws:sourceaccount':
     case 'aws:principalaccount':
     case 'aws:principalorgid':
+    case 'kms:calleraccount':
       return accountOrOrgValueNarrows(value);
     case 's3:resourceaccount':
     case 'aws:resourceaccount':
