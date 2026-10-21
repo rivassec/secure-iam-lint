@@ -103,12 +103,12 @@ tag; for security-sensitive workflows pin the full commit SHA instead:
 
 ```yaml
       # Resolve the commit for a release tag and pin it (keep the version comment):
-      #   git ls-remote https://github.com/rivassec/secure-iam-lint refs/tags/v1.1.0
-      - uses: rivassec/secure-iam-lint@v1.1.0
+      #   git ls-remote https://github.com/rivassec/secure-iam-lint 'refs/tags/v1.2.0^{}'
+      - uses: rivassec/secure-iam-lint@v1.2.0
 ```
 
 Each GitHub Release lists the exact commit SHA for that tag; copy it into the
-`uses:` line in place of `v1.1.0` for a pin that cannot move.
+`uses:` line in place of `v1.2.0` for a pin that cannot move.
 
 ### Inputs and outputs
 
