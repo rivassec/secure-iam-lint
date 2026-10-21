@@ -166,3 +166,12 @@ test('H-3: prior outputs are not reused across a provider id change', () => {
     oldState: { provider: `${PROV}::id1`, outputs: { arn: `arn:aws:iam::${V}:role/r` } } };
   assert.ok(!trustIds(runBare(s)).includes('TRUST-SAME-ACCOUNT'));
 });
+
+test('H-2b: flow-style YAML policies fail closed too', () => {
+  const inline = 'Resources:\n  P:\n    Type: AWS::IAM::ManagedPolicy\n    Properties:\n      PolicyDocument:\n        Statement:\n          - {Effect: Allow, Action: "*", Resource: "*"}\n';
+  const flow = "Resources:\n  P:\n    Type: AWS::IAM::ManagedPolicy\n    Properties:\n      PolicyDocument: {Version: '2012-10-17', Statement: [{Effect: Allow, Action: '*', Resource: '*'}]}\n";
+  for (const body of [inline, flow]) {
+    assert.ok(has(runBare(step('aws:cloudformation/stack:Stack', 'cfn', { name: 'x', templateBody: body })), 'PULUMI_UNSUPPORTED_TYPE'));
+  }
+  assert.ok(!has(runBare(step('aws:cloudwatch/dashboard:Dashboard', 'd', { dashboardBody: 'This statement has no effect on anything.' })), 'PULUMI_UNSUPPORTED_TYPE'));
+});
