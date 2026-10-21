@@ -10,6 +10,7 @@
 // types, unresolvable account / partition / resource context. Pure: no Node built-ins.
 import { scan, EXIT, ANALYSIS_STATUS, ANALYSIS_STATE, DEFAULT_BUDGET_MS } from './scan.mjs';
 import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
+import { applyBaseline } from './baseline.mjs';
 
 // Preview placeholder for a value not known until apply (whole property collapses to it).
 export const PULUMI_UNKNOWN = '04da6b54-80e4-46f7-96ec-b56ff0331ba9';
@@ -708,7 +709,8 @@ function findUnanalyzedDocs(inputs, consumed, budget) {
  */
 export function extractPulumiDocuments(text, opts = {}) {
   const globalStates = [];
-  const out = { kind: null, scanScope: 'delta', scannedUrns: [], documents: [], unanalyzed: [], providers: [], states: globalStates };
+  const out = { kind: null, scanScope: 'delta', scannedUrns: [], documents: [], unanalyzed: [], providers: [],
+    groups: [], unresolvedEdges: [], states: globalStates };
   if (opts.oversize === true) { globalStates.push(st('PULUMI_LIMIT', 'pulumi-input')); return out; }
   if (!isStr(text) || text.trim() === '') return { usage: { reason: 'MISSING_INPUT', message: 'No Pulumi JSON supplied (input is missing or empty).' } };
   if (text.length > PULUMI_LIMITS.MAX_BYTES) { globalStates.push(st('PULUMI_LIMIT', 'pulumi-input')); return out; }
@@ -864,8 +866,97 @@ export function extractPulumiDocuments(text, opts = {}) {
   }
   if (budget.exhausted) globalStates.push(st('PULUMI_LIMIT', 'pulumi-input'));
   out.documents.sort((a, b) => cmp(a.artifact, b.artifact));
+  Object.assign(out, buildGroups(items, out.documents));
   globalStates.sort((a, b) => cmp(`${a.code}\u0000${a.path}`, `${b.code}\u0000${b.path}`));
   return out;
+}
+
+// --- P9 grouping: informational only, never changes a verdict ---------------------------
+
+const ROLE_POLICY_TYPES = new Set(['aws:iam/rolePolicy:RolePolicy', 'aws-native:iam:RolePolicy']);
+const ATTACH_TYPES = new Set(['aws:iam/rolePolicyAttachment:RolePolicyAttachment']);
+const POLICY_TYPES = new Set(['aws:iam/policy:Policy', 'aws-native:iam:ManagedPolicy']);
+const AWS_MANAGED_RE = /^arn:[a-z-]+:iam::aws:policy\//;
+const TRUST_PROPS = new Set(['assumeRolePolicy', 'assumeRolePolicyDocument']);
+const edgeKey = (e) => `${e.kind}\u0000${e.from}\u0000${e.to == null ? '' : e.to}`;
+
+// A reference resolves only to exactly one same-provider candidate; else an explicit reason.
+function resolveRef(cands, ref, prov, keysOf) {
+  if (ref === undefined) return { reason: 'missing' };
+  const tt = taint(ref);
+  if (tt) return { reason: tt === 'secret' ? 'secret' : 'unknown' };
+  if (!concrete(ref)) return { reason: 'invalid' };
+  const hits = cands.filter((c) => providerUrnOf(c.provider) === prov && keysOf(c).includes(ref));
+  if (hits.length === 1) return { to: hits[0].urn };
+  return { reason: hits.length === 0 ? 'no-match' : 'ambiguous' };
+}
+const roleKeys = (r) => [r.inputs.name, r.inputs.roleName, r.outputs.name, r.outputs.roleName, r.id, r.outputs.arn].filter(concrete);
+const policyKeys = (p) => [p.outputs.arn].filter(concrete);
+
+function trustPrincipals(text) {
+  const p = parseJsonStrict(text, 32);
+  if (!p.ok || !isObj(p.value)) return [];
+  const sts = Array.isArray(p.value.Statement) ? p.value.Statement : [p.value.Statement];
+  const out = [];
+  for (const s of sts) {
+    if (!isObj(s) || s.Effect !== 'Allow' || !isObj(s.Principal)) continue;
+    const a = s.Principal.AWS;
+    for (const v of (Array.isArray(a) ? a : [a])) if (isStr(v)) out.push(v);
+  }
+  return out;
+}
+
+function buildGroups(items, documents) {
+  const roles = items.filter((it) => ROLE_TYPES.has(it.type));
+  const policies = items.filter((it) => POLICY_TYPES.has(it.type));
+  const docsOf = (urn) => documents.filter((d) => d.urn === urn).map((d) => d.artifact);
+  const groups = new Map(roles.map((r) => [r.urn, {
+    role: r.urn, type: r.type, provider: providerUrnOf(r.provider), documents: docsOf(r.urn), edges: [],
+  }]));
+  const unresolved = [];
+  const link = (edge, roleUrn, extraDocs) => {
+    if (edge.to == null) { unresolved.push(edge); return; }
+    const g = groups.get(roleUrn);
+    if (!g) return;
+    g.edges.push(edge);
+    for (const a of extraDocs || []) if (!g.documents.includes(a)) g.documents.push(a);
+  };
+  for (const it of items) {
+    const prov = providerUrnOf(it.provider);
+    if (ROLE_POLICY_TYPES.has(it.type)) {
+      const r = resolveRef(roles, it.inputs.role !== undefined ? it.inputs.role : it.inputs.roleName, prov, roleKeys);
+      link(r.to ? { kind: 'role-policy', from: it.urn, to: r.to } : { kind: 'role-policy', from: it.urn, to: null, unresolved: true, reason: r.reason },
+        r.to, docsOf(it.urn));
+    } else if (ATTACH_TYPES.has(it.type)) {
+      const r = resolveRef(roles, it.inputs.role, prov, roleKeys);
+      link(r.to ? { kind: 'attachment-role', from: it.urn, to: r.to } : { kind: 'attachment-role', from: it.urn, to: null, unresolved: true, reason: r.reason }, r.to);
+      const arn = it.inputs.policyArn;
+      if (concrete(arn) && AWS_MANAGED_RE.test(arn)) {
+        if (r.to) link({ kind: 'attachment-policy', from: it.urn, to: arn, external: 'aws-managed' }, r.to);
+        else unresolved.push({ kind: 'attachment-policy', from: it.urn, to: arn, external: 'aws-managed', unresolved: true, reason: 'role-unresolved' });
+      } else {
+        const pr = resolveRef(policies, arn, prov, policyKeys);
+        const edge = pr.to ? { kind: 'attachment-policy', from: it.urn, to: pr.to } : { kind: 'attachment-policy', from: it.urn, to: null, unresolved: true, reason: pr.reason };
+        if (pr.to && r.to) link(edge, r.to, docsOf(pr.to));
+        else if (pr.to) unresolved.push({ ...edge, unresolved: true, reason: 'role-unresolved' });
+        else unresolved.push(edge);
+      }
+    }
+  }
+  // can-assume: a trust principal that is exactly another same-provider role's ARN (G1 input).
+  for (const r of roles) {
+    const trust = documents.find((d) => d.urn === r.urn && TRUST_PROPS.has(d.property) && d.text);
+    if (!trust) continue;
+    const prov = providerUrnOf(r.provider);
+    for (const p of trustPrincipals(trust.text)) {
+      const hits = roles.filter((o) => o.urn !== r.urn && providerUrnOf(o.provider) === prov && concrete(o.outputs.arn) && o.outputs.arn === p);
+      if (hits.length === 1) link({ kind: 'can-assume', from: hits[0].urn, to: r.urn }, r.urn);
+    }
+  }
+  const sortEdges = (a) => a.sort((x, y) => cmp(edgeKey(x), edgeKey(y)));
+  const out = [...groups.values()].sort((a, b) => cmp(a.role, b.role));
+  for (const g of out) { g.documents.sort(); sortEdges(g.edges); }
+  return { groups: out, unresolvedEdges: sortEdges(unresolved) };
 }
 
 // --- Aggregate scan ---------------------------------------------------------------------
@@ -898,6 +989,63 @@ function withStates(result, states) {
     analysisStates: Object.freeze([...states, ...(result.analysisStates || [])]),
     exitCode: worse(result.exitCode, EXIT.FAIL_CLOSED),
     reason: (result.exitCode === EXIT.INTERNAL) ? result.reason : states[0].code,
+  });
+}
+
+// Run verdict from the documents plus file-level states (any state forces exit 3).
+function aggregate(meta, documents) {
+  const states = meta.analysisStates || [];
+  let exitCode = EXIT.CLEAN;
+  for (const d of documents) exitCode = worse(exitCode, d.result.exitCode);
+  if (states.length > 0) exitCode = worse(exitCode, EXIT.FAIL_CLOSED);
+  const findingsCount = documents.reduce((n, d) => n + (d.result.findingsCount || 0), 0);
+  const blockingCount = documents.reduce((n, d) => n + (d.result.blockingCount || 0), 0);
+  const failed = states.some((s) => s.analysisState === ANALYSIS_STATE.MALFORMED)
+    || documents.some((d) => d.result.analysisStatus === ANALYSIS_STATUS.FAILED);
+  const analysisStatus = exitCode === EXIT.CLEAN || exitCode === EXIT.FINDINGS
+    ? ANALYSIS_STATUS.COMPLETE : (failed ? ANALYSIS_STATUS.FAILED : ANALYSIS_STATUS.PARTIAL);
+  let reason = exitCode === EXIT.CLEAN ? 'CLEAN' : exitCode === EXIT.FINDINGS ? 'FINDINGS_AT_OR_ABOVE_THRESHOLD' : null;
+  if (reason == null) {
+    const worst = documents.find((d) => d.result.exitCode === exitCode);
+    reason = (exitCode === EXIT.FAIL_CLOSED && states[0]) ? states[0].code
+      : (worst ? worst.result.reason : 'PULUMI_INCOMPLETE');
+  }
+  if (exitCode === EXIT.CLEAN && documents.some((d) => d.result.reason === 'CLEAN_WITH_BASELINE')) reason = 'CLEAN_WITH_BASELINE';
+  return Object.freeze({ ...meta, analysisStatus, exitCode, reason, findingsCount, blockingCount, documents });
+}
+
+// P8: a document's baseline URI. JSON keeps (urn, property) unambiguous whatever they contain.
+export function pulumiBaselineUri(d) {
+  return `pulumi:${JSON.stringify([String(d.urn), String(d.property)])}`;
+}
+
+/**
+ * Attach baseline keys to every document (always, so SARIF publishes them) and apply an
+ * opt-in baseline per document, then re-aggregate. File-level states are never accepted.
+ * @param {object} result scanPulumi() result
+ * @param {Map<string,object>|null} accepted parseBaseline().keys, or null
+ * @param {string} threshold
+ */
+export function applyPulumiBaseline(result, accepted, threshold) {
+  if (!result || !Array.isArray(result.documents) || result.exitCode === EXIT.USAGE || result.exitCode === EXIT.INTERNAL) return result;
+  const documents = result.documents.map((d) => Object.freeze({ ...d, result: applyBaseline(d.result, pulumiBaselineUri(d), accepted, threshold) }));
+  const used = new Set();
+  const mismatched = new Set();
+  for (const d of documents) {
+    for (const k of d.result.baseline.used) used.add(k);
+    for (const k of d.result.baseline.mismatched) mismatched.add(k);
+  }
+  const { analysisStatus: _s, exitCode: _e, reason: _r, findingsCount: _f, blockingCount: _b, documents: _d, ...meta } = result;
+  const agg = aggregate(meta, documents);
+  const applied = accepted instanceof Map;
+  return Object.freeze({
+    ...agg,
+    baseline: Object.freeze({
+      applied,
+      used: Object.freeze([...used].sort()),
+      mismatched: Object.freeze([...mismatched].sort()),
+      stale: Object.freeze(applied ? [...accepted.keys()].filter((k) => !used.has(k)).sort() : []),
+    }),
   });
 }
 
@@ -937,36 +1085,17 @@ export function scanPulumi(input) {
       for (const k of ['artifact', 'urn', 'property', 'type', 'family', 'op', 'managed', 'location']) meta[k] = d[k];
       return Object.freeze({ ...meta, result });
     });
-    let exitCode = EXIT.CLEAN;
-    for (const d of documents) exitCode = worse(exitCode, d.result.exitCode);
-    if (ext.states.length > 0) exitCode = worse(exitCode, EXIT.FAIL_CLOSED);
-    const findingsCount = documents.reduce((n, d) => n + (d.result.findingsCount || 0), 0);
-    const blockingCount = documents.reduce((n, d) => n + (d.result.blockingCount || 0), 0);
-    const failed = ext.states.some((s) => s.analysisState === ANALYSIS_STATE.MALFORMED)
-      || documents.some((d) => d.result.analysisStatus === ANALYSIS_STATUS.FAILED);
-    const analysisStatus = exitCode === EXIT.CLEAN || exitCode === EXIT.FINDINGS
-      ? ANALYSIS_STATUS.COMPLETE : (failed ? ANALYSIS_STATUS.FAILED : ANALYSIS_STATUS.PARTIAL);
-    let reason = exitCode === EXIT.CLEAN ? 'CLEAN' : exitCode === EXIT.FINDINGS ? 'FINDINGS_AT_OR_ABOVE_THRESHOLD' : null;
-    if (reason == null) {
-      const worst = documents.find((d) => d.result.exitCode === exitCode);
-      reason = (exitCode === EXIT.FAIL_CLOSED && ext.states[0]) ? ext.states[0].code
-        : (worst ? worst.result.reason : 'PULUMI_INCOMPLETE');
-    }
-    return Object.freeze({
+    return aggregate({
       input: 'pulumi',
       kind: ext.kind,
       scanScope: ext.scanScope,
       scannedUrns: ext.scannedUrns,
       unanalyzed: ext.unanalyzed,
       providers: ext.providers,
-      analysisStatus,
+      groups: ext.groups,
+      unresolvedEdges: ext.unresolvedEdges,
       analysisStates: ext.states,
-      exitCode,
-      reason,
-      findingsCount,
-      blockingCount,
-      documents,
-    });
+    }, documents);
   } catch {
     return Object.freeze({
       input: 'pulumi', kind: null, scanScope: null, scannedUrns: [], documents: [],
@@ -986,6 +1115,7 @@ export function pulumiUnits(result, fallbackUri) {
   const fb = isStr(fallbackUri) && fallbackUri.trim() !== '' ? fallbackUri.trim() : 'Pulumi.yaml';
   const units = (result.documents || []).map((d) => ({
     file: d.location ? d.location.uri : fb,
+    baselineUri: pulumiBaselineUri(d),
     sarif: {
       file: d.location ? d.location.uri : fb,
       logicalLocation: d.artifact,
@@ -996,7 +1126,7 @@ export function pulumiUnits(result, fallbackUri) {
     result: d.result,
   }));
   if ((result.analysisStates || []).length > 0) {
-    units.push({ file: fb, sarif: { file: fb, logicalLocation: 'pulumi-input', runProperties: { scanScope: result.scanScope } }, result: failClosedResult(result.analysisStates, null) });
+    units.push({ file: fb, baselineUri: 'pulumi-input', sarif: { file: fb, logicalLocation: 'pulumi-input', runProperties: { scanScope: result.scanScope } }, result: failClosedResult(result.analysisStates, null) });
   }
   return units;
 }

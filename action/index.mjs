@@ -137,11 +137,9 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
     const sarifSafe = lexicallySafe && realPathSafe;
     const inputs = sarifSafe ? rawInputs : { ...rawInputs, sarifOutput: DEFAULT_SARIF_OUTPUT };
 
-    // --- v1.3.0: Pulumi preview / stack export input (exclusive with paths). ------
-    if (isNonEmptyString(inputs.pulumiJson)) return runPulumiInput(inputs, sarifSafe, io, manifest);
-
     // --- Adapter-owned usage validation (exit 2), before any scanning. --------
-    if (!isNonEmptyString(inputs.family)) {
+    // pulumi-json takes each policy's family from its resource type.
+    if (!isNonEmptyString(inputs.pulumiJson) && !isNonEmptyString(inputs.family)) {
       return finalize([{
         file: null,
         result: usageResult(
@@ -227,6 +225,10 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
         }], { ...inputs, baselineOutput: '' }, manifest);
       }
     }
+
+    // --- v1.3.0: Pulumi preview / stack export input (exclusive with paths). ------
+    // After the baseline block, so a Pulumi run applies and writes baselines too (P8).
+    if (isNonEmptyString(inputs.pulumiJson)) return runPulumiInput(inputs, sarifSafe, io, manifest);
 
     const patterns = splitPaths(inputs.paths);
 
@@ -393,9 +395,6 @@ function runPulumiInput(inputs, sarifSafe, io, manifest) {
   if (isNonEmptyString(inputs.paths)) return fail('PULUMI_WITH_PATHS', 'Set either "paths" or "pulumi-json", not both.');
   if (isNonEmptyString(inputs.family)) return fail('PULUMI_WITH_FAMILY', 'The "family" input is not used with "pulumi-json" (each policy\'s family comes from its resource type).');
   if (inputs.resourceContext) return fail('PULUMI_WITH_RESOURCE', 'The "resource-*" inputs are not used with "pulumi-json" (the attached resource is resolved from the stack).');
-  if (isNonEmptyString(inputs.baseline) || isNonEmptyString(inputs.baselineOutput)) {
-    return fail('PULUMI_BASELINE_UNSUPPORTED', 'Baselines are not supported with "pulumi-json" yet.');
-  }
   let safe = sarifOutputIsContained(inputs.pulumiJson);
   if (safe && io && typeof io.sarifTargetContained === 'function') {
     try { safe = io.sarifTargetContained(inputs.pulumiJson) === true; } catch { safe = false; }
@@ -441,7 +440,9 @@ function finalize(rawUnits, inputs, manifest) {
   const threshold = String((inputs && inputs.failOn) || 'high').trim().toLowerCase();
   const units = rawUnits.map((u) => ({
     ...u,
-    result: applyBaseline(u.result, isNonEmptyString(u && u.file) ? u.file : 'action-inputs', baselineKeys, threshold),
+    // A Pulumi unit carries its own <urn>#<property> baseline URI (P8).
+    result: applyBaseline(u.result, isNonEmptyString(u && u.baselineUri) ? u.baselineUri
+      : (isNonEmptyString(u && u.file) ? u.file : 'action-inputs'), baselineKeys, threshold),
   }));
   // A baseline entry whose id matches a result but whose file / ruleId / severity does not
   // was NOT accepted (applyBaseline); it also fails the run as a usage error, so a

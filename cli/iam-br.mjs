@@ -53,7 +53,7 @@ import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 // The CLI just picks it when --format sarif; the exit code is unaffected.
 import { formatSarif, artifactUri } from './sarif.mjs';
 // v1.3.0: Pulumi preview / stack export input (one aggregate result over many documents).
-import { scanPulumi, pulumiUnits, PULUMI_LIMITS } from './pulumi.mjs';
+import { scanPulumi, pulumiUnits, applyPulumiBaseline, PULUMI_LIMITS } from './pulumi.mjs';
 import { buildAggregateSarif } from '../action/action-aggregate.mjs';
 import {
   applyBaseline, parseBaseline, buildBaseline, formatBaseline, baselineWriteProblem, MAX_BASELINE_BYTES,
@@ -487,7 +487,6 @@ function usage(message) {
 function pulumiArgProblem(opts) {
   if (isNonEmptyString(opts.family)) return '--family is not used with --input pulumi (each policy\'s family comes from its resource type)';
   if (opts.resourceType || opts.resourceArn || opts.resourceAccount) return '--resource-* is not used with --input pulumi (the attached resource is resolved from the stack)';
-  if (opts.baseline != null || opts.format === 'baseline') return 'baselines are not supported with --input pulumi yet';
   if (!isNonEmptyString(opts.file)) return '--input pulumi needs the preview/export JSON as a file argument (stdin is not read)';
   return null;
 }
@@ -677,26 +676,9 @@ export async function run(argv, io) {
     // An opt-in baseline is read + validated BEFORE analysis: an unreadable or malformed
     // baseline is a usage error (exit 2), never "no baseline" (which would silently fail
     // every accepted result) and never a clean pass.
-    let acceptedKeys = null;
-    if (opts.baseline != null) {
-      let baselineText;
-      try {
-        baselineText = io.readFile(opts.baseline, MAX_BASELINE_BYTES);
-      } catch (e) {
-        if (opts.verbose) {
-          err(`iam-br: cannot read baseline file '${opts.baseline}': ${(e && (e.code || e.message)) || 'error'}\n`);
-        } else {
-          err('iam-br: cannot read baseline file (use --verbose for details).\n');
-        }
-        return EXIT.USAGE;
-      }
-      const parsedBaseline = parseBaseline(baselineText);
-      if (!parsedBaseline.ok) {
-        err(`iam-br: ${parsedBaseline.message}\n`);
-        return EXIT.USAGE;
-      }
-      acceptedKeys = parsedBaseline.keys;
-    }
+    const bl = readAcceptedKeys(opts, io, err);
+    if (bl.exit != null) return bl.exit;
+    const acceptedKeys = bl.keys;
 
     // Run the analysis. scan() owns the exit-code contract; the CLI propagates it.
     const scanFn = (io && io.scan) || scan;
@@ -778,9 +760,34 @@ export async function run(argv, io) {
   }
 }
 
+// Read + validate an opt-in baseline BEFORE analysis: unreadable or malformed is exit 2,
+// never "no baseline". Returns { keys } (null when none) or { exit }.
+function readAcceptedKeys(opts, io, err) {
+  if (opts.baseline == null) return { keys: null };
+  let baselineText;
+  try {
+    baselineText = io.readFile(opts.baseline, MAX_BASELINE_BYTES);
+  } catch (e) {
+    if (opts.verbose) {
+      err(`iam-br: cannot read baseline file '${opts.baseline}': ${(e && (e.code || e.message)) || 'error'}\n`);
+    } else {
+      err('iam-br: cannot read baseline file (use --verbose for details).\n');
+    }
+    return { exit: EXIT.USAGE };
+  }
+  const parsedBaseline = parseBaseline(baselineText);
+  if (!parsedBaseline.ok) {
+    err(`iam-br: ${parsedBaseline.message}\n`);
+    return { exit: EXIT.USAGE };
+  }
+  return { keys: parsedBaseline.keys };
+}
+
 // --input pulumi: read the file (larger cap than one policy), scan every document,
 // emit one aggregate report. Same exit contract; formatting never changes the code.
 function runPulumi(opts, io, out, err, manifest) {
+  const bl = readAcceptedKeys(opts, io, err);
+  if (bl.exit != null) return bl.exit;
   let text;
   let tooLarge = false;
   try {
@@ -794,7 +801,7 @@ function runPulumi(opts, io, out, err, manifest) {
       return EXIT.USAGE;
     }
   }
-  const result = scanPulumi({
+  const scanned = scanPulumi({
     text: tooLarge ? '' : text,
     oversize: tooLarge,
     subjectAccount: opts.subjectAccount,
@@ -802,16 +809,31 @@ function runPulumi(opts, io, out, err, manifest) {
     threshold: opts.threshold,
     budgetMs: opts.budgetMs,
   });
-  const code = Number.isInteger(result.exitCode) ? result.exitCode : EXIT.INTERNAL;
-  if (code === EXIT.USAGE) {
-    err(`iam-br: ${result.analysisStates[0] ? result.analysisStates[0].message : 'not Pulumi JSON'}\n`);
+  if (scanned.exitCode === EXIT.USAGE) {
+    err(`iam-br: ${scanned.analysisStates[0] ? scanned.analysisStates[0].message : 'not Pulumi JSON'}\n`);
     return EXIT.USAGE;
   }
+  // P8: keys per <urn>#<property> (always attached), opt-in acceptance per document.
+  const threshold = isNonEmptyString(opts.threshold) ? opts.threshold.trim().toLowerCase() : 'high';
+  const result = applyPulumiBaseline(scanned, bl.keys, threshold);
+  if (result.baseline && result.baseline.mismatched.length > 0) {
+    err(`iam-br: ${result.baseline.mismatched.length} baseline entr${result.baseline.mismatched.length === 1 ? 'y matches' : 'ies match'} a result by id `
+      + 'but not by file / ruleId / severity; regenerate the baseline (--format baseline) and review it.\n');
+    return EXIT.USAGE;
+  }
+  const code = Number.isInteger(result.exitCode) ? result.exitCode : EXIT.INTERNAL;
   let formatted;
   try {
-    formatted = opts.format === 'sarif'
-      ? `${JSON.stringify(buildAggregateSarif(pulumiUnits(result, opts.artifactUri), manifest), null, 2)}\n`
-      : `${JSON.stringify(toPulumiJsonReport(result, opts, manifest), null, 2)}\n`;
+    if (opts.format === 'baseline') {
+      const doc = buildBaseline(pulumiUnits(result, opts.artifactUri));
+      formatted = formatBaseline(doc);
+      const problem = baselineWriteProblem(doc, formatted);
+      if (problem) throw new Error(`baseline too large to read back: ${problem}`);
+    } else {
+      formatted = opts.format === 'sarif'
+        ? `${JSON.stringify(buildAggregateSarif(pulumiUnits(result, opts.artifactUri), manifest), null, 2)}\n`
+        : `${JSON.stringify(toPulumiJsonReport(result, opts, manifest), null, 2)}\n`;
+    }
   } catch (e) {
     err(`iam-br: internal error: failed to format ${opts.format} output: ${(e && e.message) || 'error'}\n`);
     return EXIT.INTERNAL;
@@ -827,6 +849,8 @@ function runPulumi(opts, io, out, err, manifest) {
   } else {
     out(formatted);
   }
+  const stale = result.baseline ? result.baseline.stale.length : 0;
+  if (stale > 0) err(`iam-br: ${stale} baseline entr${stale === 1 ? 'y no longer matches' : 'ies no longer match'} any result; remove them from the baseline file.\n`);
   err(`iam-br: input=pulumi scope=${result.scanScope} status=${result.analysisStatus} exit=${code} `
     + `reason=${result.reason} documents=${result.documents.length} findings=${result.findingsCount} blocking=${result.blockingCount}\n`);
   return code;
@@ -856,6 +880,12 @@ export function toPulumiJsonReport(result, opts, manifest = VERSION_MANIFEST) {
     providers: [...(result.providers || [])],
     // Listed, not analyzed (e.g. source-bound Lambda permissions).
     unanalyzed: [...(result.unanalyzed || [])],
+    // P9: role groups (informational; never part of the verdict).
+    groups: [...(result.groups || [])],
+    unresolvedEdges: [...(result.unresolvedEdges || [])],
+    baseline: result.baseline
+      ? { applied: result.baseline.applied, accepted: result.baseline.used.length, stale: result.baseline.stale.length }
+      : null,
     analysisStatus: result.analysisStatus,
     reason: result.reason,
     exitCode: result.exitCode,
