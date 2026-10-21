@@ -32,7 +32,7 @@ import { correlateFindings } from './correlate.js';
 import { buildGraph, buildTrustGraph, buildResourceGraph, GRAPH_LIMITS } from './graph.js';
 import { detectFamily, FAMILIES, isRcpShape } from './family.js';
 import { enrichCoverage, duplicateSids } from './coverage.js';
-import { classifyConditions, unsupportedConditionKeys } from './conditions.js';
+import { classifyConditions, unsupportedConditionKeys, unsupportedConditionBindings } from './conditions.js';
 // S1-breadth-classify: the shared Resource-ARN classifier. Used here (post-rules) to
 // close the last breadth fail-open the rule engine cannot: ANY value classifyResource()
 // reports BROAD - a non-ARN glob ("?*", "*/*") OR a broad WELL-FORMED ARN
@@ -162,7 +162,7 @@ export function analyze(text, options) {
     // Every trust finding carries the limitation that the assumed role's
     // permissions are out of scope / unknown.
     if (effectiveFamily === FAMILIES.ROLE_TRUST) {
-      return trustResult(m.model, coverage, effectiveFamily);
+      return trustResult(m.model, coverage, effectiveFamily, { subjectAccount: (options && options.subjectAccount) || null });
     }
 
     // IAM-1002 (Phase 10): an explicit permissions-boundary / session selection
@@ -453,6 +453,7 @@ export function analyze(text, options) {
       graph,
       catalogVersion: defaultCatalog.version,
       unsupportedConditions: unsupportedConditionKeys(m.model),
+      unsupportedConditionBindings: unsupportedConditionBindings(m.model),
       unrecognizedActions: unrecognizedActions(m.model, defaultCatalog),
       // IAM-1006 (test 50): object-action vs bucket-only-ARN mismatches - a
       // non-blocking coverage warning so an ineffective grant is never reported

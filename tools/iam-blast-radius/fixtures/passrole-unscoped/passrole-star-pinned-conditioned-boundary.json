@@ -1,0 +1,17 @@
+{
+  "name": "PassRole on * pinned to a service by iam:PassedToService (boundary)",
+  "note": "The pin restricts which service receives the role, not which roles can be passed: still unscoped on the role axis, reported with reduced confidence.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PassAnyPinned",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": "*",
+        "Condition": { "StringEquals": { "iam:PassedToService": "ecs-tasks.amazonaws.com" } }
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["PASSROLE-UNSCOPED"], "notFindingIds": [] }
+}

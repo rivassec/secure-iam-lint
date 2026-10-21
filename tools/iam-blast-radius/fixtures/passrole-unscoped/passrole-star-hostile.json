@@ -1,0 +1,16 @@
+{
+  "name": "PassRole on * with hostile strings (inert rendering)",
+  "note": "Hostile Sid/resource tokens must ride through as inert data.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "<img src=x onerror=alert(1)>pr",
+        "Effect": "Allow",
+        "Action": "iam:PassRole",
+        "Resource": ["*", "arn:aws:iam::111122223333:role/<script>alert(1)</script>"]
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["PASSROLE-UNSCOPED"], "hostile": true, "hostileFor": ["PASSROLE-UNSCOPED"], "assertInertRendering": true }
+}

@@ -27,6 +27,13 @@ export function makeFinding(stmt, principals, { id, severity, title, why, remedi
     title,
     statementSid: statementSid(stmt),
     statementIndex: stmt.index,
+    // Top-level so the fingerprint/baseline id bind to WHO is trusted (R1-06).
+    // Deduped: an anonymous entry otherwise appears twice (R2-03). A bare
+    // 12-digit account tokens as its root ARN so both spellings match (R2-04).
+    principals: [...new Set(principals.entries
+      .map((e) => (e.type === 'aws-account' && /^\d{12}$/.test(e.value)
+        ? `aws-root=arn:aws:iam::${e.value}:root` : `${e.type}=${e.value}`))
+      .concat(principals.anonymous ? ['anonymous=*'] : []))],
     actions,
     resources: [], // a trust policy has no Resource; its absence is normal.
     conditions: stmt.condition === undefined ? null : stmt.condition,

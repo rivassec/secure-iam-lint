@@ -1,0 +1,11 @@
+{
+  "name": "s3:PutObjectAcl on bucket/* (F1-01 positive)",
+  "note": "Bulk object-ACL write: public/cross-account exposure unless BucketOwnerEnforced; high.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AclAll", "Effect": "Allow", "Action": "s3:PutObjectAcl", "Resource": "arn:aws:s3:::example-bucket/*" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["OBJECT-ACL-WRITE"] }
+}

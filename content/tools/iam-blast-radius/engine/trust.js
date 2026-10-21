@@ -37,6 +37,7 @@ import {
 export * from './trust-findings.js';
 import {
   parseOperatorParts, toValues, conditionSignals, hasConfusedDeputyConstraint, publicScopeConstraint,
+  selfReferenceKeys,
 } from './trust-conditions.js';
 export * from './trust-conditions.js';
 import {
@@ -104,7 +105,7 @@ import { chargeWork, isGlobBudgetError } from './glob.js';
 // IAM-804 iteration 4 finding 2). Only a value carrying at least one LITERAL
 // character narrows (a partial ExternalId still forces the caller to present that
 // literal substring). Mirrors conditions.js valueNarrowsKey default arm.
-function findingsForStatement(stmt) {
+function findingsForStatement(stmt, subjectAccount = null) {
   const allPrincipals = classifyPrincipals(stmt.principal);
   const found = [];
 
@@ -280,7 +281,7 @@ function findingsForStatement(stmt) {
     if (principals.entries.length === 0) return found;
   }
 
-  const sig = conditionSignals(stmt.condition, principals);
+  const sig = conditionSignals(stmt.condition, principals, subjectAccount);
   const who = principalSummary(principals);
   // A would-be constraint carrying a bypassable qualifier (...IfExists /
   // ForAllValues:) is NOT credited above and does not lower severity; name it so
@@ -403,6 +404,14 @@ function findingsForStatement(stmt) {
       }));
       return found;
     }
+    // T1-01: an account-open aws:PrincipalArn (wildcard/variable account segment)
+    // matches a role name ANY AWS customer can create, so it is public-equivalent
+    // and uncredited - this branch fires at critical, naming why.
+    const openNote = sig.principalArnAccountOpen
+      ? ' A present aws:PrincipalArn condition is NOT credited: its account segment ' +
+        'is wildcarded or caller-controlled, and any AWS customer can create a ' +
+        'matching role in their own account, so it does not bound who is trusted.'
+      : '';
     found.push(makeFinding(stmt, principals, {
       id: 'TRUST-PUBLIC',
       severity: 'critical',
@@ -412,7 +421,7 @@ function findingsForStatement(stmt) {
         'anonymous/other-account principals - is trusted to assume this role. AWS ' +
         'strongly warns against a wildcard principal on an Allow in a role trust ' +
         'policy because it lets outside principals become a principal in your account.' +
-        bypassNote,
+        openNote + bypassNote,
       remediation:
         'Replace Principal "*" with the specific accounts, roles, or federated ' +
         'identities that must assume this role, and add a confused-deputy ' +
@@ -749,7 +758,7 @@ function findingsForStatement(stmt) {
 // unassumable (threat-model T8, a truthfulness harm).
 
 // All same-policy trust Deny statements (Deny effect + trust shape).
-export function analyzeTrust(model) {
+export function analyzeTrust(model, options = null) {
   const errors = [];
   try {
     if (!model || typeof model !== 'object' || !Array.isArray(model.statements)) {
@@ -773,7 +782,20 @@ export function analyzeTrust(model) {
       // Deny-unaware; analyze.js + graph.js apply IAM-302 precedence).
       if (stmt.effect !== 'Allow') continue;
       if (!isTrustStatement(stmt)) continue;
-      for (const f of findingsForStatement(stmt)) findings.push(f);
+      for (const f of findingsForStatement(stmt, options && options.subjectAccount)) findings.push(f);
+      const selfRefs = selfReferenceKeys(stmt.condition);
+      if (selfRefs.length > 0) {
+        findings.push(makeFinding(stmt, classifyPrincipals(stmt.principal), {
+          id: 'TRUST-CONDITION-TAUTOLOGY',
+          severity: 'info',
+          title: 'Condition compares a key with its own policy variable',
+          why: `The condition on ${selfRefs.join(', ')} tests the key against its own value (key == \${key}), `
+            + 'which is always true, so it constrains nothing. The trust is scored as if the condition were absent.',
+          remediation: 'Replace the policy variable with the literal value the key must have.',
+          docRef: DOC_CONDITION_KEYS,
+          pathExploitability: 'low',
+        }));
+      }
     }
 
     // Deterministic order: by statement index, then by trust id order.

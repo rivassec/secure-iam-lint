@@ -66,6 +66,23 @@ inputs:
     description: Path to write the SARIF 2.1.0 output file.
     required: false
     default: iam-blast-radius.sarif
+  baseline:
+    description: >-
+      Optional workspace-relative path to a committed baseline file of ACCEPTED results
+      (generate one with baseline-output, or `iam-br --format baseline`). Accepted findings
+      stop counting toward fail-on, and accepted UNKNOWN_ACTION / UNSUPPORTED_CONDITION
+      states stop failing the run - each accepted INDIVIDUALLY (an unknown action or key
+      not in the baseline still fails closed). Usage errors, internal errors and every
+      other fail-closed state (malformed, blocked, budget, ...) are never accepted. Keys are
+      bound to the file path. An unreadable or malformed baseline is a usage error (exit 2).
+      Accepted SARIF results carry baselineState "unchanged" and an accepted suppression.
+    required: false
+  baseline-output:
+    description: >-
+      Optional workspace-relative path to WRITE a fresh baseline accepting every result of
+      this run (review it, then commit it and pass it as `baseline`). Confined like
+      sarif-output.
+    required: false
   budget-ms:
     description: >-
       Per-policy wall-clock analysis budget in milliseconds (default 10000). If a
@@ -132,6 +149,10 @@ outputs:
     description: Total findings at/above the fail-on threshold across all scanned files.
   analysis-status:
     description: Aggregate analysis status - complete, partial, or failed.
+  baselined-count:
+    description: Number of baseline entries that matched a result this run (only set when `baseline` is given).
+  baseline-stale-count:
+    description: Number of baseline entries that matched nothing this run and can be removed (only set when `baseline` is given).
 
 # Runtime: node24, provided by the GitHub-hosted runner (nothing is installed or bundled
 # by this action). GitHub.com-hosted runners are the supported baseline; a self-hosted

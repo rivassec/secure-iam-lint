@@ -3,38 +3,101 @@
   "missing": [],
   "active": [
     {
+      "file": "action/action-glob.mjs",
+      "line": 62,
+      "cls": "candidate-drop",
+      "snippet": "return s.length > MAX_GLOB_PATTERN_LENGTH || countGlobWildcards(s) > MAX_GLOB_WILDCARDS;",
+      "note": "cap/truncation-guarded drop with no fail-closed truncation signal"
+    },
+    {
+      "file": "action/index.mjs",
+      "line": 195,
+      "cls": "candidate-drop",
+      "snippet": "return fail('BASELINE_UNREADABLE', 'The \"baseline\" file could not be read (missing, a symlink, not a regular file, or too large).');",
+      "note": "enumeration drops an unreadable/parse-failed/glob-failed item with no fail-closed bookkeeping"
+    },
+    {
+      "file": "cli/baseline.mjs",
+      "line": 110,
+      "cls": "candidate-drop",
+      "snippet": "if (Buffer.byteLength(text, 'utf8') > MAX_BASELINE_BYTES) {",
+      "note": "cap/truncation-guarded drop with no fail-closed truncation signal"
+    },
+    {
+      "file": "cli/baseline.mjs",
+      "line": 117,
+      "cls": "candidate-drop",
+      "snippet": "return bad('The baseline file is not valid JSON.');",
+      "note": "enumeration drops an unreadable/parse-failed/glob-failed item with no fail-closed bookkeeping"
+    },
+    {
+      "file": "cli/baseline.mjs",
+      "line": 126,
+      "cls": "candidate-drop",
+      "snippet": "if (doc.entries.length > MAX_BASELINE_ENTRIES) return bad(`The baseline file has more than ${MAX_BASELINE_ENTRIES} entries.`);",
+      "note": "cap/truncation-guarded drop with no fail-closed truncation signal"
+    },
+    {
+      "file": "cli/baseline.mjs",
+      "line": 259,
+      "cls": "candidate-drop",
+      "snippet": "if (doc.entries.length > MAX_BASELINE_ENTRIES) {",
+      "note": "cap/truncation-guarded drop with no fail-closed truncation signal"
+    },
+    {
+      "file": "cli/baseline.mjs",
+      "line": 263,
+      "cls": "candidate-drop",
+      "snippet": "if (bytes > MAX_BASELINE_BYTES) return `${bytes} bytes exceed the ${MAX_BASELINE_BYTES}-byte limit`;",
+      "note": "cap/truncation-guarded drop with no fail-closed truncation signal"
+    },
+    {
       "file": "cli/iam-br.mjs",
-      "line": 696,
+      "line": 769,
       "cls": "silent-catch-clean",
       "snippet": "} catch { /* best effort */ }",
       "note": "catch swallows the error with no fail-closed marker"
     },
     {
       "file": "cli/iam-br.mjs",
-      "line": 710,
+      "line": 783,
       "cls": "silent-catch-clean",
       "snippet": "try { stream.pause(); } catch { /* best effort */ }",
       "note": "catch swallows the error with no fail-closed marker"
     },
     {
       "file": "cli/iam-br.mjs",
-      "line": 711,
+      "line": 784,
+      "cls": "silent-catch-clean",
+      "snippet": "try { if (typeof stream.destroy === 'function') stream.destroy(); } catch { /* best effort */ }",
+      "note": "catch swallows the error with no fail-closed marker"
+    },
+    {
+      "file": "cli/iam-br.mjs",
+      "line": 807,
+      "cls": "silent-catch-clean",
+      "snippet": "try { stream.pause(); } catch { /* best effort */ }",
+      "note": "catch swallows the error with no fail-closed marker"
+    },
+    {
+      "file": "cli/iam-br.mjs",
+      "line": 808,
       "cls": "silent-catch-clean",
       "snippet": "try { if (typeof stream.destroy === 'function') stream.destroy(); } catch { /* best effort */ }",
       "note": "catch swallows the error with no fail-closed marker"
     },
     {
       "file": "cli/sarif.mjs",
-      "line": 480,
+      "line": 530,
       "cls": "candidate-drop",
       "snippet": "if (s.length > MAX_SID_LEN) s = `${s.slice(0, MAX_SID_LEN)}...`;",
       "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
     },
     {
       "file": "cli/sarif.mjs",
-      "line": 775,
+      "line": 816,
       "cls": "candidate-drop",
-      "snippet": "const shown = norm.slice(0, MAX_MSG_ACTIONS);",
+      "snippet": "return { shown: norm.slice(0, MAX_MSG_ACTIONS), more: Math.max(0, norm.length - MAX_MSG_ACTIONS) };",
       "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
     },
     {
@@ -60,7 +123,7 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/correlate.js",
-      "line": 880,
+      "line": 888,
       "cls": "unbounded-walk",
       "snippet": "function deepFreeze(value) {",
       "note": "recursion (deepFreeze) with no visible depth/node/size cap"
@@ -81,14 +144,14 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/escalation.js",
-      "line": 1079,
+      "line": 1088,
       "cls": "unbounded-walk",
       "snippet": "function deepFreeze(value) {",
       "note": "recursion (deepFreeze) with no visible depth/node/size cap"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/format-control.js",
-      "line": 181,
+      "line": 183,
       "cls": "unbounded-walk",
       "snippet": "export function sanitizeTree(value) {",
       "note": "recursion (sanitizeTree) with no visible depth/node/size cap"
@@ -123,9 +186,9 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/model.js",
-      "line": 125,
+      "line": 161,
       "cls": "unbounded-walk",
-      "snippet": "function copyGuarded(value, errors, path) {",
+      "snippet": "function copyGuarded(value, errors, path, spoof) {",
       "note": "recursion (copyGuarded) with no visible depth/node/size cap"
     },
     {
@@ -158,28 +221,28 @@
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules-detectors.js",
-      "line": 726,
+      "line": 762,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 143,
+      "line": 144,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 223,
+      "line": 224,
       "cls": "budget-bypass",
       "snippet": "for (const stmt of model.statements) {",
       "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
     },
     {
       "file": "content/tools/iam-blast-radius/engine/rules.js",
-      "line": 273,
+      "line": 274,
       "cls": "unbounded-walk",
       "snippet": "function deepFreeze(value) {",
       "note": "recursion (deepFreeze) with no visible depth/node/size cap"
@@ -225,6 +288,13 @@
       "cls": "unbounded-walk",
       "snippet": "function sanitize(value, path, errors, visited) {",
       "note": "recursion (sanitize) with no visible depth/node/size cap"
+    },
+    {
+      "file": "content/tools/iam-blast-radius/samples.js",
+      "line": 25,
+      "cls": "unbounded-walk",
+      "snippet": "function deepFreeze(value) {",
+      "note": "recursion (deepFreeze) with no visible depth/node/size cap"
     }
   ],
   "suppressed": []

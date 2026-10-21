@@ -7,7 +7,7 @@ import { analyzeRcp } from './rcp.js';
 import { analyzeResource } from './resource.js';
 import { buildTrustGraph, buildResourceGraph, GRAPH_LIMITS } from './graph.js';
 import { enrichCoverage, duplicateSids } from './coverage.js';
-import { unsupportedConditionKeys } from './conditions.js';
+import { unsupportedConditionKeys, unsupportedConditionBindings } from './conditions.js';
 import { defaultCatalog, unrecognizedActions } from './catalog.js';
 import { sortFindings, stampFamily, CATALOG_VERSION } from './analyze-format.js';
 
@@ -119,8 +119,8 @@ export function abortedResult(model, coverage) {
 // "Principal subject of this policy" root (acceptance-suite test 15); it reuses
 // the typed `can-assume` edge and never emits identity-style capability edges on
 // a trust policy. The findings table remains the authoritative view.
-export function trustResult(model, coverage, effectiveFamily) {
-  const trust = analyzeTrust(model);
+export function trustResult(model, coverage, effectiveFamily, options = null) {
+  const trust = analyzeTrust(model, options);
   if (!trust.ok) return fail(trust.errors);
 
   // IAM-806: same-policy explicit-Deny precedence for the AUTHORITATIVE TABLE.
@@ -172,6 +172,7 @@ export function trustResult(model, coverage, effectiveFamily) {
     graph,
     catalogVersion: defaultCatalog.version,
     unsupportedConditions: unsupportedConditionKeys(model),
+    unsupportedConditionBindings: unsupportedConditionBindings(model),
     unrecognizedActions: unrecognizedActions(model, defaultCatalog),
     trustDeny: summarizeTrustDeny(model, trust.findings),
     invalidPrincipals,
@@ -224,6 +225,7 @@ export function envelopeResult(model, coverage, effectiveFamily) {
     graph,
     catalogVersion: defaultCatalog.version,
     unsupportedConditions: unsupportedConditionKeys(model),
+    unsupportedConditionBindings: unsupportedConditionBindings(model),
     unrecognizedActions: unrecognizedActions(model, defaultCatalog),
     // IAM-1007 (test 60): non-unique Sids advisory (envelope/session family).
     duplicateSids: duplicateSids(model),
@@ -274,6 +276,7 @@ export function scpResult(model, coverage, effectiveFamily) {
     graph,
     catalogVersion: defaultCatalog.version,
     unsupportedConditions: unsupportedConditionKeys(model),
+    unsupportedConditionBindings: unsupportedConditionBindings(model),
     unrecognizedActions: unrecognizedActions(model, defaultCatalog),
     duplicateSids: duplicateSids(model),
   });
@@ -324,6 +327,7 @@ export function rcpResult(model, coverage, effectiveFamily) {
     graph,
     catalogVersion: defaultCatalog.version,
     unsupportedConditions: unsupportedConditionKeys(model),
+    unsupportedConditionBindings: unsupportedConditionBindings(model),
     unrecognizedActions: unrecognizedActions(model, defaultCatalog),
     duplicateSids: duplicateSids(model),
   });
@@ -378,6 +382,7 @@ export function resourceResult(model, coverage, effectiveFamily, options) {
     graph,
     catalogVersion: defaultCatalog.version,
     unsupportedConditions: unsupportedConditionKeys(model),
+    unsupportedConditionBindings: unsupportedConditionBindings(model),
     unrecognizedActions: unrecognizedActions(model, defaultCatalog),
     duplicateSids: duplicateSids(model),
     // IAM-1201: the resource evaluator's coverage (detected service + attached ARN

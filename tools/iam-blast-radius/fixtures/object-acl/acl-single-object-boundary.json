@@ -1,0 +1,11 @@
+{
+  "name": "s3:PutObjectVersionAcl on one named object (boundary)",
+  "note": "A single named object is the decision boundary: still reported (medium), not suppressed.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AclOne", "Effect": "Allow", "Action": "s3:PutObjectVersionAcl", "Resource": "arn:aws:s3:::example-bucket/reports/annual.pdf" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["OBJECT-ACL-WRITE"] }
+}

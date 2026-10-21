@@ -114,7 +114,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0fcdc8436309dd0fac2b63605796"
+                "iamBlastRadius/semanticIdentity/v2": "33dfb6af8793c97ce0cf2519321fb500"
               },
               "properties": {
                 "category": "security",
@@ -129,7 +129,8 @@
                 "statementSid": "WriteEverywhereButOneBucket",
                 "excludedResources": [
                   "arn\\:aws\\:s3\\:\\:\\:locked\\-bucket\\/\\*"
-                ]
+                ],
+                "baselineId": "fe272f6de32a7eb7ead6dffc96f1f82b9dec7869c4f26fd5935d92cb5f2d42c0"
               },
               "ruleIndex": 0
             }

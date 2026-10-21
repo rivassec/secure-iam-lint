@@ -4,6 +4,28 @@ import { chargeWork, globMatch } from './glob.js';
 import { grantTokenIsBroad, isStarResource } from './escalation-scope.js';
 import { hasNonEmptyCondition } from './escalation-conditions.js';
 
+// Does Deny pattern `d` match every action the (possibly wildcard) grant token `g` can
+// match? A wildcard in `g` is a set, not a literal, so `?` in `d` must not cover it.
+export function denyPatternCovers(d, g) {
+  const a = String(d).toLowerCase(); const b = String(g).toLowerCase();
+  if (!b.includes('*') && !b.includes('?')) return actionGrants(a, b);
+  chargeWork(a.length * (b.length + 1) + 1);
+  const memo = new Map();
+  const cov = (i, j) => {
+    const k = i * (b.length + 1) + j;
+    if (memo.has(k)) return memo.get(k);
+    let r;
+    if (i === a.length) r = j === b.length;
+    else if (a[i] === '*') r = cov(i + 1, j) || (j < b.length && cov(i, j + 1));
+    else if (j === b.length || b[j] === '*') r = false;
+    else if (a[i] === '?') r = cov(i + 1, j + 1);
+    else r = b[j] !== '?' && a[i] === b[j] && cov(i + 1, j + 1);
+    memo.set(k, r);
+    return r;
+  };
+  return cov(0, 0);
+}
+
 export function denyActionApplies(stmt, action) {
   // S3-dos-budget-all (Team1): charge per Action/NotAction pattern INSPECTED. A
   // policy-variable pattern short-circuits via `continue` BEFORE actionGrants (the
@@ -36,7 +58,7 @@ export function denyActionApplies(stmt, action) {
   for (const p of stmt.actions) {
     chargeWork(1);
     if (hasPolicyVariable(p)) { hasVar = true; continue; }
-    if (actionGrants(p, action)) concreteMatch = true;
+    if (denyPatternCovers(p, action)) concreteMatch = true;
   }
   if (concreteMatch) return { applies: true, certain: true };
   if (hasVar) return { applies: true, certain: false }; // might match at runtime

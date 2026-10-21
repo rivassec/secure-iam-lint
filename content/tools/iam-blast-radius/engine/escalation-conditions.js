@@ -1,5 +1,9 @@
 // escalation-conditions.js - condition operator/service helpers. Extracted (behavior-preserving).
 import { globMatch } from './glob.js';
+import { CHINA_SERVICE_PRINCIPALS } from './escalation-catalogs.js';
+
+// Partition sentinel: not asserted and no ARN evidence either way.
+export const UNASSERTED_PARTITION = 'unasserted';
 
 // Extract every Condition entry that binds iam:PassedToService (case-insensitive
 // key), preserving the OPERATOR it appears under - the operator decides whether
@@ -45,7 +49,8 @@ export function normalizeOperator(op) {
 //     matches (may pass to any service EXCEPT the listed ones).
 //   - Null and any unrecognized operator: uncertain (cannot resolve from text;
 //     do NOT assume allowlist semantics, which would invert the meaning).
-export function operatorPermitsService(op, values, principal) {
+// `partition` is the asserted token, or null when none was asserted / it was unrecognized.
+export function operatorPermitsService(op, values, principal, partition = 'aws') {
   const base = normalizeOperator(op);
   const p = String(principal).toLowerCase();
   // Stage-14 CRITICAL: AWS folds the VALUE only for the *IgnoreCase base operators.
@@ -59,9 +64,33 @@ export function operatorPermitsService(op, values, principal) {
   // operators only ever OVER-reported a permit -> fail-closed/safe; only the denylist
   // direction was fail-open. We fold exactly where AWS folds.)
   const ignoreCase = base === 'stringequalsignorecase' || base === 'stringnotequalsignorecase';
-  const matchAny = values.some(
-    (v) => globMatch(ignoreCase ? String(v).toLowerCase() : String(v), p),
-  );
+  const fold = (v) => (ignoreCase ? String(v).toLowerCase() : String(v));
+  // Only Like/Arn* expand wildcards; (Not)Equals compares literally (R1-01).
+  const glob = base === 'stringlike' || base === 'stringnotlike' || base.startsWith('arn');
+  const hit = (v, t) => (glob ? globMatch(fold(v), t) : fold(v) === t);
+  // Candidate spellings AWS might send (R2-01/R2-02, F2-08). China docs say some
+  // services use .amazonaws.com.cn "instead of or in addition to" the canonical
+  // form, so a pin never proves a sole spelling: under aws-cn (and null) BOTH arms
+  // consider both spellings - the allow arm matches either (an unmatched allow
+  // drops a grant, fail-open), and a deny counts only when it covers both.
+  // UNASSERTED_PARTITION keeps Stage-18 deny semantics (canonical only).
+  const pinnedCn = CHINA_SERVICE_PRINCIPALS[p];
+  const wideSet = [p, pinnedCn || `${p}.cn`];
+  const known = partition && partition !== UNASSERTED_PARTITION;
+  const allowCandidates = partition === 'aws-cn' ? wideSet : (known ? [p] : wideSet);
+  const candidates = partition === 'aws-cn' ? wideSet : (partition === null ? wideSet : [p]);
+  // ${...} is caller-controlled and may resolve to the principal (T2-1).
+  // ${*} ${?} ${$} are literal ESCAPES, not variables (R1-04): strip them before
+  // the variable test. The escaped char never occurs in a service principal, so a
+  // value carrying one can never match any candidate (both arms).
+  const ESC_RE = /\$\{[*?$]\}/;
+  const VAR_RE = /\$\{[^}]*\}/;
+  const isVar = (v) => VAR_RE.test(String(v).replace(new RegExp(ESC_RE, 'g'), ''));
+  const match = (v, t) => !ESC_RE.test(String(v)) && hit(v, t);
+  const concrete = values.filter((v) => !isVar(v));
+  const anyVar = concrete.length !== values.length;
+  const covered = candidates.filter((c) => concrete.some((v) => match(v, c)));
+  const matchAllow = anyVar || allowCandidates.some((c) => concrete.some((v) => match(v, c)));
   // Stage-17: a BYPASSABLE qualifier - an `...IfExists` suffix or a `ForAllValues:` set prefix -
   // makes the condition TRUE when the request key is ABSENT (IfExists) or the request set is
   // EMPTY (ForAllValues, vacuous truth). AWS therefore does NOT honor it as a real restriction:
@@ -79,21 +108,16 @@ export function operatorPermitsService(op, values, principal) {
     case 'stringlike':
     case 'arnequals':
     case 'arnlike':
-      return matchAny ? 'permit' : (bypassable ? 'uncertain' : 'deny');
+      return matchAllow ? 'permit' : (bypassable ? 'uncertain' : 'deny');
     case 'stringnotequals':
     case 'stringnotequalsignorecase':
     case 'stringnotlike':
     case 'arnnotequals':
     case 'arnnotlike':
-      // Stage-18: the denylist arm deliberately does NOT consult `bypassable`. Its `deny`
-      // fires ONLY when a value glob-matches the tested service principal `p` - i.e. only for
-      // the exact service named in the denylist. A real iam:PassRole to THAT service has AWS
-      // populate iam:PassedToService=that-service (key PRESENT, single-valued), so the deny is
-      // a genuine AWS deny, and the bypassable (key-absent / empty-set) case never applies to a
-      // reachable same-service pass. Degrading this `deny` to `uncertain` (as the allowlist arm
-      // does) would OVER-report - firing PASSROLE-* on a policy AWS genuinely denies (a false
-      // positive), verified in Stage-18. The asymmetry is correct; do not "symmetrize" it.
-      return matchAny ? 'deny' : 'permit';
+      // Deny only when every candidate spelling is covered; partial coverage is uncertain.
+      // Stage-18: deliberately ignores `bypassable` (a full-cover deny is a genuine AWS deny).
+      if (covered.length === candidates.length) return 'deny';
+      return covered.length > 0 ? 'uncertain' : 'permit';
     default:
       // Null, Date*, Bool, and anything unrecognized: meaning cannot be
       // determined from the policy text -> uncertain.
@@ -111,12 +135,12 @@ export function operatorPermitsService(op, values, principal) {
 //   - uncertain=true: an operator (e.g. Null / unsupported) could not be
 //                     resolved from the policy text; the path is kept but its
 //                     confidence is reduced rather than asserting a false result.
-export function passRolePermitsService(condition, principal) {
+export function passRolePermitsService(condition, principal, partition = 'aws') {
   const entries = passedToServiceEntries(condition);
   if (entries.length === 0) return { permits: true, pinned: false, uncertain: false };
   let uncertain = false;
   for (const e of entries) {
-    const disp = operatorPermitsService(e.op, e.values, principal);
+    const disp = operatorPermitsService(e.op, e.values, principal, partition);
     // A definitive deny under any AND-ed operator blocks this service outright.
     if (disp === 'deny') return { permits: false, pinned: true, uncertain: false };
     if (disp === 'uncertain') uncertain = true;

@@ -173,7 +173,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1e4bdb49f5d5eb0202640198da06"
+                "iamBlastRadius/semanticIdentity/v2": "025d9f6fa7025d917fd356bb97a55f31"
               },
               "properties": {
                 "category": "security",
@@ -189,7 +189,8 @@
                 "excludedResources": [
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz",
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz\\/\\*"
-                ]
+                ],
+                "baselineId": "87ce3564889a2465195acd8e8ea851e707b935a66032b4891be6d63aa070b477"
               },
               "ruleIndex": 0
             },
@@ -209,7 +210,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0a15e2715340c80768f072aedb4e"
+                "iamBlastRadius/semanticIdentity/v2": "70ae28831392ac46c72bab1cdb0ce230"
               },
               "properties": {
                 "category": "security",
@@ -225,7 +226,8 @@
                 "excludedResources": [
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz",
                   "arn\\:aws\\:s3\\:\\:\\:does\\-not\\-exist\\-carveout\\-xyz\\/\\*"
-                ]
+                ],
+                "baselineId": "86136346cf4c63abeba8d54ae007013316006a748213dfae5623a51bee15f468"
               },
               "ruleIndex": 1
             }

@@ -109,7 +109,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "01f6f14350be9b171697c493b8c0"
+                "iamBlastRadius/semanticIdentity/v2": "3fdd8395e2f5b2de4f65b6dd925db5bc"
               },
               "properties": {
                 "category": "security",
@@ -120,7 +120,8 @@
                   "pathExploitability": "low"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "AllowReadBroad"
+                "statementSid": "AllowReadBroad",
+                "baselineId": "42bd9b8e9fcf4768dc60ea48e6d208f1790f3dcae5b218b5961595600b5c68d7"
               },
               "ruleIndex": 0
             }

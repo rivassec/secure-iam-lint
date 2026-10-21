@@ -8,6 +8,64 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Nothing yet.
 
+## [1.2.0] - 2026-10-20
+
+### Added
+
+- **Baseline mode**: `baseline` / `baseline-output` Action inputs and CLI options
+  accept a reviewed findings file so known findings don't fail the gate; acceptance
+  dies on any identity change (file, rule, severity, principals, condition values).
+  Format version 2; see the fingerprint entry below.
+- **DB-AUTH** finding: `rds-db:connect` is IAM database auth (credential-equivalent);
+  high unless every resource pins a concrete `dbuser:<cluster>/<user>`.
+- **PASSROLE-UNSCOPED** finding: `iam:PassRole` on `*` (or any all-roles pattern)
+  reports even without a companion launch action - it combines with whatever compute
+  permission the holder has elsewhere.
+- **OBJECT-ACL-WRITE** finding: `s3:PutObjectAcl` / `s3:PutObjectVersionAcl` can set
+  objects public or grant them cross-account unless the bucket enforces
+  BucketOwnerEnforced (which a policy can't show); high on `bucket/*` or broader,
+  medium on a single named object.
+- Condition modeling: `s3:ResourceAccount` / `aws:ResourceAccount` (a negated
+  account guard is called out as covering same-account resources too) and the
+  Cognito `cognito-identity.amazonaws.com:amr` sign-in state.
+- Action catalog refresh (service coverage incl. `kinesis`, `rds-db`, `eks-auth`);
+  unmodeled write/permissions actions from the AWS reference stay withheld so an
+  Allow on them remains fail-closed `UNKNOWN_ACTION`.
+- China-partition service principals: documented `.amazonaws.com.cn` spellings for
+  `ec2` and `datapipeline`; under `aws-cn` the matcher considers both spellings for
+  every service.
+
+### Changed
+
+- **SARIF fingerprints are now `iamBlastRadius/semanticIdentity/v2`** (breaking for
+  dismissed alerts and baselines, once). The statement position is no longer part of
+  a finding's identity, so inserting a statement above an accepted finding no longer
+  re-opens it; identical findings in one file are told apart by an occurrence
+  ordinal. `UNKNOWN_ACTION` / `UNSUPPORTED_CONDITION` fingerprints now include the
+  full sorted offending set (dismissing one no longer covers a different one). The
+  hash is SHA-256 truncated to 128 bits (was non-cryptographic cyrb53).
+- Trust findings carry their trusted principals, and the SARIF fingerprint and
+  baseline id bind to them: accepting a trust never covers a different account.
+- Under `aws-cn`, an `iam:PassedToService` deny covering only one spelling (e.g.
+  `StringNotEquals ec2.amazonaws.com.cn`) is no longer credited: the PassRole
+  path reports and the scan fails closed (exit 3), since AWS may send either.
+- `iam:PassedToService` matching is operator-correct (`(Not)Equals` compares
+  literally; only `Like`/`Arn*` expand wildcards) and partition-aware: the
+  matcher tests the spellings the asserted partition can send (`aws-cn` may
+  use `<svc>.amazonaws.com.cn`, varying per service), and an unasserted or
+  unrecognized partition is never coerced to `aws` before matching.
+- `UNSUPPORTED_CONDITION` identities (fingerprints and baseline ids) include a
+  canonical serialization of the affected statements' Condition blocks, so an
+  acceptance never survives a condition-value edit.
+- **Baseline file format is version 2.** Version 1 baselines are refused (exit `2`)
+  with a message to regenerate; keys follow the same identity change. `baseline-output`
+  warns when it writes `critical` entries.
+- **DATA-EXFIL severity scales with resource breadth**: a single named secret or
+  parameter is `medium`; `*`, account-wide patterns, path reads and anything
+  ambiguous (variables, wildcard accounts, `NotResource`) stay `high`.
+- Release version bumped to `1.2.0` (`package.json` and
+  `VERSION_MANIFEST.releaseVersion`).
+
 ## [1.1.0] - 2026-10-09
 
 ### Added
@@ -94,6 +152,7 @@ marks the release and makes the compare/tag links below resolve - is pending.
   self-check runs in CI, and pointed at a real AWS account it verifies the engine
   never reads CLEAN on a policy AWS reports as allowing the action.
 
-[Unreleased]: https://github.com/rivassec/secure-iam-lint/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/rivassec/secure-iam-lint/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/rivassec/secure-iam-lint/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/rivassec/secure-iam-lint/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/rivassec/secure-iam-lint/releases/tag/v1.0.0

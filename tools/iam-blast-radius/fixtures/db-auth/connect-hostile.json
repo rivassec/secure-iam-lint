@@ -1,0 +1,16 @@
+{
+  "name": "rds-db:connect with hostile strings (inert rendering)",
+  "note": "Hostile Sid/resource tokens must ride through as inert data.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "<img src=x onerror=alert(1)>db",
+        "Effect": "Allow",
+        "Action": "rds-db:connect",
+        "Resource": "arn:aws:rds-db:us-east-2:111122223333:dbuser:<script>alert(1)</script>/*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["DB-AUTH"], "hostile": true, "hostileFor": ["DB-AUTH"], "assertInertRendering": true }
+}

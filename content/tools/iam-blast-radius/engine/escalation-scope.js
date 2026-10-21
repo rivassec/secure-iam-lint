@@ -38,19 +38,57 @@ export function resourceListIsBroadForAssume(stmt) {
 // would claim reach the account-pinned ARN does not support (threat-model T8,
 // IAM-301 negative corpus). A PARTIAL role-name wildcard (role/app-*, role/app-?)
 // reaches many roles but not all, so it too stays `high`.
-export function assumeScopeIsAllRoles(stmt) {
-  // Account axis must be arbitrary first: a concrete-account grant is bounded.
-  if (!assumeAccountReach(stmt).arbitrary) return false;
+// Is the role-NAME axis unconstrained (bare "*", role/*, an ARN whose role-name
+// segment is exactly "*", an inverse NotResource, or an unspecified scope)? A
+// literal path prefix (role/deployment/*) constrains the axis. Account reach is
+// deliberately NOT considered here.
+// F2-03: decided by PROBE match, not string shapes. A pattern is unconstrained
+// when it matches two dissimilar probe role names (so a literal prefix like
+// role/zz-* or role/service-role/* matches at most one and stays quiet), on
+// either the plain or the pathed form. Probes reuse the pattern's own concrete
+// partition/account tokens so the account axis stays out of the verdict.
+const PROBE_NAMES = ['zzqj3cafe', 'aw9kxbolt'];
+const VAR_RE = /\$\{[^}]*\}/g;
+function probeRoleArns(r) {
+  const m = /^arn:([^:]*):[^:]*:[^:]*:([^:]*):/.exec(r);
+  const lit = (t, d) => (t && !/[*?$]/.test(t) ? t : d);
+  const part = lit(m && m[1], 'aws');
+  const acct = lit(m && m[2], '111122223333');
+  return PROBE_NAMES.map((n) => [
+    `arn:${part}:iam::${acct}:role/${n}`,
+    `arn:${part}:iam::${acct}:role/${n}/${n}`,
+  ]);
+}
+export function roleNameAxisUnconstrained(stmt) {
   if (stmt.notResources.length > 0) return true; // inverse: ~all roles
   if (stmt.resources.length === 0) return true; // unspecified: unconstrained
   return stmt.resources.some((r) => {
-    if (r === '*') return true;
-    if (r === 'role/*') return true; // bare shorthand
-    const marker = ':role/';
-    const idx = r.lastIndexOf(marker);
-    if (idx === -1) return false;
-    return r.slice(idx + marker.length) === '*'; // role-name segment is exactly "*"
+    const raw = String(r);
+    chargeWork(raw.length + 1);
+    if (raw === '*' || raw === 'role/*') return true;
+    // N1: a ${...} partition/account is caller-chosen; only the role-name axis decides.
+    // Mask first: ${aws:PrincipalAccount} itself contains ':' and breaks the split.
+    const vars = [];
+    const masked = raw.replace(VAR_RE, (v) => `\u0000${vars.push(v) - 1}\u0000`);
+    const pm = /^(arn:[^:]*:[^:]*:[^:]*:[^:]*:)([\s\S]*)$/.exec(masked);
+    const s = pm
+      ? pm[1].replace(/\u0000\d+\u0000/g, '*') + pm[2].replace(/\u0000(\d+)\u0000/g, (_, i) => vars[i])
+      : raw;
+    // N3: a wildcard-only name (role/??????????) bounds length, not which roles.
+    const name = /^(?:arn:[^:]*:[^:]*:[^:]*:[^:]*:)?role\/(.+)$/.exec(s);
+    if (name && /^[*?/]+$/.test(name[1])) return true;
+    const [a, b] = probeRoleArns(s);
+    for (let form = 0; form < 2; form++) {
+      if (globMatch(s, a[form]) && globMatch(s, b[form])) return true;
+    }
+    return false;
   });
+}
+
+export function assumeScopeIsAllRoles(stmt) {
+  // Account axis must be arbitrary first: a concrete-account grant is bounded.
+  if (!assumeAccountReach(stmt).arbitrary) return false;
+  return roleNameAxisUnconstrained(stmt);
 }
 
 // A broad-for-assume grant is not necessarily cross-account. Determine whether

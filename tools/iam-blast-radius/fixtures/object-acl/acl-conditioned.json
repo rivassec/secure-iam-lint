@@ -1,0 +1,17 @@
+{
+  "name": "s3:PutObjectAcl condition-gated",
+  "note": "A Condition reduces confidence but the capability is still reported.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AclCond",
+        "Effect": "Allow",
+        "Action": "s3:PutObjectAcl",
+        "Resource": "arn:aws:s3:::example-bucket/*",
+        "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "true" } }
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["OBJECT-ACL-WRITE"] }
+}

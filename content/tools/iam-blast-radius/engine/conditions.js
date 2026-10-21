@@ -89,6 +89,21 @@ const KNOWN_KEYS = Object.freeze({
   'iam:passedtoservice': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'PassRole target service' },
   'iam:associatedresourcearn': { class: CONDITION_CLASS.SELECTOR, role: 'resource', label: 'Associated resource ARN' },
   'kms:viaservice': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'KMS calling service' },
+  // S3 ListBucket scoping. s3:prefix is the standard per-user / per-path scope on
+  // s3:ListBucket (it limits WHICH keys a list call may return), so a positive,
+  // specific value is a constraint; "*" or a negated operator falls to expansion via
+  // the generic branches below. s3:delimiter and s3:max-keys only shape the listing
+  // response (max-keys is bypassed by paginating), so they are modeled - understood,
+  // not unsupported - but as selectors, which are NEVER credited as a guardrail.
+  's3:prefix': { class: CONDITION_CLASS.CONSTRAINT, role: 'object-prefix', label: 'S3 list prefix' },
+  's3:delimiter': { class: CONDITION_CLASS.SELECTOR, role: 'listing-shape', label: 'S3 list delimiter (shapes the response, does not restrict access)' },
+  's3:max-keys': { class: CONDITION_CLASS.SELECTOR, role: 'listing-shape', label: 'S3 list page size (bypassed by pagination, does not restrict access)' },
+  // Resource-OWNER account pins (G2). They scope which account owns the resource,
+  // not who calls; a NEGATED operator on them is the classic footgun ("every
+  // account except X" INCLUDES the caller's own). Mirrors resource-s3-rules.js
+  // S3_RESOURCE_ACCOUNT_KEYS semantics (bucket-owner account, never the caller).
+  's3:resourceaccount': { class: CONDITION_CLASS.CONSTRAINT, role: 'resource-account', label: 'Resource owner account' },
+  'aws:resourceaccount': { class: CONDITION_CLASS.CONSTRAINT, role: 'resource-account', label: 'Resource owner account' },
 });
 
 // Recognized federation PROVIDER HOSTS (docs/trust-policy-semantics.md 4.4/4.5).
@@ -133,17 +148,54 @@ const RECOGNIZED_FEDERATION_HOSTS = Object.freeze(new Set([
 // everything before it, so a multi-colon attacker key (`acme:customkey:sub`) has
 // host `acme:customkey`, which is not recognized -> null. Returns null for any
 // non-federation or unrecognized-provider key.
-function federationMeta(keyLower) {
+//
+// `statementHosts` (optional) widens the allowlist PER STATEMENT to the OIDC provider
+// hosts that statement's own Principal.Federated names (oidcProviderHosts below). A
+// claim key on THAT provider is, by AWS semantics, that provider's claim - exactly
+// what the built-in hosts model - so an enterprise IdP (Okta, Entra ID, GitLab, ...)
+// trust is understood without a config input. The S2 property holds: a key whose host
+// is NOT the statement's federated provider (an attacker-named `acme:customkey:sub`,
+// or a typo'd host) still returns null and fails closed.
+function federationMeta(keyLower, statementHosts = null) {
   const lastColon = keyLower.lastIndexOf(':');
   if (lastColon <= 0 || lastColon === keyLower.length - 1) return null;
   const claim = keyLower.slice(lastColon + 1);
-  if (claim !== 'aud' && claim !== 'sub') return null;
+  if (claim !== 'aud' && claim !== 'sub' && claim !== 'amr') return null;
   const host = keyLower.slice(0, lastColon);
-  if (!RECOGNIZED_FEDERATION_HOSTS.has(host)) return null;
+  if (!RECOGNIZED_FEDERATION_HOSTS.has(host) && !(statementHosts && statementHosts.has(host))) return null;
+  // amr is Cognito-specific: authenticated/unauthenticated sign-in state (G3).
+  if (claim === 'amr') {
+    if (host !== 'cognito-identity.amazonaws.com') return null;
+    return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-amr', label: 'Cognito authentication state (amr)', federation: 'amr' };
+  }
   if (claim === 'aud') {
     return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-audience', label: 'Federated audience (aud)', federation: 'aud' };
   }
   return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-subject', label: 'Federated subject (sub)', federation: 'sub' };
+}
+
+// The OIDC provider hosts named by a list of Principal.Federated values, lowercased:
+// `arn:<partition>:iam::<12-digit account>:oidc-provider/<host>` -> `<host>`. A value
+// that is not a concrete OIDC provider ARN (a SAML provider - modeled by the built-in
+// `saml` host - a glob, or anything malformed) contributes nothing, so it can never
+// widen the allowlist. A host carrying ':' is rejected (a claim key splits host from
+// claim on the LAST colon, so it could never be matched honestly).
+// Only a REAL partition counts: a made-up `arn:not-a-partition:...` provider cannot widen
+// the allowlist. MIRRORS escalation-reachability.js KNOWN_PARTITIONS (that module imports
+// this one, so importing it back would be a cycle); tests/conditions-s3-federation.test.js
+// pins the two sets equal.
+export const OIDC_PROVIDER_PARTITIONS = Object.freeze(new Set([
+  'aws', 'aws-us-gov', 'aws-cn',
+  'aws-iso', 'aws-iso-b', 'aws-iso-e', 'aws-iso-f',
+]));
+const OIDC_PROVIDER_ARN = /^arn:([a-z0-9-]+):iam::\d{12}:oidc-provider\/([^*?:\s]+)$/;
+export function oidcProviderHosts(values) {
+  const out = new Set();
+  for (const v of Array.isArray(values) ? values : []) {
+    const m = OIDC_PROVIDER_ARN.exec(String(v));
+    if (m && OIDC_PROVIDER_PARTITIONS.has(m[1])) out.add(m[2].toLowerCase());
+  }
+  return out;
 }
 
 // Base operators (after stripping set qualifier + IfExists) whose match is
@@ -197,6 +249,10 @@ const VALUE_SCOPING_TRUST_KEYS = new Set([
   'aws:principalaccount',
   'aws:principalorgid',
 ]);
+
+// Resource-account keys credit only under a positive string match, like the
+// trust value-scoping keys (a Numeric/Date operator does not pin the account).
+const ACCOUNT_SCOPING_KEYS = new Set(['s3:resourceaccount', 'aws:resourceaccount']);
 
 /**
  * Split a condition operator into its parts. AWS lets an operator carry a set
@@ -389,10 +445,18 @@ function isAllAddressIp(v) {
 // 2). MUST stay behaviorally identical to trust.js isAllGlobOrEmpty.
 function valueNarrowsKey(keyLower, value) {
   switch (keyLower) {
+    case 'sts:externalid':
+      // Mirrors trust-principal-helpers: exact ExternalId values only.
+      return String(value) !== '' && !hasGlob(String(value));
     case 'aws:sourceaccount':
     case 'aws:principalaccount':
     case 'aws:principalorgid':
       return accountOrOrgValueNarrows(value);
+    case 's3:resourceaccount':
+    case 'aws:resourceaccount':
+      // F2-09: credit only a full-literal account id (an 11-digit typo matches no
+      // account, so crediting it would mislabel a dead guard as narrowing).
+      return /^[0-9]{12}$/.test(String(value));
     case 'aws:sourcearn':
     case 'aws:principalarn':
       return arnValueNarrows(value);
@@ -462,19 +526,23 @@ function appearsFor(cls) {
  *   omitted (direct callers), no sibling context is assumed and the ForAllValues
  *   caveat is emitted as before. Never affects `credited` (fail-safe: an
  *   uncredited footgun is not re-credited by a sibling presence check).
+ * @param {Set<string>|null} federationHosts lowercased OIDC provider hosts the
+ *   statement's own Principal.Federated names (oidcProviderHosts); their aud/sub
+ *   claim keys are modeled like the built-in providers. Optional.
  * @returns {object} frozen classification record
  */
-export function classifyConditionEntry(operator, key, value, presenceCheckedKeys = null) {
+export function classifyConditionEntry(operator, key, value, presenceCheckedKeys = null, federationHosts = null) {
   const { base, setOperator, ifExists } = parseOperator(operator);
   const keyStr = String(key);
   const keyLower = keyStr.toLowerCase();
-  const values = toValueArray(value);
+  // ${...} is caller-controlled: score it as '*' (mirrors trust-conditions).
+  const values = toValueArray(value).map((v) => String(v).replace(/\$\{[^}]*\}/g, '*'));
   // Exact-match modeled keys first, then the federation aud/sub resolver (whose
   // keys carry a provider-host prefix). Anything neither knows stays unknown ->
   // context-required, surfaced in coverage (unsupported does NOT mean safe).
   const meta = Object.prototype.hasOwnProperty.call(KNOWN_KEYS, keyLower)
     ? KNOWN_KEYS[keyLower]
-    : federationMeta(keyLower);
+    : federationMeta(keyLower, federationHosts);
   const known = meta !== null;
 
   const negated = NEGATED_OPERATORS.has(base);
@@ -510,7 +578,8 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
     const kind = boolKind(values);
     if (kind === 'true') {
       cls = meta.class; // constraint
-      credited = cls === CONDITION_CLASS.CONSTRAINT && !ifExists && !setOperator;
+      // Bool on a federated aud/sub claim compares no claim value, so it is not a guardrail.
+      credited = cls === CONDITION_CLASS.CONSTRAINT && !ifExists && !setOperator && !meta.federation;
       notes.push(`asserts ${meta.label}`);
     } else if (kind === 'false') {
       cls = CONDITION_CLASS.EXPANSION;
@@ -525,6 +594,10 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
     if (meta.class === CONDITION_CLASS.SELECTOR) {
       cls = CONDITION_CLASS.SELECTOR;
       notes.push(`selects ${meta.label} by EXCLUSION (denylist operator ${operator})`);
+    } else if (meta.role === 'resource-account') {
+      // G2: the negated account guard reads like "cross-account only" but is not.
+      cls = CONDITION_CLASS.EXPANSION;
+      notes.push(`negated operator ${operator} grants access to resources in EVERY account except ${values.slice(0, 8).join(', ') || '(none)'} - INCLUDING same-account resources; this broadens rather than restricts ${meta.label}`);
     } else {
       cls = CONDITION_CLASS.EXPANSION;
       notes.push(`negated operator ${operator} matches everything except the listed values; this broadens rather than restricts ${meta.label}`);
@@ -532,6 +605,28 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
   } else if (wildcard) {
     cls = CONDITION_CLASS.EXPANSION;
     notes.push(`value is a wildcard "*", which does not constrain ${meta.label}`);
+  } else if (meta.federation === 'amr') {
+    // Only the two defined sign-in states are modeled, and only under a positive
+    // string match; anything else stays context-required (fail closed). Never
+    // credited: "authenticated" is a whole pool population, not a guardrail.
+    const allKnown = values.length > 0 &&
+      values.every((v) => v.toLowerCase() === 'authenticated' || v.toLowerCase() === 'unauthenticated');
+    if (allKnown && POSITIVE_STRING_MATCH_OPERATORS.has(base)) {
+      // F2-09: "unauthenticated" is the GUEST audience - anyone who knows the pool
+      // id, effectively public - so it reads as population-scale breadth, never a
+      // narrowing. "authenticated" stays a constraint-shaped note, uncredited.
+      if (values.some((v) => v.toLowerCase() === 'unauthenticated')) {
+        cls = CONDITION_CLASS.EXPANSION;
+        notes.push('selects ROLE AUDIENCE "unauthenticated": every GUEST of the identity pool - anyone who knows the pool id - holds this role; this is a population-scale audience, not a restriction');
+      } else {
+        cls = CONDITION_CLASS.CONSTRAINT;
+        notes.push('selects ROLE AUDIENCE "authenticated": every signed-in user of the identity pool holds this role (a population-scale audience), so it is not credited as a guardrail');
+      }
+      credited = false;
+    } else {
+      cls = CONDITION_CLASS.CONTEXT_REQUIRED;
+      notes.push(`"${keyStr}" value(s) or operator beyond authenticated/unauthenticated under a positive string match are not modelled; their effect cannot be resolved from the policy text`);
+    }
   } else if (meta.federation === 'sub' && values.some((v) => v.includes('*') || v.includes('?'))) {
     // A federated SUBJECT that carries a glob (e.g. GitHub Actions
     // `repo:org/*`) scopes an organization-wide / pattern set of workloads, not
@@ -572,7 +667,7 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
     // correctly keeps HIGH (adversarial-critic IAM-804 iteration 5). Mirrors
     // trust.js scopesValue (positive-operator gate). The class stays CONSTRAINT
     // (the key IS a known scoping key), but credited flips off with a note.
-    if (credited && VALUE_SCOPING_TRUST_KEYS.has(keyLower) && !POSITIVE_STRING_MATCH_OPERATORS.has(base)) {
+    if (credited && (VALUE_SCOPING_TRUST_KEYS.has(keyLower) || ACCOUNT_SCOPING_KEYS.has(keyLower) || meta.federation) && !POSITIVE_STRING_MATCH_OPERATORS.has(base)) {
       credited = false;
       notes.push(`operator "${operator}" is not a positive string/ARN match, so it does not scope ${meta.label} by value and is not credited as a guardrail`);
     }
@@ -638,9 +733,10 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
  * returns a stable "no conditions" shape.
  *
  * @param {object|null} condition normalized Condition object (or null)
+ * @param {Set<string>|null} [federationHosts] see classifyConditionEntry
  * @returns {object} frozen classification summary
  */
-export function classifyConditions(condition) {
+export function classifyConditions(condition, federationHosts = null) {
   const entries = [];
   if (condition && typeof condition === 'object' && !Array.isArray(condition)) {
     const operators = Object.keys(condition).sort();
@@ -678,7 +774,7 @@ export function classifyConditions(condition) {
         // characters they compare, not a flat per-call constant. chargeWork is a no-op
         // while no budget is armed, so this changes NO verdict.
         chargeWork(Math.max(1, toValueArray(block[key]).length));
-        entries.push(classifyConditionEntry(op, key, block[key], presenceCheckedKeys));
+        entries.push(classifyConditionEntry(op, key, block[key], presenceCheckedKeys, federationHosts));
       }
     }
   }
@@ -707,6 +803,42 @@ export function classifyConditions(condition) {
   });
 }
 
+// Canonical serialization (sorted keys) of the WHOLE Condition block of every statement
+// that carries an unsupported key, so a baseline acceptance dies when ANY value in such
+// a statement's condition changes - sibling modeled keys included (F3, edit B).
+function canonicalCondition(cond) {
+  // R1-05: scalar leaves and scalar arrays normalize to a deduped sorted array,
+  // so AWS-equivalent forms (scalar vs 1-element array, order, duplicates) hash
+  // the same. Arrays holding objects walk element-wise; a nested scalar array
+  // still gets leaf-sorted (F1-06: AWS rejects nested arrays, so no deployable
+  // policy is affected by two such malformed blocks sharing a hash).
+  const prim = (x) => x === null || typeof x !== 'object';
+  const leaf = (v) => [...new Set(v.map((x) => String(x)))].sort();
+  const walk = (v) => {
+    if (Array.isArray(v)) return v.every(prim) ? leaf(v) : v.map((x) => walk(x));
+    if (v && typeof v === 'object') {
+      const o = {};
+      for (const k of Object.keys(v).sort()) o[k] = walk(v[k]);
+      return o;
+    }
+    return leaf([v]);
+  };
+  return JSON.stringify(walk(cond));
+}
+
+export function unsupportedConditionBindings(model) {
+  const out = new Set();
+  const statements = model && Array.isArray(model.statements) ? model.statements : [];
+  for (const stmt of statements) {
+    const federated = stmt && stmt.principal && stmt.principal.byType
+      ? stmt.principal.byType.Federated : null;
+    const cc = classifyConditions(stmt && stmt.condition, oidcProviderHosts(federated));
+    if (cc.contextRequiredKeys.length === 0) continue;
+    out.add(canonicalCondition(stmt.condition || {}));
+  }
+  return [...out].sort();
+}
+
 /**
  * Collect the sorted, de-duplicated set of context-required (unmodelled)
  * condition keys across every statement of a model. Feeds
@@ -719,7 +851,9 @@ export function unsupportedConditionKeys(model) {
   const out = new Set();
   const statements = model && Array.isArray(model.statements) ? model.statements : [];
   for (const stmt of statements) {
-    const cc = classifyConditions(stmt && stmt.condition);
+    const federated = stmt && stmt.principal && stmt.principal.byType
+      ? stmt.principal.byType.Federated : null;
+    const cc = classifyConditions(stmt && stmt.condition, oidcProviderHosts(federated));
     for (const k of cc.contextRequiredKeys) out.add(k);
   }
   return [...out].sort();

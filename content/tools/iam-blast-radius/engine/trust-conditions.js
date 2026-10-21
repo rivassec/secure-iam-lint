@@ -12,6 +12,39 @@ export function parseOperatorParts(op) {
   return { base: o, setOperator, ifExists };
 }
 
+// A ${...} policy variable is caller-controlled: read it as '*', keep the literal parts.
+export function substitutePolicyVars(v) {
+  return String(v).replace(/\$\{[^}]*\}/g, '*');
+}
+
+const CONCRETE_ACCOUNT_RE = /^[0-9]{12}$/;
+
+// T1-02: ${aws:ResourceAccount} / ${aws:ResourceOrgID} resolve from the RESOURCE,
+// not the caller, so they pin trust to the resource's own account/org. Resolve the
+// account to the subject account when known, else to a non-glob placeholder that
+// still reads as pinned (never as '*'). Runs BEFORE the blanket caller-side rule.
+export function substituteResourceVars(v, subjectAccount) {
+  const acct = subjectAccount && CONCRETE_ACCOUNT_RE.test(String(subjectAccount))
+    ? String(subjectAccount) : 'resource-account';
+  return String(v)
+    .replace(/\$\{\s*aws:resourceaccount\s*\}/gi, acct)
+    .replace(/\$\{\s*aws:resourceorgid\s*\}/gi, 'o-resource-org');
+}
+
+// Keys whose value is exactly their own policy variable (key == ${key}): always true.
+export function selfReferenceKeys(condition) {
+  const out = [];
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return out;
+  for (const inner of Object.values(condition)) {
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    for (const rawKey of Object.keys(inner)) {
+      const self = `\${${String(rawKey).toLowerCase()}}`;
+      if (toValues(inner[rawKey]).some((v) => v.trim().toLowerCase() === self)) out.push(String(rawKey));
+    }
+  }
+  return [...new Set(out)].sort();
+}
+
 export function toValues(v) {
   if (Array.isArray(v)) return v.map((x) => String(x));
   if (v === null || v === undefined) return [];
@@ -20,7 +53,7 @@ export function toValues(v) {
 
 // Walk a statement's Condition block and derive the trust-relevant polarity
 // signals. Text-only: it reports how the condition READS, never a runtime match.
-export function conditionSignals(condition, principals) {
+export function conditionSignals(condition, principals, subjectAccount = null) {
   // Does the named Principal already pin the account? Used to intersect a
   // positive aws:PrincipalArn scoping value with the Principal so a wildcard the
   // Principal already pins (the account segment) does not inflate breadth.
@@ -48,6 +81,10 @@ export function conditionSignals(condition, principals) {
     // sub-account narrowing (the designed medium case).
     principalArnForeign: false,
     principalAccount: false, // positive aws:PrincipalAccount match (non-wildcard)
+    // T1-01: a positive aws:PrincipalArn whose ACCOUNT segment is open (glob /
+    // caller variable / malformed) matches a role any AWS customer can create in
+    // their own account; it bounds nothing, so it is never credited as scoping.
+    principalArnAccountOpen: false,
     // Would-be constraints defeated by a bypassable operator qualifier
     // (...IfExists / ForAllValues:). Tracked as "<key> (<operator>)" strings so a
     // finding that STAYS high can NAME the qualifier in its why text instead of
@@ -70,7 +107,8 @@ export function conditionSignals(condition, principals) {
     const bypassable = ifExists || setOperator === 'ForAllValues';
     for (const rawKey of Object.keys(inner)) {
       const key = String(rawKey).toLowerCase();
-      const values = toValues(inner[rawKey]);
+      const values = toValues(inner[rawKey])
+        .map((v) => substitutePolicyVars(substituteResourceVars(v, subjectAccount)));
       // A real value-scoping constraint requires a positive string/ARN match
       // operator AND that EVERY value actually NARROWS this key's value space
       // (key-aware: a globbed value that still matches everything - e.g.
@@ -111,6 +149,19 @@ export function conditionSignals(condition, principals) {
         if (scopesValue) sig.sourceArnAccount = true;
       } else if (key === 'aws:principalarn') {
         if (scopesValue) {
+          // T1-01: values OR, so ONE account-GLOBBED value (wildcard or caller
+          // variable in the account segment, unpinned by the Principal) admits a
+          // role any AWS customer can create in their own account. That bounds
+          // nothing: uncredited, public-equivalent. A truncated/junk value matches
+          // no one and keeps the existing fail-closed broad path (S7-4).
+          const accountOpen = !pinsAccount && values.some((v) => {
+            const segs = String(v).split(':');
+            return segs.length >= 6 && hasGlob(segs[4]);
+          });
+          if (accountOpen) {
+            sig.principalArnAccountOpen = true;
+            continue;
+          }
           // Breadth is the Principal-AND-Condition INTERSECTION, not the value in
           // isolation: a glob in a segment the named Principal already pins (the
           // account) adds no breadth (adversarial iteration-2 findings 3/4). Uses
@@ -150,7 +201,8 @@ export function conditionSignals(condition, principals) {
           sig.sourceIp = true;
         }
       } else if (key.endsWith(':aud') || key === 'saml:aud') {
-        if (!negated && !bypassable) sig.audConstraint = true;
+        // Only a positive string match pins the audience; Null/Bool/Date/Numeric do not.
+        if (positiveStringMatch && !bypassable && values.length > 0 && !values.includes('*')) sig.audConstraint = true;
       } else if (key.endsWith(':sub') || key === 'saml:sub') {
         // Subject scope drives federated severity (trust-policy-semantics 4.4):
         // a value carrying a GLOB metacharacter - '*' (e.g. repo:org/*) OR the
@@ -165,8 +217,11 @@ export function conditionSignals(condition, principals) {
         // while conditions.js flagged it broad/uncredited, the exact
         // severity-vs-provenance contradiction the engine eliminates elsewhere
         // (adversarial-critic IAM-804 iteration 4 finding 1).
-        const broad = negated || bypassable || values.length === 0 || values.some((v) => hasGlob(v));
-        sig.subScope = broad ? 'broad' : 'tight';
+        // Tight needs a non-bypassable positive string match on literal values; Null/Bool/
+        // Date/Numeric never pin the subject. Operators AND, so any one tight entry wins regardless of key order.
+        const tight = positiveStringMatch && !bypassable && values.length > 0 && !values.some((v) => hasGlob(v));
+        if (tight) sig.subScope = 'tight';
+        else if (sig.subScope === null) sig.subScope = 'broad';
       }
     }
   }
@@ -217,6 +272,10 @@ export function publicScopeConstraint(sig) {
   if (sig.principalAccount) names.push('aws:PrincipalAccount');
   if (names.length === 0) return null;
   const broad = sig.orgConstraint || sig.principalAccount || sig.principalArnScope === 'broad';
+  // A tight pin is equivalent to NAMING that principal, which scores TRUST-CROSS-ACCOUNT
+  // high - so the "*"-form must not score lower (gate-bypass parity). An exact
+  // ExternalId/SourceArn correlation lowers it to medium, mirroring the named form.
+  const tightUnconstrained = !broad && !(sig.externalId || sig.sourceArnAccount);
   // Describe the DOMINANT (broadest) surviving scope accurately, so a whole-account
   // aws:PrincipalAccount is never mislabeled "a specific principal".
   const breadthDesc = sig.orgConstraint
@@ -225,8 +284,8 @@ export function publicScopeConstraint(sig) {
       ? 'an entire AWS account - aws:PrincipalAccount is account-granularity, equivalent to naming that account as the Principal, so the whole account is trusted'
       : sig.principalArnScope === 'broad'
         ? 'a wildcarded set of principals within the scope'
-        : 'a specific principal';
-  return { severity: broad ? 'high' : 'medium', names: names.join(', '), breadthDesc };
+        : 'a specific principal - equivalent to naming that principal directly, so this trust is scored like the named cross-account form';
+  return { severity: broad || tightUnconstrained ? 'high' : 'medium', names: names.join(', '), breadthDesc };
 }
 
 // --- Finding construction ----------------------------------------------------

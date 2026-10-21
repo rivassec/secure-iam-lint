@@ -190,12 +190,12 @@ export function principalArnValueIsBroad(value, principalPins) {
 }
 
 // Dispatch the narrowing test for the trust-relevant scoping keys. Any other key
-// (e.g. sts:ExternalId, an OIDC sub) narrows unless it is the empty string or a
-// value made entirely of glob metacharacters ('*'/'?', e.g. "*", "?*", "*?") -
-// a partial ExternalId carrying a literal still forces the caller to present a
-// matching correlation value, so it stays a (weaker) confused-deputy constraint.
+// (e.g. an OIDC sub) narrows unless it is empty or all glob metacharacters.
 export function valueNarrowsKey(key, value) {
   switch (key) {
+    case 'sts:externalid':
+      // Any glob lets other tenants of the vendor match: exact values only.
+      return String(value) !== '' && !hasGlob(String(value));
     case 'aws:sourceaccount':
     case 'aws:principalaccount':
     case 'aws:principalorgid':

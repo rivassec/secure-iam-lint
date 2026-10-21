@@ -66,7 +66,7 @@ const SEVERITY_RANK = Object.freeze(['critical', 'high', 'medium', 'low', 'info'
 
 // The partialFingerprints KEY. Versioned so a future fingerprinting change can be
 // introduced under a new key without silently merging/splitting existing alerts.
-export const FINGERPRINT_KEY = 'iamBlastRadius/semanticIdentity/v1';
+export const FINGERPRINT_KEY = 'iamBlastRadius/semanticIdentity/v2';
 
 function isNonEmptyString(v) {
   return typeof v === 'string' && v.trim().length > 0;
@@ -159,28 +159,71 @@ function findingPrincipals(f) {
   return out;
 }
 
-// cyrb53 - a small, fast, well-distributed NON-cryptographic hash (public domain).
-// Pure JS (Math.imul only): no Node APIs, deterministic. A partialFingerprint needs
-// stable dedup, not cryptographic strength. Two seeds are concatenated to widen the
-// output and cut collision odds. Returns a fixed-length lowercase hex string.
-function cyrb53(str, seed) {
-  let h1 = 0xdeadbeef ^ seed;
-  let h2 = 0x41c6ce57 ^ seed;
-  for (let i = 0; i < str.length; i++) {
-    const ch = str.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
+// SHA-256 over the UTF-16 code units of the string (two bytes each, so a lone surrogate
+// never collapses to U+FFFD and distinct policy text cannot share an input). Pure JS so this
+// module stays free of Node built-ins; verified against node:crypto in the tests.
+const SHA256_K = (() => {
+  const k = [];
+  for (let n = 2; k.length < 64; n += 1) {
+    let prime = true;
+    for (let d = 2; d * d <= n; d += 1) if (n % d === 0) { prime = false; break; }
+    if (prime) k.push(Math.floor((n ** (1 / 3) % 1) * 4294967296) >>> 0);
   }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
-  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
-  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  const n = 4294967296 * (2097151 & h2) + (h1 >>> 0);
-  return n.toString(16).padStart(14, '0');
+  return k;
+})();
+
+export function sha256Hex(str) {
+  const bytes = [];
+  for (let i = 0; i < str.length; i += 1) {
+    const c = str.charCodeAt(i);
+    bytes.push(c >>> 8, c & 255);
+  }
+  const bitLen = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  const hi = Math.floor(bitLen / 4294967296);
+  for (const w of [hi, bitLen >>> 0]) bytes.push(w >>> 24, (w >>> 16) & 255, (w >>> 8) & 255, w & 255);
+  const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const w = new Array(64);
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let off = 0; off < bytes.length; off += 64) {
+    for (let i = 0; i < 16; i += 1) {
+      const j = off + i * 4;
+      w[i] = ((bytes[j] << 24) | (bytes[j + 1] << 16) | (bytes[j + 2] << 8) | bytes[j + 3]) | 0;
+    }
+    for (let i = 16; i < 64; i += 1) {
+      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+    }
+    let [a, b, c, d, e, f, g, hh] = h;
+    for (let i = 0; i < 64; i += 1) {
+      const t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + SHA256_K[i] + w[i]) | 0;
+      const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+      hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    [a, b, c, d, e, f, g, hh].forEach((v, i) => { h[i] = (h[i] + v) | 0; });
+  }
+  return h.map((v) => (v >>> 0).toString(16).padStart(8, '0')).join('');
 }
 
-function hashIdentity(canonical) {
-  return `${cyrb53(canonical, 0)}${cyrb53(canonical, 0x9e3779b9)}`;
+// SHA-256 truncated to 128 bits: the identity text is attacker-controlled, so a forgeable
+// hash would let a crafted grant share a dismissed alert's fingerprint. `occurrence` is the
+// n-th result in the file with the same identity, which keeps true duplicates distinct.
+function hashIdentity(canonical, occurrence = 0) {
+  return sha256Hex(`${canonical}\noccurrence=${occurrence}`).substring(0, 32);
+}
+
+// 0-based ordinal of each row among the rows with the same identity, in list order. Position
+// in the policy is deliberately not part of it, so unrelated edits cannot shift a fingerprint.
+export function occurrenceOrdinals(rows, identityOf) {
+  const seen = new Map();
+  return rows.map((r) => {
+    const id = identityOf(r);
+    const n = seen.get(id) || 0;
+    seen.set(id, n + 1);
+    return n;
+  });
 }
 
 // Join a normalized attacker-controlled token list into ONE identity-string field with an
@@ -217,7 +260,7 @@ function joinInjective(list) {
 // is what partialFingerprints hashes, so it MUST be stable across whitespace,
 // object key order, and absolute-vs-repo-relative artifact paths, and MUST NOT
 // include message text, line numbers, timestamps, or the artifact URI. It captures:
-// finding type + policy family + statement POSITION + normalized action / resource /
+// finding type + policy family + normalized action / resource /
 // principal / condition, plus the sorted names (never values) of any unresolved
 // viability inputs - so supplying a subject account resolves the finding without
 // churning a different account VALUE into the fingerprint.
@@ -226,8 +269,9 @@ function joinInjective(list) {
 // attacker-controlled free-form policy text; folding it into the identity would let a
 // fork PR craft a Sid whose fingerprint COLLIDES with a dismissed base-branch alert,
 // auto-suppressing a real finding. Statement identity is carried by the structural
-// POSITION (statementIndex) - which the attacker cannot use to forge a collision
-// against a semantically different finding - never by the free-form label.
+// CONTENT (actions/resources/principals/condition), never by the free-form label or by
+// position: a statement inserted above must not churn the fingerprint. Genuine duplicates are
+// told apart by occurrenceOrdinals, not by position.
 export function findingIdentity(finding, family) {
   const f = finding || {};
   const esc = f.escalation && typeof f.escalation === 'object' ? f.escalation : null;
@@ -238,7 +282,6 @@ export function findingIdentity(finding, family) {
     'kind=finding',
     `type=${f.id != null ? String(f.id) : ''}`,
     `family=${family != null ? String(family) : ''}`,
-    `stmtIndex=${typeof f.statementIndex === 'number' ? f.statementIndex : ''}`,
     // S1-NEW02: the POSITIVE identity lists are attacker-controlled policy text with no
     // charset restriction, so each is joined through the INJECTIVE joinInjective() (escape
     // '\', '|', newline) - a plain `.join('|')` let a single '|'- or newline-bearing token
@@ -300,12 +343,22 @@ export function findingIdentity(finding, family) {
 // path-anchored state stays stable.
 export function stateIdentity(st) {
   const s = st || {};
-  return [
+  const parts = [
     'kind=analysis-state',
     `state=${s.analysisState != null ? String(s.analysisState) : ''}`,
     `code=${s.code != null ? String(s.code) : ''}`,
     `path=${s.path != null ? String(s.path) : ''}`,
-  ].join('\n');
+  ];
+  // The full sorted offending set, so dismissing one unknown action never covers another.
+  const detail = stateDetailOf(s);
+  if (detail) {
+    const tokens = [...new Set((Array.isArray(detail.list) ? detail.list : []).map(String))].sort();
+    parts.push(`${detail.property}=${joinInjective(tokens)}`);
+  }
+  // Condition VALUES, not just key names: an acceptance must not survive a value edit (F3).
+  const b = s && s.details && Array.isArray(s.details.bindings) ? s.details.bindings : [];
+  if (b.length > 0) parts.push(`bindings=${joinInjective([...new Set(b.map(String))].sort())}`);
+  return parts.join('\n');
 }
 
 // --- Certainty + evidence projection (preserved exactly, never re-derived) ----
@@ -759,6 +812,13 @@ function sanitizeUri(uri) {
 // full normalized action list still rides in partialFingerprints identity + properties.
 const MAX_MSG_ACTIONS = 12;
 
+// The first MAX_MSG_ACTIONS normalized tokens of a list, plus how many were elided -
+// the caller MUST render `more` as a truthful "(+N more)" so the cap is never silent.
+function capMessageTokens(list) {
+  const norm = normList(list);
+  return { shown: norm.slice(0, MAX_MSG_ACTIONS), more: Math.max(0, norm.length - MAX_MSG_ACTIONS) };
+}
+
 // Render an attacker-controlled action list for message.text. Each Action is just as
 // attacker-controlled as a Sid (a fork PR owns the whole policy JSON), and GitHub
 // renders message.text as MARKDOWN. So every action is neutralized with the SAME
@@ -770,18 +830,50 @@ const MAX_MSG_ACTIONS = 12;
 // bloat the message; the elided remainder is reported as a plain "(+N more)" count.
 // Returns '' (no `; actions:` clause) when nothing printable survives.
 function renderActionClause(actions) {
-  const norm = normList(actions);
-  if (norm.length === 0) return '';
-  const shown = norm.slice(0, MAX_MSG_ACTIONS);
+  const { shown, more } = capMessageTokens(actions);
+  if (shown.length === 0) return '';
   const tokens = [];
   for (const a of shown) {
     const safe = sanitizeSid(a);
     if (safe) tokens.push(`\`${safe}\``);
   }
   if (tokens.length === 0) return '';
-  const more = norm.length - shown.length;
   const suffix = more > 0 ? `, (+${more} more)` : '';
   return `; actions: ${tokens.join(', ')}${suffix}`;
+}
+
+// The offending tokens an analyzer-state names in its details (UNKNOWN_ACTION's actions,
+// UNSUPPORTED_CONDITION's condition keys). Without this a SARIF-only consumer sees "one or
+// more actions are not recognized" and has to bisect the policy to find which. The tokens
+// are attacker-controlled policy text appended to analyzer-state PROSE, so each one gets
+// the same bare-leaf treatment as the rest of that message (inertLeaf: every ASCII
+// punctuation char escaped, so no markdown construct - not even inside a would-be code
+// span - can form), count-capped like a finding's action clause. Appended AFTER
+// sanitizeStateMessage so the engine prose cap cannot cut the list. The full (uncapped) list
+// also rides the fingerprint via stateIdentity. The same list also rides in a
+// machine-readable property (stateDetailOf().property) for consumers that parse SARIF.
+function stateDetailOf(s) {
+  const d = s && s.details;
+  if (!d || typeof d !== 'object') return null;
+  if (s.code === 'UNKNOWN_ACTION') return { label: 'actions', property: 'unknownActions', list: d.actions };
+  if (s.code === 'UNSUPPORTED_CONDITION') {
+    return { label: 'condition keys', property: 'unsupportedConditions', list: d.conditions };
+  }
+  return null;
+}
+
+function stateDetailClause(s) {
+  const detail = stateDetailOf(s);
+  if (!detail) return '';
+  const { label, list } = detail;
+  const { shown, more } = capMessageTokens(list);
+  const tokens = [];
+  for (const v of shown) {
+    const safe = inertLeaf(v, MAX_SID_LEN);
+    if (safe) tokens.push(safe);
+  }
+  if (tokens.length === 0) return '';
+  return ` Offending ${label}: ${tokens.join(', ')}${more > 0 ? ` (+${more} more)` : ''}.`;
 }
 
 // A deterministic, one-line per-instance message. Deliberately carries the finding
@@ -797,6 +889,30 @@ function renderActionClause(actions) {
 // are the only free prose. A hostile Sid or Action such as `[x](javascript:...)` or one
 // carrying a newline therefore cannot inject a link, image, or line break into the
 // rendered message.
+// Issuers of a federated trust finding, so a lookalike host is visible. Attacker-controlled.
+function federatedIssuers(finding) {
+  const out = new Set();
+  for (const ev of (finding && Array.isArray(finding.evidence)) ? finding.evidence : []) {
+    for (const p of (ev && Array.isArray(ev.principals)) ? ev.principals : []) {
+      if (!p || (p.type !== 'federated-oidc' && p.type !== 'federated-saml')) continue;
+      const m = /:(?:oidc|saml)-provider\/(.+)$/.exec(String(p.value));
+      if (m) out.add(m[1]);
+    }
+  }
+  return [...out].sort();
+}
+
+function renderIssuerClause(finding) {
+  const { shown, more } = capMessageTokens(federatedIssuers(finding));
+  const tokens = [];
+  for (const v of shown) {
+    const safe = sanitizeSid(v);
+    if (safe) tokens.push(`\`${safe}\``);
+  }
+  if (tokens.length === 0) return '';
+  return `; issuer: ${tokens.join(', ')}${more > 0 ? `, (+${more} more)` : ''}`;
+}
+
 function findingMessage(finding, family) {
   const f = finding || {};
   const title = isNonEmptyString(f.title) ? f.title.trim() : String(f.id != null ? f.id : 'finding');
@@ -806,7 +922,8 @@ function findingMessage(finding, family) {
     : (typeof f.statementIndex === 'number' ? `(index ${f.statementIndex})` : '(unknown statement)');
   const fam = family != null ? String(family) : 'unknown';
   const actionPart = renderActionClause(f.actions);
-  return `${title} [${fam} policy] at statement ${sidToken}${actionPart}. Potential blast radius from the supplied policy context only; not effective permissions.`;
+  const issuerPart = renderIssuerClause(f);
+  return `${title} [${fam} policy] at statement ${sidToken}${actionPart}${issuerPart}. Potential blast radius from the supplied policy context only; not effective permissions.`;
 }
 
 // A stable JSON Pointer to the statement the finding is anchored on, when the engine
@@ -903,11 +1020,33 @@ function stateDescriptor(s) {
   };
 }
 
+// Baseline projection (cli/baseline.mjs computes the keys; this pure adapter only READS
+// them off result.baseline, so it stays free of Node APIs). Every keyed row publishes its
+// key in properties.baselineId so a later run can build a baseline from the SARIF. When a
+// baseline was APPLIED, every keyed row also gets the standard SARIF 2.1.0 baselineState
+// ("unchanged" = accepted, "new" = not in the baseline) and an accepted row gets an
+// external, accepted suppression. Neither field changes the exit code (that was decided
+// in applyBaseline) or the fingerprint.
+const BASELINE_JUSTIFICATION = 'Accepted in the committed IAM Blast Radius baseline file.';
+function applyBaselineProjection(row, sourceRow, baseline) {
+  if (!baseline || !(baseline.keyOf instanceof Map)) return;
+  const key = baseline.keyOf.get(sourceRow);
+  if (typeof key !== 'string') return;
+  row.properties.baselineId = key;
+  if (!baseline.applied) return;
+  // Only a row the verdict ACTUALLY accepted is suppressed (baseline.used). An id listed in
+  // the baseline but refused - an ineligible failed analysis, or a metadata mismatch -
+  // stays "new" and unsuppressed, so the SARIF never hides what the exit code still counts.
+  const accepted = baseline.usedSet instanceof Set && baseline.usedSet.has(key);
+  row.baselineState = accepted ? 'unchanged' : 'new';
+  if (accepted) row.suppressions = [{ kind: 'external', status: 'accepted', justification: BASELINE_JUSTIFICATION }];
+}
+
 // One analyzer-state RESULT row. Extracted (mirrors stateDescriptor) so the normal states
 // and the synthetic truncation state share ONE definition: kind:'fail', level:'error',
 // category analysis-state, NO security-severity, message through the sanitizeStateMessage
 // sink, and a path rendered markdown-inert. The caller assigns ruleIndex.
-function stateResultRow(s, uri) {
+function stateResultRow(s, uri, occurrence = 0) {
   const code = s && s.code != null ? String(s.code) : 'FAIL_CLOSED';
   const properties = {
     // NO security-severity here, by contract: an analyzer-state result is NOT a
@@ -924,6 +1063,13 @@ function stateResultRow(s, uri) {
     const safePath = inertLeaf(s.path, MAX_STATE_MSG_LEN);
     if (safePath) properties.path = safePath;
   }
+  // The offending tokens, count-capped with a truthful marker and markdown-inert like every
+  // other properties-bag token list (inertTokenList).
+  const detail = stateDetailOf(s);
+  if (detail) {
+    const tokens = inertTokenList(normList(detail.list));
+    if (tokens.length > 0) properties[detail.property] = tokens;
+  }
   // R5-uri-trunc: a sliced (over-length) artifact URI is recorded via a SEPARATE flag, never
   // by mutating the location string. Same treatment as the finding rows below.
   const { location, uriTruncated } = locationFor(uri);
@@ -936,9 +1082,9 @@ function stateResultRow(s, uri) {
     // interpolate attacker-controlled policy text. GitHub renders message.text as MARKDOWN,
     // so it MUST be neutralized here - the single chokepoint every analyzer-state message
     // flows through - not at each engine call site. See sanitizeStateMessage.
-    message: { text: sanitizeStateMessage(s && s.message) },
+    message: { text: sanitizeStateMessage(s && s.message) + stateDetailClause(s) },
     locations: [location],
-    partialFingerprints: { [FINGERPRINT_KEY]: hashIdentity(stateIdentity(s)) },
+    partialFingerprints: { [FINGERPRINT_KEY]: hashIdentity(stateIdentity(s), occurrence) },
     properties,
   };
 }
@@ -1083,7 +1229,10 @@ function buildResults(result, uri, ruleIndex) {
   //   SARIF_OUTPUT_TRUNCATED analyzer-state result so anything trimmed is ANNOUNCED, never
   //   silently dropped (the exit code, owned by scan(), is unaffected either way).
   const built = [];
+  const occurrences = occurrenceOrdinals(findings, (x) => findingIdentity(x, result.family));
+  let findingIdx = -1;
   for (const f of findings) {
+    findingIdx += 1;
     const id = f && f.id != null ? String(f.id) : 'finding';
     const sev = String(f && f.severity != null ? f.severity : 'info').toLowerCase();
     const map = sevMap(sev);
@@ -1129,6 +1278,8 @@ function buildResults(result, uri, ruleIndex) {
     if (f && Array.isArray(f.excludedResources) && f.excludedResources.length > 0) {
       properties.excludedResources = inertTokenList(f.excludedResources);
     }
+    const issuers = federatedIssuers(f);
+    if (issuers.length > 0) properties.issuers = inertTokenList(issuers);
 
     // R5-uri-trunc: an over-length artifact URI is sliced but NOT marker-mutated (that would
     // corrupt GitHub's file deep-link); the slice is recorded via a SEPARATE properties flag.
@@ -1139,10 +1290,11 @@ function buildResults(result, uri, ruleIndex) {
       level: map.level,
       message: { text: findingMessage(f, result.family) },
       locations: [location],
-      partialFingerprints: { [FINGERPRINT_KEY]: hashIdentity(findingIdentity(f, result.family)) },
+      partialFingerprints: { [FINGERPRINT_KEY]: hashIdentity(findingIdentity(f, result.family), occurrences[findingIdx]) },
       properties,
     };
     if (ruleIndex.has(id)) row.ruleIndex = ruleIndex.get(id);
+    applyBaselineProjection(row, f, result.baseline);
 
     // fullCost includes evidence (natural key position preserved); bareCost is measured on a
     // shallow clone with evidence removed, so the REAL row is never reordered in the common
@@ -1215,8 +1367,10 @@ function buildResults(result, uri, ruleIndex) {
   // states a within-limits policy produces.
   const states = result.analysisStates || [];
   let stateEmit = 0;
-  for (const s of states) {
-    const row = stateResultRow(s, uri);
+  const stateOcc = occurrenceOrdinals(states, stateIdentity);
+  for (const [si, s] of states.entries()) {
+    const row = stateResultRow(s, uri, stateOcc[si]);
+    applyBaselineProjection(row, s, result.baseline);
     const ruleId = row.ruleId;
     if (ruleIndex.has(ruleId)) row.ruleIndex = ruleIndex.get(ruleId);
     const cost = estimateRowBytes(row);

@@ -1,0 +1,11 @@
+{
+  "name": "object reads do not trip OBJECT-ACL-WRITE (negative)",
+  "note": "s3:GetObjectAcl is a read; only the ACL writes are the exposure primitive.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "ReadAcl", "Effect": "Allow", "Action": "s3:GetObjectAcl", "Resource": "arn:aws:s3:::example-bucket/*" }
+    ]
+  },
+  "expect": { "valid": true, "notFindingIds": ["OBJECT-ACL-WRITE"] }
+}

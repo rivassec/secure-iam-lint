@@ -107,10 +107,10 @@ import {
 export * from './escalation-consts.js';
 import { concreteRoleTargetAccount, isConcreteRoleArn, resourceCoversRole, isAllRolesAssumeScope, specificAccountsInRoleArns, parsePassResource, partitionReaches, accountReaches, partitionModelable, subjectPartitionKnown, accountModelable, otherResourceIsUnmodelable, isUnmodelablePassResource, isConfidentPinnedResource, globCanProducePrefix, subjectRoleArnPrefix, resourceReachesSubject, rolePathIsWildcardEquivalent, principalPinsOf, constraintContains, keyConstraintsSatisfiable, principalPinsOfMemo, pinsJointlySatisfiable, principalConditionsSatisfiable, ROLE_ARN_PARTS_RE, KNOWN_PARTITIONS, IAM_ARN_LENIENT_RE, PRINCIPAL_INVARIANT_KEYS, EXACT_EQUALITY_PIN_OPERATORS, NEGATED_EQUALITY_PIN_OPERATORS, CASE_INSENSITIVE_PIN_OPERATORS, SATISFIABILITY_TRIPLE_WORK } from './escalation-reachability.js';
 export * from './escalation-reachability.js';
-import { passedToServiceEntries, normalizeOperator, operatorPermitsService, passRolePermitsService, hasNonEmptyCondition } from './escalation-conditions.js';
+import { passedToServiceEntries, normalizeOperator, operatorPermitsService, passRolePermitsService, hasNonEmptyCondition, UNASSERTED_PARTITION } from './escalation-conditions.js';
 export { hasNonEmptyCondition } from './escalation-conditions.js';
 import { statementSid } from './escalation-statement.js';
-import { resourceScope, isStarResource, grantTokenIsBroad, resourceListIsBroadForAssume, assumeScopeIsAllRoles, assumeAccountReach } from './escalation-scope.js';
+import { resourceScope, isStarResource, grantTokenIsBroad, resourceListIsBroadForAssume, assumeScopeIsAllRoles, assumeAccountReach, roleNameAxisUnconstrained } from './escalation-scope.js';
 import { statementNeverMatches, parseOperator } from './conditions.js';
 // ONE shared, ReDoS-safe, linear wildcard matcher (S3-dos-budget). Replaces the
 // byte-identical globMatch copy this file used to carry; isGlobBudgetError lets the
@@ -234,6 +234,65 @@ const LAMBDA_CODE_ONLY_ACTIONS = Object.freeze(['lambda:UpdateFunctionCode']);
 // exact false negative threat-model T8 forbids). Normalize/validate here so the
 // passedRoleAccounts comparison downstream is only reached for a real account id.
 
+// Matching world when no partition was asserted, derived at PATH level (R3-03):
+// Resource ARNs and non-negated ARN-valued condition entries of the PassRole
+// statement AND every surviving companion exec statement (F2-01: one chosen
+// companion made the result order-dependent). A NotResource ARN or an ARN under
+// a negated operator never STEERS the world, but it is still a partition signal:
+// it poisons to null (F2-02). Any segment that is not an exact KNOWN_PARTITIONS
+// token (wildcard, variable, wrong case, unknown, non-ARN grant) also poisons -
+// both matcher arms widen, fail closed (R3-01/R3-02). No evidence at all ->
+// UNASSERTED_PARTITION (allow arm wide, deny arm canonical). Single known token
+// -> that world; mixed -> null. Evidence is computed ONCE per statement and
+// merged per path, so the work charged stays linear in the policy (S2 budget).
+function stmtArnEvidence(stmt) {
+  const ev = { parts: new Set(), poison: false };
+  const classify = (v) => {
+    const m = /^arn:([^:]*):/i.exec(v);
+    if (m && KNOWN_PARTITIONS.has(m[1])) ev.parts.add(m[1]);
+    else ev.poison = true;
+  };
+  for (const r of Array.isArray(stmt.resources) ? stmt.resources : []) {
+    const v = String(r);
+    chargeWork(v.length + 1);
+    if (v !== '*') classify(v);
+  }
+  for (const r of Array.isArray(stmt.notResources) ? stmt.notResources : []) {
+    const v = String(r);
+    chargeWork(v.length + 1);
+    if (/^arn:/i.test(v)) ev.poison = true; // F2-02: signal, never steering
+  }
+  const cond = stmt.condition;
+  if (!cond || typeof cond !== 'object') return ev;
+  for (const op of Object.keys(cond)) {
+    const block = cond[op];
+    if (!block || typeof block !== 'object') continue;
+    const negated = /not/.test(normalizeOperator(op));
+    for (const key of Object.keys(block)) {
+      const v = block[key];
+      for (const item of Array.isArray(v) ? v : [v]) {
+        if (typeof item !== 'string') continue;
+        chargeWork(item.length + 1);
+        if (!/^arn:/i.test(item)) continue;
+        if (negated) ev.poison = true; // F2-02
+        else classify(item);
+      }
+    }
+  }
+  return ev;
+}
+
+function mergeArnEvidence(into, ev) {
+  if (ev.poison) into.poison = true;
+  for (const t of ev.parts) into.parts.add(t);
+  return into;
+}
+
+function resolveArnEvidence(ev) {
+  if (ev.poison || ev.parts.size > 1) return null;
+  return ev.parts.size === 0 ? UNASSERTED_PARTITION : [...ev.parts][0];
+}
+
 function detectPassRolePaths(allows, out, denies, ctx) {
   const rawSubjectAccount = ctx && ctx.subjectAccount != null ? String(ctx.subjectAccount) : null;
   const subjectAccount = rawSubjectAccount && CONCRETE_ACCOUNT_ID_RE.test(rawSubjectAccount)
@@ -298,6 +357,13 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     ? denyRemovesAllSubjectRoles(denies, subjectAccount, subjectPartition)
     : false;
 
+  const usedPassStmts = new Set(); // F2-04: withhold UNSCOPED per consumed pass statement
+  const arnEvidenceMemo = new Map(); // stmt.index -> evidence (charged once per statement)
+  const evidenceOfStmt = (stmt) => {
+    let ev = arnEvidenceMemo.get(stmt.index);
+    if (!ev) { ev = stmtArnEvidence(stmt); arnEvidenceMemo.set(stmt.index, ev); }
+    return ev;
+  };
   for (const svc of PASS_ROLE_SERVICES) {
     // Gather EVERY Allow granting a role-consuming action for this service, then
     // apply same-policy explicit-Deny precedence PER statement. A Deny that fully
@@ -319,12 +385,14 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     let execBroad = -1;
     let execTech = -1;
     let execAnyCandidate = false;
+    const execArnStmts = []; // every surviving candidate feeds partition evidence (F2-01)
     for (const stmt of allows) {
       const m = grantedPatternsFor(stmt, svc.execActions);
       if (m.length === 0) continue;
       execAnyCandidate = true;
       const d = applyDenyToActions(denies, m, stmt);
       if (d.blocked) continue; // this exec statement is fully, in-scope denied
+      execArnStmts.push(stmt);
       // MOST-SEVERE first: a launch-capable exec (critical) outranks a staging-only
       // exec (high) no matter its order, resource breadth, or index (axis 2). Only
       // within an equal technique tier do the not-narrowed / broadest / lowest-index
@@ -348,6 +416,9 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     }
     if (!execAnyCandidate) continue; // no service-execution action -> not this path
     if (!execStmt) continue; // every exec statement definitively denied -> path removed
+    // F2-01: merged partition evidence of every surviving exec candidate.
+    const execEv = { parts: new Set(), poison: false };
+    for (const e of execArnStmts) mergeArnEvidence(execEv, evidenceOfStmt(e));
 
     // Gather EVERY PassRole grant that can feed THIS service (respecting
     // PassedToService operator semantics: allowlist vs denylist vs uncertain),
@@ -372,7 +443,24 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     let passTier = -1;
     let passAnyPermits = false;
     for (const stmt of passStmts) {
-      const p = passRolePermitsService(stmt.condition, svc.principal);
+      // Unasserted partition: derive the matching world from the path's own ARNs
+      // (viability still treats the partition as unasserted).
+      let p = passRolePermitsService(stmt.condition, svc.principal,
+        partitionKnown
+          ? subjectPartition
+          : resolveArnEvidence(mergeArnEvidence(mergeArnEvidence({ parts: new Set(), poison: false }, evidenceOfStmt(stmt)), execEv)));
+      if (!p.permits && partitionKnown) {
+        // R2-05: a pin that misses the asserted partition but matches the ROLE
+        // ARNs' own world keeps the path, so the cross-partition demotion (and
+        // its explanatory note) still reports it instead of reading CLEAN.
+        // Role Resource ARNs only: companion/condition evidence must not override
+        // an asserted partition (the R3-03 asserted-aws control).
+        const arnPart = resolveArnEvidence(stmtArnEvidence({ resources: stmt.resources }));
+        if (arnPart && arnPart !== UNASSERTED_PARTITION && arnPart !== subjectPartition) {
+          const q = passRolePermitsService(stmt.condition, svc.principal, arnPart);
+          if (q.permits) p = q;
+        }
+      }
       if (!p.permits) continue;
       passAnyPermits = true;
       const eff = denyEffectOnAction(denies, PASS_ROLE_ACTION, stmt);
@@ -812,6 +900,71 @@ function detectPassRolePaths(allows, out, denies, ctx) {
     if (targetResources.length) escalationFinding.escalation.targetResources = targetResources.slice();
     if (excludedTargets.length) escalationFinding.escalation.excludedTargets = excludedTargets.slice();
     out.push(escalationFinding);
+    usedPassStmts.add(passStmt.index); // F2-04
+  }
+
+  // G5: broad PassRole grant that no compound PASSROLE-* path above consumed
+  // (F2-04: per pass statement, not per document). It pairs with whatever compute
+  // permission the holder has from any other policy (e.g. a node role reached via
+  // instance metadata), so it is surfaced on its own.
+  const unscoped = [];
+  for (const stmt of passStmts) {
+    if (usedPassStmts.has(stmt.index)) continue;
+    // Only a truly unconstrained role-name axis ("*", role/*); a literal path
+    // prefix (role/deployment/*) is a deliberate scope and stays quiet.
+    if (!resourceListIsBroadForAssume(stmt) || !roleNameAxisUnconstrained(stmt)) continue;
+    // PassRole only passes same-account roles: a Deny covering every subject
+    // role leaves nothing to pass (F2-07a).
+    if (subjectDenied) continue;
+    const eff = denyEffectOnAction(denies, PASS_ROLE_ACTION, stmt);
+    if (eff === 'blocked') continue;
+    unscoped.push({ stmt, narrowed: eff === 'may-block' });
+  }
+  if (unscoped.length > 0) {
+    // One finding per document (F2-07b). Severity degrades only when EVERY
+    // contributing grant is deny-narrowed (fail closed).
+    const allNarrowed = unscoped.every((u) => u.narrowed);
+    const allPinned = unscoped.every((u) => passedToServiceEntries(u.stmt.condition).length > 0);
+    const resources = [...new Set(unscoped.flatMap((u) => resourceScope(u.stmt)))];
+    out.push(
+      makeEscalation('PASSROLE-UNSCOPED', unscoped[0].stmt, {
+        severity: allNarrowed ? 'medium' : 'high',
+        // The broad grant is plainly in the text; whether a launch permission
+        // exists elsewhere is unknown from this document alone.
+        policyEvidence: 'high',
+        pathExploitability: 'low',
+        conditioned: unscoped.some((u) => hasNonEmptyCondition(u.stmt)),
+        denyNarrowed: unscoped.some((u) => u.narrowed),
+        technique: 'passrole-unscoped',
+        requiredActions: [PASS_ROLE_ACTION],
+        prerequisites: prerequisitesOf([
+          prereqTechnique('passrole-unscoped', [prereqGroup([PASS_ROLE_ACTION], 'pass')], { requiresPassRole: true }),
+        ]),
+        actions: [PASS_ROLE_ACTION],
+        resources,
+        evidence: unscoped.map((u) =>
+          evidenceOf(u.stmt, 'pass', [PASS_ROLE_ACTION],
+            'PassRole over a broad role scope with no launch action in this policy')),
+        why:
+          'Grants iam:PassRole over a broad / wildcard role scope with no ' +
+          'role-consuming launch action in this policy. The grant combines ' +
+          'with any compute permission the holder has from any other policy ' +
+          '(for example on an instance or node role, every workload on the ' +
+          'host can reach these credentials and pair them with its own ' +
+          'launch permissions), so the pass capability is a standing hazard ' +
+          'even though this document alone completes no execution path.',
+        // F2-07c: do not advise a pin that is already present.
+        remediation: allPinned
+          ? 'Scope iam:PassRole to the specific role ARNs that must be passed; ' +
+            'the iam:PassedToService pin limits the receiving service but not ' +
+            'which roles can be passed. Keep role-passing out of broadly-held ' +
+            'policies such as instance or node roles.'
+          : 'Scope iam:PassRole to the specific role ARNs that must be passed ' +
+            'and pin iam:PassedToService to the intended service; keep ' +
+            'role-passing out of broadly-held policies such as instance or ' +
+            'node roles.',
+      }),
+    );
   }
 }
 

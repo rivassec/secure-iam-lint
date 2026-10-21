@@ -34,8 +34,8 @@ import { modelFromText } from '../../../content/tools/iam-blast-radius/engine/mo
 test('catalog exposes a dated snapshot version + date', () => {
   assert.equal(defaultCatalog.version, ACTION_CATALOG_VERSION);
   assert.equal(defaultCatalog.date, ACTION_CATALOG_DATE);
-  // A dated snapshot tag (YYYY.MM.DD) and an ISO date, both committed constants.
-  assert.match(ACTION_CATALOG_VERSION, /^\d{4}\.\d{2}\.\d{2}$/);
+  // A dated snapshot tag (YYYY.MM.DD, optional same-day serial) and an ISO date.
+  assert.match(ACTION_CATALOG_VERSION, /^\d{4}\.\d{2}\.\d{2}(\.\d+)?$/);
   assert.match(ACTION_CATALOG_DATE, /^\d{4}-\d{2}-\d{2}$/);
 });
 
@@ -73,7 +73,7 @@ test('lookup: known concrete action carries service + name + access level', () =
 test('lookup: requiresWildcardResource distinguishes required-wildcard READs from scopable READs', () => {
   // READ-level actions AWS grants only on Resource "*" (no resource-level support).
   const requiresWildcard = [
-    'sts:GetCallerIdentity', 'sts:GetSessionToken', 'sts:GetFederationToken',
+    'sts:GetCallerIdentity', 'sts:GetSessionToken',
     'ec2:DescribeTags', 'cloudtrail:LookupEvents', 'cloudtrail:DescribeTrails',
   ];
   for (const a of requiresWildcard) {

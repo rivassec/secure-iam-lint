@@ -95,9 +95,19 @@ const APPLICABILITY = Object.freeze({
   // DIRECT-IAM-ADMIN/WILDCARD shape (not a specific AddUserToGroup expression), and
   // a NotResource complement of a group ARN is not a realistic scoping of this rule.
   'GROUP-MEMBERSHIP': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
+  // G4: a single concrete action (rds-db:connect), same shape and exclusions as
+  // GROUP-MEMBERSHIP / DATA-READ (notAction inversion and a NotResource complement
+  // are the WILDCARD/DATA-EXFIL shapes, not a dbuser-scoped auth grant).
+  'DB-AUTH': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
+  // F1-01/F1-02: single-action ACL-write primitive, same shape and exclusions as
+  // DB-AUTH (notAction/NotResource are the WILDCARD shapes, not an object-ACL grant).
+  'OBJECT-ACL-WRITE': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
   'DESTRUCTIVE-ACTION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   'DETECTION-IMPAIRMENT': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   'NOTACTION-ALLOW': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],
+  // G5: single-action primitive (broad iam:PassRole, no companion launch action);
+  // notAction/notResource excluded for the same reasons as the PassRole compounds.
+  'PASSROLE-UNSCOPED': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
   'PASSROLE-LAMBDA': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
   'PASSROLE-EC2': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
   'PASSROLE-SERVICE': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],

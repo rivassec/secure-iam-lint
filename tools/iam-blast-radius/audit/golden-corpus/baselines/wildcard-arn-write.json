@@ -163,7 +163,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "134cf0208c61a71e519ac197fe1d"
+                "iamBlastRadius/semanticIdentity/v2": "7d366c43214e91aa9831cc3cbb4f5e7c"
               },
               "properties": {
                 "category": "security",
@@ -175,7 +175,8 @@
                   "pathExploitability": "high"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "WildcardArnWrite"
+                "statementSid": "WildcardArnWrite",
+                "baselineId": "175b5584f57dcd6d41c0ca632258a2dde0ef2345fe943cb15142fc23466adc90"
               },
               "ruleIndex": 0
             },
@@ -195,7 +196,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "04312a240802d60c56d9ae8a5efc"
+                "iamBlastRadius/semanticIdentity/v2": "580138f4c27a9ec040df91e61cf85443"
               },
               "properties": {
                 "category": "security",
@@ -207,7 +208,8 @@
                   "pathExploitability": "high"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "WildcardArnWrite"
+                "statementSid": "WildcardArnWrite",
+                "baselineId": "ea76cb63f7f03f75c7f979b69d1e5ab0abec00723f6b03132c0797b4c53fe050"
               },
               "ruleIndex": 1
             }

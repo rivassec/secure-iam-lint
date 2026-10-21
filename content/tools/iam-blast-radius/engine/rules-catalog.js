@@ -135,6 +135,26 @@ export const RULES = Object.freeze({
     docRef:
       'https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies-cross-account-resource-access.html',
   }),
+  // G4: rds-db:connect mints an IAM DB auth token - credential-equivalent database
+  // access. Broad scope = any DB user on any IAM-enabled cluster.
+  'DB-AUTH': Object.freeze({
+    id: 'DB-AUTH',
+    order: 13,
+    title: 'IAM database authentication (rds-db:connect)',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.IAMPolicy.html',
+  }),
+  // F1-01/F1-02: object-ACL writes can expose objects publicly or cross-account
+  // unless the bucket enforces BucketOwnerEnforced (not visible in policy text).
+  'OBJECT-ACL-WRITE': Object.freeze({
+    id: 'OBJECT-ACL-WRITE',
+    order: 14,
+    title: 'Object ACL write (s3:PutObjectAcl / s3:PutObjectVersionAcl)',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html',
+  }),
 });
 
 export const RULE_IDS = Object.freeze(Object.keys(RULES));

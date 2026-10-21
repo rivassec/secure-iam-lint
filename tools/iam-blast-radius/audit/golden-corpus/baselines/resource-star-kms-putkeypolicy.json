@@ -32,7 +32,7 @@
           "conditions": null,
           "policyEvidence": "high",
           "pathExploitability": "high",
-          "why": "Grants a resource-policy write / cross-account grant action (e.g. s3:PutBucketPolicy, s3:PutObjectAcl, kms:PutKeyPolicy, kms:CreateGrant, lambda:AddPermission, sns:AddPermission, secretsmanager:PutResourcePolicy). A principal that can rewrite a resource's own policy can grant an external or arbitrary principal access to that data store, key, function, or topic - a cross-account exfiltration, key-control, or persistence backdoor primitive.",
+          "why": "Grants a resource-policy write / cross-account grant action (e.g. s3:PutBucketPolicy, kms:PutKeyPolicy, kms:CreateGrant, lambda:AddPermission, sns:AddPermission, secretsmanager:PutResourcePolicy). A principal that can rewrite a resource's own policy can grant an external or arbitrary principal access to that data store, key, function, or topic - a cross-account exfiltration, key-control, or persistence backdoor primitive.",
           "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, and any Condition keys may narrow or block it. This finding does not prove the permission is reachable or exploitable.",
           "remediation": "Restrict resource-policy writes to a dedicated administration role, scope the Resource to specific ARNs, and use SCPs / resource-control policies and aws:PrincipalOrgID conditions to prevent granting access to principals outside your organization.",
           "ruleVersion": "1",
@@ -163,7 +163,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1571b96a1c2eb803da849e53ec63"
+                "iamBlastRadius/semanticIdentity/v2": "2ef2daf54c5713649811def274da4254"
               },
               "properties": {
                 "category": "security",
@@ -175,7 +175,8 @@
                   "pathExploitability": "high"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "KmsControl"
+                "statementSid": "KmsControl",
+                "baselineId": "662aae10582429f7431608a23a4547da77531325ad55a42a6dcc83527925ca99"
               },
               "ruleIndex": 0
             },
@@ -195,7 +196,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1d3fc5336a6f0b1de229f1a68245"
+                "iamBlastRadius/semanticIdentity/v2": "2aab46358a6876dce21e8e36f536d1b7"
               },
               "properties": {
                 "category": "security",
@@ -207,7 +208,8 @@
                   "pathExploitability": "high"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "KmsControl"
+                "statementSid": "KmsControl",
+                "baselineId": "7fbf2e22cb482dea55863b5a02404424833ba943600550a710e99d5cfc164727"
               },
               "ruleIndex": 1
             }
@@ -249,7 +251,7 @@
           "*"
         ],
         "conditionsPresent": false,
-        "evidenceWhyHash": "0f83bad0cabc9994"
+        "evidenceWhyHash": "1f61dd8b35039a02"
       },
       {
         "id": "WILDCARD-RESOURCE",

@@ -41,8 +41,8 @@
     "blocked": false,
     "family": "scp-rcp",
     "override": "scp-rcp",
-    "status": "warned",
-    "note": "warned (not ok): the curated action catalog does not recognize organizations:LeaveOrganization, an honest coverage gap - it does not weaken the guardrail semantics.",
+    "status": "ok",
+    "note": "ok: organizations:LeaveOrganization is in the action catalog since the 2026.10.20 AWS-reference snapshot (it was previously an honest coverage gap that warned). The guardrail semantics are unchanged.",
     "findingIds": [
       "SCP-GUARDRAIL",
       "SCP-GUARDRAIL"
