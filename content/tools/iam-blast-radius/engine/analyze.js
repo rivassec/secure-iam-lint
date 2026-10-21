@@ -168,7 +168,8 @@ export function analyze(text, options) {
     // Every trust finding carries the limitation that the assumed role's
     // permissions are out of scope / unknown.
     if (effectiveFamily === FAMILIES.ROLE_TRUST) {
-      return trustResult(expandTrustModel(m.model), coverage, effectiveFamily, { subjectAccount: (options && options.subjectAccount) || null });
+      return trustResult(expandTrustModel(m.model), coverage, effectiveFamily, {
+        subjectAccount: (options && options.subjectAccount) || null, partition: guardPartition(options) });
     }
 
     // IAM-1002 (Phase 10): an explicit permissions-boundary / session selection

@@ -74,6 +74,29 @@ export * from './trust-catalogs.js';
 import { chargeWork, isGlobBudgetError } from './glob.js';
 
 const ALWAYS_PRESENT_ON_ASSUME_ROLE = Object.freeze(new Set(['aws:principalarn', 'aws:principalaccount', 'aws:principaltype']));
+
+// P6: 'root' / 'principal' when every entry is concretely in the subject account, else null.
+const SAME_ACCT_ARN = /^arn:([a-z-]+):(?:iam|sts)::(\d{12}):(?:role|user|assumed-role|federated-user)\/[^*?$]+$/i;
+const SAME_ACCT_ROOT = /^arn:([a-z-]+):iam::(\d{12}):root$/i;
+// An asserted partition must match; another partition's account is a different account.
+const inAcct = (m, acct, part) => !!m && m[2] === acct && (!part || m[1].toLowerCase() === part);
+function sameAccountKind(ext, subjectAccount, partition = null) {
+  const acct = /^\d{12}$/.test(String(subjectAccount ?? '')) ? String(subjectAccount) : null;
+  if (!acct || ext.entries.length === 0) return null;
+  let root = false;
+  for (const e of ext.entries) {
+    const v = String(e.value);
+    if (e.type === 'aws-account' && v === acct) root = true;
+    else if (e.type === 'aws-root' && inAcct(SAME_ACCT_ROOT.exec(v), acct, partition)) root = true;
+    else if (e.type !== 'aws-principal-arn' || !inAcct(SAME_ACCT_ARN.exec(v), acct, partition)) return null;
+  }
+  return root ? 'root' : 'principal';
+}
+// Single constant so the root wording can be revised in one place.
+const SAME_ACCOUNT_ROOT_WHY = (who) =>
+  `The trust policy delegates assume-role to the role's own account root (${who}). ` +
+  'That delegates to every IAM principal in the account whose own policy allows ' +
+  'sts:AssumeRole on this role, not only the root user.';
 // Multi-tenant providers: anyone on the internet can obtain a token (F5).
 const GITHUB_OIDC_HOST = 'token.actions.githubusercontent.com';
 const COGNITO_FED_HOST = 'cognito-identity.amazonaws.com';
@@ -111,7 +134,7 @@ const fedHost = (v) => String(v).toLowerCase().replace(/^arn:[^:]*:iam::[^:]*:oi
 // IAM-804 iteration 4 finding 2). Only a value carrying at least one LITERAL
 // character narrows (a partial ExternalId still forces the caller to present that
 // literal substring). Mirrors conditions.js valueNarrowsKey default arm.
-function findingsForStatement(stmt, subjectAccount = null) {
+function findingsForStatement(stmt, subjectAccount = null, partition = null) {
   const allPrincipals = classifyPrincipals(stmt.principal);
   const found = [];
 
@@ -526,7 +549,26 @@ function findingsForStatement(stmt, subjectAccount = null) {
   // (trust-policy-semantics 2.2-2.4 / 5, acceptance test 16).
   const externalCats = ['aws-account', 'aws-root', 'aws-principal-arn', 'canonical-user']
     .filter((c) => principals.categories.has(c));
-  if (externalCats.length > 0) {
+  // P6: every such principal concretely in the subject account is a same-account trust.
+  const sameKind = externalCats.length > 0
+    ? sameAccountKind(subsetPrincipals(principals, externalCats), subjectAccount, partition) : null;
+  if (sameKind) {
+    const own = subsetPrincipals(principals, externalCats);
+    found.push(makeFinding(stmt, own, {
+      id: 'TRUST-SAME-ACCOUNT',
+      severity: sameKind === 'root' ? 'medium' : 'low',
+      title: 'Same-account role trust',
+      why: sameKind === 'root' ? SAME_ACCOUNT_ROOT_WHY(principalSummary(own))
+        : `The trust policy delegates assume-role to principal(s) in the role's own account (${principalSummary(own)}). ` +
+          'Same-account trust does not reach outside the account.',
+      remediation: sameKind === 'root'
+        ? 'Name the specific role/user ARNs that must assume this role instead of the account root.'
+        : 'Keep the trusted Principal scoped to the roles/users that need it.',
+      docRef: DOC_PRINCIPAL,
+      pathExploitability: 'low',
+    }));
+  }
+  if (externalCats.length > 0 && !sameKind) {
     const ext = subsetPrincipals(principals, externalCats);
     const extWho = principalSummary(ext);
     const constrained = hasConfusedDeputyConstraint(sig);
@@ -833,7 +875,7 @@ export function analyzeTrust(model, options = null) {
       // Deny-unaware; analyze.js + graph.js apply IAM-302 precedence).
       if (stmt.effect !== 'Allow') continue;
       if (!isTrustStatement(stmt)) continue;
-      for (const f of findingsForStatement(stmt, options && options.subjectAccount)) findings.push(f);
+      for (const f of findingsForStatement(stmt, options && options.subjectAccount, options && options.partition)) findings.push(f);
       const selfRefs = selfReferenceKeys(stmt.condition);
       if (selfRefs.length > 0) {
         findings.push(makeFinding(stmt, classifyPrincipals(stmt.principal), {
