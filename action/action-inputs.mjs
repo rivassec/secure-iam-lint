@@ -113,7 +113,7 @@ export function getInput(env, name) {
 export const DECLARED_INPUTS = Object.freeze([
   'paths', 'family', 'subject-account', 'resource-arn', 'resource-type', 'resource-account',
   'partition', 'fail-on', 'sarif-output', 'baseline', 'baseline-output', 'budget-ms',
-  'max-files', 'max-total-bytes', 'max-sarif-results', 'max-sarif-bytes',
+  'max-files', 'max-total-bytes', 'max-sarif-results', 'max-sarif-bytes', 'pulumi-json',
 ]);
 
 // Undeclared INPUT_* names; odd names are only counted.
@@ -135,6 +135,7 @@ export function unrecognizedInputs(env) {
 export function readInputs(env) {
   return {
     paths: getInput(env, 'paths'),
+    pulumiJson: getInput(env, 'pulumi-json'),
     family: getInput(env, 'family'),
     subjectAccount: getInput(env, 'subject-account'),
     // The resource family's attached-resource context (review finding D1): built from

@@ -52,6 +52,9 @@ import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 // The SARIF 2.1.0 adapter (story P15-sarif): a PURE projection of a scan() result.
 // The CLI just picks it when --format sarif; the exit code is unaffected.
 import { formatSarif, artifactUri } from './sarif.mjs';
+// v1.3.0: Pulumi preview / stack export input (one aggregate result over many documents).
+import { scanPulumi, pulumiUnits, PULUMI_LIMITS } from './pulumi.mjs';
+import { buildAggregateSarif } from '../action/action-aggregate.mjs';
 import {
   applyBaseline, parseBaseline, buildBaseline, formatBaseline, baselineWriteProblem, MAX_BASELINE_BYTES,
 } from './baseline.mjs';
@@ -80,6 +83,7 @@ const VALUE_FLAGS = Object.freeze(new Set([
   '--resource-type',
   '--resource-arn',
   '--resource-account',
+  '--input',
 ]));
 
 // Boolean flags (no value). `-h` is an alias for `--help`. `--debug` is an alias
@@ -227,6 +231,7 @@ export const HELP_TEXT = `iam-br - IAM Blast Radius headless scanner (fail-close
 
 USAGE
   iam-br --family <family> [options] [policy.json]
+  iam-br --input pulumi [options] preview-or-export.json
   cat policy.json | iam-br --family <family> [options]
 
 Reads one AWS IAM policy document from a file argument or, if none is given,
@@ -278,7 +283,16 @@ OPTIONS
                           RESOURCE_BUDGET_EXCEEDED); it never reports a clean pass.
   --output <path>         Write formatted output to <path> instead of STDOUT.
   --artifact-uri <uri>    Location URI recorded in SARIF output for the analyzed
-                          policy (default: the file path, or 'stdin').
+                          policy (default: the file path, or 'stdin'). With
+                          --input pulumi: the fallback location (default
+                          Pulumi.yaml) when a resource has no usable source line.
+  --input <kind>          policy (default) | pulumi. 'pulumi' reads a
+                          'pulumi preview --json' or 'pulumi stack export' file
+                          and scans every IAM policy in it; --family and
+                          --resource-* are not used. A default preview lists only
+                          changed resources (scanScope "delta"): exit 0 then means
+                          "no new risk in this change", not "stack clean". Use
+                          'preview --show-sames' or a stack export for a full scan.
   --verbose, --debug      Include the underlying errno/detail in read/write error
                           diagnostics. OFF by default so a read failure does NOT
                           reveal whether a path is missing (ENOENT) vs a directory
@@ -315,6 +329,7 @@ export function parseArgs(argv) {
     output: undefined,
     artifactUri: undefined,
     budgetMs: DEFAULT_BUDGET_MS,
+    input: 'policy',
     file: undefined,
     // S5-cli-hardening: default OFF. When true, read/write error diagnostics may
     // include the underlying errno/detail; when false they stay generic so they do
@@ -376,6 +391,7 @@ export function parseArgs(argv) {
         case '--resource-type': opts.resourceType = value; break;
         case '--resource-arn': opts.resourceArn = value; break;
         case '--resource-account': opts.resourceAccount = value; break;
+        case '--input': opts.input = value; break;
         default: return usage(`unknown option '${name}'`);
       }
       continue;
@@ -400,8 +416,14 @@ export function parseArgs(argv) {
     opts.file = positionals[0];
   }
 
-  // Required: --family. NEVER auto-detected -> a missing family is a usage error.
-  if (!isNonEmptyString(opts.family)) {
+  if (opts.input !== 'policy' && opts.input !== 'pulumi') {
+    return usage(`unknown --input '${opts.input}' (expected: policy | pulumi)`);
+  }
+  if (opts.input === 'pulumi') {
+    const problem = pulumiArgProblem(opts);
+    if (problem) return usage(problem);
+  } else if (!isNonEmptyString(opts.family)) {
+    // Required: --family. NEVER auto-detected -> a missing family is a usage error.
     return usage(
       'the --family option is required and is never auto-detected ' +
       '(identity | resource | role-trust | trust | permissions-boundary | scp-rcp | scp | rcp | session)',
@@ -410,12 +432,12 @@ export function parseArgs(argv) {
   // Validate the family VALUE here too (like --format) so a bad value is a usage
   // error on stderr with no stdout, consistent with a missing family. scan()
   // enforces the same SELECTABLE_FAMILIES set for the programmatic / action path.
-  const familyLower = opts.family.trim().toLowerCase();
+  const familyLower = opts.input === 'pulumi' ? null : opts.family.trim().toLowerCase();
   if (familyLower === 'auto' || familyLower === 'auto-detect') {
     return usage('family auto-detection is not permitted; select an explicit family '
       + '(identity | resource | role-trust | trust | permissions-boundary | scp-rcp | scp | rcp | session)');
   }
-  if (!SELECTABLE_FAMILIES.has(familyLower)) {
+  if (familyLower !== null && !SELECTABLE_FAMILIES.has(familyLower)) {
     return usage(`unknown --family '${opts.family}' `
       + '(expected: identity | resource | role-trust | trust | permissions-boundary | scp-rcp | scp | rcp | session)');
   }
@@ -454,6 +476,16 @@ export function parseArgs(argv) {
 
 function usage(message) {
   return { ok: false, error: { reason: 'USAGE', message } };
+}
+
+// --input pulumi: each document's family and context come from the file, so the
+// single-policy flags are refused; baselines arrive with URN keys (round 3).
+function pulumiArgProblem(opts) {
+  if (isNonEmptyString(opts.family)) return '--family is not used with --input pulumi (each policy\'s family comes from its resource type)';
+  if (opts.resourceType || opts.resourceArn || opts.resourceAccount) return '--resource-* is not used with --input pulumi (the attached resource is resolved from the stack)';
+  if (opts.baseline != null || opts.format === 'baseline') return 'baselines are not supported with --input pulumi yet';
+  if (!isNonEmptyString(opts.file)) return '--input pulumi needs the preview/export JSON as a file argument (stdin is not read)';
+  return null;
 }
 
 // --- Output formatting --------------------------------------------------------
@@ -570,6 +602,8 @@ export async function run(argv, io) {
         return EXIT.USAGE;
       }
     }
+
+    if (opts.input === 'pulumi') return runPulumi(opts, io, out, err, manifest);
 
     // Resolve the policy text: a file argument, else STDIN.
     // `oversize` records that a pre-guard tripped the MAX_BYTES cap BEFORE the whole
@@ -736,6 +770,105 @@ export async function run(argv, io) {
     err(`iam-br: internal error: ${(e && e.message) || 'unexpected failure'}\n`);
     return EXIT.INTERNAL;
   }
+}
+
+// --input pulumi: read the file (larger cap than one policy), scan every document,
+// emit one aggregate report. Same exit contract; formatting never changes the code.
+function runPulumi(opts, io, out, err, manifest) {
+  let text;
+  let tooLarge = false;
+  try {
+    text = io.readFile(opts.file, PULUMI_LIMITS.MAX_BYTES);
+  } catch (e) {
+    if (e && e.code === INPUT_TOO_LARGE) tooLarge = true;
+    else {
+      err(opts.verbose
+        ? `iam-br: cannot read Pulumi file '${opts.file}': ${(e && (e.code || e.message)) || 'error'}\n`
+        : 'iam-br: cannot read Pulumi file (use --verbose for details).\n');
+      return EXIT.USAGE;
+    }
+  }
+  const result = scanPulumi({
+    text: tooLarge ? '' : text,
+    oversize: tooLarge,
+    subjectAccount: opts.subjectAccount,
+    partition: opts.partition,
+    threshold: opts.threshold,
+    budgetMs: opts.budgetMs,
+  });
+  const code = Number.isInteger(result.exitCode) ? result.exitCode : EXIT.INTERNAL;
+  if (code === EXIT.USAGE) {
+    err(`iam-br: ${result.analysisStates[0] ? result.analysisStates[0].message : 'not Pulumi JSON'}\n`);
+    return EXIT.USAGE;
+  }
+  let formatted;
+  try {
+    formatted = opts.format === 'sarif'
+      ? `${JSON.stringify(buildAggregateSarif(pulumiUnits(result, opts.artifactUri), manifest), null, 2)}\n`
+      : `${JSON.stringify(toPulumiJsonReport(result, opts, manifest), null, 2)}\n`;
+  } catch (e) {
+    err(`iam-br: internal error: failed to format ${opts.format} output: ${(e && e.message) || 'error'}\n`);
+    return EXIT.INTERNAL;
+  }
+  if (opts.output != null) {
+    try {
+      io.writeFile(opts.output, formatted);
+    } catch (e) {
+      err(opts.verbose ? `iam-br: cannot write output '${opts.output}': ${(e && e.message) || 'error'}\n`
+        : 'iam-br: cannot write output (use --verbose for details).\n');
+      return EXIT.INTERNAL;
+    }
+  } else {
+    out(formatted);
+  }
+  err(`iam-br: input=pulumi scope=${result.scanScope} status=${result.analysisStatus} exit=${code} `
+    + `reason=${result.reason} documents=${result.documents.length} findings=${result.findingsCount} blocking=${result.blockingCount}\n`);
+  return code;
+}
+
+/**
+ * Deterministic JSON report for --input pulumi: verdict, scan scope, then one entry per
+ * policy document keyed by `<urn>#<property>`.
+ * @param {object} result scanPulumi() result
+ * @param {object} opts
+ * @param {object} [manifest]
+ * @returns {object}
+ */
+export function toPulumiJsonReport(result, opts, manifest = VERSION_MANIFEST) {
+  const o = opts || {};
+  return {
+    tool: 'iam-blast-radius',
+    version: semanticVersion(manifest),
+    input: 'pulumi',
+    pulumiKind: result.kind,
+    scanScope: result.scanScope,
+    scannedUrns: [...(result.scannedUrns || [])],
+    threshold: o.threshold != null ? o.threshold : 'high',
+    partitionAsserted: isNonEmptyString(o.partition) ? o.partition.trim() : null,
+    analysisStatus: result.analysisStatus,
+    reason: result.reason,
+    exitCode: result.exitCode,
+    findingsCount: result.findingsCount,
+    blockingCount: result.blockingCount,
+    analysisStates: [...(result.analysisStates || [])],
+    documents: (result.documents || []).map((d) => ({
+      artifact: d.artifact,
+      urn: d.urn,
+      property: d.property,
+      type: d.type,
+      family: d.family,
+      op: d.op,
+      managed: d.managed,
+      location: d.location,
+      analysisStatus: d.result.analysisStatus,
+      reason: d.result.reason,
+      exitCode: d.result.exitCode,
+      findingsCount: d.result.findingsCount,
+      blockingCount: d.result.blockingCount,
+      analysisStates: [...(d.result.analysisStates || [])],
+      findings: [...(d.result.findings || [])],
+    })),
+  };
 }
 
 // --- Process entry point ------------------------------------------------------

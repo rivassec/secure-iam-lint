@@ -1176,16 +1176,24 @@ function truncationState(budget) {
 // Returns { location, uriTruncated }. The location's artifact-location URI is the sanitized-
 // but-UNMODIFIED (never marker-appended) path; uriTruncated tells the caller to record a
 // SEPARATE properties.uriTruncated flag so a slice is visible without corrupting the URI.
-function locationFor(uri) {
+function locationFor(where) {
   // SECURITY (S2-sarif-sanitize-all): the artifact URI can be attacker-influenced - in
   // the Action a fork PR names the scanned file, and a hostile name could carry control
   // chars / newlines into a SARIF location. Strip them (path punctuation is preserved so
   // a legitimate repo-relative path is not mangled). See sanitizeUri.
-  const { uri: safeUri, truncated } = sanitizeUri(uri);
-  return {
-    location: { physicalLocation: { artifactLocation: { uri: safeUri } } },
-    uriTruncated: truncated,
-  };
+  const w = (where && typeof where === 'object') ? where : { uri: where };
+  const { uri: safeUri, truncated } = sanitizeUri(w.uri);
+  const physicalLocation = { artifactLocation: { uri: safeUri } };
+  // v1.3.0 (Pulumi): optional line region and logical location (URN#property), same sanitizer.
+  if (Number.isInteger(w.startLine) && w.startLine > 0 && w.startLine < 1e7) {
+    physicalLocation.region = { startLine: w.startLine };
+    if (Number.isInteger(w.startColumn) && w.startColumn > 0 && w.startColumn < 1e7) physicalLocation.region.startColumn = w.startColumn;
+  }
+  const location = { physicalLocation };
+  if (isNonEmptyString(w.logical)) {
+    location.logicalLocations = [{ fullyQualifiedName: sanitizeUri(w.logical).uri, kind: 'resource' }];
+  }
+  return { location, uriTruncated: truncated };
 }
 
 // Build the two DISJOINT result groups. Security findings first (in engine order),
@@ -1394,17 +1402,30 @@ function semanticVersion(manifest) {
   return (manifest && manifest.ruleVersion) || '0';
 }
 
+// Pulumi run metadata: only these keys, strings sanitized like a URI (attacker-influenced URNs).
+const RUN_PROPERTY_KEYS = Object.freeze(['scanScope', 'artifact', 'managed']);
+function runPropertiesOf(props) {
+  const out = {};
+  if (!props || typeof props !== 'object') return out;
+  for (const k of RUN_PROPERTY_KEYS) {
+    if (isNonEmptyString(props[k])) out[k] = sanitizeUri(props[k]).uri;
+  }
+  return out;
+}
+
 /**
  * Build the SARIF 2.1.0 log object for a scan() result. Pure + deterministic.
  *
  * @param {object} result   a scan() result (findings + analysisStates + verdict)
- * @param {object} [opts]    { artifactUri?, file? } - location model inputs
+ * @param {object} [opts]    { artifactUri?, file?, logicalLocation?, startLine?, startColumn?,
+ *   runProperties? } - location model inputs (the last four: Pulumi input)
  * @param {object} [manifest] the version manifest ({ ruleVersion, ... })
  * @returns {object} a SARIF 2.1.0 log
  */
 export function buildSarifLog(result, opts, manifest) {
   const res = result || {};
-  const uri = artifactUri(opts);
+  const o = opts || {};
+  const uri = { uri: artifactUri(o), logical: o.logicalLocation, startLine: o.startLine, startColumn: o.startColumn };
   const { rules, index } = buildRules(res);
   const { results, budget } = buildResults(res, uri, index);
 
@@ -1448,6 +1469,7 @@ export function buildSarifLog(result, opts, manifest) {
         findingsCount: typeof res.findingsCount === 'number'
           ? res.findingsCount
           : (Array.isArray(res.findings) ? res.findings.length : 0),
+        ...runPropertiesOf(o.runProperties),
       },
       results,
     }],
