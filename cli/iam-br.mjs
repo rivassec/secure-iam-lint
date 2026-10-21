@@ -851,6 +851,11 @@ export function toPulumiJsonReport(result, opts, manifest = VERSION_MANIFEST) {
     scannedUrns: [...(result.scannedUrns || [])],
     threshold: o.threshold != null ? o.threshold : 'high',
     partitionAsserted: isNonEmptyString(o.partition) ? o.partition.trim() : null,
+    subjectAccountAsserted: /^\d{12}$/.test(String(o.subjectAccount ?? '').trim()) ? String(o.subjectAccount).trim() : null,
+    // R2-2: why each provider's account/partition was believed.
+    providers: [...(result.providers || [])],
+    // Listed, not analyzed (e.g. source-bound Lambda permissions).
+    unanalyzed: [...(result.unanalyzed || [])],
     analysisStatus: result.analysisStatus,
     reason: result.reason,
     exitCode: result.exitCode,

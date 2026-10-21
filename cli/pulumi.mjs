@@ -104,7 +104,22 @@ const IAM_NO_DOCUMENT = new Set([
 
 // A property whose name says it holds a policy document (content-scan backstop).
 const DOC_KEY_RE = /(polic(y|ies)|policydocument|policytext)$/i;
-const STATEMENT_RE = /"statement"\s*:/i;
+// R2-1/F-3: policy shape = a Statement (any case) whose entries carry Effect + Action/NotAction,
+// or a bare statement (Effect + Principal/Action). WAFv2 `statement` objects carry no Effect.
+const IAM_VERSIONS = new Set(['2012-10-17', '2008-10-17']);
+const isStatement = (x) => isObj(x) && own(x, 'Effect') && (own(x, 'Action') || own(x, 'NotAction'));
+const keyCI = (o, k) => Object.keys(o).find((x) => x.toLowerCase() === k);
+function isPolicyShaped(o) {
+  if (!isObj(o)) return false;
+  const sk = keyCI(o, 'statement');
+  if (sk) {
+    const s = o[sk];
+    if ((Array.isArray(s) ? s.some(isStatement) : isStatement(s)) || IAM_VERSIONS.has(o.Version)) return true;
+  }
+  return own(o, 'Effect') && ['Principal', 'NotPrincipal', 'Action', 'NotAction'].some((k) => own(o, k));
+}
+const docKey = (k) => k != null && (DOC_KEY_RE.test(k) || k.toLowerCase() === 'statement')
+  && !/(arn|arns|name|names|id|ids|type)$/i.test(k);
 
 // Region -> partition. Unknown region: unresolved (exit 3), never defaulted to aws.
 const COMMERCIAL_REGION_RE = /^(us|eu|ap|ca|sa|me|af|il|mx)-(east|west|north|south|central|northeast|northwest|southeast|southwest)-\d{1,2}$/;
@@ -287,6 +302,7 @@ const MSG = Object.freeze({
   PULUMI_PARTITION_UNRESOLVED: 'The provider region does not map to a known AWS partition, so the partition is not assumed.',
   PULUMI_PARTITION_MISMATCH: 'The supplied partition differs from the partition the stack proves for these resources, or the resource and provider regions disagree.',
   PULUMI_CONTEXT_AMBIGUOUS: 'More than one resource in the stack matches the resource this policy is attached to.',
+  PULUMI_UNMODELED_PERMISSION: 'A Lambda permission grants invoke to the public, another account, or a service with no source binding. It is not modeled yet; unsupported does NOT mean safe.',
 });
 const st = (code, path, kind = ANALYSIS_STATE.INCOMPLETE) => state(kind, code, MSG[code] || 'Pulumi input could not be fully analyzed.', path);
 
@@ -338,15 +354,18 @@ function itemFromStep(step, index, states) {
     states.push(st('PULUMI_MALFORMED', step.urn, ANALYSIS_STATE.MALFORMED));
     return null;
   }
+  const provider = isStr(ns.provider) ? ns.provider : (old && isStr(old.provider) ? old.provider : null);
+  // G-01: prior outputs describe the new resource only for an in-place op on the same provider.
+  const oldUsable = !!old && op !== 'replace' && op !== 'create-replacement'
+    && (!isStr(old.provider) || providerUrnOf(old.provider) === providerUrnOf(provider));
   return {
     urn: step.urn,
     op,
     type: ns.type,
     inputs: ns.inputs || {},
-    // Outputs: the new state's when present, else the prior state's (an update keeps its ARN).
-    outputs: ns.outputs || (old && old.outputs) || {},
-    id: isStr(ns.id) ? ns.id : (old && isStr(old.id) ? old.id : null),
-    provider: isStr(ns.provider) ? ns.provider : (old && isStr(old.provider) ? old.provider : null),
+    outputs: ns.outputs || (oldUsable && old.outputs) || {},
+    id: isStr(ns.id) ? ns.id : (oldUsable && isStr(old.id) ? old.id : null),
+    provider,
     sourcePosition: ns.sourcePosition,
     external: op === 'read' || ns.external === true,
     protectChanged: !!(old && old.protect) !== !!ns.protect,
@@ -385,6 +404,18 @@ function providerUrnOf(ref) {
 }
 
 const ARN_ACCOUNT_RE = /^arn:([a-z-]+):[a-z0-9-]+:[a-z0-9-]*:(\d{12}):/;
+// F-4/G-02: types whose `arn` output is their own ARN, computed in the provider's account.
+// Others (EventTarget, TopicSubscription...) can echo or point at another account's ARN.
+const OWN_ARN_TYPES = new Set([
+  'aws:iam/role:Role', 'aws:iam/user:User', 'aws:iam/group:Group', 'aws:iam/policy:Policy',
+  'aws:iam/instanceProfile:InstanceProfile', 'aws:sqs/queue:Queue', 'aws:sns/topic:Topic', 'aws:kms/key:Key',
+  'aws:lambda/function:Function', 'aws:secretsmanager/secret:Secret', 'aws:ecr/repository:Repository',
+  'aws:dynamodb/table:Table',
+  'aws-native:iam:Role', 'aws-native:iam:User', 'aws-native:iam:Group', 'aws-native:iam:ManagedPolicy',
+  'aws-native:iam:InstanceProfile', 'aws-native:sqs:Queue', 'aws-native:sns:Topic', 'aws-native:kms:Key',
+  'aws-native:lambda:Function', 'aws-native:secretsmanager:Secret', 'aws-native:ecr:Repository',
+  'aws-native:dynamodb:Table',
+]);
 
 // Per provider: region-derived partition and account evidence from the stack itself.
 function providerFacts(items) {
@@ -411,6 +442,7 @@ function providerFacts(items) {
   for (const it of items) {
     // A read/external resource may live in another account: never account evidence.
     if (it.type.startsWith('pulumi:providers:') || it.external) continue;
+    if (!OWN_ARN_TYPES.has(it.type) || own(it.inputs, 'arn')) continue; // an echoed arn proves nothing
     const p = providerUrnOf(it.provider);
     if (!p) continue;
     const arn = it.outputs.arn;
@@ -460,6 +492,41 @@ function resolveScope(it, facts, opts, globalSeen, globalStates) {
     globalStates.push(st('PULUMI_ACCOUNT_UNRESOLVED', where));
   }
   return { account, partition, accountProven: !!derivedAcct && evidence.size === 1 && (!explicitAcct || explicitAcct === derivedAcct), states };
+}
+
+// Per-provider account/partition and the evidence behind them (R2-2), for reviewers.
+function providerSummary(facts, opts) {
+  return [...facts.keys()].sort().map((urn) => {
+    const s = resolveScope({ provider: `${urn}::x`, urn, inputs: {} }, facts, opts, new Set(), []);
+    const f = facts.get(urn);
+    return { urn, account: s.account, accountProven: s.accountProven, partition: s.partition,
+      evidence: { arnAccounts: [...f.accounts].sort(), configAccounts: [...f.configAccounts].sort(), region: f.region } };
+  });
+}
+
+// Lambda permissions (option d): exit 3 only for risky shapes; source-bound service grants are listed.
+const PERMISSION_TYPES = new Set(['aws:lambda/permission:Permission',
+  'aws:lambda/layerVersionPermission:LayerVersionPermission', 'aws-native:lambda:Permission']);
+const SERVICE_PRINCIPAL_RE = /^[a-z0-9.-]+\.amazonaws\.com(?:\.cn)?$/;
+// Returns { state } (exit 3) or { reason } (listed in unanalyzed[]).
+function permissionVerdict(it, scope) {
+  const f = it.inputs;
+  for (const k of ['principal', 'sourceAccount', 'sourceArn', 'principalOrgId', 'organizationId']) {
+    const t = taint(f[k]);
+    if (t) return { state: t === 'secret' ? 'PULUMI_SECRET' : 'PULUMI_UNKNOWN' };
+  }
+  const p = f.principal;
+  const risky = { state: 'PULUMI_UNMODELED_PERMISSION' };
+  if (!concrete(p)) return risky;
+  if (SERVICE_PRINCIPAL_RE.test(p)) {
+    return concrete(f.sourceArn) || concrete(f.sourceAccount) ? { reason: 'service-principal-source-bound' } : risky;
+  }
+  if (concrete(f.principalOrgId) || concrete(f.organizationId)) return { reason: 'org-scoped' };
+  const acct = /^\d{12}$/.test(p) ? p : (ARN_ACCOUNT_RE.exec(p) || [])[2];
+  const ownAcct = scope.accountProven ? scope.account : null;
+  if (ownAcct && acct === ownAcct) return { reason: 'own-account-principal' };
+  if (ownAcct && p === '*' && f.sourceAccount === ownAcct) return { reason: 'source-account-bound' };
+  return risky;
 }
 
 // --- Resource context (P4): exact join to the REFERENCED resource ------------------------
@@ -602,22 +669,31 @@ function inlineLabel(base, name, index) {
   return /^[A-Za-z0-9+=,.@_-]{1,128}$/.test(name) ? `${base}[${name}]` : `${base}[${JSON.stringify(name)}]`;
 }
 
-// Content-scan backstop: a policy-looking value in a property nothing analyzed. Bounded.
+// Content-scan backstop (F-1..F-5): a policy in a property nothing analyzed. Decodes JSON strings,
+// reports secrets/unknowns under policy-named keys, and fails closed past the depth/node budget.
+// Returns [{ path, code }].
 function findUnanalyzedDocs(inputs, consumed, budget) {
   const hits = [];
   const walk = (v, path, key, depth) => {
-    if (budget.n <= 0 || depth > 32) { if (budget.n <= 0) budget.exhausted = true; return; }
+    if (budget.n <= 0 || depth > 32) { budget.exhausted = true; return; }
     budget.n -= 1;
+    if (docKey(key)) {
+      const tt = taint(v);
+      if (tt === 'secret' || tt === 'unknown') { hits.push({ path, code: tt === 'secret' ? 'PULUMI_SECRET' : 'PULUMI_UNKNOWN' }); return; }
+      if (tt === 'deep') { budget.exhausted = true; return; }
+    }
     if (isStr(v)) {
-      const named = key != null && DOC_KEY_RE.test(key) && !/(arn|arns|name|names|id|ids|type)$/i.test(key);
-      if (STATEMENT_RE.test(v) || (named && v.includes(PULUMI_UNKNOWN))) hits.push(path);
+      const s = v.trimStart();
+      if (s[0] !== '{' && s[0] !== '[') return;
+      const p = parseJsonStrict(v, 32);
+      if (p.ok) walk(p.value, path, key, depth + 1);
+      else if (/statement/i.test(v) && /effect/i.test(v)) hits.push({ path, code: 'PULUMI_UNSUPPORTED_TYPE' });
       return;
     }
     if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${path}[${i}]`, key, depth + 1)); return; }
     if (isObj(v)) {
-      const ks = Object.keys(v);
-      if (ks.some((k) => k.toLowerCase() === 'statement')) { hits.push(path); return; }
-      for (const k of ks.sort()) walk(v[k], path ? `${path}.${k}` : k, k, depth + 1);
+      if (isPolicyShaped(v)) { hits.push({ path, code: 'PULUMI_UNSUPPORTED_TYPE' }); return; }
+      for (const k of Object.keys(v).sort()) walk(v[k], path ? `${path}.${k}` : k, k, depth + 1);
     }
   };
   for (const k of Object.keys(inputs).sort()) if (!consumed.has(k)) walk(inputs[k], k, k, 0);
@@ -632,7 +708,7 @@ function findUnanalyzedDocs(inputs, consumed, budget) {
  */
 export function extractPulumiDocuments(text, opts = {}) {
   const globalStates = [];
-  const out = { kind: null, scanScope: 'delta', scannedUrns: [], documents: [], states: globalStates };
+  const out = { kind: null, scanScope: 'delta', scannedUrns: [], documents: [], unanalyzed: [], providers: [], states: globalStates };
   if (opts.oversize === true) { globalStates.push(st('PULUMI_LIMIT', 'pulumi-input')); return out; }
   if (!isStr(text) || text.trim() === '') return { usage: { reason: 'MISSING_INPUT', message: 'No Pulumi JSON supplied (input is missing or empty).' } };
   if (text.length > PULUMI_LIMITS.MAX_BYTES) { globalStates.push(st('PULUMI_LIMIT', 'pulumi-input')); return out; }
@@ -690,10 +766,17 @@ export function extractPulumiDocuments(text, opts = {}) {
   if (hasSteps && items.some((x) => x.op === 'same' && x.type !== 'pulumi:pulumi:Stack' && !x.protectChanged)) out.scanScope = 'full';
 
   const facts = providerFacts(items);
+  out.providers = providerSummary(facts, opts);
   const seen = new Set();
   const budget = { n: PULUMI_LIMITS.MAX_WALK_NODES, exhausted: false };
   for (const it of items) {
     if (it.type.startsWith('pulumi:providers:') || it.type === 'pulumi:pulumi:Stack') continue;
+    if (PERMISSION_TYPES.has(it.type)) {
+      const v = permissionVerdict(it, resolveScope(it, facts, opts, new Set(), []));
+      if (v.state) globalStates.push(st(v.state, it.urn, v.state === 'PULUMI_UNMODELED_PERMISSION' ? ANALYSIS_STATE.UNSUPPORTED : ANALYSIS_STATE.INCOMPLETE));
+      else out.unanalyzed.push({ urn: it.urn, type: it.type, reason: v.reason });
+      continue;
+    }
     const entries = TYPE_MAP[it.type];
     const consumed = new Set();
     if (!entries) {
@@ -774,8 +857,9 @@ export function extractPulumiDocuments(text, opts = {}) {
       }
       pushDoc(e.prop, family, res, extra, context);
     }
-    for (const p of findUnanalyzedDocs(it.inputs, consumed, budget)) {
-      globalStates.push(st('PULUMI_UNSUPPORTED_TYPE', `${it.urn}#${p}`, ANALYSIS_STATE.UNSUPPORTED));
+    for (const h of findUnanalyzedDocs(it.inputs, consumed, budget)) {
+      globalStates.push(st(h.code, `${it.urn}#${h.path}`,
+        h.code === 'PULUMI_UNSUPPORTED_TYPE' ? ANALYSIS_STATE.UNSUPPORTED : ANALYSIS_STATE.INCOMPLETE));
     }
   }
   if (budget.exhausted) globalStates.push(st('PULUMI_LIMIT', 'pulumi-input'));
@@ -873,6 +957,8 @@ export function scanPulumi(input) {
       kind: ext.kind,
       scanScope: ext.scanScope,
       scannedUrns: ext.scannedUrns,
+      unanalyzed: ext.unanalyzed,
+      providers: ext.providers,
       analysisStatus,
       analysisStates: ext.states,
       exitCode,
