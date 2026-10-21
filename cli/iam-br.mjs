@@ -246,7 +246,11 @@ OPTIONS
   --subject-account <id>  AWS account id (12 digits) for account-aware checks
                           (e.g. PassRole viability). An invalid id is ignored
                           (the dependent finding stays UNKNOWN and fails closed).
-  --resource-arn <arn>    For --family resource: the ARN of the resource the policy
+                          For role-trust it is the account that owns EVERY role in
+                          the run; split a glob that spans accounts.
+  --resource-arn <arn>    For --family role-trust: the role's own ARN; required to
+                          report a trust as same-account (else cross-account high).
+                          For --family resource: the ARN of the resource the policy
   --resource-type <t>     is ATTACHED to (e.g. --resource-type s3-bucket
   --resource-account <id> --resource-arn arn:aws:s3:::my-bucket). Required to analyze
                           a resource policy; without it the resource family fails
@@ -471,6 +475,8 @@ export function toJsonReport(result, opts, manifest = VERSION_MANIFEST) {
     // Echo the partition ONLY when the caller asserted one; omission is meaningful
     // (it is what keeps a cross-partition viability question fail-closed).
     partitionAsserted: isNonEmptyString(o.partition) ? o.partition.trim() : null,
+    // E-1: the account a same-account verdict was judged against (valid ids only).
+    subjectAccountAsserted: /^\d{12}$/.test(String(o.subjectAccount ?? '').trim()) ? String(o.subjectAccount).trim() : null,
     analysisStatus: result.analysisStatus,
     reason: result.reason != null ? result.reason : null,
     exitCode: result.exitCode,

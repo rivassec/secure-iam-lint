@@ -7,7 +7,9 @@ import { scan, EXIT } from '../../../cli/scan.mjs';
 
 const ACCT = '111122223333';
 const doc = (...st) => JSON.stringify({ Version: '2012-10-17', Statement: st.map((s) => ({ Effect: 'Allow', Action: 'sts:AssumeRole', ...s })) });
-const run = (text, o = {}) => scan({ text, family: 'role-trust', partition: 'aws', subjectAccount: ACCT, ...o });
+// E-1: same-account needs the role's own ARN as evidence.
+const OWN = { type: 'iam-role', arn: `arn:aws:iam::${ACCT}:role/prod` };
+const run = (text, o = {}) => scan({ text, family: 'role-trust', partition: 'aws', subjectAccount: ACCT, resourceContext: OWN, ...o });
 const ids = (r) => r.findings.map((f) => `${f.id}:${f.severity}`).sort();
 const role = (a) => `arn:aws:iam::${a}:role/helperbot-task`;
 
@@ -31,7 +33,8 @@ test('P6: same-account root (ARN or bare id) is TRUST-SAME-ACCOUNT medium', () =
 
 test('P6 guards: anything not proven same-account stays cross-account high', () => {
   const high = (name, text, o) => assert.deepEqual(ids(run(text, o)), ['TRUST-CROSS-ACCOUNT:high'], name);
-  high('no subject', doc({ Principal: { AWS: role(ACCT) } }), { subjectAccount: undefined });
+  high('no subject, no role ARN', doc({ Principal: { AWS: role(ACCT) } }), { subjectAccount: undefined, resourceContext: undefined });
+  high('subject only, no role ARN (E-1)', doc({ Principal: { AWS: role(ACCT) } }), { resourceContext: undefined });
   high('bad subject', doc({ Principal: { AWS: role(ACCT) } }), { subjectAccount: '1111' });
   high('other account', doc({ Principal: { AWS: role('444455556666') } }));
   high('mixed accounts', doc({ Principal: { AWS: [role(ACCT), role('444455556666')] } }));
@@ -74,5 +77,6 @@ test('P6: an asserted partition must match; another partition is another account
   const cn = `arn:aws-cn:iam::${ACCT}:role/helperbot-task`;
   assert.ok(!ids(run(doc({ Principal: { AWS: cn } }))).includes('TRUST-SAME-ACCOUNT:low'));
   assert.ok(!ids(run(doc({ Principal: { AWS: `arn:aws-cn:iam::${ACCT}:root` } }))).some((x) => x.startsWith('TRUST-SAME-ACCOUNT')));
-  assert.deepEqual(ids(run(doc({ Principal: { AWS: cn } }), { partition: 'aws-cn' })), ['TRUST-SAME-ACCOUNT:low']);
+  assert.deepEqual(ids(run(doc({ Principal: { AWS: cn } }), { partition: 'aws-cn',
+    resourceContext: { type: 'iam-role', arn: `arn:aws-cn:iam::${ACCT}:role/prod` } })), ['TRUST-SAME-ACCOUNT:low']);
 });

@@ -24,7 +24,7 @@ export * from './analyze-format.js';
 import { analyzeRules, ruleFindingDenySuppressed, actionResourceTypeMismatches, survivingBroadReadActions, survivingSparedContainerReads } from './rules.js';
 import { analyzeEscalations } from './escalation.js';
 import { applyDenyToActions } from './escalation-deny.js';
-import { analyzeTrust, trustFindingDenyState, summarizeTrustDeny } from './trust.js';
+import { analyzeTrust, trustFindingDenyState, summarizeTrustDeny, roleEvidence } from './trust.js';
 import { expandTrustModel } from './trust-classify.js';
 import { analyzeEnvelope } from './envelope.js';
 import { analyzeScp } from './scp.js';
@@ -168,8 +168,9 @@ export function analyze(text, options) {
     // Every trust finding carries the limitation that the assumed role's
     // permissions are out of scope / unknown.
     if (effectiveFamily === FAMILIES.ROLE_TRUST) {
-      return trustResult(expandTrustModel(m.model), coverage, effectiveFamily, {
-        subjectAccount: (options && options.subjectAccount) || null, partition: guardPartition(options) });
+      const subjectAccount = (options && options.subjectAccount) || null;
+      return trustResult(expandTrustModel(m.model), coverage, effectiveFamily, { subjectAccount,
+        evidence: roleEvidence(options && options.resourceContext, subjectAccount, guardPartition(options)) });
     }
 
     // IAM-1002 (Phase 10): an explicit permissions-boundary / session selection

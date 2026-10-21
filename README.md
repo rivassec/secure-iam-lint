@@ -116,8 +116,8 @@ Each GitHub Release lists the exact commit SHA for that tag; copy it into the
 | ----- | -------- | ----- |
 | `paths` | yes | Newline-separated files or globs, e.g. `policies/**/*.json`. |
 | `family` | yes | `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp` or `scp-rcp` (also `trust` for `role-trust`). Never auto-detected: one family per run, so a mixed repo runs the Action once per family. |
-| `resource-arn`, `resource-type`, `resource-account` | for `resource` | The resource the policy is attached to. Without `resource-arn` the `resource` family fails closed. |
-| `subject-account` | no | 12-digit account id for account-aware checks (e.g. `iam:PassRole` viability). |
+| `resource-arn`, `resource-type`, `resource-account` | for `resource`; `resource-arn` for same-account `role-trust` | The resource the policy is attached to. Without `resource-arn` the `resource` family fails closed. For `role-trust`, the role's own ARN: without it a trust is never reported as same-account. |
+| `subject-account` | no | 12-digit account id for account-aware checks (e.g. `iam:PassRole` viability). For `role-trust` it is the account that owns every role in the run. |
 | `partition` | no | `aws`, `aws-us-gov`, `aws-cn`, ... Deliberately has **no default**: an omitted partition is "not asserted", and any verdict that depends on it fails closed (exit `3`). |
 | `fail-on` | no | Minimum severity that fails the check (default `high`; `none` disables). |
 | `sarif-output` | no | SARIF 2.1.0 path, relative to the workspace (default `iam-blast-radius.sarif`). |

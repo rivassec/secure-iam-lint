@@ -10,6 +10,7 @@
       "family": "role-trust",
       "threshold": "high",
       "partitionAsserted": null,
+      "subjectAccountAsserted": null,
       "analysisStatus": "complete",
       "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
       "exitCode": 1,

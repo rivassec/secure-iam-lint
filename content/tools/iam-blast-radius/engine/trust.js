@@ -72,25 +72,46 @@ export * from './trust-catalogs.js';
 // masking it as an INTERNAL trust-analysis failure (which would bypass analyze()'s
 // graceful fail-closed mapping and the CLI clock re-throw).
 import { chargeWork, isGlobBudgetError } from './glob.js';
+import { KNOWN_PARTITIONS } from './escalation-reachability.js';
 
 const ALWAYS_PRESENT_ON_ASSUME_ROLE = Object.freeze(new Set(['aws:principalarn', 'aws:principalaccount', 'aws:principaltype']));
 
-// P6: 'root' / 'principal' when every entry is concretely in the subject account, else null.
-const SAME_ACCT_ARN = /^arn:([a-z-]+):(?:iam|sts)::(\d{12}):(?:role|user|assumed-role|federated-user)\/[^*?$]+$/i;
-const SAME_ACCT_ROOT = /^arn:([a-z-]+):iam::(\d{12}):root$/i;
-// An asserted partition must match; another partition's account is a different account.
-const inAcct = (m, acct, part) => !!m && m[2] === acct && (!part || m[1].toLowerCase() === part);
-function sameAccountKind(ext, subjectAccount, partition = null) {
-  const acct = /^\d{12}$/.test(String(subjectAccount ?? '')) ? String(subjectAccount) : null;
-  if (!acct || ext.entries.length === 0) return null;
+// P6 (E-1/E-2): same-account needs the role's own ARN as evidence, and only principals
+// AWS would accept (case-sensitive, known partition, IAM name charset) count.
+const ROLE_ARN = /^arn:([a-z-]+):iam::(\d{12}):role\/[\w+=,.@/-]+$/;
+const IAM_PRINCIPAL = /^arn:([a-z-]+):iam::(\d{12}):(?:role|user)\/[\w+=,.@/-]+$/;
+const STS_PRINCIPAL = /^arn:([a-z-]+):sts::(\d{12}):(?:assumed-role|federated-user)\/[\w+=,.@/-]+$/;
+const ROOT_PRINCIPAL = /^arn:([a-z-]+):iam::(\d{12}):root$/;
+// { account, partition, arn } from a role resourceContext, or null (absent, invalid, contradicted).
+export function roleEvidence(resourceContext, subjectAccount = null, partition = null) {
+  const arn = resourceContext && typeof resourceContext.arn === 'string' ? resourceContext.arn : '';
+  const m = ROLE_ARN.exec(arn);
+  if (!m || !KNOWN_PARTITIONS.has(m[1])) return null;
+  if (partition && m[1] !== partition) return null;
+  if (subjectAccount && String(subjectAccount) !== m[2]) return null;
+  return { account: m[2], partition: m[1], arn };
+}
+const inRole = (m, ev) => !!m && m[1] === ev.partition && m[2] === ev.account;
+// 'root' / 'principal' when every entry is proven in the role's own account, else null.
+function sameAccountKind(ext, ev) {
+  if (!ev || ext.entries.length === 0) return null;
   let root = false;
   for (const e of ext.entries) {
     const v = String(e.value);
-    if (e.type === 'aws-account' && v === acct) root = true;
-    else if (e.type === 'aws-root' && inAcct(SAME_ACCT_ROOT.exec(v), acct, partition)) root = true;
-    else if (e.type !== 'aws-principal-arn' || !inAcct(SAME_ACCT_ARN.exec(v), acct, partition)) return null;
+    if (e.type === 'aws-account' && v === ev.account) root = true;
+    else if (e.type === 'aws-root' && inRole(ROOT_PRINCIPAL.exec(v), ev)) root = true;
+    else if (e.type !== 'aws-principal-arn' ||
+      !(inRole(IAM_PRINCIPAL.exec(v), ev) || inRole(STS_PRINCIPAL.exec(v), ev))) return null;
   }
   return root ? 'root' : 'principal';
+}
+// Every principal names the asserted subject account, but no role ARN proves it owns the role.
+function unprovenSameAccount(ext, subjectAccount) {
+  const acct = /^\d{12}$/.test(String(subjectAccount ?? '')) ? String(subjectAccount) : null;
+  return !!acct && ext.entries.length > 0 && ext.entries.every((e) => {
+    const v = String(e.value);
+    return e.type === 'aws-account' ? v === acct : (v.split(':')[4] === acct);
+  });
 }
 // Single constant so the root wording can be revised in one place.
 const SAME_ACCOUNT_ROOT_WHY = (who) =>
@@ -134,7 +155,7 @@ const fedHost = (v) => String(v).toLowerCase().replace(/^arn:[^:]*:iam::[^:]*:oi
 // IAM-804 iteration 4 finding 2). Only a value carrying at least one LITERAL
 // character narrows (a partial ExternalId still forces the caller to present that
 // literal substring). Mirrors conditions.js valueNarrowsKey default arm.
-function findingsForStatement(stmt, subjectAccount = null, partition = null) {
+function findingsForStatement(stmt, subjectAccount = null, evidence = null) {
   const allPrincipals = classifyPrincipals(stmt.principal);
   const found = [];
 
@@ -549,18 +570,19 @@ function findingsForStatement(stmt, subjectAccount = null, partition = null) {
   // (trust-policy-semantics 2.2-2.4 / 5, acceptance test 16).
   const externalCats = ['aws-account', 'aws-root', 'aws-principal-arn', 'canonical-user']
     .filter((c) => principals.categories.has(c));
-  // P6: every such principal concretely in the subject account is a same-account trust.
+  // P6: every such principal proven in the role's own account is a same-account trust.
   const sameKind = externalCats.length > 0
-    ? sameAccountKind(subsetPrincipals(principals, externalCats), subjectAccount, partition) : null;
+    ? sameAccountKind(subsetPrincipals(principals, externalCats), evidence) : null;
   if (sameKind) {
     const own = subsetPrincipals(principals, externalCats);
     found.push(makeFinding(stmt, own, {
       id: 'TRUST-SAME-ACCOUNT',
       severity: sameKind === 'root' ? 'medium' : 'low',
       title: 'Same-account role trust',
-      why: sameKind === 'root' ? SAME_ACCOUNT_ROOT_WHY(principalSummary(own))
+      why: (sameKind === 'root' ? SAME_ACCOUNT_ROOT_WHY(principalSummary(own))
         : `The trust policy delegates assume-role to principal(s) in the role's own account (${principalSummary(own)}). ` +
-          'Same-account trust does not reach outside the account.',
+          'Same-account trust does not reach outside the account.') +
+        ` Same-account is proven by the role ARN ${evidence.arn} (account ${evidence.account}).`,
       remediation: sameKind === 'root'
         ? 'Name the specific role/user ARNs that must assume this role instead of the account root.'
         : 'Keep the trusted Principal scoped to the roles/users that need it.',
@@ -748,11 +770,15 @@ function findingsForStatement(stmt, subjectAccount = null, partition = null) {
         'aws:SourceArn/aws:SourceAccount for a service caller).';
       docRefUsed = DOC_PRINCIPAL;
     }
+    const unproven = !evidence && unprovenSameAccount(ext, subjectAccount)
+      ? ` Every principal names the asserted subject account (${subjectAccount}), but nothing proves this role ` +
+        'is in that account; supply the role ARN (--resource-arn) to confirm a same-account trust.'
+      : '';
     found.push(makeFinding(stmt, ext, {
       id: 'TRUST-CROSS-ACCOUNT',
       severity,
       title: 'External / cross-account role trust',
-      why: whyText,
+      why: whyText + unproven,
       remediation: remediationText,
       docRef: docRefUsed,
       pathExploitability: pathExpl,
@@ -875,7 +901,7 @@ export function analyzeTrust(model, options = null) {
       // Deny-unaware; analyze.js + graph.js apply IAM-302 precedence).
       if (stmt.effect !== 'Allow') continue;
       if (!isTrustStatement(stmt)) continue;
-      for (const f of findingsForStatement(stmt, options && options.subjectAccount, options && options.partition)) findings.push(f);
+      for (const f of findingsForStatement(stmt, options && options.subjectAccount, options && options.evidence)) findings.push(f);
       const selfRefs = selfReferenceKeys(stmt.condition);
       if (selfRefs.length > 0) {
         findings.push(makeFinding(stmt, classifyPrincipals(stmt.principal), {
