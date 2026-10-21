@@ -69,3 +69,10 @@ test('P6: conditions do not change the same-account verdict', () => {
   assert.deepEqual(ids(run(doc({ Principal: { AWS: 'arn:aws:iam::444455556666:root' }, Condition: { StringEquals: { 'sts:ExternalId': 'x1' } } }))),
     ['TRUST-CROSS-ACCOUNT:low']);
 });
+
+test('P6: an asserted partition must match; another partition is another account', () => {
+  const cn = `arn:aws-cn:iam::${ACCT}:role/helperbot-task`;
+  assert.ok(!ids(run(doc({ Principal: { AWS: cn } }))).includes('TRUST-SAME-ACCOUNT:low'));
+  assert.ok(!ids(run(doc({ Principal: { AWS: `arn:aws-cn:iam::${ACCT}:root` } }))).some((x) => x.startsWith('TRUST-SAME-ACCOUNT')));
+  assert.deepEqual(ids(run(doc({ Principal: { AWS: cn } }), { partition: 'aws-cn' })), ['TRUST-SAME-ACCOUNT:low']);
+});
