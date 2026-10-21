@@ -50,7 +50,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   configured only by profile). It is cross-checked against the stack, a mismatch
   fails closed, and it never proves a same-account trust on its own.
 - The condition keys `kms:GrantIsForAWSResource` and `kms:CallerAccount` are modeled
-  for the AWS-managed key-policy shapes.
+  for the AWS-managed key-policy shapes, and `kms:ListGrants` is a known read.
 
 ### Security
 
@@ -100,6 +100,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A baseline can accept an engine coverage gap (for example `UNKNOWN_ACTION`), as
   in v1.2.0; `analysis-status: partial` stays visible. Pulumi adapter states are
   never accepted.
+- `kms:RevokeGrant` stays unknown in an Allow (a permissions change with no
+  detector), so a key policy whose grant statement allows it still exits 3.
 - SARIF paths are relative to the Pulumi project; a project in a repo subdirectory
   does not map to files in code scanning yet.
 

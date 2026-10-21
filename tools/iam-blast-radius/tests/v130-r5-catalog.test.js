@@ -69,3 +69,10 @@ test('typical CI/ECS role shape is analyzable (not exit 3)', () => {
   ), 'identity');
   assert.equal(r.exitCode, EXIT.CLEAN, JSON.stringify(r.findings));
 });
+
+test('kms:ListGrants is a known read; kms:RevokeGrant stays fail-closed in an Allow', () => {
+  const k = 'arn:aws:kms:us-east-1:111122223333:key/abc';
+  const one = (a) => scan({ text: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: a, Resource: k }] }), family: 'identity', partition: 'aws' });
+  assert.notEqual(one('kms:ListGrants').exitCode, EXIT.FAIL_CLOSED);
+  assert.equal(one('kms:RevokeGrant').exitCode, EXIT.FAIL_CLOSED);
+});

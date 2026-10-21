@@ -56,7 +56,7 @@ export const ACCESS_LEVELS = Object.freeze({
 const L = ACCESS_LEVELS;
 
 // Dated snapshot identity. Bump both when the curated set below changes.
-export const ACTION_CATALOG_VERSION = '2026.10.21.2';
+export const ACTION_CATALOG_VERSION = '2026.10.21.3';
 export const ACTION_CATALOG_DATE = '2026-10-21';
 
 // The curated snapshot: service -> { actionName: accessLevel }. Keys use the
@@ -196,6 +196,7 @@ const CATALOG_DATA = Object.freeze({
     ScheduleKeyDeletion: L.WRITE, // F15: DESTRUCTIVE-ACTION
     DescribeKey: L.READ,
     ListKeys: L.LIST,
+    ListGrants: L.LIST, // r5: read-only; RevokeGrant stays unknown (no detector)
   },
   kinesis: {
     // G9: kinesis:Put* includes PutResourcePolicy (cross-account stream grant).
