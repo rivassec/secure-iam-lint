@@ -84,6 +84,7 @@ const VALUE_FLAGS = Object.freeze(new Set([
   '--resource-arn',
   '--resource-account',
   '--input',
+  '--provider-account',
 ]));
 
 // Boolean flags (no value). `-h` is an alias for `--help`. `--debug` is an alias
@@ -297,6 +298,12 @@ OPTIONS
                           changed resources (scanScope "delta"): exit 0 then means
                           "no new risk in this change", not "stack clean". Use
                           'preview --show-sames' or a stack export for a full scan.
+  --provider-account <p>=<id>
+                          With --input pulumi (repeatable): the AWS account of the
+                          provider named <p> (its resource name or full URN).
+                          Cross-checked against the stack; a mismatch fails closed.
+                          It resolves the account but never proves a same-account
+                          trust on its own.
   --verbose, --debug      Include the underlying errno/detail in read/write error
                           diagnostics. OFF by default so a read failure does NOT
                           reveal whether a path is missing (ENOENT) vs a directory
@@ -396,6 +403,13 @@ export function parseArgs(argv) {
         case '--resource-arn': opts.resourceArn = value; break;
         case '--resource-account': opts.resourceAccount = value; break;
         case '--input': opts.input = value; break;
+        case '--provider-account': {
+          // R5-4: repeatable <provider-name-or-urn>=<account>; split on the last '='.
+          const i = value.lastIndexOf('=');
+          if (i <= 0) return usage("--provider-account expects <provider>=<12-digit account id>");
+          (opts.providerAccounts ||= []).push({ key: value.slice(0, i), account: value.slice(i + 1) });
+          break;
+        }
         default: return usage(`unknown option '${name}'`);
       }
       continue;
@@ -426,6 +440,8 @@ export function parseArgs(argv) {
   if (opts.input === 'pulumi') {
     const problem = pulumiArgProblem(opts);
     if (problem) return usage(problem);
+  } else if (opts.providerAccounts) {
+    return usage('--provider-account is only valid with --input pulumi');
   } else if (!isNonEmptyString(opts.family)) {
     // Required: --family. NEVER auto-detected -> a missing family is a usage error.
     return usage(
@@ -806,6 +822,7 @@ function runPulumi(opts, io, out, err, manifest) {
     oversize: tooLarge,
     subjectAccount: opts.subjectAccount,
     partition: opts.partition,
+    providerAccounts: opts.providerAccounts,
     threshold: opts.threshold,
     budgetMs: opts.budgetMs,
   });

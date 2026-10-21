@@ -176,6 +176,10 @@ findings are located by `<urn>#<property>`.
 - **Same-account trust** is reported only when the stack proves the role's own
   account (from IAM resource ARNs or the provider's config), never from
   `subject-account` alone.
+- **Multi-account stacks.** A provider the stack can't prove (for example one
+  configured only by `profile`) is `PULUMI_ACCOUNT_UNRESOLVED` (exit `3`). Name its
+  account with `provider-accounts` (`<provider>=<account>`, one per line); it is
+  cross-checked against the stack and never proves a same-account trust by itself.
 - **Baselines** work as for files, keyed per `<urn>#<property>`: a renamed resource or
   stack shows up as one stale and one new entry.
 - **Keep `preview.json` inside the job.** Secrets are redacted, but config and resource

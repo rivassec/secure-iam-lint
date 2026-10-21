@@ -44,7 +44,15 @@ inputs:
       family and attached resource taken from each resource type. A default preview
       lists only changed resources (scan-scope "delta"); use
       `preview --show-sames` or a stack export for a full scan. Mutually exclusive
-      with paths; family, resource-* and baseline inputs are not used with it.
+      with paths; family and resource-* are not used with it (baselines are).
+    required: false
+  provider-accounts:
+    description: >-
+      With pulumi-json only: newline-separated `<provider>=<12-digit account id>`
+      lines (provider resource name or full URN) for providers the stack can't prove,
+      e.g. ones configured only by profile. Cross-checked against the stack; a
+      mismatch fails closed. It resolves the account but never proves a
+      same-account trust on its own.
     required: false
   subject-account:
     description: >-
