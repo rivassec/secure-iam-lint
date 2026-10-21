@@ -660,7 +660,6 @@ const REQUIRED_WILDCARD_READS_STAY_CLEAN = [
   'cloudtrail:DescribeTrails',  // catalog READ, requires "*"
   'sts:GetCallerIdentity',      // catalog READ, requires "*"
   'sts:GetSessionToken',        // catalog READ, requires "*"
-  'sts:GetFederationToken',     // catalog READ, requires "*"
 ];
 test('anti-over-correction (read @ "*"): required-wildcard enumeration reads stay CLEAN / exit 0', () => {
   for (const action of REQUIRED_WILDCARD_READS_STAY_CLEAN) {
@@ -709,7 +708,6 @@ const REQUIRED_WILDCARD_LEVEL_READS = [
   'cloudtrail:DescribeTrails',
   'sts:GetCallerIdentity',
   'sts:GetSessionToken',
-  'sts:GetFederationToken',
 ];
 test('iter7 FP: a REQUIRED-WILDCARD READ on "*" stays CLEAN (READ is not sufficient for scopable)', () => {
   for (const action of REQUIRED_WILDCARD_LEVEL_READS) {

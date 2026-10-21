@@ -1,5 +1,5 @@
 // rules-detectors.js - the identity-policy rule detectors (wildcard action/resource, direct-IAM-admin, data-exfil, kms-decrypt, scoped data-read + container-read spared-resource analysis, destructive, detection-impairment, notaction-allow, group-membership). Extracted (behavior-preserving).
-import { actionGrants, actionService, actionVerb, concreteResourceAccount, groupNameFromArn, groupNameSuggestsPrivilege, isFullWildcard, isServiceWildcard, isWholeContainerRead, resourceAccountFromCondition, resourceHasVariable, resourceInfersSensitive, BULK_READ_ACTIONS, CONCRETE_ACCOUNT_ID_RE, DATA_READ_ACTIONS, DESTRUCTIVE_VERB, DETECTION_ACTIONS, DETECTION_SERVICES, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, KMS_DECRYPT_ACTIONS, RESOURCE_POLICY_WRITE_ACTIONS, SECRET_READ_ACTIONS } from './rules-classify.js';
+import { actionGrants, actionService, actionVerb, concreteResourceAccount, groupNameFromArn, groupNameSuggestsPrivilege, isFullWildcard, isServiceWildcard, isWholeContainerRead, resourceAccountFromCondition, resourceHasVariable, resourceInfersSensitive, BULK_READ_ACTIONS, CONCRETE_ACCOUNT_ID_RE, DATA_READ_ACTIONS, DB_AUTH_ACTIONS, DESTRUCTIVE_VERB, DETECTION_ACTIONS, DETECTION_SERVICES, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, KMS_DECRYPT_ACTIONS, OBJECT_ACL_WRITE_ACTIONS, RESOURCE_POLICY_WRITE_ACTIONS, SECRET_READ_ACTIONS } from './rules-classify.js';
 import { denyFencesToNarrow, grantsNonReadAction, makeFinding, remediableWildcardActions, resourceIsBroad, resourceScope, isBroadArnResource, ruleFindingDenySuppressed, survivingBroadReadActions } from './rules-finding.js';
 import { chargeWork, globMatch } from './glob.js';
 import { classifyResource, parseArn, RESOURCE_CLASS } from './resource-arn.js';
@@ -150,7 +150,7 @@ export function ruleResourcePolicyWrite(stmt, out) {
       resources: resourceScope(stmt),
       why:
         'Grants a resource-policy write / cross-account grant action (e.g. ' +
-        's3:PutBucketPolicy, s3:PutObjectAcl, kms:PutKeyPolicy, kms:CreateGrant, ' +
+        's3:PutBucketPolicy, kms:PutKeyPolicy, kms:CreateGrant, ' +
         'lambda:AddPermission, sns:AddPermission, secretsmanager:PutResourcePolicy). ' +
         'A principal that can rewrite a resource\'s own policy can grant an external ' +
         'or arbitrary principal access to that data store, key, function, or topic - ' +
@@ -164,6 +164,75 @@ export function ruleResourcePolicyWrite(stmt, out) {
   );
 }
 
+// 3c. Object-ACL write (F1-01/F1-02). s3:PutObjectAcl / s3:PutObjectVersionAcl
+// can set an object public-read or grant it to another account unless the bucket
+// enforces BucketOwnerEnforced - bucket state this policy text cannot show. Kept
+// out of RESOURCE-POLICY-WRITE (G10): object-scoped, not a resource-policy write.
+// High on bucket/* or broader; medium on a single named object.
+export function ruleObjectAclWrite(stmt, out) {
+  const matched = matchPatterns(stmt, OBJECT_ACL_WRITE_ACTIONS, false);
+  if (matched.length === 0) return;
+  const singleObject =
+    stmt.notResources.length === 0 &&
+    stmt.resources.length > 0 &&
+    stmt.resources.every((r) => {
+      const s = String(r);
+      if (resourceHasVariable(s)) return false;
+      const arn = parseArn(s);
+      // Real s3 object ARNs have EMPTY region/account; anything else is malformed
+      // for s3 and stays high (fail closed - e.g. arn:aws:s3:us-east-2:acct:res/name).
+      return !!arn && arn.service === 's3' && arn.region === '' && arn.account === '' &&
+        /^[^/]+\/./.test(arn.resourceId) &&
+        !/[*?]/.test(arn.resourceId) && classifyResource(s) === RESOURCE_CLASS.NARROW;
+    });
+  out.push(
+    makeFinding('OBJECT-ACL-WRITE', stmt, {
+      severity: singleObject ? 'medium' : 'high',
+      policyEvidence: 'high',
+      actions: matched,
+      resources: resourceScope(stmt),
+      why:
+        'Grants an object-ACL write (s3:PutObjectAcl / s3:PutObjectVersionAcl). ' +
+        'Unless the bucket enforces Object Ownership BucketOwnerEnforced (or Block ' +
+        'Public Access) - bucket state a policy cannot show - the holder can set ' +
+        'matching objects public-read or grant them to another account. ' +
+        (singleObject
+          ? 'The grant names a single object, so the exposure is limited to it.'
+          : 'The scope covers many objects, so this is a bulk public/cross-account ' +
+            'exposure primitive.'),
+      remediation:
+        'Prefer bucket policies over object ACLs and enforce Object Ownership ' +
+        'BucketOwnerEnforced; if object ACLs are required, scope the Resource to ' +
+        'the specific objects and gate with conditions (e.g. s3:x-amz-acl).',
+    }),
+  );
+}
+
+// G11: is every Resource a NAMED concrete ARN? '?' is allowed only as the AWS
+// random suffix (-??????): any other '?' names a length class, not one resource
+// (F1-04). A '*' anywhere, a ${...} variable, NotResource, or a malformed value
+// is NOT named (stays high). ssm:GetParametersByPath authorizes on a PATH and
+// reads its whole subtree ('parameter/' is the entire Parameter Store), so a
+// statement granting it is never named (F1-03); the degenerate ids 'parameter'
+// and 'parameter/' never name one parameter either.
+function allResourcesNamed(stmt) {
+  if (stmt.notResources.length > 0 || stmt.resources.length === 0) return false;
+  if (stmt.actions.some((p) => !isFullWildcard(p) && actionGrants(p, 'ssm:GetParametersByPath'))) {
+    return false;
+  }
+  return stmt.resources.every((r) => {
+    const s = String(r);
+    if (resourceHasVariable(s)) return false;
+    const arn = parseArn(s);
+    if (!arn) return false;
+    if ([arn.partition, arn.service, arn.region].some((seg) => /[*?]/.test(seg))) return false;
+    if (!CONCRETE_ACCOUNT_ID_RE.test(arn.account)) return false;
+    if (arn.service === 'ssm' && /^parameter\/?$/.test(arn.resourceId)) return false;
+    if (!/^[^*?]*(-\?{6})?$/.test(arn.resourceId)) return false;
+    return classifyResource(s) === RESOURCE_CLASS.NARROW;
+  });
+}
+
 // 4a. Sensitive data read / exfil.
 export function ruleDataExfil(stmt, out) {
   const secret = matchPatterns(stmt, SECRET_READ_ACTIONS, false);
@@ -172,7 +241,8 @@ export function ruleDataExfil(stmt, out) {
   const bulk = broad ? bulkAll : [];
   const matched = secret.concat(bulk);
   if (matched.length === 0) return;
-  const highSeverity = broad || secret.length > 0;
+  // G11: a secret read on named resources only is routine -> medium, not high.
+  const highSeverity = (broad || secret.length > 0) && !(!broad && allResourcesNamed(stmt));
   const whyParts = [];
   if (secret.length > 0) {
     whyParts.push(
@@ -194,6 +264,63 @@ export function ruleDataExfil(stmt, out) {
       remediation:
         'Scope the read to the specific secrets/keys/objects required and gate ' +
         'with conditions (e.g. source VPC/identity); avoid granting on "*".',
+    }),
+  );
+}
+
+// 4a-ter. IAM database authentication (G4). rds-db:connect mints a DB auth
+// token for the dbuser named in the Resource - credential-equivalent database
+// access. Fires whenever granted; high unless every resource pins a concrete
+// dbuser (a wildcard user or cluster reaches any IAM-enabled database).
+export function ruleDbAuth(stmt, out) {
+  // rds-db:connect is the namespace's only action, so rds-db:* grants exactly
+  // it: service wildcards count here (F2-05), as iam:* does for IAM admin.
+  const matched = matchPatterns(stmt, DB_AUTH_ACTIONS, true);
+  if (matched.length === 0) return;
+  const scope = resourceScope(stmt);
+  // Pinned = every Resource is a parsed rds-db dbuser:<cluster>/<user> ARN with
+  // concrete segments (F2-06). ${aws:username} in the USER segment is the
+  // documented per-user idiom and stays pinned; any other variable, any glob,
+  // or a non-ARN value is unpinned (high).
+  const pinned =
+    !resourceIsBroad(stmt) &&
+    stmt.notResources.length === 0 &&
+    stmt.resources.length > 0 &&
+    stmt.resources.every((r) => {
+      const s = String(r);
+      const arn = parseArn(s);
+      if (!arn || arn.service !== 'rds-db') return false;
+      if (/[*?]/.test(arn.partition) || /[*?]/.test(arn.region)) return false;
+      if (!CONCRETE_ACCOUNT_ID_RE.test(arn.account)) return false;
+      const m = /^dbuser:([^/]+)\/(.+)$/.exec(arn.resourceId);
+      if (!m) return false;
+      const cluster = m[1];
+      const user = m[2];
+      if (/[*?]/.test(cluster) || resourceHasVariable(cluster)) return false;
+      if (/[*?]/.test(user)) return false;
+      return user === '${aws:username}' || !resourceHasVariable(user);
+    });
+  out.push(
+    makeFinding('DB-AUTH', stmt, {
+      severity: pinned ? 'medium' : 'high',
+      policyEvidence: 'high',
+      actions: matched,
+      resources: scope,
+      why:
+        'Grants rds-db:connect, IAM database authentication: it mints a ' +
+        'short-lived auth token to log in as the database user named in the ' +
+        'Resource. ' +
+        (pinned
+          ? 'The grant pins a concrete cluster and database user, so access is ' +
+            'limited to that user\'s database privileges.'
+          : 'The resource scope is not pinned to one concrete cluster and ' +
+            'database user, so the principal can authenticate as any matching ' +
+            'database user (including ones granted rds_iam) on any matching ' +
+            'IAM-enabled cluster - credential-equivalent database access.'),
+      remediation:
+        'Scope rds-db:connect to a specific dbuser ARN ' +
+        '(arn:...:dbuser:<cluster-resource-id>/<db-user-name>), one per intended ' +
+        'user, and avoid wildcards in the cluster or user segment.',
     }),
   );
 }

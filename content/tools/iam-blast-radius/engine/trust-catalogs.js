@@ -92,6 +92,7 @@ export const TRUST_IDS = Object.freeze([
   'TRUST-FEDERATED',
   'TRUST-SESSION-CONTROL',
   'TRUST-SERVICE',
+  'TRUST-CONDITION-TAUTOLOGY',
 ]);
 
 export const RULE_VERSION = '1';

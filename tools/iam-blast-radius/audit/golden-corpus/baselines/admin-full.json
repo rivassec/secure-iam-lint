@@ -1588,7 +1588,7 @@
         {
           "id": "CREDENTIAL-CREATION",
           "severity": "high",
-          "title": "Credential creation for a principal (access key / login profile)",
+          "title": "Credential creation for a principal (access key / login profile / federation token)",
           "statementSid": "GodMode",
           "statementIndex": 0,
           "actions": [
@@ -2068,7 +2068,7 @@
                   "id": "CREDENTIAL-CREATION",
                   "name": "CREDENTIAL-CREATION",
                   "shortDescription": {
-                    "text": "Credential creation for a principal (access key / login profile)"
+                    "text": "Credential creation for a principal (access key / login profile / federation token)"
                   },
                   "fullDescription": {
                     "text": "IAM blast-radius finding type CREDENTIAL-CREATION. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
@@ -2180,7 +2180,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "14062ee06a46d005af6e54d2e0b5"
+                "iamBlastRadius/semanticIdentity/v2": "0072fbd455ae64172085de9f0a0c1513"
               },
               "properties": {
                 "category": "security",
@@ -2207,7 +2207,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "154f433085ec16aeedc015be5a91372b5a41e4796b809f4f98d4286e89ea9a8f"
               },
               "ruleIndex": 0
             },
@@ -2227,7 +2228,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "134021ada0595417efb599ab3ffb"
+                "iamBlastRadius/semanticIdentity/v2": "594bd2df971d0bf5272e075943706495"
               },
               "properties": {
                 "category": "security",
@@ -2266,7 +2267,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "8953c0e4a5784f5124ed78d557e7f38396fe90d375d24ced521a0c823413f7a7"
               },
               "ruleIndex": 1
             },
@@ -2286,7 +2288,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "14aa6c247a659e099bafa2cf8640"
+                "iamBlastRadius/semanticIdentity/v2": "266eb1170717f6b16ed513099f52c167"
               },
               "properties": {
                 "category": "security",
@@ -2325,7 +2327,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "f3627d7dafef57ff57c450259d21fcd056de51831de7f6a2ef6fe97e8c6e8529"
               },
               "ruleIndex": 2
             },
@@ -2345,7 +2348,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0b56bf233f7d0a1a1c2f384bd720"
+                "iamBlastRadius/semanticIdentity/v2": "563edffb6f226761370bf8171293ef22"
               },
               "properties": {
                 "category": "security",
@@ -2384,7 +2387,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "461d4631034d55d9362f8211a3117f55359a105e06fb9b97c8355711c9b4f503"
               },
               "ruleIndex": 3
             },
@@ -2404,7 +2408,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1f805863c4f64d0fcbacc8fab675"
+                "iamBlastRadius/semanticIdentity/v2": "1b85d1ff996d051aff3bce852aee7e72"
               },
               "properties": {
                 "category": "security",
@@ -2443,7 +2447,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "63bb72b40183725597b4137f2fd62430089931b966c37fe961b817a343522a54"
               },
               "ruleIndex": 3
             },
@@ -2463,7 +2468,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "179687797880650844beabe5ea34"
+                "iamBlastRadius/semanticIdentity/v2": "ca8be8337b973f6e22f6720a73a0d3fc"
               },
               "properties": {
                 "category": "security",
@@ -2502,7 +2507,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "a3a363a48fdd124177707e669d03cfc8938298c5b45b9cf0ada4e1c1a5111ae8"
               },
               "ruleIndex": 3
             },
@@ -2522,7 +2528,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0d4ddbaaaa6c4d1a00d813d713f6"
+                "iamBlastRadius/semanticIdentity/v2": "f932dccdcd61c2eb2d8d39ade32ed8d2"
               },
               "properties": {
                 "category": "security",
@@ -2561,7 +2567,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "d0a186f8a3bd2f634b6e0cc37ab7d8aafe9073afc7f090122157cdc4bae03021"
               },
               "ruleIndex": 3
             },
@@ -2581,7 +2588,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "016791d898d0ce0abfc707f79fd6"
+                "iamBlastRadius/semanticIdentity/v2": "3205e7c3acbf3c4ec75a3f0e0d18b055"
               },
               "properties": {
                 "category": "security",
@@ -2620,7 +2627,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "5b8b14108a7bdb9bfae8c787178246dd45b8a4e00a4be2fa1b44ebdaf52090e6"
               },
               "ruleIndex": 3
             },
@@ -2640,7 +2648,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "17a2a984f468c00905dbdc70710a"
+                "iamBlastRadius/semanticIdentity/v2": "34082ed1581e3d122e76fa0d4de8f0c6"
               },
               "properties": {
                 "category": "security",
@@ -2679,7 +2687,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "d257c14b092c45813a019c677771fb32d469026cb2bd2aa7f78a5317de842110"
               },
               "ruleIndex": 3
             },
@@ -2699,7 +2708,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1cd2369380a54901639421d5fd7f"
+                "iamBlastRadius/semanticIdentity/v2": "8eea8592d9bd5f49541219d941f14846"
               },
               "properties": {
                 "category": "security",
@@ -2738,7 +2747,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "4bcec4c8a37991852b0f608fc1d9a37ad9566f0d377b1dee006fcd1cb084bf99"
               },
               "ruleIndex": 3
             },
@@ -2758,7 +2768,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "18b5efa2fe1c371b295874aa49be"
+                "iamBlastRadius/semanticIdentity/v2": "0db40e96c1012486428460314a94a88f"
               },
               "properties": {
                 "category": "security",
@@ -2784,7 +2794,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "9726c03c19a63a330dc6d6f25f32e25669fd0b9c826a8105ac6094550116eee8"
               },
               "ruleIndex": 4
             },
@@ -2792,7 +2803,7 @@
               "ruleId": "CREDENTIAL-CREATION",
               "level": "error",
               "message": {
-                "text": "Credential creation for a principal (access key / login profile) [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+                "text": "Credential creation for a principal (access key / login profile / federation token) [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
               },
               "locations": [
                 {
@@ -2804,7 +2815,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "12da52531440ea06bb1bb19579d5"
+                "iamBlastRadius/semanticIdentity/v2": "1536b37a359605c56c1e71fc3b122ce8"
               },
               "properties": {
                 "category": "security",
@@ -2830,7 +2841,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "30e3faca78ffdc59053f1d8e79050aa06f715e03d0aaef8a2dd422bcd3ae4582"
               },
               "ruleIndex": 5
             },
@@ -2850,7 +2862,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0854b54992b364032185f55c0f61"
+                "iamBlastRadius/semanticIdentity/v2": "a09c82480b31f4ac612a78ddba089fcc"
               },
               "properties": {
                 "category": "security",
@@ -2876,7 +2888,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "3821b313b181caff82b152e18d81dff46614ca1d862d7672a34ba6ea15db13d2"
               },
               "ruleIndex": 6
             },
@@ -2896,7 +2909,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0e9f463210bf0209202a9930df72"
+                "iamBlastRadius/semanticIdentity/v2": "a09a04e695aa91d349bde71ecd8fa841"
               },
               "properties": {
                 "category": "security",
@@ -2922,7 +2935,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "954169a7ac68d05eb3bcc74d7fb710d49dc2376267e7c0b4a57115743f2da8e4"
               },
               "ruleIndex": 7
             },
@@ -2942,7 +2956,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1e26028f773e431a15cfd8e5079c"
+                "iamBlastRadius/semanticIdentity/v2": "7e6926f0114301bed388070f5cfff283"
               },
               "properties": {
                 "category": "security",
@@ -2968,7 +2982,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "41113690796e498cde81fecbc70769e61e219f389aa55b6bb3729cce415544eb"
               },
               "ruleIndex": 8
             },
@@ -2988,7 +3003,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "02c41ca32f858200ffbd578fae07"
+                "iamBlastRadius/semanticIdentity/v2": "9d1d2bff6221d6d3f86a0d41c851fa0b"
               },
               "properties": {
                 "category": "security",
@@ -3000,7 +3015,8 @@
                   "pathExploitability": "high"
                 },
                 "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode"
+                "statementSid": "GodMode",
+                "baselineId": "2642c57c93617925382106cea5b75942c2df6cb735d7e8fa592908225ec4c976"
               },
               "ruleIndex": 9
             }
@@ -3061,7 +3077,7 @@
       {
         "id": "CREDENTIAL-CREATION",
         "severity": "high",
-        "title": "Credential creation for a principal (access key / login profile)",
+        "title": "Credential creation for a principal (access key / login profile / federation token)",
         "statementIndex": 0,
         "actions": [
           "*"

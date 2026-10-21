@@ -13,8 +13,8 @@
       "analysisStatus": "complete",
       "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
       "exitCode": 1,
-      "findingsCount": 5,
-      "blockingCount": 5,
+      "findingsCount": 6,
+      "blockingCount": 6,
       "analysisStates": [],
       "findings": [
         {
@@ -328,6 +328,91 @@
           }
         },
         {
+          "id": "CREDENTIAL-CREATION",
+          "severity": "high",
+          "title": "Credential creation for a principal (access key / login profile / federation token)",
+          "statementSid": "EverythingExceptIam",
+          "statementIndex": 0,
+          "actions": [
+            "sts:GetFederationToken"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "medium",
+          "why": "Grants credential creation (iam:CreateAccessKey / iam:CreateLoginProfile / iam:UpdateLoginProfile). A principal that can mint an access key or set a console password for another (more privileged) user can authenticate as that user - a lateral-movement / escalation primitive.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Scope credential actions to the principal's own identity where possible (e.g. an ${aws:username} Resource Condition), and restrict creation of credentials for other users to a dedicated admin role.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html",
+          "escalation": {
+            "technique": "credential-creation",
+            "service": null,
+            "requiredActions": [
+              "sts:GetFederationToken"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "credential-creation",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "sts:GetFederationToken"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "EverythingExceptIam",
+              "role": "primitive",
+              "actions": [
+                "sts:GetFederationToken"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "EverythingExceptIam",
+              "actions": [
+                "sts:GetFederationToken"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
           "id": "NOTACTION-ALLOW",
           "severity": "high",
           "title": "Allow with NotAction (broad inverse grant)",
@@ -478,6 +563,24 @@
                   "helpUri": "https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_SendCommand.html"
                 },
                 {
+                  "id": "CREDENTIAL-CREATION",
+                  "name": "CREDENTIAL-CREATION",
+                  "shortDescription": {
+                    "text": "Credential creation for a principal (access key / login profile / federation token)"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type CREDENTIAL-CREATION. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "7.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html"
+                },
+                {
                   "id": "NOTACTION-ALLOW",
                   "name": "NOTACTION-ALLOW",
                   "shortDescription": {
@@ -519,8 +622,8 @@
           "properties": {
             "analysisStatus": "complete",
             "exitCode": 1,
-            "blockingCount": 5,
-            "findingsCount": 5
+            "blockingCount": 6,
+            "findingsCount": 6
           },
           "results": [
             {
@@ -539,7 +642,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "109f2d254af657109e16290811dc"
+                "iamBlastRadius/semanticIdentity/v2": "f548d630ba1884bd9123aff61cbdc28c"
               },
               "properties": {
                 "category": "security",
@@ -568,7 +671,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "EverythingExceptIam"
+                "statementSid": "EverythingExceptIam",
+                "baselineId": "bcf496743ea9c38305b61e1b4be6bf65491d4ab3adfdda86d9c6bc057d4e4a6a"
               },
               "ruleIndex": 0
             },
@@ -588,7 +692,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1277144feabe5c1453dda2f3aaba"
+                "iamBlastRadius/semanticIdentity/v2": "63011b61443ebe9c821932b6d05d254c"
               },
               "properties": {
                 "category": "security",
@@ -619,7 +723,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "EverythingExceptIam"
+                "statementSid": "EverythingExceptIam",
+                "baselineId": "b70d664f7444c960e7559516d282fc090cd9e3eff190b7a0dc2e145a0a0978b7"
               },
               "ruleIndex": 1
             },
@@ -639,7 +744,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "0617e2d3cbd06a09b08351bf42c1"
+                "iamBlastRadius/semanticIdentity/v2": "51405ac5860c0d65abb20c6c68344f78"
               },
               "properties": {
                 "category": "security",
@@ -669,9 +774,57 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "EverythingExceptIam"
+                "statementSid": "EverythingExceptIam",
+                "baselineId": "d860fa1478f0489729a6e073d6e668d053041a8feb32976e45ad81123d935877"
               },
               "ruleIndex": 2
+            },
+            {
+              "ruleId": "CREDENTIAL-CREATION",
+              "level": "error",
+              "message": {
+                "text": "Credential creation for a principal (access key / login profile / federation token) [identity policy] at statement `EverythingExceptIam`; actions: `sts:GetFederationToken`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v2": "57d8bf77b88ec432e8d54d4f15c5e5c5"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "high",
+                "policyFamily": "identity",
+                "security-severity": "7.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "medium",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "EverythingExceptIam",
+                    "role": "primitive",
+                    "actions": [
+                      "sts\\:GetFederationToken"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "EverythingExceptIam",
+                "baselineId": "2bbb8236c15607840b79d41bb45f7c7b552d2df804f388b9d7304890d7eea1a4"
+              },
+              "ruleIndex": 3
             },
             {
               "ruleId": "NOTACTION-ALLOW",
@@ -689,7 +842,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1887094a3d6cfb198e946e5aa091"
+                "iamBlastRadius/semanticIdentity/v2": "9641148b26e2994458cd55df89152743"
               },
               "properties": {
                 "category": "security",
@@ -704,9 +857,10 @@
                 "statementSid": "EverythingExceptIam",
                 "excludedActions": [
                   "iam\\:\\*"
-                ]
+                ],
+                "baselineId": "dd37f583d0afd4091ffbccab845311317e762600314e74c6b7eb7fa64fec39e1"
               },
-              "ruleIndex": 3
+              "ruleIndex": 4
             },
             {
               "ruleId": "WILDCARD-RESOURCE",
@@ -724,7 +878,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "1879528c9832db09f2801a45b997"
+                "iamBlastRadius/semanticIdentity/v2": "941aafa0adc950cc90e1467f04c099d2"
               },
               "properties": {
                 "category": "security",
@@ -739,9 +893,10 @@
                 "statementSid": "EverythingExceptIam",
                 "excludedActions": [
                   "iam\\:\\*"
-                ]
+                ],
+                "baselineId": "a00fc81028dc3af7296d97dc758f2225b85d0b670640caadd47dd3754d8e1553"
               },
-              "ruleIndex": 4
+              "ruleIndex": 5
             }
           ]
         }
@@ -821,6 +976,20 @@
         ],
         "conditionsPresent": false,
         "evidenceWhyHash": "7e058ede00d459b4"
+      },
+      {
+        "id": "CREDENTIAL-CREATION",
+        "severity": "high",
+        "title": "Credential creation for a principal (access key / login profile / federation token)",
+        "statementIndex": 0,
+        "actions": [
+          "sts:GetFederationToken"
+        ],
+        "resources": [
+          "*"
+        ],
+        "conditionsPresent": false,
+        "evidenceWhyHash": "fabd55943de2929e"
       },
       {
         "id": "NOTACTION-ALLOW",

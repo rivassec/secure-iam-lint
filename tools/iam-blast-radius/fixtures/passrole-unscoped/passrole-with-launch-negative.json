@@ -1,0 +1,12 @@
+{
+  "name": "PassRole on * WITH a launch action (withheld in favor of the compound path)",
+  "note": "The compound PASSROLE-LAMBDA (critical) owns the document; the standalone finding must not double-report.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PassAny", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "*" },
+      { "Sid": "Launch", "Effect": "Allow", "Action": "lambda:CreateFunction", "Resource": "arn:aws:lambda:us-east-2:111122223333:function:example" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["PASSROLE-LAMBDA"], "notFindingIds": ["PASSROLE-UNSCOPED"] }
+}

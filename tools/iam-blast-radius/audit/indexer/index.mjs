@@ -122,7 +122,15 @@ function parseExports(src) {
 
 // --- 3. load lint hotspots (placeholder feed) ------------------------------
 
+// Read once per process: the lint tests rewrite these files concurrently, and the
+// determinism contract is same-input, not under-mutation.
+let HOTSPOTS_CACHE = null;
 function loadHotspots() {
+  if (HOTSPOTS_CACHE) return HOTSPOTS_CACHE;
+  HOTSPOTS_CACHE = loadHotspotsUncached();
+  return HOTSPOTS_CACHE;
+}
+function loadHotspotsUncached() {
   // Consume audit/lint output if present; else empty. Keyed by repo-rel path.
   const byFile = {};
   if (!existsSync(LINT_DIR)) return { present: false, byFile };

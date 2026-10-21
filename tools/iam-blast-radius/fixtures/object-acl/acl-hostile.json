@@ -1,0 +1,16 @@
+{
+  "name": "s3:PutObjectAcl with hostile strings (inert rendering)",
+  "note": "Hostile Sid/resource tokens must ride through as inert data.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "<img src=x onerror=alert(1)>acl",
+        "Effect": "Allow",
+        "Action": "s3:PutObjectAcl",
+        "Resource": "arn:aws:s3:::example-bucket/<script>alert(1)</script>/*"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["OBJECT-ACL-WRITE"], "hostile": true, "hostileFor": ["OBJECT-ACL-WRITE"], "assertInertRendering": true }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "iam:PassRole on a literal role-path prefix (negative)",
+  "note": "role/deployment/* constrains the role-name axis: a deliberate scope, not unscoped (MUST-STAY-NARROW parity).",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PassScoped", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::111122223333:role/deployment/*" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["PASSROLE-UNSCOPED"] }
+}

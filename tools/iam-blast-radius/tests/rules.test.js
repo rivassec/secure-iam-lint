@@ -178,6 +178,10 @@ test('every rule family has at least one positive and one negative fixture', () 
     'DIRECT-IAM-ADMIN': ['direct-iam'],
     'RESOURCE-POLICY-WRITE': ['resource-policy'],
     'DATA-EXFIL': ['exfil'],
+    // G4: IAM database authentication.
+    'DB-AUTH': ['db-auth'],
+    // F1-01/F1-02: object-ACL writes.
+    'OBJECT-ACL-WRITE': ['object-acl'],
     'KMS-DECRYPT': ['exfil'],
     'DATA-READ': ['exfil'],
     'DESTRUCTIVE-ACTION': ['destructive'],

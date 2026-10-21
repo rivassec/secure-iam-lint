@@ -1,0 +1,12 @@
+{
+  "name": "rds-db:connect fully denied in the same policy",
+  "note": "Explicit Deny precedence removes the grant; no DB-AUTH.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "DbConnectAll", "Effect": "Allow", "Action": "rds-db:connect", "Resource": "*" },
+      { "Sid": "DenyIt", "Effect": "Deny", "Action": "rds-db:connect", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["DB-AUTH"] }
+}

@@ -121,10 +121,15 @@ Each GitHub Release lists the exact commit SHA for that tag; copy it into the
 | `partition` | no | `aws`, `aws-us-gov`, `aws-cn`, ... Deliberately has **no default**: an omitted partition is "not asserted", and any verdict that depends on it fails closed (exit `3`). |
 | `fail-on` | no | Minimum severity that fails the check (default `high`; `none` disables). |
 | `sarif-output` | no | SARIF 2.1.0 path, relative to the workspace (default `iam-blast-radius.sarif`). |
+| `baseline`, `baseline-output` | no | Read / write a committed baseline of accepted results, so only NEW results fail. Each result is accepted individually; usage, internal and most fail-closed states never are. See [ACTION.md](ACTION.md#accepting-known-results-baseline). |
 | `budget-ms`, `max-files`, `max-total-bytes`, `max-sarif-results`, `max-sarif-bytes` | no | Resource ceilings; breaching one fails closed rather than reporting a partial scan clean. See [ACTION.md](ACTION.md). |
 
 Outputs: `exit-code`, `analysis-status` (`complete` / `partial` / `failed`),
-`findings-count`, `blocking-findings-count`, `sarif-path`.
+`findings-count`, `blocking-findings-count`, `sarif-path`, plus `baselined-count` /
+`baseline-stale-count` when a baseline is given. Outputs are written before the step
+fails, so they are readable under `continue-on-error` - but prefer a baseline, which
+still fails on new results. A mixed repo runs one step per family (see
+[ACTION.md](ACTION.md#mixed-repos-one-step-per-family)).
 
 ### Exit-code contract
 

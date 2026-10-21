@@ -2,7 +2,7 @@
   "meta": {
     "generatedBy": "tools/iam-blast-radius/audit/indexer/index.mjs",
     "repoRoot": ".",
-    "shippedFileCount": 30,
+    "shippedFileCount": 72,
     "entryRoots": {
       "browser-analyze": [
         "content/tools/iam-blast-radius/app.js",
@@ -23,22 +23,104 @@
   },
   "matrix": [
     {
-      "file": "content/tools/iam-blast-radius/engine/analyze.js",
+      "file": "content/tools/iam-blast-radius/engine/analyze-format.js",
       "exports": [
         "CATALOG_VERSION",
-        "DEFAULT_WORK_LIMIT",
         "FINDING_COLUMNS",
         "FINDING_DETAIL_FIELDS",
+        "SERVICE_LABELS",
         "SEVERITY_ORDER",
         "SUMMARY_CATEGORIES",
-        "analyze",
+        "SUMMARY_CATEGORY_BY_ID",
         "findingToRow",
+        "pathLineFor",
+        "serviceLabel",
+        "severityRank",
         "sortFindings",
+        "stampFamily",
         "summarize",
+        "textList"
+      ],
+      "exportCount": 15,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/conditions.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
+        "content/tools/iam-blast-radius/engine/analyze.js"
+      ],
+      "callerCount": 2,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/analyze-results.js",
+      "exports": [
+        "abortedResult",
+        "blockedResult",
+        "emptyGraph",
+        "envelopeResult",
+        "fail",
+        "rcpResult",
+        "resourceResult",
+        "scpResult",
+        "trustResult"
+      ],
+      "exportCount": 9,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/analyze-format.js",
+        "content/tools/iam-blast-radius/engine/catalog.js",
+        "content/tools/iam-blast-radius/engine/conditions.js",
+        "content/tools/iam-blast-radius/engine/coverage.js",
+        "content/tools/iam-blast-radius/engine/envelope.js",
+        "content/tools/iam-blast-radius/engine/graph.js",
+        "content/tools/iam-blast-radius/engine/rcp.js",
+        "content/tools/iam-blast-radius/engine/resource.js",
+        "content/tools/iam-blast-radius/engine/rules.js",
+        "content/tools/iam-blast-radius/engine/scp.js",
+        "content/tools/iam-blast-radius/engine/trust.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/analyze.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/analyze.js",
+      "exports": [
+        "DEFAULT_WORK_LIMIT",
+        "analyze",
+        "findingIdentityKey",
         "default"
       ],
-      "exportCount": 11,
+      "exportCount": 4,
       "imports": [
+        "content/tools/iam-blast-radius/engine/analyze-format.js",
+        "content/tools/iam-blast-radius/engine/analyze-format.js",
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
         "content/tools/iam-blast-radius/engine/catalog.js",
         "content/tools/iam-blast-radius/engine/conditions.js",
         "content/tools/iam-blast-radius/engine/correlate.js",
@@ -90,6 +172,7 @@
         "tools/iam-blast-radius/tests/acceptance-suite-4-messaging.test.js",
         "tools/iam-blast-radius/tests/acceptance-suite-4.test.js",
         "tools/iam-blast-radius/tests/acceptance-suite.test.js",
+        "tools/iam-blast-radius/tests/analyze-finding-identity-injective.test.js",
         "tools/iam-blast-radius/tests/analyze.test.js",
         "tools/iam-blast-radius/tests/breadth-classify.test.js",
         "tools/iam-blast-radius/tests/breadth-failclosed.test.js",
@@ -97,6 +180,8 @@
         "tools/iam-blast-radius/tests/browser-graph-purity.test.js",
         "tools/iam-blast-radius/tests/catalog.test.js",
         "tools/iam-blast-radius/tests/complexity-budget.test.js",
+        "tools/iam-blast-radius/tests/compute-code-overwrite.test.js",
+        "tools/iam-blast-radius/tests/compute-session-takeover.test.js",
         "tools/iam-blast-radius/tests/condition-helpers-budget.test.js",
         "tools/iam-blast-radius/tests/condition-value-budget.test.js",
         "tools/iam-blast-radius/tests/conditions.test.js",
@@ -104,20 +189,27 @@
         "tools/iam-blast-radius/tests/coverage.test.js",
         "tools/iam-blast-radius/tests/dataexfil-arn-nonarn-glob.test.js",
         "tools/iam-blast-radius/tests/dataexfil-arn-outpost-terminal-collection.test.js",
+        "tools/iam-blast-radius/tests/detach-policy-iam-admin.test.js",
         "tools/iam-blast-radius/tests/determinism.test.js",
         "tools/iam-blast-radius/tests/dos-budget-all.test.js",
         "tools/iam-blast-radius/tests/evidence.test.js",
         "tools/iam-blast-radius/tests/family.test.js",
         "tools/iam-blast-radius/tests/fixture-matrix.test.js",
+        "tools/iam-blast-radius/tests/metamorphic-properties.test.js",
         "tools/iam-blast-radius/tests/must-warn.test.js",
         "tools/iam-blast-radius/tests/negative-resource.test.js",
         "tools/iam-blast-radius/tests/negative-trust.test.js",
         "tools/iam-blast-radius/tests/negative.test.js",
+        "tools/iam-blast-radius/tests/new01-undetermined-service-agnostic.test.js",
+        "tools/iam-blast-radius/tests/newbudget-denyfence-dos-budget.test.js",
+        "tools/iam-blast-radius/tests/notaction-deny-variable-failclosed.test.js",
+        "tools/iam-blast-radius/tests/passedtoservice-casefold-failclosed.test.js",
         "tools/iam-blast-radius/tests/passrole-account-dedup-budget.test.js",
         "tools/iam-blast-radius/tests/passrole-defaulted-subject-partition.test.js",
         "tools/iam-blast-radius/tests/passrole-demoted-subsumption-order-invariance.test.js",
         "tools/iam-blast-radius/tests/passrole-deny-decoy-not-remove-all.test.js",
         "tools/iam-blast-radius/tests/passrole-deny-scan-budget.test.js",
+        "tools/iam-blast-radius/tests/passrole-eventbridge.test.js",
         "tools/iam-blast-radius/tests/passrole-exec-most-severe-order-invariance.test.js",
         "tools/iam-blast-radius/tests/passrole-noncanonical-arn-spelling.test.js",
         "tools/iam-blast-radius/tests/passrole-noncanonical-subject-partition.test.js",
@@ -134,15 +226,19 @@
         "tools/iam-blast-radius/tests/render-graph.test.js",
         "tools/iam-blast-radius/tests/report.test.js",
         "tools/iam-blast-radius/tests/resource-dos-budget.test.js",
+        "tools/iam-blast-radius/tests/resource-policy-write.test.js",
         "tools/iam-blast-radius/tests/resource.test.js",
         "tools/iam-blast-radius/tests/role-takeover.test.js",
         "tools/iam-blast-radius/tests/roletakeover-satisfiability-dos-budget.test.js",
         "tools/iam-blast-radius/tests/rules-crossaccount-dedup-budget.test.js",
+        "tools/iam-blast-radius/tests/s1-r1-deny-fence-surviving.test.js",
         "tools/iam-blast-radius/tests/s2-airtight-incomplete.test.js",
         "tools/iam-blast-radius/tests/s2-crossaccount-scoped-surface.test.js",
         "tools/iam-blast-radius/tests/s4-unicode-spoof.test.js",
         "tools/iam-blast-radius/tests/samples.test.js",
         "tools/iam-blast-radius/tests/security.test.js",
+        "tools/iam-blast-radius/tests/semantic-failclosed-vectors.test.js",
+        "tools/iam-blast-radius/tests/spoofed-duplicate-key-failclosed.test.js",
         "tools/iam-blast-radius/tests/t91-passrole-viability.test.js",
         "tools/iam-blast-radius/tests/trust-calibration.test.js",
         "tools/iam-blast-radius/tests/trust-dos-budget.test.js",
@@ -152,16 +248,103 @@
         "tools/iam-blast-radius/tests/version-coherence.test.js",
         "tools/iam-blast-radius/tests/wildcardresource-account-wildcard.test.js"
       ],
-      "testCount": 78,
+      "testCount": 92,
       "astHotspots": [
         {
           "file": "content/tools/iam-blast-radius/engine/analyze.js",
-          "line": 949,
+          "line": 284,
           "cls": "budget-bypass",
           "snippet": "for (const s of m.model.statements) {",
           "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
         }
       ]
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/arn-util.js",
+      "exports": [
+        "parseArn",
+        "parseResourceContext",
+        "serviceForArn"
+      ],
+      "exportCount": 3,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/resource-catalogs.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/resource-finding.js",
+        "content/tools/iam-blast-radius/engine/resource-principal-classification.js",
+        "content/tools/iam-blast-radius/engine/resource-shared.js",
+        "content/tools/iam-blast-radius/engine/resource-source-binding.js",
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 5,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/catalog-aws-ref.js",
+      "exports": [
+        "AWS_REF_ACTIONS",
+        "AWS_REF_REQUIRES_WILDCARD",
+        "AWS_SERVICE_PREFIXES"
+      ],
+      "exportCount": 3,
+      "imports": [],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/catalog.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [
+        "tools/iam-blast-radius/tests/catalog-aws-ref.test.js",
+        "tools/iam-blast-radius/tests/catalog-unmodeled.test.js"
+      ],
+      "testCount": 2,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/catalog-unmodeled.js",
+      "exports": [
+        "UNMODELED_ESCALATION"
+      ],
+      "exportCount": 1,
+      "imports": [],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/catalog.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [
+        "tools/iam-blast-radius/tests/catalog-unmodeled.test.js"
+      ],
+      "testCount": 1,
+      "astHotspots": []
     },
     {
       "file": "content/tools/iam-blast-radius/engine/catalog.js",
@@ -177,16 +360,19 @@
       ],
       "exportCount": 8,
       "imports": [
+        "content/tools/iam-blast-radius/engine/catalog-aws-ref.js",
+        "content/tools/iam-blast-radius/engine/catalog-unmodeled.js",
         "content/tools/iam-blast-radius/engine/glob.js"
       ],
       "importsMissing": [],
       "nodeBuiltins": [],
       "externalImports": [],
       "callers": [
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
         "content/tools/iam-blast-radius/engine/analyze.js",
         "content/tools/iam-blast-radius/engine/version.js"
       ],
-      "callerCount": 2,
+      "callerCount": 3,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -195,11 +381,13 @@
       "reachableFromBrowser": true,
       "tests": [
         "tools/iam-blast-radius/tests/breadth-classify.test.js",
+        "tools/iam-blast-radius/tests/catalog-aws-ref.test.js",
+        "tools/iam-blast-radius/tests/catalog-unmodeled.test.js",
         "tools/iam-blast-radius/tests/catalog.test.js",
         "tools/iam-blast-radius/tests/s2-airtight-incomplete.test.js",
         "tools/iam-blast-radius/tests/version-coherence.test.js"
       ],
-      "testCount": 4,
+      "testCount": 6,
       "astHotspots": []
     },
     {
@@ -208,14 +396,16 @@
         "CONDITION_APPEARS",
         "CONDITION_CLASS",
         "NEGATED_OPERATORS",
+        "OIDC_PROVIDER_PARTITIONS",
         "classifyConditionEntry",
         "classifyConditions",
+        "oidcProviderHosts",
         "parseOperator",
         "statementNeverMatches",
         "unsupportedConditionKeys",
         "default"
       ],
-      "exportCount": 9,
+      "exportCount": 11,
       "imports": [
         "content/tools/iam-blast-radius/engine/glob.js"
       ],
@@ -223,14 +413,20 @@
       "nodeBuiltins": [],
       "externalImports": [],
       "callers": [
+        "content/tools/iam-blast-radius/engine/analyze-format.js",
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
         "content/tools/iam-blast-radius/engine/analyze.js",
+        "content/tools/iam-blast-radius/engine/escalation-reachability.js",
         "content/tools/iam-blast-radius/engine/escalation.js",
         "content/tools/iam-blast-radius/engine/rcp.js",
+        "content/tools/iam-blast-radius/engine/resource-conditions.js",
+        "content/tools/iam-blast-radius/engine/resource-source-binding.js",
         "content/tools/iam-blast-radius/engine/resource.js",
+        "content/tools/iam-blast-radius/engine/rules-detectors.js",
         "content/tools/iam-blast-radius/engine/rules.js",
         "content/tools/iam-blast-radius/engine/scp.js"
       ],
-      "callerCount": 6,
+      "callerCount": 12,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -238,10 +434,12 @@
       ],
       "reachableFromBrowser": true,
       "tests": [
+        "tools/iam-blast-radius/tests/conditions-s3-federation.test.js",
         "tools/iam-blast-radius/tests/conditions.test.js",
+        "tools/iam-blast-radius/tests/federation-sub-polarity.test.js",
         "tools/iam-blast-radius/tests/s2-airtight-incomplete.test.js"
       ],
-      "testCount": 2,
+      "testCount": 4,
       "astHotspots": []
     },
     {
@@ -251,7 +449,9 @@
         "default"
       ],
       "exportCount": 2,
-      "imports": [],
+      "imports": [
+        "content/tools/iam-blast-radius/engine/glob.js"
+      ],
       "importsMissing": [],
       "nodeBuiltins": [],
       "externalImports": [],
@@ -272,7 +472,7 @@
       "astHotspots": [
         {
           "file": "content/tools/iam-blast-radius/engine/correlate.js",
-          "line": 880,
+          "line": 888,
           "cls": "unbounded-walk",
           "snippet": "function deepFreeze(value) {",
           "note": "recursion (deepFreeze) with no visible depth/node/size cap"
@@ -302,11 +502,12 @@
       "externalImports": [],
       "callers": [
         "content/tools/iam-blast-radius/app.js",
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
         "content/tools/iam-blast-radius/engine/analyze.js",
         "content/tools/iam-blast-radius/engine/report.js",
         "content/tools/iam-blast-radius/engine/version.js"
       ],
-      "callerCount": 4,
+      "callerCount": 5,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -336,9 +537,10 @@
       "nodeBuiltins": [],
       "externalImports": [],
       "callers": [
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
         "content/tools/iam-blast-radius/engine/analyze.js"
       ],
-      "callerCount": 1,
+      "callerCount": 2,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -360,6 +562,438 @@
       ]
     },
     {
+      "file": "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+      "exports": [
+        "actionGrants",
+        "grantedPatternsFor",
+        "hasPolicyVariable"
+      ],
+      "exportCount": 3,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/glob.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/escalation-families.js",
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation-scope.js",
+        "content/tools/iam-blast-radius/engine/escalation-takeover.js",
+        "content/tools/iam-blast-radius/engine/escalation.js",
+        "content/tools/iam-blast-radius/engine/graph-helpers.js"
+      ],
+      "callerCount": 7,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": [
+        {
+          "file": "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+          "line": 41,
+          "cls": "budget-bypass",
+          "snippet": "for (const p of stmt.actions) {",
+          "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+        }
+      ]
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation-catalogs.js",
+      "exports": [
+        "ASSUME_ROLE_ACTIONS",
+        "ATTACH_POLICY_ACTIONS",
+        "CONCRETE_ACCOUNT_ID_RE",
+        "CREDENTIAL_ACTIONS",
+        "ECS_LAUNCH_ACTIONS",
+        "ESCALATIONS",
+        "ESCALATION_IDS",
+        "PASS_ROLE_ACTION",
+        "PASS_ROLE_SERVICES",
+        "POLICY_VERSION_ACTIONS",
+        "PUT_INLINE_POLICY_ACTIONS",
+        "ROLE_TAKEOVER_ASSUME_ACTIONS",
+        "ROLE_TAKEOVER_GRANT_ACTIONS",
+        "TRUST_MODIFY_ACTIONS",
+        "classifyEcsRole",
+        "ecsRoleClasses"
+      ],
+      "exportCount": 16,
+      "imports": [],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation-families.js",
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation-reachability.js",
+        "content/tools/iam-blast-radius/engine/escalation-takeover.js",
+        "content/tools/iam-blast-radius/engine/escalation.js"
+      ],
+      "callerCount": 5,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+      "exports": [
+        "hasNonEmptyCondition",
+        "normalizeOperator",
+        "operatorPermitsService",
+        "passRolePermitsService",
+        "passedToServiceEntries"
+      ],
+      "exportCount": 5,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/glob.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/escalation-families.js",
+        "content/tools/iam-blast-radius/engine/escalation-takeover.js",
+        "content/tools/iam-blast-radius/engine/escalation.js",
+        "content/tools/iam-blast-radius/engine/graph-trust.js",
+        "content/tools/iam-blast-radius/engine/rules-detectors.js",
+        "content/tools/iam-blast-radius/engine/rules-finding.js",
+        "content/tools/iam-blast-radius/engine/trust-deny.js"
+      ],
+      "callerCount": 8,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation-consts.js",
+      "exports": [
+        "CAPABILITY_LIMIT",
+        "CONDITION_LIMIT",
+        "DENY_NARROW_LIMIT",
+        "PASSED_TO_SERVICE_UNCERTAIN_LIMIT",
+        "TARGET_UNKNOWN_LIMIT"
+      ],
+      "exportCount": 5,
+      "imports": [],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation.js"
+      ],
+      "callerCount": 2,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation-deny.js",
+      "exports": [
+        "applyDenyToActions",
+        "denyActionApplies",
+        "denyEffectOnAction",
+        "denyPatternCovers",
+        "denyResourceCoverage",
+        "denyResourcesCover"
+      ],
+      "exportCount": 6,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+        "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-scope.js",
+        "content/tools/iam-blast-radius/engine/glob.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation-families.js",
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation-takeover.js",
+        "content/tools/iam-blast-radius/engine/escalation.js",
+        "content/tools/iam-blast-radius/engine/graph-helpers.js",
+        "content/tools/iam-blast-radius/engine/rules-detectors.js",
+        "content/tools/iam-blast-radius/engine/rules-finding.js",
+        "content/tools/iam-blast-radius/engine/trust-deny.js"
+      ],
+      "callerCount": 8,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [
+        "tools/iam-blast-radius/tests/deny-qmark-masking.test.js"
+      ],
+      "testCount": 1,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation-families.js",
+      "exports": [
+        "detectAssumeRoleExpansion",
+        "detectAttachPolicy",
+        "detectComputeCodeOverwrite",
+        "detectComputeSessionTakeover",
+        "detectCredentialCreation",
+        "detectCrossAccountScopedAssume",
+        "detectPolicyVersion",
+        "detectPutInlinePolicy",
+        "detectTrustModify"
+      ],
+      "exportCount": 9,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+        "content/tools/iam-blast-radius/engine/escalation-catalogs.js",
+        "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation-reachability.js",
+        "content/tools/iam-blast-radius/engine/escalation-scope.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation-finding.js",
+      "exports": [
+        "contributingStatementsFrom",
+        "downgrade",
+        "evidenceOf",
+        "makeEscalation",
+        "prereqGroup",
+        "prereqTechnique",
+        "prerequisitesOf",
+        "survivingGrantedActions"
+      ],
+      "exportCount": 8,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+        "content/tools/iam-blast-radius/engine/escalation-catalogs.js",
+        "content/tools/iam-blast-radius/engine/escalation-consts.js",
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/escalation-scope.js",
+        "content/tools/iam-blast-radius/engine/escalation-statement.js",
+        "content/tools/iam-blast-radius/engine/glob.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation-families.js",
+        "content/tools/iam-blast-radius/engine/escalation-takeover.js",
+        "content/tools/iam-blast-radius/engine/escalation.js"
+      ],
+      "callerCount": 3,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation-reachability.js",
+      "exports": [
+        "CASE_INSENSITIVE_PIN_OPERATORS",
+        "EXACT_EQUALITY_PIN_OPERATORS",
+        "IAM_ARN_LENIENT_RE",
+        "KNOWN_PARTITIONS",
+        "NEGATED_EQUALITY_PIN_OPERATORS",
+        "PRINCIPAL_INVARIANT_KEYS",
+        "ROLE_ARN_PARTS_RE",
+        "SATISFIABILITY_TRIPLE_WORK",
+        "accountModelable",
+        "accountReaches",
+        "concreteRoleTargetAccount",
+        "constraintContains",
+        "globCanProducePrefix",
+        "isAllRolesAssumeScope",
+        "isConcreteRoleArn",
+        "isConfidentPinnedResource",
+        "isUnmodelablePassResource",
+        "keyConstraintsSatisfiable",
+        "otherResourceIsUnmodelable",
+        "parsePassResource",
+        "partitionModelable",
+        "partitionReaches",
+        "pinsJointlySatisfiable",
+        "principalConditionsSatisfiable",
+        "principalPinsOf",
+        "principalPinsOfMemo",
+        "resourceCoversRole",
+        "resourceReachesSubject",
+        "rolePathIsWildcardEquivalent",
+        "specificAccountsInRoleArns",
+        "subjectPartitionKnown",
+        "subjectRoleArnPrefix"
+      ],
+      "exportCount": 32,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-catalogs.js",
+        "content/tools/iam-blast-radius/engine/escalation-scope.js",
+        "content/tools/iam-blast-radius/engine/glob.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation-families.js",
+        "content/tools/iam-blast-radius/engine/escalation-takeover.js",
+        "content/tools/iam-blast-radius/engine/escalation.js"
+      ],
+      "callerCount": 3,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [
+        "tools/iam-blast-radius/tests/conditions-s3-federation.test.js"
+      ],
+      "testCount": 1,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation-scope.js",
+      "exports": [
+        "assumeAccountReach",
+        "assumeScopeIsAllRoles",
+        "grantTokenIsBroad",
+        "isStarResource",
+        "resourceListIsBroadForAssume",
+        "resourceScope"
+      ],
+      "exportCount": 6,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+        "content/tools/iam-blast-radius/engine/glob.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/escalation-families.js",
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation-reachability.js",
+        "content/tools/iam-blast-radius/engine/escalation.js"
+      ],
+      "callerCount": 5,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation-statement.js",
+      "exports": [
+        "statementSid"
+      ],
+      "exportCount": 1,
+      "imports": [],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation.js"
+      ],
+      "callerCount": 2,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/escalation-takeover.js",
+      "exports": [
+        "detectRoleTakeover"
+      ],
+      "exportCount": 1,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+        "content/tools/iam-blast-radius/engine/escalation-catalogs.js",
+        "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation-reachability.js",
+        "content/tools/iam-blast-radius/engine/glob.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/escalation.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
       "file": "content/tools/iam-blast-radius/engine/escalation.js",
       "exports": [
         "ESCALATIONS",
@@ -367,16 +1001,33 @@
         "actionGrants",
         "analyzeEscalations",
         "analyzeEscalationsFromText",
-        "applyDenyToActions",
-        "denyActionApplies",
-        "denyResourceCoverage",
         "hasNonEmptyCondition",
         "hasPolicyVariable",
         "default"
       ],
-      "exportCount": 11,
+      "exportCount": 8,
       "imports": [
         "content/tools/iam-blast-radius/engine/conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+        "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+        "content/tools/iam-blast-radius/engine/escalation-catalogs.js",
+        "content/tools/iam-blast-radius/engine/escalation-catalogs.js",
+        "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-consts.js",
+        "content/tools/iam-blast-radius/engine/escalation-consts.js",
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/escalation-families.js",
+        "content/tools/iam-blast-radius/engine/escalation-families.js",
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation-reachability.js",
+        "content/tools/iam-blast-radius/engine/escalation-reachability.js",
+        "content/tools/iam-blast-radius/engine/escalation-scope.js",
+        "content/tools/iam-blast-radius/engine/escalation-statement.js",
+        "content/tools/iam-blast-radius/engine/escalation-takeover.js",
+        "content/tools/iam-blast-radius/engine/escalation-takeover.js",
         "content/tools/iam-blast-radius/engine/glob.js",
         "content/tools/iam-blast-radius/engine/model.js"
       ],
@@ -406,22 +1057,16 @@
         "tools/iam-blast-radius/tests/evidence.test.js",
         "tools/iam-blast-radius/tests/fixture-matrix.test.js",
         "tools/iam-blast-radius/tests/graph.test.js",
+        "tools/iam-blast-radius/tests/metamorphic-properties.test.js",
         "tools/iam-blast-radius/tests/phase10-envelope.test.js",
         "tools/iam-blast-radius/tests/phase13-rcp.test.js",
         "tools/iam-blast-radius/tests/phase13-scp.test.js"
       ],
-      "testCount": 12,
+      "testCount": 13,
       "astHotspots": [
         {
           "file": "content/tools/iam-blast-radius/engine/escalation.js",
-          "line": 168,
-          "cls": "budget-bypass",
-          "snippet": "for (const p of stmt.actions) {",
-          "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
-        },
-        {
-          "file": "content/tools/iam-blast-radius/engine/escalation.js",
-          "line": 3142,
+          "line": 1088,
           "cls": "unbounded-walk",
           "snippet": "function deepFreeze(value) {",
           "note": "recursion (deepFreeze) with no visible depth/node/size cap"
@@ -508,13 +1153,15 @@
       "reachableFromBrowser": true,
       "tests": [
         "tools/iam-blast-radius/tests/cli-json-byte-faithful-doc.test.js",
-        "tools/iam-blast-radius/tests/s4-unicode-spoof.test.js"
+        "tools/iam-blast-radius/tests/hardening-e2-e3.test.js",
+        "tools/iam-blast-radius/tests/s4-unicode-spoof.test.js",
+        "tools/iam-blast-radius/tests/sanitizetree-spoofed-proto-key.test.js"
       ],
-      "testCount": 2,
+      "testCount": 4,
       "astHotspots": [
         {
           "file": "content/tools/iam-blast-radius/engine/format-control.js",
-          "line": 181,
+          "line": 183,
           "cls": "unbounded-walk",
           "snippet": "export function sanitizeTree(value) {",
           "note": "recursion (sanitizeTree) with no visible depth/node/size cap"
@@ -545,13 +1192,28 @@
         "content/tools/iam-blast-radius/engine/analyze.js",
         "content/tools/iam-blast-radius/engine/catalog.js",
         "content/tools/iam-blast-radius/engine/conditions.js",
+        "content/tools/iam-blast-radius/engine/correlate.js",
+        "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+        "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/escalation-finding.js",
+        "content/tools/iam-blast-radius/engine/escalation-reachability.js",
+        "content/tools/iam-blast-radius/engine/escalation-scope.js",
+        "content/tools/iam-blast-radius/engine/escalation-takeover.js",
         "content/tools/iam-blast-radius/engine/escalation.js",
         "content/tools/iam-blast-radius/engine/resource-arn.js",
+        "content/tools/iam-blast-radius/engine/resource-conditions.js",
+        "content/tools/iam-blast-radius/engine/resource-source-binding.js",
         "content/tools/iam-blast-radius/engine/resource.js",
+        "content/tools/iam-blast-radius/engine/rules-classify.js",
+        "content/tools/iam-blast-radius/engine/rules-detectors.js",
+        "content/tools/iam-blast-radius/engine/rules-finding.js",
         "content/tools/iam-blast-radius/engine/rules.js",
+        "content/tools/iam-blast-radius/engine/trust-classify.js",
+        "content/tools/iam-blast-radius/engine/trust-deny.js",
         "content/tools/iam-blast-radius/engine/trust.js"
       ],
-      "callerCount": 9,
+      "callerCount": 24,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -566,23 +1228,271 @@
       "astHotspots": []
     },
     {
-      "file": "content/tools/iam-blast-radius/engine/graph.js",
+      "file": "content/tools/iam-blast-radius/engine/graph-catalogs.js",
       "exports": [
         "CERTAINTY",
+        "CERTAINTY_RANK",
         "EDGE_TYPES",
+        "EDGE_TYPE_ORDER",
         "GRAPH_LIMITS",
         "LANES",
         "LANE_ORDER",
         "NODE_TYPES",
+        "NODE_TYPE_ORDER",
+        "PRINCIPAL_ID"
+      ],
+      "exportCount": 10,
+      "imports": [],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/graph-edges.js",
+        "content/tools/iam-blast-radius/engine/graph-helpers.js",
+        "content/tools/iam-blast-radius/engine/graph-resource.js",
+        "content/tools/iam-blast-radius/engine/graph-result.js",
+        "content/tools/iam-blast-radius/engine/graph-trust.js",
+        "content/tools/iam-blast-radius/engine/graph.js"
+      ],
+      "callerCount": 6,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/graph-edges.js",
+      "exports": [
+        "CREDENTIAL_ONLY_ADMIN_ACTIONS",
+        "ESCALATION_MAP",
+        "RULE_MAP",
+        "addDenyEdges",
+        "dropRedundantGenericDelegation",
+        "ecsPassRoleEdges",
+        "edgeEvidenceCarrier",
+        "isCredentialOnlyAdmin",
+        "passRoleEdges",
+        "roleTakeoverEdges",
+        "selfIamModify",
+        "wildcardResourceEdges"
+      ],
+      "exportCount": 12,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/graph-catalogs.js",
+        "content/tools/iam-blast-radius/engine/graph-helpers.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/graph.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/graph-helpers.js",
+      "exports": [
+        "DESTRUCTIVE_VERB",
+        "READ_VERB",
+        "certaintyFromEvidence",
+        "classifyCapability",
+        "denyNarrowsNotAction",
+        "downgradeCertainty",
+        "err",
+        "evidenceFromFinding",
+        "findStatement",
+        "findingWithActions",
+        "firstResource",
+        "passRoleCertainty",
+        "principalNode",
+        "ruleCertainty",
+        "verbOf"
+      ],
+      "exportCount": 15,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/graph-catalogs.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/graph-edges.js",
+        "content/tools/iam-blast-radius/engine/graph-resource.js",
+        "content/tools/iam-blast-radius/engine/graph-trust.js",
+        "content/tools/iam-blast-radius/engine/graph.js"
+      ],
+      "callerCount": 4,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": [
+        {
+          "file": "content/tools/iam-blast-radius/engine/graph-helpers.js",
+          "line": 183,
+          "cls": "budget-bypass",
+          "snippet": "for (const dp of deny.actions) {",
+          "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+        }
+      ]
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/graph-resource.js",
+      "exports": [
+        "buildResourceGraph",
+        "resourceEdgeCertainty",
+        "resourceTargetNode"
+      ],
+      "exportCount": 3,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/graph-catalogs.js",
+        "content/tools/iam-blast-radius/engine/graph-helpers.js",
+        "content/tools/iam-blast-radius/engine/graph-result.js",
+        "content/tools/iam-blast-radius/engine/graph-trust.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/graph.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/graph-result.js",
+      "exports": [
+        "compareEdges",
+        "compareNodes",
+        "deepFreeze",
+        "emptyGraph",
+        "frozenResult"
+      ],
+      "exportCount": 5,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/graph-catalogs.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/graph-resource.js",
+        "content/tools/iam-blast-radius/engine/graph-trust.js",
+        "content/tools/iam-blast-radius/engine/graph.js"
+      ],
+      "callerCount": 3,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": [
+        {
+          "file": "content/tools/iam-blast-radius/engine/graph-result.js",
+          "line": 36,
+          "cls": "unbounded-walk",
+          "snippet": "export function deepFreeze(value) {",
+          "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+        }
+      ]
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/graph-trust.js",
+      "exports": [
+        "TRUST_ROLE_ID",
+        "TRUST_ROLE_LABEL",
+        "buildTrustGraph",
+        "trustEdgeCertainty",
+        "trustOriginNode"
+      ],
+      "exportCount": 5,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+        "content/tools/iam-blast-radius/engine/graph-catalogs.js",
+        "content/tools/iam-blast-radius/engine/graph-helpers.js",
+        "content/tools/iam-blast-radius/engine/graph-result.js",
+        "content/tools/iam-blast-radius/engine/trust-classify.js",
+        "content/tools/iam-blast-radius/engine/trust-deny.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/graph-resource.js",
+        "content/tools/iam-blast-radius/engine/graph.js"
+      ],
+      "callerCount": 2,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": [
+        {
+          "file": "content/tools/iam-blast-radius/engine/graph-trust.js",
+          "line": 178,
+          "cls": "budget-bypass",
+          "snippet": "for (const stmt of model.statements) {",
+          "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+        }
+      ]
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/graph.js",
+      "exports": [
         "buildGraph",
         "buildGraphFromText",
-        "buildResourceGraph",
-        "buildTrustGraph",
         "default"
       ],
-      "exportCount": 11,
+      "exportCount": 3,
       "imports": [
         "content/tools/iam-blast-radius/engine/escalation.js",
+        "content/tools/iam-blast-radius/engine/graph-catalogs.js",
+        "content/tools/iam-blast-radius/engine/graph-catalogs.js",
+        "content/tools/iam-blast-radius/engine/graph-edges.js",
+        "content/tools/iam-blast-radius/engine/graph-edges.js",
+        "content/tools/iam-blast-radius/engine/graph-helpers.js",
+        "content/tools/iam-blast-radius/engine/graph-helpers.js",
+        "content/tools/iam-blast-radius/engine/graph-resource.js",
+        "content/tools/iam-blast-radius/engine/graph-resource.js",
+        "content/tools/iam-blast-radius/engine/graph-result.js",
+        "content/tools/iam-blast-radius/engine/graph-result.js",
+        "content/tools/iam-blast-radius/engine/graph-trust.js",
+        "content/tools/iam-blast-radius/engine/graph-trust.js",
         "content/tools/iam-blast-radius/engine/model.js",
         "content/tools/iam-blast-radius/engine/rules.js",
         "content/tools/iam-blast-radius/engine/trust.js"
@@ -591,9 +1501,10 @@
       "nodeBuiltins": [],
       "externalImports": [],
       "callers": [
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
         "content/tools/iam-blast-radius/engine/analyze.js"
       ],
-      "callerCount": 1,
+      "callerCount": 2,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -606,29 +1517,7 @@
         "tools/iam-blast-radius/tests/role-takeover.test.js"
       ],
       "testCount": 3,
-      "astHotspots": [
-        {
-          "file": "content/tools/iam-blast-radius/engine/graph.js",
-          "line": 412,
-          "cls": "budget-bypass",
-          "snippet": "for (const dp of deny.actions) {",
-          "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
-        },
-        {
-          "file": "content/tools/iam-blast-radius/engine/graph.js",
-          "line": 1586,
-          "cls": "budget-bypass",
-          "snippet": "for (const stmt of model.statements) {",
-          "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
-        },
-        {
-          "file": "content/tools/iam-blast-radius/engine/graph.js",
-          "line": 1881,
-          "cls": "unbounded-walk",
-          "snippet": "function deepFreeze(value) {",
-          "note": "recursion (deepFreeze) with no visible depth/node/size cap"
-        }
-      ]
+      "astHotspots": []
     },
     {
       "file": "content/tools/iam-blast-radius/engine/masked-grant.js",
@@ -707,10 +1596,11 @@
         "tools/iam-blast-radius/tests/phase13-rcp.test.js",
         "tools/iam-blast-radius/tests/phase13-scp.test.js",
         "tools/iam-blast-radius/tests/rules.test.js",
+        "tools/iam-blast-radius/tests/s1-r1-deny-fence-surviving.test.js",
         "tools/iam-blast-radius/tests/s4-unicode-spoof.test.js",
         "tools/iam-blast-radius/tests/trust.test.js"
       ],
-      "testCount": 15,
+      "testCount": 16,
       "astHotspots": [
         {
           "file": "content/tools/iam-blast-radius/engine/model.js",
@@ -721,9 +1611,9 @@
         },
         {
           "file": "content/tools/iam-blast-radius/engine/model.js",
-          "line": 125,
+          "line": 161,
           "cls": "unbounded-walk",
-          "snippet": "function copyGuarded(value, errors, path) {",
+          "snippet": "function copyGuarded(value, errors, path, spoof) {",
           "note": "recursion (copyGuarded) with no visible depth/node/size cap"
         }
       ]
@@ -771,9 +1661,10 @@
       "nodeBuiltins": [],
       "externalImports": [],
       "callers": [
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
         "content/tools/iam-blast-radius/engine/analyze.js"
       ],
-      "callerCount": 1,
+      "callerCount": 2,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -915,9 +1806,12 @@
       "callers": [
         "content/tools/iam-blast-radius/engine/analyze.js",
         "content/tools/iam-blast-radius/engine/masked-grant.js",
+        "content/tools/iam-blast-radius/engine/rules-classify.js",
+        "content/tools/iam-blast-radius/engine/rules-detectors.js",
+        "content/tools/iam-blast-radius/engine/rules-finding.js",
         "content/tools/iam-blast-radius/engine/rules.js"
       ],
-      "callerCount": 3,
+      "callerCount": 6,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -925,42 +1819,386 @@
       ],
       "reachableFromBrowser": true,
       "tests": [
-        "tools/iam-blast-radius/tests/breadth-classify.test.js"
+        "tools/iam-blast-radius/tests/breadth-classify.test.js",
+        "tools/iam-blast-radius/tests/mac-should-fix.test.js"
       ],
-      "testCount": 1,
+      "testCount": 2,
       "astHotspots": []
     },
     {
-      "file": "content/tools/iam-blast-radius/engine/resource.js",
+      "file": "content/tools/iam-blast-radius/engine/resource-catalogs.js",
       "exports": [
+        "DOC_CONFUSED_DEPUTY",
+        "DOC_CROSS_ACCOUNT",
+        "DOC_EVAL_LOGIC",
+        "DOC_KMS_CONDITIONS",
+        "DOC_KMS_GRANTS",
+        "DOC_KMS_KEY_POLICY",
+        "DOC_KMS_OVERVIEW",
+        "DOC_PRINCIPAL",
+        "DOC_S3_ACTIONS",
+        "DOC_S3_BPA",
+        "DOC_S3_POLICY_KEYS",
+        "DOC_SNS_ACCESS",
+        "DOC_SQS_ACCESS",
         "MODELED_RESOURCE_SERVICES",
         "RESOURCE_CODES",
         "RESOURCE_IDS",
+        "RESOURCE_LIMIT",
+        "RESOURCE_RULE_VERSION",
         "RESOURCE_SERVICES",
-        "RESOURCE_SERVICE_LABELS",
-        "analyzeResource",
-        "dispatchPerServiceRules",
-        "enumeratePrincipals",
-        "parseArn",
-        "parseResourceContext",
-        "perServiceRuleSetFor",
-        "serviceForArn",
-        "default"
+        "RESOURCE_SERVICE_LABELS"
       ],
-      "exportCount": 13,
+      "exportCount": 20,
+      "imports": [],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/arn-util.js",
+        "content/tools/iam-blast-radius/engine/resource-conditions.js",
+        "content/tools/iam-blast-radius/engine/resource-finding.js",
+        "content/tools/iam-blast-radius/engine/resource-kms-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-messaging-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-s3-rules.js",
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 7,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/resource-conditions.js",
+      "exports": [
+        "KMS_PRINCIPAL_SCOPING_KEYS",
+        "NETWORK_SELECTOR_KEYS",
+        "PRINCIPAL_SCOPING_KEYS",
+        "conditionKeyInventory",
+        "describeConditionComposition",
+        "isPrincipalScopingKey",
+        "operatorNegatesScope",
+        "principalScopingAnalysis",
+        "selectorCategory"
+      ],
+      "exportCount": 9,
       "imports": [
         "content/tools/iam-blast-radius/engine/conditions.js",
         "content/tools/iam-blast-radius/engine/glob.js",
+        "content/tools/iam-blast-radius/engine/resource-catalogs.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/resource-kms-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-messaging-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-s3-rules.js",
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 4,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/resource-finding.js",
+      "exports": [
+        "S3_OBJECT_ACTIONS",
+        "isS3ObjectAction",
+        "makeResourceFinding",
+        "s3ResourceScope",
+        "summarizeEntries"
+      ],
+      "exportCount": 5,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/arn-util.js",
+        "content/tools/iam-blast-radius/engine/resource-catalogs.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/resource-kms-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-messaging-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-s3-rules.js",
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 4,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/resource-kms-rules.js",
+      "exports": [
+        "KMS_GRANT_IS_FOR_AWS_RESOURCE_KEY",
+        "KMS_VIA_SERVICE_KEY",
+        "kmsActionName",
+        "kmsChannelDecoyKeys",
+        "kmsHasAccountDelegation",
+        "kmsHasAnonymousAllow",
+        "kmsPerServiceRules",
+        "namesGrantIsForAwsResource"
+      ],
+      "exportCount": 8,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/resource-catalogs.js",
+        "content/tools/iam-blast-radius/engine/resource-conditions.js",
+        "content/tools/iam-blast-radius/engine/resource-finding.js",
+        "content/tools/iam-blast-radius/engine/resource-s3-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-shared.js",
         "content/tools/iam-blast-radius/engine/trust.js"
       ],
       "importsMissing": [],
       "nodeBuiltins": [],
       "externalImports": [],
       "callers": [
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/resource-messaging-rules.js",
+      "exports": [
+        "MESSAGING_DATA_PLANE_VECTORS",
+        "SNS_CONTROL_ACTIONS",
+        "SQS_CONTROL_ACTIONS",
+        "isMessagingServiceWildcard",
+        "messagingActionParts",
+        "messagingControlSet",
+        "messagingPerServiceRules",
+        "namesSourceOwner"
+      ],
+      "exportCount": 8,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/resource-catalogs.js",
+        "content/tools/iam-blast-radius/engine/resource-conditions.js",
+        "content/tools/iam-blast-radius/engine/resource-finding.js",
+        "content/tools/iam-blast-radius/engine/resource-shared.js",
+        "content/tools/iam-blast-radius/engine/trust.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/resource-principal-classification.js",
+      "exports": [
+        "FAIL_CLOSED_PRINCIPAL_META",
+        "FAIL_CLOSED_PRINCIPAL_TYPES",
+        "SUBKIND_LABELS",
+        "principalSubKind"
+      ],
+      "exportCount": 4,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/arn-util.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/resource-s3-rules.js",
+      "exports": [
+        "S3_BUCKET_CONTROL_ACTIONS",
+        "S3_REQUEST_PROPERTY_KEYS",
+        "S3_RESOURCE_ACCOUNT_KEYS",
+        "collectRequestPropertyDenyKeys",
+        "isRequestPropertyOnlyCondition",
+        "isS3BucketControlAction",
+        "s3NonPrincipalDecoyKeys",
+        "s3PerServiceRules"
+      ],
+      "exportCount": 8,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/resource-catalogs.js",
+        "content/tools/iam-blast-radius/engine/resource-conditions.js",
+        "content/tools/iam-blast-radius/engine/resource-finding.js",
+        "content/tools/iam-blast-radius/engine/resource-shared.js",
+        "content/tools/iam-blast-radius/engine/trust.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/resource-kms-rules.js",
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 2,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/resource-shared.js",
+      "exports": [
+        "accountOfEntry",
+        "enumeratePrincipals",
+        "hasTransportOnlyDeny",
+        "isTransportOnlyCondition"
+      ],
+      "exportCount": 4,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/arn-util.js",
+        "content/tools/iam-blast-radius/engine/trust.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/resource-kms-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-messaging-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-s3-rules.js",
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 4,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/resource-source-binding.js",
+      "exports": [
+        "POSITIVE_MATCH_OPERATORS",
+        "accountFromSourceValue",
+        "commonSourceAccount",
+        "isMatchAllSourceValue",
+        "sourceAccountSet",
+        "sourceBindingAnalysis",
+        "toSourceValueList"
+      ],
+      "exportCount": 7,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/arn-util.js",
+        "content/tools/iam-blast-radius/engine/conditions.js",
+        "content/tools/iam-blast-radius/engine/glob.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/resource.js",
+      "exports": [
+        "analyzeResource",
+        "dispatchPerServiceRules",
+        "perServiceRuleSetFor",
+        "default"
+      ],
+      "exportCount": 4,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/arn-util.js",
+        "content/tools/iam-blast-radius/engine/arn-util.js",
+        "content/tools/iam-blast-radius/engine/conditions.js",
+        "content/tools/iam-blast-radius/engine/glob.js",
+        "content/tools/iam-blast-radius/engine/resource-catalogs.js",
+        "content/tools/iam-blast-radius/engine/resource-catalogs.js",
+        "content/tools/iam-blast-radius/engine/resource-conditions.js",
+        "content/tools/iam-blast-radius/engine/resource-conditions.js",
+        "content/tools/iam-blast-radius/engine/resource-finding.js",
+        "content/tools/iam-blast-radius/engine/resource-finding.js",
+        "content/tools/iam-blast-radius/engine/resource-kms-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-kms-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-messaging-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-messaging-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-principal-classification.js",
+        "content/tools/iam-blast-radius/engine/resource-principal-classification.js",
+        "content/tools/iam-blast-radius/engine/resource-s3-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-s3-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-shared.js",
+        "content/tools/iam-blast-radius/engine/resource-shared.js",
+        "content/tools/iam-blast-radius/engine/resource-source-binding.js",
+        "content/tools/iam-blast-radius/engine/resource-source-binding.js",
+        "content/tools/iam-blast-radius/engine/trust.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
         "content/tools/iam-blast-radius/engine/analyze.js",
         "content/tools/iam-blast-radius/engine/family.js"
       ],
-      "callerCount": 2,
+      "callerCount": 3,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -982,34 +2220,233 @@
       "astHotspots": []
     },
     {
-      "file": "content/tools/iam-blast-radius/engine/rules.js",
+      "file": "content/tools/iam-blast-radius/engine/rules-catalog.js",
       "exports": [
         "RULES",
-        "RULE_IDS",
-        "actionResourceTypeMismatches",
-        "analyzeRules",
-        "analyzeRulesFromText",
-        "isBroadArnResource",
-        "ruleFindingDenySuppressed",
-        "survivingBroadReadActions",
-        "default"
+        "RULE_IDS"
       ],
-      "exportCount": 9,
+      "exportCount": 2,
+      "imports": [],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/rules-finding.js",
+        "content/tools/iam-blast-radius/engine/rules.js"
+      ],
+      "callerCount": 2,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/rules-classify.js",
+      "exports": [
+        "BULK_READ_ACTIONS",
+        "CAPABILITY_LIMIT",
+        "COMPLEMENT_LIMIT",
+        "CONCRETE_ACCOUNT_ID_RE",
+        "CONDITION_LIMIT",
+        "CONFIDENCE_LADDER",
+        "DATA_READ_ACTIONS",
+        "DESTRUCTIVE_VERB",
+        "DETECTION_ACTIONS",
+        "DETECTION_SERVICES",
+        "GROUP_MEMBERSHIP_ACTIONS",
+        "IAM_ADMIN_ACTIONS",
+        "KMS_DECRYPT_ACTIONS",
+        "PRIVILEGED_GROUP_NAME_TOKENS",
+        "READ_VERB",
+        "RESOURCE_ACCOUNT_COND_KEYS",
+        "RESOURCE_ACCOUNT_EQ_OPS",
+        "RESOURCE_POLICY_WRITE_ACTIONS",
+        "SECRET_READ_ACTIONS",
+        "SENSITIVE_NAME_TOKENS",
+        "actionGrants",
+        "actionService",
+        "actionVerb",
+        "concreteResourceAccount",
+        "groupNameFromArn",
+        "groupNameSuggestsPrivilege",
+        "isFullWildcard",
+        "isServiceWildcard",
+        "isWholeContainerRead",
+        "lowerConfidence",
+        "resourceAccountFromCondition",
+        "resourceHasVariable",
+        "resourceInfersSensitive",
+        "statementSid"
+      ],
+      "exportCount": 34,
       "imports": [
-        "content/tools/iam-blast-radius/engine/conditions.js",
-        "content/tools/iam-blast-radius/engine/escalation.js",
         "content/tools/iam-blast-radius/engine/glob.js",
-        "content/tools/iam-blast-radius/engine/model.js",
         "content/tools/iam-blast-radius/engine/resource-arn.js"
       ],
       "importsMissing": [],
       "nodeBuiltins": [],
       "externalImports": [],
       "callers": [
+        "content/tools/iam-blast-radius/engine/rules-detectors.js",
+        "content/tools/iam-blast-radius/engine/rules-finding.js",
+        "content/tools/iam-blast-radius/engine/rules.js"
+      ],
+      "callerCount": 3,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/rules-detectors.js",
+      "exports": [
+        "allowGrantsSparedResource",
+        "classifyContainerReads",
+        "denyEntirelyDeniesResource",
+        "matchPatterns",
+        "ruleDataExfil",
+        "ruleDataReadScoped",
+        "ruleDestructive",
+        "ruleDetectionImpairment",
+        "ruleDirectIamAdmin",
+        "ruleGroupMembership",
+        "ruleKmsDecrypt",
+        "ruleNotActionAllow",
+        "ruleResourcePolicyWrite",
+        "ruleWildcardAction",
+        "ruleWildcardResource",
+        "sparedResourceFullyDeniedElsewhere",
+        "survivingSparedContainerReads",
+        "undetAllCanonicalS3",
+        "undetFindingText"
+      ],
+      "exportCount": 19,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/glob.js",
+        "content/tools/iam-blast-radius/engine/resource-arn.js",
+        "content/tools/iam-blast-radius/engine/rules-classify.js",
+        "content/tools/iam-blast-radius/engine/rules-finding.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/rules.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": [
+        {
+          "file": "content/tools/iam-blast-radius/engine/rules-detectors.js",
+          "line": 98,
+          "cls": "budget-bypass",
+          "snippet": "for (const p of stmt.actions) {",
+          "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+        },
+        {
+          "file": "content/tools/iam-blast-radius/engine/rules-detectors.js",
+          "line": 762,
+          "cls": "budget-bypass",
+          "snippet": "for (const stmt of model.statements) {",
+          "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
+        }
+      ]
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/rules-finding.js",
+      "exports": [
+        "denyFencesToNarrow",
+        "grantsNonReadAction",
+        "isBroadArnResource",
+        "isBulkReadAction",
+        "isNonReadAction",
+        "makeFinding",
+        "remediableWildcardActions",
+        "resourceIsBroad",
+        "resourceScope",
+        "ruleFindingDenySuppressed",
+        "survivingBroadReadActions"
+      ],
+      "exportCount": 11,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/glob.js",
+        "content/tools/iam-blast-radius/engine/resource-arn.js",
+        "content/tools/iam-blast-radius/engine/rules-catalog.js",
+        "content/tools/iam-blast-radius/engine/rules-classify.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/rules-detectors.js",
+        "content/tools/iam-blast-radius/engine/rules.js"
+      ],
+      "callerCount": 2,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/rules.js",
+      "exports": [
+        "actionResourceTypeMismatches",
+        "analyzeRules",
+        "analyzeRulesFromText",
+        "default"
+      ],
+      "exportCount": 4,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation.js",
+        "content/tools/iam-blast-radius/engine/glob.js",
+        "content/tools/iam-blast-radius/engine/model.js",
+        "content/tools/iam-blast-radius/engine/resource-arn.js",
+        "content/tools/iam-blast-radius/engine/rules-catalog.js",
+        "content/tools/iam-blast-radius/engine/rules-catalog.js",
+        "content/tools/iam-blast-radius/engine/rules-classify.js",
+        "content/tools/iam-blast-radius/engine/rules-classify.js",
+        "content/tools/iam-blast-radius/engine/rules-detectors.js",
+        "content/tools/iam-blast-radius/engine/rules-detectors.js",
+        "content/tools/iam-blast-radius/engine/rules-finding.js",
+        "content/tools/iam-blast-radius/engine/rules-finding.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
         "content/tools/iam-blast-radius/engine/analyze.js",
         "content/tools/iam-blast-radius/engine/graph.js"
       ],
-      "callerCount": 2,
+      "callerCount": 3,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -1022,34 +2459,28 @@
         "tools/iam-blast-radius/tests/evidence.test.js",
         "tools/iam-blast-radius/tests/fixture-matrix.test.js",
         "tools/iam-blast-radius/tests/graph.test.js",
-        "tools/iam-blast-radius/tests/rules.test.js"
+        "tools/iam-blast-radius/tests/rules.test.js",
+        "tools/iam-blast-radius/tests/s1-r1-deny-fence-surviving.test.js"
       ],
-      "testCount": 6,
+      "testCount": 7,
       "astHotspots": [
         {
           "file": "content/tools/iam-blast-radius/engine/rules.js",
-          "line": 957,
-          "cls": "budget-bypass",
-          "snippet": "for (const p of stmt.actions) {",
-          "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
-        },
-        {
-          "file": "content/tools/iam-blast-radius/engine/rules.js",
-          "line": 1461,
+          "line": 144,
           "cls": "budget-bypass",
           "snippet": "for (const stmt of model.statements) {",
           "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
         },
         {
           "file": "content/tools/iam-blast-radius/engine/rules.js",
-          "line": 1541,
+          "line": 224,
           "cls": "budget-bypass",
           "snippet": "for (const stmt of model.statements) {",
           "note": "nested per-item iteration with no chargeWork/budget charge in the loop body"
         },
         {
           "file": "content/tools/iam-blast-radius/engine/rules.js",
-          "line": 1591,
+          "line": 274,
           "cls": "unbounded-walk",
           "snippet": "function deepFreeze(value) {",
           "note": "recursion (deepFreeze) with no visible depth/node/size cap"
@@ -1071,9 +2502,10 @@
       "nodeBuiltins": [],
       "externalImports": [],
       "callers": [
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
         "content/tools/iam-blast-radius/engine/analyze.js"
       ],
-      "callerCount": 1,
+      "callerCount": 2,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -1096,36 +2528,287 @@
       ]
     },
     {
-      "file": "content/tools/iam-blast-radius/engine/trust.js",
+      "file": "content/tools/iam-blast-radius/engine/trust-catalogs.js",
       "exports": [
         "ASSUME_ACTIONS",
         "AUX_SESSION_ACTIONS",
+        "DOC_CONDITION_KEYS",
+        "DOC_CONFUSED_DEPUTY",
+        "DOC_OIDC",
+        "DOC_PRINCIPAL",
         "KNOWN_PRINCIPAL_TYPES",
+        "NEGATED_OPERATORS",
+        "POSITIVE_STRING_MATCH_OPERATORS",
+        "RULE_VERSION",
         "SOURCE_BINDING_SERVICES",
         "TRUST_ACTIONS",
         "TRUST_IDS",
-        "analyzeTrust",
-        "classifyPrincipals",
-        "isTrustStatement",
-        "summarizeTrustDeny",
-        "trustDenyStatements",
-        "trustFindingDenyState",
-        "default"
+        "TRUST_LIMIT"
       ],
-      "exportCount": 13,
+      "exportCount": 14,
+      "imports": [],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/trust-classify.js",
+        "content/tools/iam-blast-radius/engine/trust-conditions.js",
+        "content/tools/iam-blast-radius/engine/trust-deny.js",
+        "content/tools/iam-blast-radius/engine/trust-findings.js",
+        "content/tools/iam-blast-radius/engine/trust.js"
+      ],
+      "callerCount": 5,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/trust-classify.js",
+      "exports": [
+        "add",
+        "awsPrincipalType",
+        "classifyPrincipals",
+        "federatedType",
+        "isTrustStatement",
+        "serviceType"
+      ],
+      "exportCount": 6,
       "imports": [
-        "content/tools/iam-blast-radius/engine/escalation.js",
-        "content/tools/iam-blast-radius/engine/glob.js"
+        "content/tools/iam-blast-radius/engine/glob.js",
+        "content/tools/iam-blast-radius/engine/trust-catalogs.js",
+        "content/tools/iam-blast-radius/engine/trust-principal-helpers.js"
       ],
       "importsMissing": [],
       "nodeBuiltins": [],
       "externalImports": [],
       "callers": [
-        "content/tools/iam-blast-radius/engine/analyze.js",
-        "content/tools/iam-blast-radius/engine/graph.js",
-        "content/tools/iam-blast-radius/engine/resource.js"
+        "content/tools/iam-blast-radius/engine/graph-trust.js",
+        "content/tools/iam-blast-radius/engine/trust-deny.js",
+        "content/tools/iam-blast-radius/engine/trust.js"
       ],
       "callerCount": 3,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": [
+        {
+          "file": "content/tools/iam-blast-radius/engine/trust-classify.js",
+          "line": 61,
+          "cls": "unbounded-walk",
+          "snippet": "export function add(out, type, value, key, index) {",
+          "note": "recursion (add) with no visible depth/node/size cap"
+        }
+      ]
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/trust-conditions.js",
+      "exports": [
+        "conditionSignals",
+        "hasConfusedDeputyConstraint",
+        "parseOperatorParts",
+        "publicScopeConstraint",
+        "selfReferenceKeys",
+        "substitutePolicyVars",
+        "toValues"
+      ],
+      "exportCount": 7,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/trust-catalogs.js",
+        "content/tools/iam-blast-radius/engine/trust-principal-helpers.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/trust.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [
+        "tools/iam-blast-radius/tests/federation-sub-polarity.test.js",
+        "tools/iam-blast-radius/tests/mac-extended.test.js"
+      ],
+      "testCount": 2,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/trust-deny.js",
+      "exports": [
+        "buildDenyCoverage",
+        "canonicalPrincipalKey",
+        "principalEntryDeniedBy",
+        "summarizeTrustDeny",
+        "trustDenyStatements",
+        "trustFindingDenyState"
+      ],
+      "exportCount": 6,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+        "content/tools/iam-blast-radius/engine/escalation-deny.js",
+        "content/tools/iam-blast-radius/engine/glob.js",
+        "content/tools/iam-blast-radius/engine/trust-catalogs.js",
+        "content/tools/iam-blast-radius/engine/trust-classify.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/graph-trust.js",
+        "content/tools/iam-blast-radius/engine/trust.js"
+      ],
+      "callerCount": 2,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/trust-findings.js",
+      "exports": [
+        "makeFinding",
+        "makeInvalidPrincipalFinding",
+        "principalIsBroad",
+        "principalSummary",
+        "principalValueIsBroad",
+        "principalsFromEntries",
+        "subsetPrincipals"
+      ],
+      "exportCount": 7,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/trust-catalogs.js",
+        "content/tools/iam-blast-radius/engine/trust-principal-helpers.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/trust.js"
+      ],
+      "callerCount": 1,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": []
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/trust-principal-helpers.js",
+      "exports": [
+        "ARN_RESOURCE_TYPE_KEYWORDS",
+        "accountOrOrgValueNarrows",
+        "arnAccountPinned",
+        "arnPinnedAccount",
+        "arnValueNarrows",
+        "deepFreeze",
+        "err",
+        "hasGlob",
+        "isAllAddressIp",
+        "isAllGlobOrEmpty",
+        "namedPrincipalAccounts",
+        "principalArnValueIsBroad",
+        "principalPinsAccount",
+        "statementSid",
+        "valueNarrowsKey"
+      ],
+      "exportCount": 15,
+      "imports": [],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/trust-classify.js",
+        "content/tools/iam-blast-radius/engine/trust-conditions.js",
+        "content/tools/iam-blast-radius/engine/trust-findings.js",
+        "content/tools/iam-blast-radius/engine/trust.js"
+      ],
+      "callerCount": 4,
+      "entrypoints": [
+        "action",
+        "browser-analyze",
+        "cli"
+      ],
+      "reachableFromBrowser": true,
+      "tests": [],
+      "testCount": 0,
+      "astHotspots": [
+        {
+          "file": "content/tools/iam-blast-radius/engine/trust-principal-helpers.js",
+          "line": 182,
+          "cls": "candidate-drop",
+          "snippet": "const beforeAccount = segs.slice(0, 4); // arn, partition, service, region",
+          "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
+        },
+        {
+          "file": "content/tools/iam-blast-radius/engine/trust-principal-helpers.js",
+          "line": 223,
+          "cls": "unbounded-walk",
+          "snippet": "export function deepFreeze(value) {",
+          "note": "recursion (deepFreeze) with no visible depth/node/size cap"
+        }
+      ]
+    },
+    {
+      "file": "content/tools/iam-blast-radius/engine/trust.js",
+      "exports": [
+        "analyzeTrust",
+        "default"
+      ],
+      "exportCount": 2,
+      "imports": [
+        "content/tools/iam-blast-radius/engine/escalation.js",
+        "content/tools/iam-blast-radius/engine/glob.js",
+        "content/tools/iam-blast-radius/engine/trust-catalogs.js",
+        "content/tools/iam-blast-radius/engine/trust-catalogs.js",
+        "content/tools/iam-blast-radius/engine/trust-classify.js",
+        "content/tools/iam-blast-radius/engine/trust-classify.js",
+        "content/tools/iam-blast-radius/engine/trust-conditions.js",
+        "content/tools/iam-blast-radius/engine/trust-conditions.js",
+        "content/tools/iam-blast-radius/engine/trust-deny.js",
+        "content/tools/iam-blast-radius/engine/trust-deny.js",
+        "content/tools/iam-blast-radius/engine/trust-findings.js",
+        "content/tools/iam-blast-radius/engine/trust-findings.js",
+        "content/tools/iam-blast-radius/engine/trust-principal-helpers.js",
+        "content/tools/iam-blast-radius/engine/trust-principal-helpers.js"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [],
+      "externalImports": [],
+      "callers": [
+        "content/tools/iam-blast-radius/engine/analyze-results.js",
+        "content/tools/iam-blast-radius/engine/analyze.js",
+        "content/tools/iam-blast-radius/engine/graph.js",
+        "content/tools/iam-blast-radius/engine/resource-kms-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-messaging-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-s3-rules.js",
+        "content/tools/iam-blast-radius/engine/resource-shared.js",
+        "content/tools/iam-blast-radius/engine/resource.js"
+      ],
+      "callerCount": 8,
       "entrypoints": [
         "action",
         "browser-analyze",
@@ -1137,29 +2820,7 @@
         "tools/iam-blast-radius/tests/trust.test.js"
       ],
       "testCount": 2,
-      "astHotspots": [
-        {
-          "file": "content/tools/iam-blast-radius/engine/trust.js",
-          "line": 389,
-          "cls": "candidate-drop",
-          "snippet": "const beforeAccount = segs.slice(0, 4); // arn, partition, service, region",
-          "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
-        },
-        {
-          "file": "content/tools/iam-blast-radius/engine/trust.js",
-          "line": 427,
-          "cls": "unbounded-walk",
-          "snippet": "function deepFreeze(value) {",
-          "note": "recursion (deepFreeze) with no visible depth/node/size cap"
-        },
-        {
-          "file": "content/tools/iam-blast-radius/engine/trust.js",
-          "line": 505,
-          "cls": "unbounded-walk",
-          "snippet": "function add(out, type, value, key, index) {",
-          "note": "recursion (add) with no visible depth/node/size cap"
-        }
-      ]
+      "astHotspots": []
     },
     {
       "file": "content/tools/iam-blast-radius/engine/validate.js",
@@ -1205,6 +2866,7 @@
         "tools/iam-blast-radius/tests/contributing-statements-dedup-budget.test.js",
         "tools/iam-blast-radius/tests/dos-budget-all.test.js",
         "tools/iam-blast-radius/tests/family.test.js",
+        "tools/iam-blast-radius/tests/newbudget-denyfence-dos-budget.test.js",
         "tools/iam-blast-radius/tests/parse.test.js",
         "tools/iam-blast-radius/tests/passrole-account-dedup-budget.test.js",
         "tools/iam-blast-radius/tests/passrole-deny-scan-budget.test.js",
@@ -1217,18 +2879,18 @@
         "tools/iam-blast-radius/tests/trustdeny-principal-scan-budget.test.js",
         "tools/iam-blast-radius/tests/validate.test.js"
       ],
-      "testCount": 26,
+      "testCount": 27,
       "astHotspots": [
         {
           "file": "content/tools/iam-blast-radius/engine/validate.js",
-          "line": 258,
+          "line": 264,
           "cls": "silent-catch-clean",
           "snippet": "} catch (e) {",
           "note": "catch swallows the error with no fail-closed marker"
         },
         {
           "file": "content/tools/iam-blast-radius/engine/validate.js",
-          "line": 270,
+          "line": 276,
           "cls": "unbounded-walk",
           "snippet": "function sanitize(value, path, errors, visited) {",
           "note": "recursion (sanitize) with no visible depth/node/size cap"
@@ -1341,6 +3003,77 @@
       "astHotspots": []
     },
     {
+      "file": "cli/baseline.mjs",
+      "exports": [
+        "BASELINE_VERSION",
+        "MAX_BASELINE_BYTES",
+        "MAX_BASELINE_ENTRIES",
+        "applyBaseline",
+        "baselineWriteProblem",
+        "buildBaseline",
+        "findingBaselineKey",
+        "formatBaseline",
+        "parseBaseline",
+        "stateBaselineKey"
+      ],
+      "exportCount": 10,
+      "imports": [
+        "cli/sarif.mjs",
+        "cli/scan.mjs"
+      ],
+      "importsMissing": [],
+      "nodeBuiltins": [
+        "node:crypto"
+      ],
+      "externalImports": [],
+      "callers": [
+        "action/index.mjs",
+        "cli/iam-br.mjs"
+      ],
+      "callerCount": 2,
+      "entrypoints": [
+        "action",
+        "cli"
+      ],
+      "reachableFromBrowser": false,
+      "tests": [
+        "tools/iam-blast-radius/tests/baseline.test.js"
+      ],
+      "testCount": 1,
+      "astHotspots": [
+        {
+          "file": "cli/baseline.mjs",
+          "class": "candidate-drop",
+          "line": 110,
+          "reason": "oversize baseline returns ok:false (INVALID_BASELINE), which every caller turns into exit 2; no partial baseline is ever used"
+        },
+        {
+          "file": "cli/baseline.mjs",
+          "class": "candidate-drop",
+          "line": 117,
+          "reason": "unparseable baseline returns ok:false (INVALID_BASELINE) -> exit 2; never treated as an empty baseline"
+        },
+        {
+          "file": "cli/baseline.mjs",
+          "class": "candidate-drop",
+          "line": 126,
+          "reason": "over-cap entry count returns ok:false (INVALID_BASELINE) -> exit 2; entries are never truncated"
+        },
+        {
+          "file": "cli/baseline.mjs",
+          "class": "candidate-drop",
+          "line": 259,
+          "reason": "baselineWriteProblem: too many entries -> BASELINE_TOO_LARGE usage error (exit 2), nothing written"
+        },
+        {
+          "file": "cli/baseline.mjs",
+          "class": "candidate-drop",
+          "line": 263,
+          "reason": "baselineWriteProblem: too many bytes -> BASELINE_TOO_LARGE usage error (exit 2), nothing written"
+        }
+      ]
+    },
+    {
       "file": "cli/iam-br.mjs",
       "exports": [
         "EXIT",
@@ -1356,10 +3089,12 @@
         "run",
         "toJsonReport",
         "versionString",
+        "writeFileContained",
         "default"
       ],
-      "exportCount": 14,
+      "exportCount": 15,
       "imports": [
+        "cli/baseline.mjs",
         "cli/sarif.mjs",
         "cli/scan.mjs",
         "content/tools/iam-blast-radius/engine/validate.js",
@@ -1379,6 +3114,7 @@
       ],
       "reachableFromBrowser": false,
       "tests": [
+        "tools/iam-blast-radius/tests/baseline.test.js",
         "tools/iam-blast-radius/tests/cli-action-byte-cap.test.js",
         "tools/iam-blast-radius/tests/cli-iam-br-s5-hardening.test.js",
         "tools/iam-blast-radius/tests/cli-iam-br.test.js",
@@ -1386,27 +3122,45 @@
         "tools/iam-blast-radius/tests/cli-readfilecap-special.test.js",
         "tools/iam-blast-radius/tests/complexity-budget.test.js",
         "tools/iam-blast-radius/tests/entrypoint-guard-symlink.test.js",
+        "tools/iam-blast-radius/tests/hardening-e2-e3.test.js",
+        "tools/iam-blast-radius/tests/mac-extended.test.js",
+        "tools/iam-blast-radius/tests/no-dynamic-code.test.js",
+        "tools/iam-blast-radius/tests/s1-r1-deny-fence-surviving.test.js",
         "tools/iam-blast-radius/tests/sarif-real-invocation.test.js"
       ],
-      "testCount": 8,
+      "testCount": 13,
       "astHotspots": [
         {
           "file": "cli/iam-br.mjs",
-          "line": 668,
+          "line": 769,
           "cls": "silent-catch-clean",
           "snippet": "} catch { /* best effort */ }",
           "note": "catch swallows the error with no fail-closed marker"
         },
         {
           "file": "cli/iam-br.mjs",
-          "line": 682,
+          "line": 783,
           "cls": "silent-catch-clean",
           "snippet": "try { stream.pause(); } catch { /* best effort */ }",
           "note": "catch swallows the error with no fail-closed marker"
         },
         {
           "file": "cli/iam-br.mjs",
-          "line": 683,
+          "line": 784,
+          "cls": "silent-catch-clean",
+          "snippet": "try { if (typeof stream.destroy === 'function') stream.destroy(); } catch { /* best effort */ }",
+          "note": "catch swallows the error with no fail-closed marker"
+        },
+        {
+          "file": "cli/iam-br.mjs",
+          "line": 807,
+          "cls": "silent-catch-clean",
+          "snippet": "try { stream.pause(); } catch { /* best effort */ }",
+          "note": "catch swallows the error with no fail-closed marker"
+        },
+        {
+          "file": "cli/iam-br.mjs",
+          "line": 808,
           "cls": "silent-catch-clean",
           "snippet": "try { if (typeof stream.destroy === 'function') stream.destroy(); } catch { /* best effort */ }",
           "note": "catch swallows the error with no fail-closed marker"
@@ -1424,10 +3178,12 @@
         "findingIdentity",
         "formatSarif",
         "inertLeaf",
+        "occurrenceOrdinals",
+        "sha256Hex",
         "stateIdentity",
         "default"
       ],
-      "exportCount": 10,
+      "exportCount": 12,
       "imports": [
         "content/tools/iam-blast-radius/engine/format-control.js",
         "content/tools/iam-blast-radius/engine/validate.js"
@@ -1437,9 +3193,10 @@
       "externalImports": [],
       "callers": [
         "action/index.mjs",
+        "cli/baseline.mjs",
         "cli/iam-br.mjs"
       ],
-      "callerCount": 2,
+      "callerCount": 3,
       "entrypoints": [
         "action",
         "cli",
@@ -1447,33 +3204,34 @@
       ],
       "reachableFromBrowser": false,
       "tests": [
+        "tools/iam-blast-radius/tests/baseline.test.js",
+        "tools/iam-blast-radius/tests/cli-sarif-fingerprint-v2.test.js",
+        "tools/iam-blast-radius/tests/cli-sarif-identity.test.js",
+        "tools/iam-blast-radius/tests/cli-sarif-positive-identity.test.js",
+        "tools/iam-blast-radius/tests/cli-sarif-principal-object-identity.test.js",
         "tools/iam-blast-radius/tests/cli-sarif-sanitize-all.test.js",
         "tools/iam-blast-radius/tests/cli-sarif-sid.test.js",
+        "tools/iam-blast-radius/tests/cli-sarif-state-details.test.js",
         "tools/iam-blast-radius/tests/cli-sarif-symmetric.test.js",
         "tools/iam-blast-radius/tests/cli-sarif.test.js",
+        "tools/iam-blast-radius/tests/mac-should-fix.test.js",
+        "tools/iam-blast-radius/tests/s1-r1-deny-fence-surviving.test.js",
         "tools/iam-blast-radius/tests/s4-unicode-spoof.test.js"
       ],
-      "testCount": 5,
+      "testCount": 13,
       "astHotspots": [
         {
           "file": "cli/sarif.mjs",
-          "line": 391,
+          "line": 530,
           "cls": "candidate-drop",
           "snippet": "if (s.length > MAX_SID_LEN) s = `${s.slice(0, MAX_SID_LEN)}...`;",
           "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
         },
         {
           "file": "cli/sarif.mjs",
-          "line": 655,
+          "line": 816,
           "cls": "candidate-drop",
-          "snippet": "if (s.length > MAX_URI_LEN) s = s.slice(0, MAX_URI_LEN);",
-          "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
-        },
-        {
-          "file": "cli/sarif.mjs",
-          "line": 677,
-          "cls": "candidate-drop",
-          "snippet": "const shown = norm.slice(0, MAX_MSG_ACTIONS);",
+          "snippet": "return { shown: norm.slice(0, MAX_MSG_ACTIONS), more: Math.max(0, norm.length - MAX_MSG_ACTIONS) };",
           "note": "slice/splice truncation to a cap with no fail-closed truncation signal"
         }
       ]
@@ -1486,10 +3244,11 @@
         "DEFAULT_BUDGET_MS",
         "EXIT",
         "SELECTABLE_FAMILIES",
+        "meetsThreshold",
         "scan",
         "default"
       ],
-      "exportCount": 7,
+      "exportCount": 8,
       "imports": [
         "content/tools/iam-blast-radius/engine/analyze.js",
         "content/tools/iam-blast-radius/engine/glob.js"
@@ -1499,87 +3258,105 @@
       "externalImports": [],
       "callers": [
         "action/index.mjs",
+        "cli/baseline.mjs",
         "cli/iam-br.mjs"
       ],
-      "callerCount": 2,
+      "callerCount": 3,
       "entrypoints": [
         "action",
         "cli"
       ],
       "reachableFromBrowser": false,
       "tests": [
+        "tools/iam-blast-radius/tests/baseline.test.js",
         "tools/iam-blast-radius/tests/breadth-classify.test.js",
         "tools/iam-blast-radius/tests/breadth-failclosed.test.js",
         "tools/iam-blast-radius/tests/browser-cli-parity.test.js",
+        "tools/iam-blast-radius/tests/catalog-aws-ref.test.js",
+        "tools/iam-blast-radius/tests/catalog-unmodeled.test.js",
         "tools/iam-blast-radius/tests/cli-action-safety-gate.test.js",
         "tools/iam-blast-radius/tests/cli-json-byte-faithful-doc.test.js",
+        "tools/iam-blast-radius/tests/cli-sarif-fingerprint-v2.test.js",
+        "tools/iam-blast-radius/tests/cli-sarif-identity.test.js",
+        "tools/iam-blast-radius/tests/cli-sarif-positive-identity.test.js",
         "tools/iam-blast-radius/tests/cli-sarif-sanitize-all.test.js",
         "tools/iam-blast-radius/tests/cli-sarif-sid.test.js",
+        "tools/iam-blast-radius/tests/cli-sarif-state-details.test.js",
         "tools/iam-blast-radius/tests/cli-sarif-symmetric.test.js",
         "tools/iam-blast-radius/tests/cli-sarif.test.js",
         "tools/iam-blast-radius/tests/cli-scan.test.js",
         "tools/iam-blast-radius/tests/complexity-budget.test.js",
+        "tools/iam-blast-radius/tests/compute-code-overwrite.test.js",
+        "tools/iam-blast-radius/tests/compute-session-takeover.test.js",
         "tools/iam-blast-radius/tests/condition-value-budget.test.js",
+        "tools/iam-blast-radius/tests/conditions-s3-federation.test.js",
         "tools/iam-blast-radius/tests/dataexfil-arn-nonarn-glob.test.js",
         "tools/iam-blast-radius/tests/dataexfil-arn-outpost-terminal-collection.test.js",
+        "tools/iam-blast-radius/tests/deny-qmark-masking.test.js",
+        "tools/iam-blast-radius/tests/detach-policy-iam-admin.test.js",
         "tools/iam-blast-radius/tests/dos-budget-all.test.js",
+        "tools/iam-blast-radius/tests/federation-sub-polarity.test.js",
+        "tools/iam-blast-radius/tests/mac-extended.test.js",
+        "tools/iam-blast-radius/tests/mac-should-fix.test.js",
         "tools/iam-blast-radius/tests/must-warn.test.js",
+        "tools/iam-blast-radius/tests/new01-undetermined-service-agnostic.test.js",
+        "tools/iam-blast-radius/tests/newbudget-denyfence-dos-budget.test.js",
+        "tools/iam-blast-radius/tests/notaction-deny-variable-failclosed.test.js",
+        "tools/iam-blast-radius/tests/passedtoservice-casefold-failclosed.test.js",
         "tools/iam-blast-radius/tests/passrole-account-dedup-budget.test.js",
         "tools/iam-blast-radius/tests/passrole-defaulted-subject-partition.test.js",
         "tools/iam-blast-radius/tests/passrole-demoted-subsumption-order-invariance.test.js",
         "tools/iam-blast-radius/tests/passrole-deny-decoy-not-remove-all.test.js",
         "tools/iam-blast-radius/tests/passrole-deny-scan-budget.test.js",
+        "tools/iam-blast-radius/tests/passrole-eventbridge.test.js",
         "tools/iam-blast-radius/tests/passrole-exec-most-severe-order-invariance.test.js",
         "tools/iam-blast-radius/tests/passrole-noncanonical-arn-spelling.test.js",
         "tools/iam-blast-radius/tests/passrole-noncanonical-subject-partition.test.js",
         "tools/iam-blast-radius/tests/passrole-order-invariance.test.js",
         "tools/iam-blast-radius/tests/passrole-other-shaped-reaches.test.js",
+        "tools/iam-blast-radius/tests/resource-context-forwarding.test.js",
+        "tools/iam-blast-radius/tests/resource-policy-write.test.js",
         "tools/iam-blast-radius/tests/roletakeover-satisfiability-dos-budget.test.js",
         "tools/iam-blast-radius/tests/rules-crossaccount-dedup-budget.test.js",
+        "tools/iam-blast-radius/tests/s1-r1-deny-fence-surviving.test.js",
         "tools/iam-blast-radius/tests/s2-airtight-incomplete.test.js",
         "tools/iam-blast-radius/tests/s2-crossaccount-scoped-surface.test.js",
+        "tools/iam-blast-radius/tests/spoofed-token-failclosed.test.js",
         "tools/iam-blast-radius/tests/trust-dos-budget.test.js",
         "tools/iam-blast-radius/tests/trustdeny-principal-scan-budget.test.js",
         "tools/iam-blast-radius/tests/wildcardresource-account-wildcard.test.js"
       ],
-      "testCount": 33,
+      "testCount": 57,
       "astHotspots": []
     },
     {
       "file": "action/index.mjs",
       "exports": [
-        "AGGREGATE_CAP_REASON",
-        "DEFAULT_MAX_FILES",
-        "DEFAULT_MAX_TOTAL_BYTES",
-        "ENUMERATION_MAX_FILES",
-        "ENUMERATION_TRUNCATED_REASON",
-        "ENUMERATION_UNREADABLE_REASON",
         "EXIT",
-        "SYMLINK_EXCLUDED_REASON",
-        "aggregateStatus",
-        "buildAggregateSarif",
         "emitArtifacts",
-        "exceedsInputByteCap",
-        "formatOutputs",
-        "formatSummary",
-        "getInput",
-        "globCanMatchUnderDir",
-        "globMatchPath",
-        "globToRegExp",
-        "hasMagic",
         "main",
-        "matchedExcludedSymlinks",
-        "matchedUnreadableDirs",
-        "readInputs",
-        "resolveFiles",
         "runAction",
-        "sarifTargetContainedFs",
-        "splitPaths",
-        "worstExitCode",
         "default"
       ],
-      "exportCount": 29,
+      "exportCount": 5,
       "imports": [
+        "action/action-aggregate.mjs",
+        "action/action-aggregate.mjs",
+        "action/action-consts.mjs",
+        "action/action-consts.mjs",
+        "action/action-enumerate.mjs",
+        "action/action-enumerate.mjs",
+        "action/action-glob.mjs",
+        "action/action-glob.mjs",
+        "action/action-inputs.mjs",
+        "action/action-inputs.mjs",
+        "action/action-output.mjs",
+        "action/action-output.mjs",
+        "action/action-results.mjs",
+        "action/action-results.mjs",
+        "action/action-utils.mjs",
+        "action/action-utils.mjs",
+        "cli/baseline.mjs",
         "cli/sarif.mjs",
         "cli/scan.mjs",
         "content/tools/iam-blast-radius/engine/validate.js",
@@ -1602,10 +3379,16 @@
       "tests": [
         "tools/iam-blast-radius/tests/action-aggregate-cap.test.js",
         "tools/iam-blast-radius/tests/action-enumeration-failclosed.test.js",
+        "tools/iam-blast-radius/tests/action-failure-hint.test.js",
         "tools/iam-blast-radius/tests/action-index.test.js",
+        "tools/iam-blast-radius/tests/action-sarif-aggregate-budget.test.js",
+        "tools/iam-blast-radius/tests/action-selftest-runner.test.js",
         "tools/iam-blast-radius/tests/action-selftest.test.js",
         "tools/iam-blast-radius/tests/action-symlink-failclosed.test.js",
         "tools/iam-blast-radius/tests/action-symlink-write.test.js",
+        "tools/iam-blast-radius/tests/action-unknown-inputs.test.js",
+        "tools/iam-blast-radius/tests/baseline-fs.test.js",
+        "tools/iam-blast-radius/tests/baseline.test.js",
         "tools/iam-blast-radius/tests/cli-action-byte-cap.test.js",
         "tools/iam-blast-radius/tests/cli-action-safety-gate.test.js",
         "tools/iam-blast-radius/tests/complexity-budget.test.js",
@@ -1613,20 +3396,56 @@
         "tools/iam-blast-radius/tests/entrypoint-guard-symlink.test.js",
         "tools/iam-blast-radius/tests/sarif-real-invocation.test.js"
       ],
-      "testCount": 12,
+      "testCount": 18,
       "astHotspots": [
         {
           "file": "action/index.mjs",
-          "line": 303,
-          "cls": "candidate-drop",
-          "snippet": "return s.length > MAX_GLOB_PATTERN_LENGTH || countGlobWildcards(s) > MAX_GLOB_WILDCARDS;",
-          "note": "cap/truncation-guarded drop with no fail-closed truncation signal"
+          "class": "candidate-drop",
+          "line": 195,
+          "reason": "unreadable baseline rejects the WHOLE run as a usage error (exit 2, BASELINE_UNREADABLE); nothing is dropped and the run never proceeds without it"
         }
       ]
     }
   ],
   "orphans": {
-    "untested": [],
+    "untested": [
+      "content/tools/iam-blast-radius/engine/analyze-format.js",
+      "content/tools/iam-blast-radius/engine/analyze-results.js",
+      "content/tools/iam-blast-radius/engine/arn-util.js",
+      "content/tools/iam-blast-radius/engine/escalation-action-grants.js",
+      "content/tools/iam-blast-radius/engine/escalation-catalogs.js",
+      "content/tools/iam-blast-radius/engine/escalation-conditions.js",
+      "content/tools/iam-blast-radius/engine/escalation-consts.js",
+      "content/tools/iam-blast-radius/engine/escalation-families.js",
+      "content/tools/iam-blast-radius/engine/escalation-finding.js",
+      "content/tools/iam-blast-radius/engine/escalation-scope.js",
+      "content/tools/iam-blast-radius/engine/escalation-statement.js",
+      "content/tools/iam-blast-radius/engine/escalation-takeover.js",
+      "content/tools/iam-blast-radius/engine/graph-catalogs.js",
+      "content/tools/iam-blast-radius/engine/graph-edges.js",
+      "content/tools/iam-blast-radius/engine/graph-helpers.js",
+      "content/tools/iam-blast-radius/engine/graph-resource.js",
+      "content/tools/iam-blast-radius/engine/graph-result.js",
+      "content/tools/iam-blast-radius/engine/graph-trust.js",
+      "content/tools/iam-blast-radius/engine/resource-catalogs.js",
+      "content/tools/iam-blast-radius/engine/resource-conditions.js",
+      "content/tools/iam-blast-radius/engine/resource-finding.js",
+      "content/tools/iam-blast-radius/engine/resource-kms-rules.js",
+      "content/tools/iam-blast-radius/engine/resource-messaging-rules.js",
+      "content/tools/iam-blast-radius/engine/resource-principal-classification.js",
+      "content/tools/iam-blast-radius/engine/resource-s3-rules.js",
+      "content/tools/iam-blast-radius/engine/resource-shared.js",
+      "content/tools/iam-blast-radius/engine/resource-source-binding.js",
+      "content/tools/iam-blast-radius/engine/rules-catalog.js",
+      "content/tools/iam-blast-radius/engine/rules-classify.js",
+      "content/tools/iam-blast-radius/engine/rules-detectors.js",
+      "content/tools/iam-blast-radius/engine/rules-finding.js",
+      "content/tools/iam-blast-radius/engine/trust-catalogs.js",
+      "content/tools/iam-blast-radius/engine/trust-classify.js",
+      "content/tools/iam-blast-radius/engine/trust-deny.js",
+      "content/tools/iam-blast-radius/engine/trust-findings.js",
+      "content/tools/iam-blast-radius/engine/trust-principal-helpers.js"
+    ],
     "browserNodeBuiltins": []
   }
 }

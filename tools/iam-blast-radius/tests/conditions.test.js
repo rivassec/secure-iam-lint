@@ -328,14 +328,13 @@ test('IAM-804 iter4: an all-glob default-path value (sts:ExternalId "?*", "*?", 
   }
 });
 
-test('IAM-804 iter4 control: a literal-carrying ExternalId glob still narrows and IS credited', () => {
-  // The fix must reject only ALL-glob values; a partial ExternalId carrying a
-  // literal still forces the caller to present that correlation substring.
-  for (const v of ['corr-?', 'my-ext-id-*', 'prefix?suffix']) {
+test('any ExternalId glob is not credited; only an exact value is', () => {
+  // A glob lets other tenants of the vendor match (confused deputy).
+  for (const v of ['corr-?', 'my-ext-id-*', 'prefix?suffix', 'a*']) {
     const e = classifyConditionEntry('StringLike', 'sts:ExternalId', v);
-    assert.equal(e.class, CONDITION_CLASS.CONSTRAINT, `"${v}" carries a literal -> narrows`);
-    assert.equal(e.credited, true, `a literal-carrying ExternalId "${v}" is a credited constraint`);
+    assert.equal(e.credited, false, `ExternalId glob "${v}" is not credited`);
   }
+  assert.equal(classifyConditionEntry('StringEquals', 'sts:ExternalId', 'exact-123').credited, true);
 });
 
 test('IAM-804 iter5: a non-string operator (Date/Numeric) on a value-scoping trust key is NOT credited', () => {

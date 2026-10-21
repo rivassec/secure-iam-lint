@@ -1,0 +1,12 @@
+{
+  "name": "s3:PutObjectAcl fully denied in the same policy",
+  "note": "Explicit Deny precedence removes the grant; no OBJECT-ACL-WRITE.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "AclAll", "Effect": "Allow", "Action": "s3:PutObjectAcl", "Resource": "*" },
+      { "Sid": "DenyIt", "Effect": "Deny", "Action": "s3:PutObjectAcl", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["OBJECT-ACL-WRITE"] }
+}

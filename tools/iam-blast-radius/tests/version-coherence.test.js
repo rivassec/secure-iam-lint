@@ -51,7 +51,7 @@ test('version manifest is frozen and declares the expected fields', () => {
   assert.equal(typeof VERSION_MANIFEST.actionCatalogVersion, 'string');
   assert.equal(typeof VERSION_MANIFEST.buildSha, 'string');
   // The action-catalog snapshot is a dated tag (YYYY.MM.DD).
-  assert.match(VERSION_MANIFEST.actionCatalogVersion, /^\d{4}\.\d{2}\.\d{2}$/);
+  assert.match(VERSION_MANIFEST.actionCatalogVersion, /^\d{4}\.\d{2}\.\d{2}(\.\d+)?$/);
 });
 
 // --- Live coherence (the shipped modules agree with the manifest) ------------

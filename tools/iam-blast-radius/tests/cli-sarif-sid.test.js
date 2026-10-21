@@ -319,7 +319,7 @@ test('S4: a hostile Sid does NOT change the fingerprint of an otherwise-identica
     'the raw Sid is excluded from fingerprint identity, so it cannot force a collision or churn');
 });
 
-test('S4: findingIdentity ignores the Sid entirely (type/family/position/action/resource only)', () => {
+test('S4: findingIdentity ignores the Sid entirely (type/family/action/resource only)', () => {
   const base = {
     id: 'T', severity: 'high', title: 't',
     statementIndex: 0, statementSid: 'Benign',
@@ -330,10 +330,10 @@ test('S4: findingIdentity ignores the Sid entirely (type/family/position/action/
     'the Sid is not part of the semantic identity');
   assert.ok(!findingIdentity(base, 'identity').includes('Benign'),
     'the identity string carries no Sid at all');
-  // A different STATEMENT POSITION still separates findings (position is structural,
-  // not attacker-forgeable against a semantically different finding).
+  // Position is NOT identity: moving the statement must not churn the fingerprint.
   const movedStmt = { ...base, statementIndex: 1 };
-  assert.notEqual(findingIdentity(movedStmt, 'identity'), findingIdentity(base, 'identity'));
+  assert.equal(findingIdentity(movedStmt, 'identity'), findingIdentity(base, 'identity'));
+  assert.notEqual(findingIdentity({ ...base, actions: ['iam:PassRole'] }, 'identity'), findingIdentity(base, 'identity'));
 });
 
 // --- no over-correction: a benign Sid rides through intact -------------------------

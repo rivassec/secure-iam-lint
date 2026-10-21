@@ -1,0 +1,17 @@
+{
+  "name": "rds-db:connect pinned dbuser, Condition-gated (boundary)",
+  "note": "A concrete cluster + db user pin is the decision boundary: still reported (medium), not suppressed; the Condition reduces confidence.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DbConnectPinned",
+        "Effect": "Allow",
+        "Action": "rds-db:connect",
+        "Resource": "arn:aws:rds-db:us-east-2:111122223333:dbuser:cluster-ABCDE12345/app_reader",
+        "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "true" } }
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["DB-AUTH"], "notFindingIds": [] }
+}

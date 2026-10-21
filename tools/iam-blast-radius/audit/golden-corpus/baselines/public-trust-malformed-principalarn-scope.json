@@ -23,6 +23,9 @@
           "title": "Wildcard-principal role trust narrowed by a scoping condition",
           "statementSid": "PublicAssumeWithMalformedPrincipalArnScope",
           "statementIndex": 0,
+          "principals": [
+            "anonymous=*"
+          ],
           "actions": [
             "sts:AssumeRole"
           ],
@@ -169,7 +172,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v1": "04324006509c3a03c754043b0368"
+                "iamBlastRadius/semanticIdentity/v2": "41aa0b015fcfeddd6f390b792bd31630"
               },
               "properties": {
                 "category": "security",
@@ -197,7 +200,8 @@
                   }
                 ],
                 "jsonPointer": "/Statement/0",
-                "statementSid": "PublicAssumeWithMalformedPrincipalArnScope"
+                "statementSid": "PublicAssumeWithMalformedPrincipalArnScope",
+                "baselineId": "00044e1aba06d292d822649d1c50b6ca01a179f9b04aa643fa7514480afa1dd6"
               },
               "ruleIndex": 0
             }

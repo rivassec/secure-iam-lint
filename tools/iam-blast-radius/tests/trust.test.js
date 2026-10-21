@@ -1030,16 +1030,16 @@ test('Finding 2: other all-glob default-path ExternalId values ("*?", "?", "**?"
   }
 });
 
-test('Finding 2 preservation: a partial ExternalId carrying a LITERAL is still a (weaker) constraint (low/medium)', () => {
-  for (const v of ['corr-?', 'my-ext-id-*', 'prefix?suffix']) {
+test('a partial ExternalId glob is not a guardrail: stays high', () => {
+  // A glob lets other tenants of the vendor match (confused deputy).
+  for (const v of ['corr-?', 'my-ext-id-*', 'prefix?suffix', 'a*']) {
     const f = trust([{
       Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::999888777666:root' }, Action: 'sts:AssumeRole',
       Condition: { StringLike: { 'sts:ExternalId': v } },
     }]).findings.find((x) => x.id === 'TRUST-CROSS-ACCOUNT');
     assert.ok(f, `ExternalId ${v}`);
-    assert.ok(['low', 'medium'].includes(f.severity),
-      `a literal-carrying ExternalId "${v}" still forces a correlation substring, got ${f.severity}`);
-    assert.equal(f.conditionClassification.hasCreditableConstraint, true, `"${v}" is credited (has a literal)`);
+    assert.equal(f.severity, 'high', `ExternalId glob "${v}"`);
+    assert.equal(f.conditionClassification.hasCreditableConstraint, false, `"${v}" not credited`);
   }
 });
 
@@ -1606,7 +1606,10 @@ test('S7-4: a truncated aws:PrincipalArn scoping value fails closed (broad), nev
   }]);
   const lf = legit.findings.find((x) => x.id === 'TRUST-PUBLIC');
   assert.ok(lf);
-  assert.equal(lf.severity, 'medium', 'a genuine specific-ARN scope still narrows to medium (no over-correction)');
+  // L1-02: a tight pin scores like NAMING that principal (high), never medium -
+  // but it is still described as a specific principal, unlike the junk values above.
+  assert.equal(lf.severity, 'high', 'a tight pin scores like the named cross-account form');
+  assert.match(lf.why, /a specific principal/i);
 
   // CONTROL 2: an already-broad wildcard ARN stays critical (arnValueNarrows
   // rejects it before this path; unchanged behavior).

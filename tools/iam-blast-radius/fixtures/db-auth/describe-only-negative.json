@@ -1,0 +1,11 @@
+{
+  "name": "rds:DescribeDBClusters only (G4 negative)",
+  "note": "Cluster metadata listing is not DB authentication.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "DescribeOnly", "Effect": "Allow", "Action": "rds:DescribeDBClusters", "Resource": "arn:aws:rds:us-east-2:111122223333:cluster:example-db" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["DB-AUTH"] }
+}

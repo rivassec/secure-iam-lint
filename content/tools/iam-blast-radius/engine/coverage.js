@@ -142,7 +142,8 @@ export function duplicateSids(model) {
  *
  * @param {object} coverage family-gate coverage (from detectFamily)
  * @param {{model?:object, graph?:object, catalogVersion?:string,
- *          unrecognizedActions?:Array, unsupportedConditions?:Array}} [context]
+ *          unrecognizedActions?:Array, unsupportedConditions?:Array,
+ *          unsupportedConditionBindings?:Array}} [context]
  * @returns {object} enriched, frozen coverage
  */
 export function enrichCoverage(coverage, context) {
@@ -213,6 +214,9 @@ export function enrichCoverage(coverage, context) {
     : [];
   const unsupportedConditions = Array.isArray(ctx.unsupportedConditions)
     ? ctx.unsupportedConditions.map((c) => String(c))
+    : [];
+  const unsupportedConditionBindings = Array.isArray(ctx.unsupportedConditionBindings)
+    ? ctx.unsupportedConditionBindings.map((c) => String(c))
     : [];
 
   // Stage-11 RC-A (fail-open fix): the model (model.js) records when
@@ -457,6 +461,7 @@ export function enrichCoverage(coverage, context) {
     statements: Object.freeze({ total, accepted, rejected }),
     unrecognizedActions: Object.freeze(unrecognizedActions),
     unsupportedConditions: Object.freeze(unsupportedConditions),
+    unsupportedConditionBindings: Object.freeze(unsupportedConditionBindings),
     unsupportedElements: Object.freeze(unsupportedElements.concat(abortedElements)),
     // S3-dos-budget: true when the analysis was stopped by the resource budget
     // before completing. A hard fail-closed signal the CLI/SARIF adapters and the

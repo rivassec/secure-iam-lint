@@ -9,6 +9,13 @@ export const CONCRETE_ACCOUNT_ID_RE = /^[0-9]{12}$/;
 // iam:PassedToService), the finding id to emit, and the concrete role-consuming
 // actions that, combined with iam:PassRole, complete the path. Passing a role
 // to a service you can also make run code as = run code with that role.
+// aws-cn service-principal spellings pinned from AWS docs (China IAM guide, EC2 example;
+// see T2-2). Unlisted services may send either spelling - the guide says it varies.
+export const CHINA_SERVICE_PRINCIPALS = Object.freeze({
+  'ec2.amazonaws.com': 'ec2.amazonaws.com.cn',
+  'datapipeline.amazonaws.com': 'datapipeline.amazonaws.com.cn',
+});
+
 const PASS_ROLE_SERVICES = Object.freeze([
   Object.freeze({
     service: 'lambda',
@@ -24,7 +31,13 @@ const PASS_ROLE_SERVICES = Object.freeze([
     service: 'ec2',
     principal: 'ec2.amazonaws.com',
     id: 'PASSROLE-EC2',
-    execActions: Object.freeze(['ec2:RunInstances']),
+    // Associate/Replace attach an existing instance profile to a running instance, so with
+    // iam:PassRole they are the same role-transfer path as RunInstances.
+    execActions: Object.freeze([
+      'ec2:RunInstances',
+      'ec2:AssociateIamInstanceProfile',
+      'ec2:ReplaceIamInstanceProfileAssociation',
+    ]),
   }),
   Object.freeze({
     service: 'ecs',
@@ -147,6 +160,8 @@ const CREDENTIAL_ACTIONS = Object.freeze([
   'iam:CreateAccessKey',
   'iam:CreateLoginProfile',
   'iam:UpdateLoginProfile',
+  // Mints federated session credentials that survive revoking the source key.
+  'sts:GetFederationToken',
 ]);
 
 const ASSUME_ROLE_ACTIONS = Object.freeze(['sts:AssumeRole', 'sts:AssumeRoleWithSAML', 'sts:AssumeRoleWithWebIdentity']);
@@ -228,7 +243,7 @@ export const ESCALATIONS = Object.freeze({
   'CREDENTIAL-CREATION': Object.freeze({
     id: 'CREDENTIAL-CREATION',
     order: 7,
-    title: 'Credential creation for a principal (access key / login profile)',
+    title: 'Credential creation for a principal (access key / login profile / federation token)',
     ruleVersion: '1',
     docRef:
       'https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html',
@@ -295,6 +310,18 @@ export const ESCALATIONS = Object.freeze({
     ruleVersion: '1',
     docRef:
       'https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_SendCommand.html',
+  }),
+  // G5: broad iam:PassRole with NO companion launch action in this document. The
+  // grant combines with any compute permission the holder has from elsewhere, so
+  // it is surfaced on its own (high). When a companion action exists, the
+  // compound PASSROLE-* path (critical) covers it and this finding is withheld.
+  'PASSROLE-UNSCOPED': Object.freeze({
+    id: 'PASSROLE-UNSCOPED',
+    order: 13,
+    title: 'Broad iam:PassRole grant (no companion launch action in this policy)',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html',
   }),
 });
 

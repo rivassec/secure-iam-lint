@@ -12,7 +12,15 @@
 // No runtime deps (Node built-ins only). ASCII only. Deterministic: same tree
 // in -> same findings out, sorted by (file, line, class).
 
-import { readFileSync, writeFileSync, existsSync, realpathSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, realpathSync, readdirSync, renameSync } from 'node:fs';
+
+// Atomic write (tmp + rename): a concurrent reader sees the old or new file, never a
+// partial one. The tmp name must not end in .json (the indexer globs *.json).
+function writeFileAtomic(path, text) {
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
+}
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve, relative } from 'node:path';
 
@@ -711,7 +719,7 @@ function mainCli(argv) {
   // to a stable path next to lint.mjs, on every run. Best-effort: a write failure
   // must not change the lint verdict.
   const payload = { scanned: scanned.length, missing, active, suppressed };
-  try { writeFileSync(HOTSPOTS_OUT, JSON.stringify(payload, null, 2) + '\n'); } catch { /* best effort */ }
+  try { writeFileAtomic(HOTSPOTS_OUT, JSON.stringify(payload, null, 2) + '\n'); } catch { /* best effort */ }
 
   const exit = exitCodeFor({ active, missing });
 
@@ -719,7 +727,7 @@ function mainCli(argv) {
   // Run this only when you have reviewed the active hotspots and accept them.
   if (args.includes('--write-hotspot-baseline')) {
     const counts = Object.fromEntries([...hotspotCounts(active).entries()].sort());
-    writeFileSync(HOTSPOT_BASELINE_OUT, JSON.stringify(counts, null, 2) + '\n');
+    writeFileAtomic(HOTSPOT_BASELINE_OUT, JSON.stringify(counts, null, 2) + '\n');
     process.stdout.write(
       `wrote hotspot-baseline.json (${Object.keys(counts).length} file::cls keys, ${active.length} active hotspots)\n`,
     );

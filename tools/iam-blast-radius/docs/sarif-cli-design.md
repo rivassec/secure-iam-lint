@@ -103,11 +103,12 @@ CI consumer cannot misread them:
 
 ## partialFingerprints (stable dedup)
 
-Fingerprint on normalized SEMANTIC identity: finding type + policy family + JSON
-pointer / statement identity + normalized action/resource/principal/condition +
+Fingerprint on normalized SEMANTIC identity: finding type + policy family + normalized action/resource/principal/condition +
 subject-account/partition only when they affect viability. NEVER fingerprint on
-message text, line number alone, timestamps, absolute local paths, or object key
-order.
+message text, statement position, line number alone, timestamps, absolute local
+paths, or object key order. Identical results in one file are told apart by an
+occurrence ordinal; analyzer states include their sorted offending set. SHA-256/128
+under `iamBlastRadius/semanticIdentity/v2`.
 
 ## Packaging (no bundler)
 

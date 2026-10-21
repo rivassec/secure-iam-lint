@@ -1,0 +1,11 @@
+{
+  "name": "iam:PassRole on * with no launch action (G5 positive)",
+  "note": "The broad pass capability pairs with compute permissions from any other policy the holder has; surfaced standalone at high.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "PassAny", "Effect": "Allow", "Action": "iam:PassRole", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["PASSROLE-UNSCOPED"], "notFindingIds": ["PASSROLE-LAMBDA", "PASSROLE-EC2", "PASSROLE-SERVICE"] }
+}

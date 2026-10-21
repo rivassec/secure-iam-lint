@@ -31,6 +31,9 @@
 // A CI gate treats 1,2,3,4 as FAILED. Code 3 is DISTINCT from 0 and from 1.
 
 import { randomUUID } from 'node:crypto';
+import {
+  applyBaseline, parseBaseline, buildBaseline, formatBaseline, baselineWriteProblem, MAX_BASELINE_BYTES,
+} from '../cli/baseline.mjs';
 import { resolveFiles, walkFiles } from './action-enumerate.mjs';
 export * from './action-enumerate.mjs';
 import {
@@ -39,6 +42,7 @@ import {
 export * from './action-output.mjs';
 import {
   exceedsInputByteCap, sarifOutputIsContained, sarifTargetContainedFs, getInput, readInputs, budgetMsInput,
+  unrecognizedInputs,
 } from './action-inputs.mjs';
 export * from './action-inputs.mjs';
 import {
@@ -83,6 +87,19 @@ export * from './action-consts.mjs';
 // dominates blocking findings (1), which dominate a clean scan (0). Any code
 // OUTSIDE 0..4 is treated as the internal-worst rank so a garbage code can never
 // masquerade as (or collapse to) a clean 0.
+// Lexical equality of two workspace-relative paths (case kept; '.', '' and '..' resolved).
+function samePath(a, b) {
+  const norm = (p) => {
+    const out = [];
+    for (const seg of String(p).split(/[/\\]/)) {
+      if (seg === '' || seg === '.') continue;
+      if (seg === '..') out.pop(); else out.push(seg);
+    }
+    return out.join('/');
+  };
+  return norm(a) === norm(b);
+}
+
 export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST } = {}) {
   try {
     const rawInputs = readInputs(env);
@@ -150,6 +167,61 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
           inputs.family,
         ),
       }], inputs, manifest);
+    }
+
+    // --- Opt-in baseline (exit 2 on any problem, before any scanning). -----------
+    // A baseline that cannot be read or parsed must NEVER degrade to "no baseline": that
+    // would make every accepted result fail (noisy) - or, worse, a typo'd path silently
+    // stop applying a team's reviewed acceptances. It is a usage error instead. The path
+    // is confined like sarif-output, and io.readFile refuses symlinks / non-regular files.
+    inputs.baselineKeys = null;
+    if (isNonEmptyString(inputs.baseline)) {
+      const fail = (reason, message) => finalize([{
+        file: null, result: usageResult(reason, message, inputs.family),
+      }], { ...inputs, baselineOutput: '' }, manifest);
+      // Lexical AND symlink-aware: io.readFile's O_NOFOLLOW only guards the LAST component,
+      // so a symlinked parent directory (linkdir/b.json) would otherwise read from outside.
+      let baselineSafe = sarifOutputIsContained(inputs.baseline);
+      if (baselineSafe && io && typeof io.sarifTargetContained === 'function') {
+        try { baselineSafe = io.sarifTargetContained(inputs.baseline) === true; } catch { baselineSafe = false; }
+      }
+      if (!baselineSafe) {
+        return fail('UNSAFE_BASELINE_PATH', 'The "baseline" input must be a RELATIVE path inside the workspace with no symlink component.');
+      }
+      let text;
+      try {
+        text = io.readFile(inputs.baseline, MAX_BASELINE_BYTES);
+      } catch {
+        return fail('BASELINE_UNREADABLE', 'The "baseline" file could not be read (missing, a symlink, not a regular file, or too large).');
+      }
+      const parsedBaseline = parseBaseline(text);
+      if (!parsedBaseline.ok) return fail(parsedBaseline.reason, parsedBaseline.message);
+      inputs.baselineKeys = parsedBaseline.keys;
+    }
+    if (isNonEmptyString(inputs.baseline) && isNonEmptyString(inputs.baselineOutput)
+      && samePath(inputs.baseline, inputs.baselineOutput)) {
+      // Rewriting the baseline being applied would accept the run's own new findings.
+      return finalize([{
+        file: null,
+        result: usageResult('BASELINE_OUTPUT_SAME_AS_BASELINE', 'baseline-output must not be the same file as baseline.', inputs.family),
+      }], { ...inputs, baselineOutput: '' }, manifest);
+    }
+    if (isNonEmptyString(inputs.baselineOutput)) {
+      let safe = sarifOutputIsContained(inputs.baselineOutput);
+      if (safe && io && typeof io.sarifTargetContained === 'function') {
+        try { safe = io.sarifTargetContained(inputs.baselineOutput) === true; } catch { safe = false; }
+      }
+      if (!safe) {
+        return finalize([{
+          file: null,
+          result: usageResult(
+            'UNSAFE_BASELINE_OUTPUT',
+            'The "baseline-output" input must be a RELATIVE path inside the workspace (no absolute path, '
+              + 'no ".." escape, no control character, no symlink component).',
+            inputs.family,
+          ),
+        }], { ...inputs, baselineOutput: '' }, manifest);
+      }
     }
 
     const patterns = splitPaths(inputs.paths);
@@ -319,7 +391,47 @@ function safeInputs(env) {
 }
 
 // Aggregate a list of scanned units into the final structured result + outputs.
-function finalize(units, inputs, manifest) {
+function finalize(rawUnits, inputs, manifest) {
+  // Attach baseline keys to every unit (so the SARIF publishes them) and apply an opt-in
+  // baseline. applyBaseline never changes a usage/internal/failed unit, so synthetic
+  // fail-closed units keep their verdict. The URI matches buildAggregateSarif's.
+  const baselineKeys = inputs && inputs.baselineKeys instanceof Map ? inputs.baselineKeys : null;
+  const threshold = String((inputs && inputs.failOn) || 'high').trim().toLowerCase();
+  const units = rawUnits.map((u) => ({
+    ...u,
+    result: applyBaseline(u.result, isNonEmptyString(u && u.file) ? u.file : 'action-inputs', baselineKeys, threshold),
+  }));
+  // A baseline entry whose id matches a result but whose file / ruleId / severity does not
+  // was NOT accepted (applyBaseline); it also fails the run as a usage error, so a
+  // mislabelled acceptance can never sit unnoticed in a reviewed baseline.
+  const mismatchCount = units.reduce((n, u) => n + ((u.result && u.result.baseline && u.result.baseline.mismatched) || []).length, 0);
+  if (mismatchCount > 0) {
+    units.push({
+      file: null,
+      result: usageResult(
+        'BASELINE_METADATA_MISMATCH',
+        `${mismatchCount} baseline entr${mismatchCount === 1 ? 'y has' : 'ies have'} an id that matches a result but a different file, ruleId or severity; `
+          + 'regenerate the baseline (baseline-output) and review it.',
+        inputs && inputs.family,
+      ),
+    });
+  }
+  // Build the fresh baseline now: one the next run could not read is a usage error, not a write.
+  let baselineDoc = null;
+  let baselineText = null;
+  if (inputs && isNonEmptyString(inputs.baselineOutput) && mismatchCount === 0) {
+    baselineDoc = buildBaseline(units);
+    baselineText = formatBaseline(baselineDoc);
+    const problem = baselineWriteProblem(baselineDoc, baselineText);
+    if (problem) {
+      units.push({
+        file: null,
+        result: usageResult('BASELINE_TOO_LARGE', `baseline-output not written: ${problem}; scope paths to fewer files.`, inputs.family),
+      });
+      baselineDoc = null;
+      baselineText = null;
+    }
+  }
   const codes = units.map((u) => (u.result && u.result.exitCode));
   const exitCode = worstExitCode(codes);
   const findingsCount = units.reduce((n, u) => n + toCount(u.result && u.result.findingsCount), 0);
@@ -342,6 +454,18 @@ function finalize(units, inputs, manifest) {
     'blocking-findings-count': String(blockingCount),
     'analysis-status': analysisStatus,
   };
+  // Baseline outputs exist only when a baseline was applied (absent otherwise, so runs
+  // without one keep the exact pre-baseline output set).
+  let baselineStale = 0;
+  if (baselineKeys) {
+    const used = new Set();
+    for (const u of units) for (const k of ((u.result && u.result.baseline && u.result.baseline.used) || [])) used.add(k);
+    baselineStale = [...baselineKeys.keys()].filter((k) => !used.has(k)).length;
+    outputs['baselined-count'] = String(used.size);
+    outputs['baseline-stale-count'] = String(baselineStale);
+  }
+  // No baseline is written after any baseline usage error (mismatch or too large).
+  const baselinePath = baselineDoc ? inputs.baselineOutput : null;
   // The exit code above is computed from the REAL units, BEFORE the SARIF is built - so the
   // aggregate DOCUMENT-level truncation below can never downgrade (or inflate) it. The caps
   // mirror the max-files / max-total-bytes inputs (S2-NEW-SARIF-AGGREGATE).
@@ -353,9 +477,21 @@ function finalize(units, inputs, manifest) {
 
   return {
     exitCode, reason, analysisStatus, findingsCount, blockingCount,
-    sarifPath, outputs, sarifLog, units,
+    sarifPath, outputs, sarifLog, units, baselineStale,
+    baselinePath,
+    baselineText,
+    baselineCritical: baselineDoc ? baselineDoc.entries.filter((e) => e.severity === 'critical').length : 0,
   };
 }
+
+// Fixed, tool-authored one-line hints for usage errors whose reason code alone does not say
+// how to fix the input. Keyed by reason code ONLY - never interpolating an input value -
+// because this line goes to the runner log, where an attacker-shaped value could forge a
+// `::workflow-command`.
+const FAILURE_HINTS = Object.freeze({
+  UNSAFE_SARIF_OUTPUT: 'use a workspace-relative path such as "iam-blast-radius.sarif" '
+    + '(absolute paths like /tmp/x.sarif and paths escaping the workspace are rejected)',
+});
 
 // --- Artifact emission (pure over injected sinks; testable) -------------------
 
@@ -381,6 +517,11 @@ export function emitArtifacts(final, env, sinks) {
     if (typeof s.writeSarif === 'function') {
       s.writeSarif(final.sarifPath, `${JSON.stringify(final.sarifLog, null, 2)}\n`);
       ops.push({ op: 'sarif' });
+    }
+    // 1b. Optional fresh baseline (baseline-output), confined like the SARIF.
+    if (final.baselinePath && typeof final.baselineText === 'string' && typeof s.writeBaseline === 'function') {
+      s.writeBaseline(final.baselinePath, final.baselineText);
+      ops.push({ op: 'baseline' });
     }
     // 2. ALL outputs (before any fail).
     if (isNonEmptyString(e.GITHUB_OUTPUT) && typeof s.appendOutput === 'function') {
@@ -438,7 +579,7 @@ export async function main() {
     // excludes symlinks + non-regular files during enumeration, so this is defense in
     // depth on the read itself. O_NOFOLLOW/O_NONBLOCK are undefined on Windows -> 0
     // (the Action runs on Linux runners).
-    readFile: (rel) => {
+    readFile: (rel, maxBytes = null) => {
       const abs = nodePath.join(baseDir, rel);
       const C = nodeFs.constants;
       const flags = (C.O_RDONLY ?? 0) | (C.O_NOFOLLOW ?? 0) | (C.O_NONBLOCK ?? 0);
@@ -454,7 +595,7 @@ export async function main() {
           e.code = INPUT_TOO_LARGE;
           throw e;
         }
-        if (exceedsInputByteCap(st.size)) {
+        if (maxBytes != null ? st.size > maxBytes : exceedsInputByteCap(st.size)) {
           const e = new Error('policy file exceeds the input byte limit');
           e.code = INPUT_TOO_LARGE;
           throw e;
@@ -482,33 +623,37 @@ export async function main() {
   }
 
   // Write SARIF, then ALL outputs, then the summary - BEFORE failing the action.
+  // One confined writer for every workspace file the action emits (the SARIF and the
+  // optional baseline-output), so both get the identical last-line guards.
+  const writeConfined = (what) => (rel, text) => {
+    // Defense in depth (S4-action-hardening): runAction already rejects an unsafe
+    // sarif-output as a usage error, so `rel` here is a confined relative path. The
+    // sink independently REFUSES to write outside the workspace - an absolute path or
+    // one that resolves above baseDir throws (captured as a writeError, never a clean
+    // pass) rather than performing an arbitrary-file-write. This is the last guard on
+    // the ACTION.md contract "writes a SARIF file in the workspace; nothing more".
+    const baseResolved = nodePath.resolve(baseDir);
+    const sarifAbs = nodePath.resolve(baseResolved, rel);
+    const within = sarifAbs === baseResolved
+      || sarifAbs.startsWith(baseResolved + nodePath.sep);
+    if (nodePath.isAbsolute(rel) || !within) {
+      throw new Error(`refusing to write ${what} outside the workspace: ${rel}`);
+    }
+    // Symlink-aware last guard (S4-action-hardening ROUND 2): the LEXICAL `within`
+    // check is TRUE for a path like `reports/x.sarif` even when `reports` is a symlink
+    // to an external dir - the write would then land outside the workspace. runAction
+    // already rejects such a value via io.sarifTargetContained, but the sink verifies
+    // independently (defense in depth) that no existing path component is a symlink
+    // escaping the workspace before writing anything.
+    if (!sarifTargetContainedFs(nodeFs, nodePath, baseResolved, rel)) {
+      throw new Error(`refusing to write ${what} through a symlink outside the workspace: ${rel}`);
+    }
+    nodeFs.mkdirSync(nodePath.dirname(sarifAbs), { recursive: true });
+    nodeFs.writeFileSync(sarifAbs, text);
+  };
   const sinks = {
-    writeSarif: (rel, text) => {
-      // Defense in depth (S4-action-hardening): runAction already rejects an unsafe
-      // sarif-output as a usage error, so `rel` here is a confined relative path. The
-      // sink independently REFUSES to write outside the workspace - an absolute path or
-      // one that resolves above baseDir throws (captured as a writeError, never a clean
-      // pass) rather than performing an arbitrary-file-write. This is the last guard on
-      // the ACTION.md contract "writes a SARIF file in the workspace; nothing more".
-      const baseResolved = nodePath.resolve(baseDir);
-      const sarifAbs = nodePath.resolve(baseResolved, rel);
-      const within = sarifAbs === baseResolved
-        || sarifAbs.startsWith(baseResolved + nodePath.sep);
-      if (nodePath.isAbsolute(rel) || !within) {
-        throw new Error(`refusing to write SARIF outside the workspace: ${rel}`);
-      }
-      // Symlink-aware last guard (S4-action-hardening ROUND 2): the LEXICAL `within`
-      // check is TRUE for a path like `reports/x.sarif` even when `reports` is a symlink
-      // to an external dir - the write would then land outside the workspace. runAction
-      // already rejects such a value via io.sarifTargetContained, but the sink verifies
-      // independently (defense in depth) that no existing path component is a symlink
-      // escaping the workspace before writing anything.
-      if (!sarifTargetContainedFs(nodeFs, nodePath, baseResolved, rel)) {
-        throw new Error(`refusing to write SARIF through a symlink outside the workspace: ${rel}`);
-      }
-      nodeFs.mkdirSync(nodePath.dirname(sarifAbs), { recursive: true });
-      nodeFs.writeFileSync(sarifAbs, text);
-    },
+    writeSarif: writeConfined('SARIF'),
+    writeBaseline: writeConfined('the baseline'),
     appendOutput: (text) => nodeFs.appendFileSync(process.env.GITHUB_OUTPUT, text),
     appendSummary: (text) => nodeFs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, text),
   };
@@ -523,10 +668,29 @@ export async function main() {
     }
   }
 
+  if (final.baselineCritical > 0) {
+    process.stderr.write(`IAM Blast Radius: baseline-output wrote ${final.baselineCritical} critical entr${final.baselineCritical === 1 ? 'y' : 'ies'}; review them before committing, since a baseline accepts critical results too.\n`);
+  }
+
+  // Name ignored inputs (charset-limited names only, never values).
+  const stray = unrecognizedInputs(process.env);
+  if (stray.names.length > 0 || stray.odd > 0) {
+    const listed = stray.names.length > 0 ? stray.names.join(', ') : '';
+    const more = stray.odd > 0 ? `${listed ? ' and ' : ''}${stray.odd} with an unusual name` : '';
+    process.stderr.write(`IAM Blast Radius: ignoring unrecognized input(s): ${listed}${more} (not declared in action.yml).\n`);
+  }
+
+  // Stale baseline entries (accepted keys that matched nothing this run) are harmless but
+  // should be pruned; say so with a count only (no key or path is echoed into the log).
+  if (final.baselineStale > 0) {
+    process.stderr.write(`IAM Blast Radius: ${final.baselineStale} baseline entr${final.baselineStale === 1 ? 'y no longer matches' : 'ies no longer match'} any result; remove them from the baseline file.\n`);
+  }
+
   // Fail the action iff the aggregate exit code is non-zero. A fail-closed exit 3
   // reaches here unchanged and fails the check - it is NEVER downgraded to 0.
   if (final.exitCode !== EXIT.CLEAN) {
-    process.stderr.write(`IAM Blast Radius failed (exit ${final.exitCode}): ${final.reason}\n`);
+    const hint = Object.hasOwn(FAILURE_HINTS, final.reason) ? ` - ${FAILURE_HINTS[final.reason]}` : '';
+    process.stderr.write(`IAM Blast Radius failed (exit ${final.exitCode}): ${final.reason}${hint}\n`);
     process.exitCode = final.exitCode;
   }
   return final.exitCode;

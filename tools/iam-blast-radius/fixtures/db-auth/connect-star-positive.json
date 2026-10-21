@@ -1,0 +1,11 @@
+{
+  "name": "rds-db:connect on * (G4 positive)",
+  "note": "IAM DB auth as any database user on any IAM-enabled cluster: credential-equivalent, high.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "DbConnectAll", "Effect": "Allow", "Action": "rds-db:connect", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["DB-AUTH"], "notFindingIds": [] }
+}

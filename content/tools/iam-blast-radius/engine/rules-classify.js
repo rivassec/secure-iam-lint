@@ -102,8 +102,11 @@ export const DETECTION_SERVICES = new Set(['cloudtrail', 'guardduty', 'config'])
 export const RESOURCE_POLICY_WRITE_ACTIONS = Object.freeze([
   's3:PutBucketPolicy',
   's3:PutBucketAcl',
-  's3:PutObjectAcl',
+  // s3:PutObjectAcl is deliberately NOT here (G10): it is object-scoped, not a
+  // bucket/resource-policy write, and it made s3:PutObject* read as one. It is
+  // covered by OBJECT_ACL_WRITE_ACTIONS instead (F1-01).
   's3:PutAccessPointPolicy',
+  'kinesis:PutResourcePolicy',
   'kms:PutKeyPolicy',
   'kms:CreateGrant',
   'lambda:AddPermission',
@@ -121,6 +124,14 @@ export const RESOURCE_POLICY_WRITE_ACTIONS = Object.freeze([
   'codeartifact:PutDomainPermissionsPolicy',
   'codeartifact:PutRepositoryPermissionsPolicy',
   'ses:PutIdentityPolicy',
+]);
+
+// F1-01/F1-02: object-ACL writes. Object-scoped (not resource-policy writes, G10),
+// but they can set an object public-read or grant it to another account unless the
+// bucket enforces BucketOwnerEnforced - bucket state the policy text cannot show.
+export const OBJECT_ACL_WRITE_ACTIONS = Object.freeze([
+  's3:PutObjectAcl',
+  's3:PutObjectVersionAcl',
 ]);
 
 export const IAM_ADMIN_ACTIONS = Object.freeze([
@@ -203,6 +214,12 @@ export const SECRET_READ_ACTIONS = Object.freeze([
   'ssm:GetParameter',
   'ssm:GetParameters',
   'ssm:GetParametersByPath',
+]);
+
+// G4: IAM database authentication. rds-db:connect is the only action in the
+// rds-db namespace; it mints a DB auth token for the user named in the resource.
+export const DB_AUTH_ACTIONS = Object.freeze([
+  'rds-db:connect',
 ]);
 
 // KMS decryption capability. Distinct from secret-retrieval (SECRET_READ_ACTIONS):
