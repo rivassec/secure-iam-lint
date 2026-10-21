@@ -177,8 +177,9 @@ run the Action **multiple times** with different `paths` globs and a different
 
 | Input | Required | Default | Description |
 | ----- | -------- | ------- | ----------- |
-| `paths` | yes | - | Newline-separated files or globs to scan (e.g. `policies/**/*.json`). An empty match is a usage error (exit `2`), not a clean scan. |
-| `family` | yes | - | Policy family, declared explicitly and never auto-detected: `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp`, `scp-rcp`, `trust` (synonym of `role-trust`). |
+| `paths` | yes, unless `pulumi-json` | - | Newline-separated files or globs to scan (e.g. `policies/**/*.json`). An empty match is a usage error (exit `2`), not a clean scan. |
+| `family` | yes, with `paths` | - | Policy family, declared explicitly and never auto-detected: `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp`, `scp-rcp`, `trust` (synonym of `role-trust`). |
+| `pulumi-json` | no | - | Workspace-relative path to a `pulumi preview --json` or `pulumi stack export` file produced earlier in the job. Every IAM policy in it is scanned; each policy's family and attached resource come from its resource type, and findings are located by `<urn>#<property>`. A default preview lists only changed resources (`scan-scope: delta`), so exit `0` means "no new risk in this change", not "stack clean"; use `pulumi preview --show-sames` or a stack export for a full scan. Unknown preview values, secrets and unsupported policy types fail closed (exit `3`). Mutually exclusive with `paths`; `family`, `resource-*` and the baseline inputs are not used with it. |
 | `subject-account` | no | - | AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). For `role-trust` it is the account that owns every role in the run; split a `paths` glob that spans accounts. |
 | `resource-arn` | no | - | For `family: role-trust`: the role's own ARN; without it a trust is never reported as same-account (it stays `TRUST-CROSS-ACCOUNT` high). For `family: resource`: the ARN of the resource the policy is attached to (e.g. `arn:aws:s3:::my-bucket`). Required to analyze a resource policy; without it the resource family fails closed (`RESOURCE_CONTEXT_REQUIRED`, exit `3`). |
 | `resource-type` | no | - | For `family: resource`: the resource type (e.g. `s3-bucket`). |
@@ -203,6 +204,7 @@ run the Action **multiple times** with different `paths` globs and a different
 | `findings-count` | Total findings emitted across all scanned files. |
 | `blocking-findings-count` | Total findings at/above the `fail-on` threshold. |
 | `analysis-status` | Aggregate analysis status: `complete`, `partial`, or `failed`. |
+| `scan-scope` | With `pulumi-json` only: `delta` (a default preview, changed resources only) or `full` (a stack export, or a preview with `--show-sames`). |
 | `baselined-count` | Baseline entries that matched a result this run. Set only when `baseline` is given. |
 | `baseline-stale-count` | Baseline entries that matched nothing this run and can be pruned. Set only when `baseline` is given. |
 

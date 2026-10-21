@@ -26,15 +26,26 @@ branding:
 
 inputs:
   paths:
-    description: Newline-separated files or globs to scan (e.g. "policies/**/*.json").
-    required: true
+    description: >-
+      Newline-separated files or globs to scan (e.g. "policies/**/*.json").
+      Required unless pulumi-json is set (the two are mutually exclusive).
+    required: false
   family:
     description: >-
-      Policy family (REQUIRED; never auto-detected): identity | role-trust |
+      Policy family (required with paths; never auto-detected): identity | role-trust |
       resource | permissions-boundary | session | scp | rcp | scp-rcp
       (trust = role-trust). Mixed repos run the
-      action multiple times with different globs/families.
-    required: true
+      action multiple times with different globs/families. Not used with pulumi-json.
+    required: false
+  pulumi-json:
+    description: >-
+      Workspace-relative path to a `pulumi preview --json` or `pulumi stack export`
+      file produced earlier in the job. Every IAM policy in it is scanned, with the
+      family and attached resource taken from each resource type. A default preview
+      lists only changed resources (scan-scope "delta"); use
+      `preview --show-sames` or a stack export for a full scan. Mutually exclusive
+      with paths; family, resource-* and baseline inputs are not used with it.
+    required: false
   subject-account:
     description: >-
       AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). For
@@ -155,6 +166,11 @@ outputs:
     description: Total findings at/above the fail-on threshold across all scanned files.
   analysis-status:
     description: Aggregate analysis status - complete, partial, or failed.
+  scan-scope:
+    description: >-
+      With pulumi-json only - "delta" (a default preview, changed resources only) or
+      "full" (a stack export, or a preview with --show-sames). Require "full" on main
+      if a delta pass must not count as a whole-stack check.
   baselined-count:
     description: Number of baseline entries that matched a result this run (only set when `baseline` is given).
   baseline-stale-count:

@@ -58,6 +58,7 @@ import {
 } from './action-glob.mjs';
 export * from './action-glob.mjs';
 import { scan, EXIT, DEFAULT_BUDGET_MS } from '../cli/scan.mjs';
+import { scanPulumi, pulumiUnits, PULUMI_LIMITS } from '../cli/pulumi.mjs';
 import { buildSarifLog } from '../cli/sarif.mjs';
 // READ-ONLY canonical version manifest (browser-safe, no Node deps) so the SARIF
 // semanticVersion ties to the same identifiers the engine reports.
@@ -135,6 +136,9 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
     }
     const sarifSafe = lexicallySafe && realPathSafe;
     const inputs = sarifSafe ? rawInputs : { ...rawInputs, sarifOutput: DEFAULT_SARIF_OUTPUT };
+
+    // --- v1.3.0: Pulumi preview / stack export input (exclusive with paths). ------
+    if (isNonEmptyString(inputs.pulumiJson)) return runPulumiInput(inputs, sarifSafe, io, manifest);
 
     // --- Adapter-owned usage validation (exit 2), before any scanning. --------
     if (!isNonEmptyString(inputs.family)) {
@@ -381,6 +385,44 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
   }
 }
 
+// pulumi-json: confine and read the file, scan every document, aggregate like paths.
+function runPulumiInput(inputs, sarifSafe, io, manifest) {
+  const fail = (reason, message) => finalize([{ file: null, result: usageResult(reason, message, null) }],
+    { ...inputs, baselineOutput: '' }, manifest);
+  if (!sarifSafe) return fail('UNSAFE_SARIF_OUTPUT', 'The "sarif-output" input must be a RELATIVE path inside the workspace.');
+  if (isNonEmptyString(inputs.paths)) return fail('PULUMI_WITH_PATHS', 'Set either "paths" or "pulumi-json", not both.');
+  if (isNonEmptyString(inputs.family)) return fail('PULUMI_WITH_FAMILY', 'The "family" input is not used with "pulumi-json" (each policy\'s family comes from its resource type).');
+  if (inputs.resourceContext) return fail('PULUMI_WITH_RESOURCE', 'The "resource-*" inputs are not used with "pulumi-json" (the attached resource is resolved from the stack).');
+  if (isNonEmptyString(inputs.baseline) || isNonEmptyString(inputs.baselineOutput)) {
+    return fail('PULUMI_BASELINE_UNSUPPORTED', 'Baselines are not supported with "pulumi-json" yet.');
+  }
+  let safe = sarifOutputIsContained(inputs.pulumiJson);
+  if (safe && io && typeof io.sarifTargetContained === 'function') {
+    try { safe = io.sarifTargetContained(inputs.pulumiJson) === true; } catch { safe = false; }
+  }
+  if (!safe) return fail('UNSAFE_PULUMI_PATH', 'The "pulumi-json" input must be a RELATIVE path inside the workspace with no symlink component.');
+  let text = '';
+  let oversize = false;
+  try {
+    text = io.readFile(inputs.pulumiJson, PULUMI_LIMITS.MAX_BYTES);
+  } catch (e) {
+    if (e && e.code === INPUT_TOO_LARGE) oversize = true;
+    else return fail('PULUMI_UNREADABLE', 'The "pulumi-json" file could not be read (missing, a symlink, or not a regular file).');
+  }
+  const result = scanPulumi({
+    text, oversize,
+    subjectAccount: inputs.subjectAccount || undefined,
+    partition: inputs.partition || undefined,
+    threshold: inputs.failOn,
+    budgetMs: inputs.budgetMs,
+  });
+  if (result.exitCode === EXIT.USAGE) return fail(result.reason, result.analysisStates[0].message);
+  const units = pulumiUnits(result, inputs.pulumiJson);
+  // An empty stack (no policies, no states) still reports one clean unit, never "nothing scanned".
+  if (units.length === 0) units.push({ file: inputs.pulumiJson, sarif: { file: inputs.pulumiJson, runProperties: { scanScope: result.scanScope } }, result: { analysisStatus: 'complete', analysisStates: [], findings: [], blockingCount: 0, findingsCount: 0, exitCode: EXIT.CLEAN, reason: 'CLEAN', family: null } });
+  return finalize(units, { ...inputs, scanScope: result.scanScope }, manifest);
+}
+
 function safeInputs(env) {
   try {
     const inputs = readInputs(env);
@@ -454,6 +496,7 @@ function finalize(rawUnits, inputs, manifest) {
     'blocking-findings-count': String(blockingCount),
     'analysis-status': analysisStatus,
   };
+  if (inputs && isNonEmptyString(inputs.scanScope)) outputs['scan-scope'] = inputs.scanScope;
   // Baseline outputs exist only when a baseline was applied (absent otherwise, so runs
   // without one keep the exact pre-baseline output set).
   let baselineStale = 0;
