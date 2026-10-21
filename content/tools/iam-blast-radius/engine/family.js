@@ -25,7 +25,8 @@
 // IAM-1201: the resource family is context-gated. The gate validates the explicit
 // attached-resource context (type + ARN) via the resource module, which owns the
 // service detection and the resource coverage codes.
-import { parseResourceContext, RESOURCE_CODES } from './resource.js';
+import { parseResourceContext, RESOURCE_CODES, NOTPRINCIPAL_DENY_HAZARD_MESSAGE } from './resource.js';
+import { expandTrustActions } from './trust-catalogs.js';
 
 // Recognized families. IDENTITY is the only family the current rule engine
 // models; the rest are DETECTED (so exports and the coverage panel can name
@@ -155,23 +156,9 @@ export const COVERAGE_CODES = Object.freeze({
   RESOURCE_ANALYSIS_INCOMPLETE: RESOURCE_CODES.RESOURCE_ANALYSIS_INCOMPLETE,
 });
 
-// IAM-1206: the high-confidence Deny + NotPrincipal hazard warning surfaced on
-// the blocking code (and, via coverage.js, on the unsupported-element entry and
-// in every export). It states the documented permissions-boundary trap and the
-// recommended safe rewrite. Kept as a single constant so the engine, coverage
-// summary, and UI all speak with one voice (docs/resource-policy-semantics.md
-// section 8; acceptance-suite-2 test 29).
-export const NOTPRINCIPAL_DENY_HAZARD_MESSAGE =
-  'SECURITY HAZARD: Deny with NotPrincipal is not an ordinary "deny everyone ' +
-  'except these" exclusion and cannot be modeled as one. AWS documents that a ' +
-  'NotPrincipal element with a Deny effect ALWAYS denies any IAM principal that ' +
-  'has a permissions boundary attached, regardless of the principals listed in ' +
-  'NotPrincipal - so principals you intended to EXEMPT can still be denied. It is ' +
-  'also easy to accidentally deny an entire account. This analyzer does not model ' +
-  'NotPrincipal, so it fails closed here rather than render a misleading ordinary-' +
-  'deny result. Recommended safe rewrite: Deny on Principal "*" with ' +
-  'ArnNotEquals on aws:PrincipalArn naming the allowed principal ARN(s) instead ' +
-  'of NotPrincipal.';
+// IAM-1206: defined beside the resource vocabulary (the resource evaluator emits it
+// too, F11); re-exported here for existing importers.
+export { NOTPRINCIPAL_DENY_HAZARD_MESSAGE };
 
 // IAM-1103: canonicalize the family-selection vocabulary. A caller (or a record-
 // test bundle) may name a family by a common synonym - notably the org-control
@@ -203,16 +190,9 @@ export const OVERRIDE_FAMILIES = Object.freeze(new Set([
 ]));
 
 // sts actions that define a ROLE TRUST policy (the "who may assume me"
-// direction). Compared case-insensitively. A Principal-bearing policy whose
-// actions are all trust actions and that carries no Resource is a role trust
+// direction): trust-catalogs.js TRUST_ACTIONS. A Principal-bearing policy whose
+// actions all cover trust actions and that carries no Resource is a role trust
 // policy; any other Principal-bearing policy is a general resource policy.
-const TRUST_ACTIONS = new Set([
-  'sts:assumerole',
-  'sts:assumerolewithsaml',
-  'sts:assumerolewithwebidentity',
-  'sts:tagsession',
-  'sts:setsourceidentity',
-]);
 
 function code(c, message, path) {
   return { code: c, message, path: path === undefined ? null : path };
@@ -315,6 +295,19 @@ function isScpShape(statements) {
   return sawGuardrail;
 }
 
+// F8: under an EXPLICIT SCP selection the org/region guardrail signal is not
+// required: FullAWSAccess alone, or with Deny guardrails on named actions, is a
+// valid SCP. Without the signal a Deny must name positive actions: NotAction or
+// an empty Action can be a no-op guardrail (F1) and keeps failing closed. A
+// scoped Allow (identity-ambiguous) or a Principal still keeps it out.
+function isExplicitScpShape(statements) {
+  if (isScpShape(statements)) return true;
+  if (statements.length === 0) return false;
+  if (statements.some(hasPrincipalElement)) return false;
+  return statements.every((s) => (s.effect === 'Allow' && isFullAccessAllow(s))
+    || (s.effect === 'Deny' && s.actions.length > 0 && s.notActions.length === 0 && !s.notActionPresent));
+}
+
 // --- RCP (Resource Control Policy) shape (IAM-1302, test 52) ------------------
 // An RCP is the resource-side sibling of an SCP: an ORGANIZATIONS control policy
 // that CAPS who may access org resources. Unlike an SCP it names a Principal (it
@@ -377,11 +370,9 @@ function isTrustOnly(statements) {
   for (const s of statements) {
     // A trust policy has no Resource/NotResource and only trust actions.
     if (s.resources.length > 0 || s.notResources.length > 0) return false;
-    if (s.notActions.length > 0) return false;
-    if (s.actions.length === 0) return false;
-    for (const a of s.actions) {
-      if (!TRUST_ACTIONS.has(String(a).toLowerCase())) return false;
-    }
+    // F9/T2-8: sts:*, *, sts:AssumeRole* and NotAction count when they cover
+    // trust actions; a pattern covering none (s3:*) is not trust-shaped.
+    if (!expandTrustActions(s)) return false;
   }
   return true;
 }
@@ -409,7 +400,11 @@ function classifyShape(statements, opts) {
   // the block is skipped and the family resolves to SCP_RCP for the SCP evaluator.
   // Without an explicit SCP selection we fail closed (deny-guardrail SCP under
   // auto-detect stays blocked until IAM-1303 flips the auto path).
-  if (isScpShape(statements)) {
+  // F10: an explicit identity / boundary / session pick on a document that
+  // carries a real Allow is analyzed as that family; all-Deny stays ambiguous.
+  const identityExplicit = !!(opts && opts.identityExplicit);
+  const scpShaped = suppressScpBlock ? isExplicitScpShape(statements) : isScpShape(statements);
+  if (scpShaped && !(identityExplicit && statements.some((s) => s.effect === 'Allow'))) {
     if (!suppressScpBlock) {
       blockingCodes.push(code(
         COVERAGE_CODES.UNSUPPORTED_SCP_SHAPE,
@@ -457,7 +452,9 @@ function classifyShape(statements, opts) {
   // A NotPrincipal with any other effect (AWS only supports it with Deny; an
   // Allow + NotPrincipal is invalid) stays the generic unmodeled-element message.
   const notPrincipalStmts = statements.filter((s) => s.notPrincipal != null);
-  for (const s of notPrincipalStmts) {
+  // F11: under an explicit resource selection the resource evaluator fails closed
+  // per NotPrincipal statement instead, so the other statements keep their findings.
+  for (const s of suppressResourceBlock ? [] : notPrincipalStmts) {
     if (s.effect === 'Deny') {
       blockingCodes.push({
         code: COVERAGE_CODES.UNSUPPORTED_NOTPRINCIPAL,
@@ -663,9 +660,12 @@ export function detectFamily(model, options) {
   // SCP shape is CEILING-analyzed (not auto-blocked) - classifyShape skips the
   // UNSUPPORTED_SCP_SHAPE block and the SCP override branch below routes it.
   const scpExplicit = rawSelection === FAMILIES.SCP_RCP;
+  const identityExplicit = rawSelection === FAMILIES.IDENTITY
+    || rawSelection === FAMILIES.PERMISSIONS_BOUNDARY || rawSelection === FAMILIES.SESSION;
   const { detected, blockingCodes } = classifyShape(statements, {
     suppressResourceBlock: resourceExplicit,
     suppressScpBlock: scpExplicit,
+    identityExplicit,
   });
 
   // IAM-704 (test 22C): version gate. An ABSENT Version is tolerated; any

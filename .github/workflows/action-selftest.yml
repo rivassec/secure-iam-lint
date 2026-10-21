@@ -489,10 +489,9 @@ jobs:
           WANT_RULE: TRUST-PUBLIC
         run: bash .github/scripts/selftest-assert.sh
 
-      # The resource family analyzes the attached-resource policy but reports coverage
-      # INCOMPLETE by design (identity-side policies are not supplied), so it is a real
-      # PUBLIC-ACCESS finding AND a fail-closed exit 3 - never a green check.
-      - name: 'family resource with resource-arn/type (expect failure, exit 3, partial: resource coverage is always incomplete)'
+      # A fully modeled public-read bucket policy is complete since v1.2.0 (T2-4):
+      # a real PUBLIC-ACCESS finding, exit 1 - never a green check.
+      - name: 'family resource with resource-arn/type (expect failure, exit 1, complete)'
         id: resource
         continue-on-error: true
         uses: ./ # zizmor: ignore[self-repository] -- see header
@@ -511,8 +510,8 @@ jobs:
           CODE: ${{ steps.resource.outputs.exit-code }}
           STATUS: ${{ steps.resource.outputs.analysis-status }}
           WANT_OUTCOME: failure
-          WANT_CODE: '3'
-          WANT_STATUS: partial
+          WANT_CODE: '1'
+          WANT_STATUS: complete
           SARIF: selftest-resource.sarif
           WANT_RULE: PUBLIC-ACCESS
         run: bash .github/scripts/selftest-assert.sh

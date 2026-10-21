@@ -94,8 +94,11 @@ function checkFlip(kind, num, expectedFinding, entry) {
   for (const bad of FAIL_CLOSED_CODES) {
     assert.ok(!codes.includes(bad), `${file}: ${kind} test ${num} must not carry the fail-closed code ${bad}`);
   }
-  // Accepted resource analysis is still INCOMPLETE (unsupported != safe).
-  assert.ok(codes.includes('RESOURCE_ANALYSIS_INCOMPLETE'), `${file}: accepted resource analysis stays incomplete`);
+  // T2-4: the umbrella code appears exactly when the resource evaluator found an
+  // unmodeled part (a generic gate, e.g. an unsupported condition, is reported apart).
+  const rc = res.coverage.summary.resourceContext;
+  assert.equal(codes.includes('RESOURCE_ANALYSIS_INCOMPLETE'), !!(rc && rc.incomplete),
+    `${file}: RESOURCE_ANALYSIS_INCOMPLETE iff the resource evaluator is incomplete`);
 
   // The expected resource finding is present, and EVERY finding is a resource id
   // (never an identity-rule finding on a resource policy).

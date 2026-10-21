@@ -25,9 +25,9 @@
   "expectMessaging": {
     "coverageIncomplete": true,
     "findingIds": ["RESOURCE-CONFUSED-DEPUTY", "MESSAGING-DEPRECATED-SOURCE-OWNER"],
-    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "info", "MESSAGING-DEPRECATED-SOURCE-OWNER": "info" },
+    "findingSeverities": { "RESOURCE-CONFUSED-DEPUTY": "high", "MESSAGING-DEPRECATED-SOURCE-OWNER": "info" },
     "notFindingIds": ["PUBLIC-ACCESS", "MESSAGING-PUBLIC-EXPOSURE", "MESSAGING-POLICY-TAKEOVER", "RESOURCE-CROSS-ACCOUNT"],
-    "sourceBindingState": { "RESOURCE-CONFUSED-DEPUTY": "source-bound" },
+    "sourceBindingState": { "RESOURCE-CONFUSED-DEPUTY": "source-unverified" },
     "sourceBindingBound": { "RESOURCE-CONFUSED-DEPUTY": ["aws:SourceOwner"] },
     "whyIncludes": { "MESSAGING-DEPRECATED-SOURCE-OWNER": ["DEPRECATED", "aws:SourceOwner", "aws:SourceArn"] },
     "forbidWhy": {

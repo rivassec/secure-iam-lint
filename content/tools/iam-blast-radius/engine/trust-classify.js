@@ -1,7 +1,24 @@
 // trust-classify.js - trust-statement detection + principal classification (isTrustStatement, classifyPrincipals + aws/service/federated principal typing). Extracted (behavior-preserving).
 import { chargeWork } from './glob.js';
 import { hasGlob } from './trust-principal-helpers.js';
-import { TRUST_ACTIONS } from './trust-catalogs.js';
+import { TRUST_ACTIONS, expandTrustActions } from './trust-catalogs.js';
+
+// F9/T2-8: rewrite wildcard Action / NotAction trust statements to the concrete
+// trust actions they cover, so every trust consumer (evaluator, deny state,
+// graph) sees exact actions. Plain statements and the model stay untouched.
+export function expandTrustModel(model) {
+  if (!model || !Array.isArray(model.statements)) return model;
+  let changed = false;
+  const statements = model.statements.map((s) => {
+    chargeWork(1);
+    const patterned = s.notActions.length > 0 || s.actions.some((a) => /[*?]/.test(String(a)));
+    const ex = patterned ? expandTrustActions(s) : null;
+    if (!ex) return s;
+    changed = true;
+    return Object.freeze({ ...s, actions: Object.freeze(ex), notActions: Object.freeze([]), notActionPresent: false });
+  });
+  return changed ? Object.freeze({ ...model, statements: Object.freeze(statements) }) : model;
+}
 
 export function isTrustStatement(stmt) {
   if (!stmt || stmt.principal == null) return false;

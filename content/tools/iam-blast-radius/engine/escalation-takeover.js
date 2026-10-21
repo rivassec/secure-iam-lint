@@ -19,17 +19,17 @@ export function detectRoleTakeover(allows, out, denies) {
   for (const stmt of allows) {
     const g = grantedPatternsFor(stmt, ROLE_TAKEOVER_GRANT_ACTIONS);
     if (g.length > 0) {
-      const d = applyDenyToActions(denies, g, stmt);
+      const d = applyDenyToActions(denies, g, stmt, ROLE_TAKEOVER_GRANT_ACTIONS);
       if (!d.blocked) collect(grantLegsAll, stmt, d.actions);
     }
     const t = grantedPatternsFor(stmt, TRUST_MODIFY_ACTIONS);
     if (t.length > 0) {
-      const d = applyDenyToActions(denies, t, stmt);
+      const d = applyDenyToActions(denies, t, stmt, TRUST_MODIFY_ACTIONS);
       if (!d.blocked) collect(trustLegsAll, stmt, d.actions);
     }
     const a = grantedPatternsFor(stmt, ROLE_TAKEOVER_ASSUME_ACTIONS);
     if (a.length > 0) {
-      const d = applyDenyToActions(denies, a, stmt);
+      const d = applyDenyToActions(denies, a, stmt, ROLE_TAKEOVER_ASSUME_ACTIONS);
       if (!d.blocked) collect(assumeLegsAll, stmt, d.actions);
     }
   }

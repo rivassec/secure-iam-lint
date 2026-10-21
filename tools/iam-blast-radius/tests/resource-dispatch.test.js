@@ -159,8 +159,8 @@ test('dispatchPerServiceRules: NEVER throws on hostile / malformed ctx or model'
 // ---------------------------------------------------------------------------
 // Additivity + no-regression through the module entry point analyzeResource().
 // The combined finding set must still carry the generic findings, and (stubs add
-// nothing) be byte-identical to the generic-only baseline. Coverage stays
-// INCOMPLETE and keeps the fail-closed + not-effective language.
+// nothing) be byte-identical to the generic-only baseline. Coverage is complete only
+// when every Allow statement is modeled (T2-4).
 // ---------------------------------------------------------------------------
 
 test('analyzeResource: per-service dispatch is additive - generic findings preserved on every service', () => {
@@ -185,11 +185,14 @@ test('analyzeResource: per-service dispatch is additive - generic findings prese
     for (const f of res.findings) {
       assert.ok(/not effective access/i.test(f.limit), `${token}: ${f.id} keeps the caveat`);
     }
-    // Coverage stays INCOMPLETE and fail-closed.
-    assert.equal(res.coverage.incomplete, true, `${token}: coverage stays incomplete`);
-    assert.equal(res.coverage.code, RESOURCE_CODES.RESOURCE_ANALYSIS_INCOMPLETE, `${token}: incomplete code`);
-    assert.ok(/not\s+mean\s+the\s+resource\s+is\s+safe/i.test(res.coverage.note), `${token}: keeps fail-closed language`);
-    assert.ok(/per-service rule set/i.test(res.coverage.note), `${token}: note reflects the per-service dispatch ran`);
+    // T2-4: a fully modeled Allow is complete (the PUBLIC-ACCESS finding gates it).
+    assert.equal(res.coverage.incomplete, false, `${token}: fully modeled -> complete`);
+    assert.deepEqual(res.coverage.reasons, [], `${token}: no unmodeled parts`);
+    assert.ok(/per-service rules are applied/i.test(res.coverage.note), `${token}: note reflects the per-service dispatch ran`);
+    // An unmodeled part keeps it incomplete, with the fail-closed language.
+    const odd = analyzeResource({ statements: [{ ...anonModel(action).statements[0], notResources: ['x'] }] }, base);
+    assert.equal(odd.coverage.incomplete, true, `${token}: unmodeled part -> incomplete`);
+    assert.ok(/not\s+mean\s+the\s+resource\s+is\s+safe/i.test(odd.coverage.note), `${token}: keeps fail-closed language`);
   }
 });
 

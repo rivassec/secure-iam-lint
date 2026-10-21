@@ -37,7 +37,11 @@ const PASS_ROLE_SERVICES = Object.freeze([
       'ec2:RunInstances',
       'ec2:AssociateIamInstanceProfile',
       'ec2:ReplaceIamInstanceProfileAssociation',
+      // T2-3: put the passable role into an instance profile already on an instance.
+      'iam:AddRoleToInstanceProfile',
     ]),
+    // Only an explicit grant completes these; whether bare iam:* is critical is F6's call.
+    explicitOnly: Object.freeze(['iam:AddRoleToInstanceProfile']),
   }),
   Object.freeze({
     service: 'ecs',

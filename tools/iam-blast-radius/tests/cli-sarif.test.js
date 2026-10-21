@@ -356,15 +356,15 @@ test('golden: the admin-identity SARIF pins the load-bearing fields', () => {
   const rule = driver.rules.find((r) => r.id === 'DIRECT-IAM-ADMIN');
   assert.ok(rule, 'DIRECT-IAM-ADMIN descriptor present');
   assert.equal(rule.properties.category, 'security');
-  assert.equal(rule.properties['security-severity'], '7.0');
+  assert.equal(rule.properties['security-severity'], '9.0'); // F6: iam:* on * is critical
   assert.equal(rule.defaultConfiguration.level, 'error');
   // The result row.
   const res = log.runs[0].results.find((r) => r.ruleId === 'DIRECT-IAM-ADMIN');
   assert.ok(res);
   assert.equal(res.level, 'error');
   assert.equal(res.properties.category, 'security');
-  assert.equal(res.properties.severity, 'high');
-  assert.equal(res.properties['security-severity'], '7.0');
+  assert.equal(res.properties.severity, 'critical');
+  assert.equal(res.properties['security-severity'], '9.0');
   assert.equal(res.properties.policyFamily, 'identity');
   assert.equal(res.properties.jsonPointer, '/Statement/0');
   assert.equal(res.locations[0].physicalLocation.artifactLocation.uri, 'policies/app.json');

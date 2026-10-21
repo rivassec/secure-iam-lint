@@ -1,0 +1,22 @@
+{
+  "name": "POLICY-VERSION survives a Deny that covers only part of the granted scope",
+  "note": "Allow CreatePolicyVersion + SetDefaultPolicyVersion on policy/team-* with a same-policy Deny on policy/team-admin only. The other team-* policies stay rewritable, so the path survives (narrowed). Guards the T1-04 catalog-expansion and N2 containment changes against over-suppressing a partial-cover Deny.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "RewritePolicyVersion",
+        "Effect": "Allow",
+        "Action": ["iam:CreatePolicyVersion", "iam:SetDefaultPolicyVersion"],
+        "Resource": "arn:aws:iam::111122223333:policy/team-*"
+      },
+      {
+        "Sid": "ProtectAdminPolicy",
+        "Effect": "Deny",
+        "Action": ["iam:CreatePolicyVersion", "iam:SetDefaultPolicyVersion"],
+        "Resource": "arn:aws:iam::111122223333:policy/team-admin"
+      }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["POLICY-VERSION"], "notFindingIds": ["ATTACH-POLICY", "PUT-INLINE-POLICY"] }
+}

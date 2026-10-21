@@ -130,32 +130,7 @@ for (const c of recordCases.filter(isEngineDrivable)) {
         assert.equal(capabilityEdgeCount(res.graph), exp.capabilityEdges,
           `${c.id}: capability-edge count`);
       }
-    } else if (exp.status === 'COMPLETE') {
-      // A supported family analyzed to completion. Assert the required rule fired,
-      // the forbidden one did not, the legitimate prose is present, and the
-      // capability-edge budget holds.
-      assert.ok(cov && cov.blocked === false, `${c.id}: coverage completed (not blocked)`);
-      const ids = res.findings.map((f) => f.id);
-      for (const r of exp.requiredRuleIds || []) {
-        assert.ok(ids.includes(mapName(r)),
-          `${c.id}: required rule ${mapName(r)} present (got [${ids.join(', ')}])`);
-      }
-      for (const f of exp.forbiddenRuleIds || []) {
-        assert.ok(!ids.includes(mapName(f)),
-          `${c.id}: forbidden rule ${mapName(f)} absent`);
-      }
-      if (exp.requiredText && exp.requiredText.length) {
-        const hay = JSON.stringify(res.findings).toLowerCase();
-        for (const t of exp.requiredText) {
-          assert.ok(hay.includes(String(t).toLowerCase()),
-            `${c.id}: legitimate prose present: "${t}"`);
-        }
-      }
-      if (typeof exp.capabilityEdges === 'number') {
-        assert.equal(capabilityEdgeCount(res.graph), exp.capabilityEdges,
-          `${c.id}: capability-edge count`);
-      }
-    } else if (exp.status === 'COMPLETE_WITH_WARNINGS') {
+    } else if (exp.status === 'COMPLETE_WITH_WARNINGS' || (exp.status === 'COMPLETE' && c.family === 'resource')) {
       // IAM-1201/1202: a supported family accepted to a well-formed but still
       // INCOMPLETE conclusion. The resource family is ACCEPTED with its explicit
       // attached-resource context and routed to the resource evaluator. IAM-1202
@@ -166,8 +141,9 @@ for (const c of recordCases.filter(isEngineDrivable)) {
       // never "safe"). No identity capability finding may appear on a resource
       // policy, and the resource-access edge is NOT an identity capability edge.
       assert.ok(cov && cov.blocked === false, `${c.id}: accepted (not blocked)`);
-      assert.ok(cov.summary && cov.summary.incomplete === true,
-        `${c.id}: coverage is incomplete (absence of a finding != safe)`);
+      // T2-4: a fully modeled resource policy is COMPLETE; anything else stays incomplete.
+      assert.equal(!!(cov.summary && cov.summary.incomplete), exp.status !== 'COMPLETE',
+        `${c.id}: coverage completeness matches ${exp.status}`);
       const ids = res.findings.map((f) => f.id);
       for (const f of exp.forbiddenRuleIds || []) {
         assert.ok(!ids.includes(mapName(f)),
@@ -209,6 +185,31 @@ for (const c of recordCases.filter(isEngineDrivable)) {
           }).filter(Boolean))].sort();
         assert.deepEqual(originTypes, exp.resourceGraphOriginTypes.slice().sort(),
           `${c.id}: resource-access origin node types`);
+      }
+    } else if (exp.status === 'COMPLETE') {
+      // A supported family analyzed to completion. Assert the required rule fired,
+      // the forbidden one did not, the legitimate prose is present, and the
+      // capability-edge budget holds.
+      assert.ok(cov && cov.blocked === false, `${c.id}: coverage completed (not blocked)`);
+      const ids = res.findings.map((f) => f.id);
+      for (const r of exp.requiredRuleIds || []) {
+        assert.ok(ids.includes(mapName(r)),
+          `${c.id}: required rule ${mapName(r)} present (got [${ids.join(', ')}])`);
+      }
+      for (const f of exp.forbiddenRuleIds || []) {
+        assert.ok(!ids.includes(mapName(f)),
+          `${c.id}: forbidden rule ${mapName(f)} absent`);
+      }
+      if (exp.requiredText && exp.requiredText.length) {
+        const hay = JSON.stringify(res.findings).toLowerCase();
+        for (const t of exp.requiredText) {
+          assert.ok(hay.includes(String(t).toLowerCase()),
+            `${c.id}: legitimate prose present: "${t}"`);
+        }
+      }
+      if (typeof exp.capabilityEdges === 'number') {
+        assert.equal(capabilityEdgeCount(res.graph), exp.capabilityEdges,
+          `${c.id}: capability-edge count`);
       }
     } else {
       assert.fail(`${c.id}: unhandled expect.status "${exp.status}"`);

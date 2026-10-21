@@ -167,10 +167,8 @@ function buildSessionFinding(stmt) {
   const resources = resourceSummary(stmt);
   const finding = {
     id: 'SESSION-CEILING',
-    // A session policy only RESTRICTS an existing session, so even a broad ceiling
-    // grants nothing. A broad ceiling is low (it fails to narrow), a scoped one is
-    // informational.
-    severity: broad ? 'low' : 'info',
+    // F7: a broad ceiling narrows nothing; rate it like the boundary (high), scoped is info.
+    severity: broad ? 'high' : 'info',
     title: 'Session-policy ceiling (session restriction)',
     statementSid: statementSid(stmt),
     statementIndex: stmt.index,

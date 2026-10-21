@@ -191,11 +191,14 @@ test('policy with a finding at/above threshold -> complete, exit 1', () => {
 });
 
 test('threshold gates the 0-vs-1 decision for a complete analysis', () => {
-  // The admin finding is `high`; raising the threshold above it yields exit 0.
-  const belowHigh = scan({ text: ADMIN_IDENTITY, family: 'identity', threshold: 'critical' });
+  // A one-role admin grant is `high` (F6: only all-or-self targets are critical);
+  // raising the threshold above it yields exit 0.
+  const ONE_ROLE_ADMIN = JSON.stringify({ Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Action: 'iam:*', Resource: 'arn:aws:iam::111122223333:role/app' }] });
+  const belowHigh = scan({ text: ONE_ROLE_ADMIN, family: 'identity', threshold: 'critical' });
   assert.equal(belowHigh.analysisStatus, ANALYSIS_STATUS.COMPLETE);
   assert.equal(belowHigh.exitCode, EXIT.CLEAN);
-  const atHigh = scan({ text: ADMIN_IDENTITY, family: 'identity', threshold: 'high' });
+  const atHigh = scan({ text: ONE_ROLE_ADMIN, family: 'identity', threshold: 'high' });
   assert.equal(atHigh.exitCode, EXIT.FINDINGS);
 });
 

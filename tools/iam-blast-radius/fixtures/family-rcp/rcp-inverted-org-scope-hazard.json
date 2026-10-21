@@ -1,7 +1,7 @@
 {
   "id": "rcp-inverted-org-scope-hazard",
   "title": "RCP org-scope Deny with INVERTED operator polarity (positive StringEquals footgun)",
-  "note": "IAM-1302 iteration 2 (fixes review finding F1): a Principal-bearing, deny-only org RESOURCE guardrail whose org-scope condition uses a POSITIVE comparator (StringEquals aws:PrincipalOrgID) instead of the intended negated StringNotEqualsIfExists. In a Deny a positive comparator fires WHEN the org matches, so this policy denies requests FROM your OWN organization and PERMITS everyone else - the INVERSE of confused-deputy / org-perimeter protection, the exact StringEquals/StringNotEquals footgun. The evaluator must record operator polarity, narrate the inverted effect (NOT 'denies UNLESS the org matches'), stop asserting confused-deputy protection, and flag it as a misconfiguration hazard (severity medium, hazard=true), just as scp.js raises the over-broad-region hazard. The guardrail-not-grant invariant still holds: deny-only, empty graph, no S3/public-access finding, states a corresponding Allow must exist elsewhere.",
+  "note": "IAM-1302 iteration 2 (fixes review finding F1): a Principal-bearing, deny-only org RESOURCE guardrail whose org-scope condition uses a POSITIVE comparator (StringEquals aws:PrincipalOrgID) instead of the intended negated StringNotEqualsIfExists. In a Deny a positive comparator fires WHEN the org matches, so this policy denies requests FROM your OWN organization and PERMITS everyone else - the INVERSE of confused-deputy / org-perimeter protection, the exact StringEquals/StringNotEquals footgun. The evaluator must record operator polarity, narrate the inverted effect (NOT 'denies UNLESS the org matches'), stop asserting confused-deputy protection, and flag it as a misconfiguration hazard (severity high since v1.2.0 F4, hazard=true), just as scp.js raises the over-broad-region hazard. The guardrail-not-grant invariant still holds: deny-only, empty graph, no S3/public-access finding, states a corresponding Allow must exist elsewhere.",
   "policy": {
     "Version": "2012-10-17",
     "Statement": [
@@ -31,13 +31,13 @@
     "blocked": false,
     "family": "scp-rcp",
     "override": "scp-rcp",
-    "status": "warned",
-    "note": "warned (not ok): the curated action catalog / condition classifier does not recognize the org-scope keys and the s3:* wildcard, an honest coverage gap - it does not weaken the guardrail semantics.",
+    "status": "ok",
+    "note": "ok since v1.2.0 F12: aws:PrincipalIsAWSService (Bool, one true/false value) is modeled by the RCP evaluator, so coverage is complete.",
     "findingIds": [
       "RCP-GUARDRAIL"
     ],
     "severities": {
-      "RCP-GUARDRAIL": "medium"
+      "RCP-GUARDRAIL": "high"
     },
     "zeroCapabilityEdges": true,
     "noEscalation": true,

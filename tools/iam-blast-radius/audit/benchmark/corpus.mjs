@@ -110,18 +110,19 @@ export const SECOND_TIER = [
   { id: 'PassRole_Batch_SubmitJob', method: 'iam:PassRole + batch:RegisterJobDefinition + SubmitJob',
     statements: [A('iam:PassRole', iam('role/batch')), A('batch:RegisterJobDefinition', '*'), A('batch:SubmitJob', '*')], finding: null },
   // ec2 actions the reference refresh made "known" (so the unknown-action backstop no longer fired):
-  // the instance-profile swap is a named PASSROLE-EC2 path, the rest are withheld (backstop).
+  // the instance-profile swap is a named PASSROLE-EC2 path; snapshot/AMI sharing and userData
+  // rewrite are named since F15 (v1.2.0); CreateNetworkInterfacePermission stays withheld (backstop).
   { id: 'PassRole_EC2_AssociateInstanceProfile', method: 'iam:PassRole + ec2:AssociateIamInstanceProfile / ReplaceIamInstanceProfileAssociation (swap an admin profile onto a running instance)',
     statements: [A('iam:PassRole', iam('role/admin')), A('ec2:AssociateIamInstanceProfile', svc(`ec2:us-east-1:${ACCT}:instance/i-0abc`)), A('ec2:ReplaceIamInstanceProfileAssociation', svc(`ec2:us-east-1:${ACCT}:instance/i-0abc`))],
     finding: 'PASSROLE-EC2' },
   { id: 'EC2_ModifySnapshotAttribute', method: 'ec2:ModifySnapshotAttribute (share a snapshot cross-account)',
-    statements: [A('ec2:ModifySnapshotAttribute', svc(`ec2:us-east-1::snapshot/snap-0abc`))], finding: null },
+    statements: [A('ec2:ModifySnapshotAttribute', svc(`ec2:us-east-1::snapshot/snap-0abc`))], finding: 'RESOURCE-POLICY-WRITE' },
   { id: 'EC2_ModifyImageAttribute', method: 'ec2:ModifyImageAttribute (share an AMI cross-account)',
-    statements: [A('ec2:ModifyImageAttribute', svc(`ec2:us-east-1::image/ami-0abc`))], finding: null },
+    statements: [A('ec2:ModifyImageAttribute', svc(`ec2:us-east-1::image/ami-0abc`))], finding: 'RESOURCE-POLICY-WRITE' },
   { id: 'EC2_CreateNetworkInterfacePermission', method: 'ec2:CreateNetworkInterfacePermission (grant another account an ENI)',
     statements: [A('ec2:CreateNetworkInterfacePermission', svc(`ec2:us-east-1:${ACCT}:network-interface/eni-0abc`))], finding: null },
   { id: 'EC2_ModifyInstanceAttribute', method: 'ec2:ModifyInstanceAttribute (rewrite userData, run code as the instance role)',
-    statements: [A('ec2:ModifyInstanceAttribute', svc(`ec2:us-east-1:${ACCT}:instance/i-0abc`))], finding: null },
+    statements: [A('ec2:ModifyInstanceAttribute', svc(`ec2:us-east-1:${ACCT}:instance/i-0abc`))], finding: 'COMPUTE-CODE-OVERWRITE' },
   { id: 'SSM_SendCommand', method: 'ssm:SendCommand (run commands on EC2 as the instance role)',
     statements: [A('ssm:SendCommand', svc(`ec2:us-east-1:${ACCT}:instance/*`))], finding: 'COMPUTE-SESSION-TAKEOVER' },
   { id: 'SSM_StartSession', method: 'ssm:StartSession (interactive shell on EC2 as the instance role)',

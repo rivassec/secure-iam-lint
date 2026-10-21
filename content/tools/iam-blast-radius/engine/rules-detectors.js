@@ -1,9 +1,13 @@
 // rules-detectors.js - the identity-policy rule detectors (wildcard action/resource, direct-IAM-admin, data-exfil, kms-decrypt, scoped data-read + container-read spared-resource analysis, destructive, detection-impairment, notaction-allow, group-membership). Extracted (behavior-preserving).
-import { actionGrants, actionService, actionVerb, concreteResourceAccount, groupNameFromArn, groupNameSuggestsPrivilege, isFullWildcard, isServiceWildcard, isWholeContainerRead, resourceAccountFromCondition, resourceHasVariable, resourceInfersSensitive, BULK_READ_ACTIONS, CONCRETE_ACCOUNT_ID_RE, DATA_READ_ACTIONS, DB_AUTH_ACTIONS, DESTRUCTIVE_VERB, DETECTION_ACTIONS, DETECTION_SERVICES, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, KMS_DECRYPT_ACTIONS, OBJECT_ACL_WRITE_ACTIONS, RESOURCE_POLICY_WRITE_ACTIONS, SECRET_READ_ACTIONS } from './rules-classify.js';
+import { actionGrants, actionService, actionVerb, concreteResourceAccount, groupNameFromArn, groupNameSuggestsPrivilege, isFullWildcard, isServiceWildcard, isWholeContainerRead, resourceAccountFromCondition, resourceHasVariable, resourceInfersSensitive, BULK_READ_ACTIONS, CONCRETE_ACCOUNT_ID_RE, DATA_READ_ACTIONS, DB_AUTH_ACTIONS, DESTRUCTIVE_EXTRA_ACTIONS, DESTRUCTIVE_VERB, DETECTION_ACTIONS, DETECTION_SERVICES, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, IAM_FEDERATION_ACTIONS, IAM_TAG_ACTIONS, KMS_DECRYPT_ACTIONS, OBJECT_ACL_WRITE_ACTIONS, RESOURCE_POLICY_WRITE_ACTIONS, RESOURCE_SHARE_ACTIONS, SECRET_READ_ACTIONS } from './rules-classify.js';
 import { denyFencesToNarrow, grantsNonReadAction, makeFinding, remediableWildcardActions, resourceIsBroad, resourceScope, isBroadArnResource, ruleFindingDenySuppressed, survivingBroadReadActions } from './rules-finding.js';
 import { chargeWork, globMatch } from './glob.js';
 import { classifyResource, parseArn, RESOURCE_CLASS } from './resource-arn.js';
 import { denyActionApplies } from './escalation-deny.js';
+import { iamTargetIsAllOrSelf } from './escalation-scope.js';
+import { ATTACH_POLICY_ACTIONS, POLICY_VERSION_ACTIONS, PUT_INLINE_POLICY_ACTIONS } from './escalation-catalogs.js';
+
+const SELF_POLICY_ACTIONS = [...ATTACH_POLICY_ACTIONS, ...PUT_INLINE_POLICY_ACTIONS, ...POLICY_VERSION_ACTIONS];
 import { hasNonEmptyCondition } from './escalation-conditions.js';
 import { statementNeverMatches } from './conditions.js';
 
@@ -103,24 +107,51 @@ export function matchPatterns(stmt, catalog, includeServiceWildcards) {
   return matched;
 }
 
+// F15: true when every matched pattern grants only `subset` actions of `all`, so
+// subset-specific wording applies without changing existing findings' text.
+function onlySubset(matched, all, subset) {
+  const rest = all.filter((a) => !subset.includes(a));
+  return matched.every((p) => !rest.some((a) => actionGrants(p, a)));
+}
+
 // 3. Direct IAM administration (includes iam:* per the requirement).
+function iamAdminWhy(matched) {
+  const fed = IAM_FEDERATION_ACTIONS;
+  const tag = IAM_TAG_ACTIONS;
+  if (onlySubset(matched, IAM_ADMIN_ACTIONS, fed)) {
+    return 'Grants identity-provider writes (create/update an OIDC or SAML provider). ' +
+      'Role trusts that name a provider then accept tokens or assertions from whoever ' +
+      'controls it - a federation backdoor into those roles.';
+  }
+  if (onlySubset(matched, IAM_ADMIN_ACTIONS, tag)) {
+    return 'Grants IAM principal tag writes (iam:TagRole / iam:TagUser). Where access ' +
+      'is decided by aws:PrincipalTag or iam:ResourceTag (ABAC) - which this policy ' +
+      'cannot show - changing tags changes who is authorized: an escalation primitive.';
+  }
+  if (onlySubset(matched, IAM_ADMIN_ACTIONS, [...fed, ...tag])) {
+    return 'Grants identity-provider and IAM tag writes: a federation backdoor and an ' +
+      'ABAC authorization change.';
+  }
+  return 'Grants direct IAM administration (e.g. attach/put policy, create policy ' +
+    'version, create access key / login profile). A principal that can edit ' +
+    'IAM can grant itself any other permission - a privilege-escalation ' +
+    'primitive on its own.';
+}
+
 export function ruleDirectIamAdmin(stmt, out) {
   const matched = matchPatterns(stmt, IAM_ADMIN_ACTIONS, true);
   if (matched.length === 0) return;
   out.push(
     makeFinding('DIRECT-IAM-ADMIN', stmt, {
-      // High, not critical: direct-IAM single-action administration is a
-      // standalone escalation primitive, but critical is reserved for compound
-      // privilege-boundary-crossing paths (IAM-102 severity model).
-      severity: 'high',
+      // F6: critical when it grants a self-applicable policy primitive (attach/put/
+      // version) on an all-or-self target - one step to full admin, parity with
+      // PassRole+launch. Key/user creation alone stays high.
+      severity: matched.some((p) => SELF_POLICY_ACTIONS.some((a) => actionGrants(p, a))) &&
+        iamTargetIsAllOrSelf(stmt) ? 'critical' : 'high',
       policyEvidence: 'high',
       actions: matched,
       resources: resourceScope(stmt),
-      why:
-        'Grants direct IAM administration (e.g. attach/put policy, create policy ' +
-        'version, create access key / login profile). A principal that can edit ' +
-        'IAM can grant itself any other permission - a privilege-escalation ' +
-        'primitive on its own.',
+      why: iamAdminWhy(matched),
       remediation:
         'Remove self-service IAM write access; route policy changes through a ' +
         'reviewed pipeline and constrain with a permission boundary.',
@@ -148,8 +179,11 @@ export function ruleResourcePolicyWrite(stmt, out) {
       policyEvidence: 'high',
       actions: matched,
       resources: resourceScope(stmt),
-      why:
-        'Grants a resource-policy write / cross-account grant action (e.g. ' +
+      why: onlySubset(matched, RESOURCE_POLICY_WRITE_ACTIONS, RESOURCE_SHARE_ACTIONS)
+        ? 'Grants snapshot / image sharing (ec2:ModifySnapshotAttribute, ' +
+          'ec2:ModifyImageAttribute, rds:Modify*SnapshotAttribute). The holder can share ' +
+          'a copy with another account or make it public - cross-account data exposure.'
+        : 'Grants a resource-policy write / cross-account grant action (e.g. ' +
         's3:PutBucketPolicy, kms:PutKeyPolicy, kms:CreateGrant, ' +
         'lambda:AddPermission, sns:AddPermission, secretsmanager:PutResourcePolicy). ' +
         'A principal that can rewrite a resource\'s own policy can grant an external ' +
@@ -1068,6 +1102,9 @@ export function ruleDestructive(stmt, out) {
     if (isServiceWildcard(p)) continue; // reported by WILDCARD-ACTION
     if (DETECTION_SERVICES.has(actionService(p))) continue; // -> detection rule
     if (DESTRUCTIVE_VERB.test(actionVerb(p))) matched.push(p);
+  }
+  for (const p of matchPatterns(stmt, DESTRUCTIVE_EXTRA_ACTIONS, false)) {
+    if (!matched.includes(p)) matched.push(p);
   }
   if (matched.length === 0) return;
   out.push(

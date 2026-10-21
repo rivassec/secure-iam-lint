@@ -103,6 +103,91 @@
           }
         },
         {
+          "id": "ATTACH-POLICY",
+          "severity": "critical",
+          "title": "Attach managed policy to self / a principal",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "high",
+          "why": "Grants iam:Attach{User,Role,Group}Policy. A principal that can attach a managed policy to itself (or a principal it controls) can attach AdministratorAccess and obtain full administrative access - a direct privilege-escalation path.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Remove self-service policy-attachment; if attachment is required, constrain the attachable policies with iam:PolicyARN Conditions and a permission boundary, and route changes through a reviewed pipeline.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html",
+          "escalation": {
+            "technique": "attach-policy",
+            "service": null,
+            "requiredActions": [
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "attach-policy",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "primitive",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
           "id": "PASSROLE-EC2",
           "severity": "critical",
           "title": "PassRole to EC2 + RunInstances",
@@ -1501,9 +1586,9 @@
           }
         },
         {
-          "id": "ATTACH-POLICY",
-          "severity": "high",
-          "title": "Attach managed policy to self / a principal",
+          "id": "POLICY-VERSION",
+          "severity": "critical",
+          "title": "Managed-policy version manipulation",
           "statementSid": "GodMode",
           "statementIndex": 0,
           "actions": [
@@ -1515,13 +1600,13 @@
           "conditions": null,
           "policyEvidence": "high",
           "pathExploitability": "high",
-          "why": "Grants iam:Attach{User,Role,Group}Policy. A principal that can attach a managed policy to itself (or a principal it controls) can attach AdministratorAccess and obtain full administrative access - a direct privilege-escalation path.",
+          "why": "Grants managed-policy version control (iam:CreatePolicyVersion / iam:SetDefaultPolicyVersion). A principal attached to (or able to target) a customer-managed policy can publish a new, more permissive version and set it as the default, escalating its own access without attaching a new policy.",
           "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
-          "remediation": "Remove self-service policy-attachment; if attachment is required, constrain the attachable policies with iam:PolicyARN Conditions and a permission boundary, and route changes through a reviewed pipeline.",
+          "remediation": "Restrict policy-version actions to a dedicated policy-administration role, scope the Resource to specific policy ARNs, and require review (e.g. an MFA / approval Condition) for version changes.",
           "ruleVersion": "1",
           "docRef": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html",
           "escalation": {
-            "technique": "attach-policy",
+            "technique": "policy-version-manipulation",
             "service": null,
             "requiredActions": [
               "*"
@@ -1529,7 +1614,92 @@
             "prerequisites": {
               "anyOf": [
                 {
-                  "technique": "attach-policy",
+                  "technique": "policy-version-manipulation",
+                  "allOf": [
+                    {
+                      "role": "primitive",
+                      "anyOf": [
+                        "*"
+                      ]
+                    }
+                  ],
+                  "requiresPassRole": false,
+                  "note": null
+                }
+              ]
+            },
+            "targetPermissions": "unknown"
+          },
+          "evidence": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "role": "primitive",
+              "actions": [
+                "*"
+              ],
+              "resources": [
+                "*"
+              ],
+              "condition": null,
+              "note": null
+            }
+          ],
+          "contributingStatements": [
+            {
+              "statementIndex": 0,
+              "statementSid": "GodMode",
+              "actions": [
+                "*"
+              ]
+            }
+          ],
+          "riskFactors": null,
+          "policyFamily": "identity",
+          "conditionClassification": {
+            "present": false,
+            "entries": [],
+            "classes": {
+              "constraint": 0,
+              "selector": 0,
+              "expansion": 0,
+              "context-required": 0
+            },
+            "contextRequiredKeys": [],
+            "hasCreditableConstraint": false,
+            "hasExpansion": false
+          }
+        },
+        {
+          "id": "PUT-INLINE-POLICY",
+          "severity": "critical",
+          "title": "Write inline policy on self / a principal",
+          "statementSid": "GodMode",
+          "statementIndex": 0,
+          "actions": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "conditions": null,
+          "policyEvidence": "high",
+          "pathExploitability": "high",
+          "why": "Grants iam:Put{User,Role,Group}Policy. A principal that can write an inline policy on itself (or a principal it controls) can grant itself any permission, including full admin - a direct privilege-escalation path.",
+          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
+          "remediation": "Remove self-service inline-policy writes; constrain with a permission boundary that caps the effective permissions, and route policy changes through a reviewed pipeline.",
+          "ruleVersion": "1",
+          "docRef": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html",
+          "escalation": {
+            "technique": "put-inline-policy",
+            "service": null,
+            "requiredActions": [
+              "*"
+            ],
+            "prerequisites": {
+              "anyOf": [
+                {
+                  "technique": "put-inline-policy",
                   "allOf": [
                     {
                       "role": "primitive",
@@ -1615,176 +1785,6 @@
               "anyOf": [
                 {
                   "technique": "credential-creation",
-                  "allOf": [
-                    {
-                      "role": "primitive",
-                      "anyOf": [
-                        "*"
-                      ]
-                    }
-                  ],
-                  "requiresPassRole": false,
-                  "note": null
-                }
-              ]
-            },
-            "targetPermissions": "unknown"
-          },
-          "evidence": [
-            {
-              "statementIndex": 0,
-              "statementSid": "GodMode",
-              "role": "primitive",
-              "actions": [
-                "*"
-              ],
-              "resources": [
-                "*"
-              ],
-              "condition": null,
-              "note": null
-            }
-          ],
-          "contributingStatements": [
-            {
-              "statementIndex": 0,
-              "statementSid": "GodMode",
-              "actions": [
-                "*"
-              ]
-            }
-          ],
-          "riskFactors": null,
-          "policyFamily": "identity",
-          "conditionClassification": {
-            "present": false,
-            "entries": [],
-            "classes": {
-              "constraint": 0,
-              "selector": 0,
-              "expansion": 0,
-              "context-required": 0
-            },
-            "contextRequiredKeys": [],
-            "hasCreditableConstraint": false,
-            "hasExpansion": false
-          }
-        },
-        {
-          "id": "POLICY-VERSION",
-          "severity": "high",
-          "title": "Managed-policy version manipulation",
-          "statementSid": "GodMode",
-          "statementIndex": 0,
-          "actions": [
-            "*"
-          ],
-          "resources": [
-            "*"
-          ],
-          "conditions": null,
-          "policyEvidence": "high",
-          "pathExploitability": "high",
-          "why": "Grants managed-policy version control (iam:CreatePolicyVersion / iam:SetDefaultPolicyVersion). A principal attached to (or able to target) a customer-managed policy can publish a new, more permissive version and set it as the default, escalating its own access without attaching a new policy.",
-          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
-          "remediation": "Restrict policy-version actions to a dedicated policy-administration role, scope the Resource to specific policy ARNs, and require review (e.g. an MFA / approval Condition) for version changes.",
-          "ruleVersion": "1",
-          "docRef": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html",
-          "escalation": {
-            "technique": "policy-version-manipulation",
-            "service": null,
-            "requiredActions": [
-              "*"
-            ],
-            "prerequisites": {
-              "anyOf": [
-                {
-                  "technique": "policy-version-manipulation",
-                  "allOf": [
-                    {
-                      "role": "primitive",
-                      "anyOf": [
-                        "*"
-                      ]
-                    }
-                  ],
-                  "requiresPassRole": false,
-                  "note": null
-                }
-              ]
-            },
-            "targetPermissions": "unknown"
-          },
-          "evidence": [
-            {
-              "statementIndex": 0,
-              "statementSid": "GodMode",
-              "role": "primitive",
-              "actions": [
-                "*"
-              ],
-              "resources": [
-                "*"
-              ],
-              "condition": null,
-              "note": null
-            }
-          ],
-          "contributingStatements": [
-            {
-              "statementIndex": 0,
-              "statementSid": "GodMode",
-              "actions": [
-                "*"
-              ]
-            }
-          ],
-          "riskFactors": null,
-          "policyFamily": "identity",
-          "conditionClassification": {
-            "present": false,
-            "entries": [],
-            "classes": {
-              "constraint": 0,
-              "selector": 0,
-              "expansion": 0,
-              "context-required": 0
-            },
-            "contextRequiredKeys": [],
-            "hasCreditableConstraint": false,
-            "hasExpansion": false
-          }
-        },
-        {
-          "id": "PUT-INLINE-POLICY",
-          "severity": "high",
-          "title": "Write inline policy on self / a principal",
-          "statementSid": "GodMode",
-          "statementIndex": 0,
-          "actions": [
-            "*"
-          ],
-          "resources": [
-            "*"
-          ],
-          "conditions": null,
-          "policyEvidence": "high",
-          "pathExploitability": "high",
-          "why": "Grants iam:Put{User,Role,Group}Policy. A principal that can write an inline policy on itself (or a principal it controls) can grant itself any permission, including full admin - a direct privilege-escalation path.",
-          "limit": "Capability from this policy alone, not effective access. A single policy cannot establish effective permissions: other identity policies, resource policies, permission boundaries, SCPs, session policies, explicit Denies, and Condition keys may narrow or block this path. The permissions of the target role (passed / assumed / re-trusted) are not in scope and are treated as unknown; this finding does not claim what that role can do, only that this policy would let the principal reach it.",
-          "remediation": "Remove self-service inline-policy writes; constrain with a permission boundary that caps the effective permissions, and route policy changes through a reviewed pipeline.",
-          "ruleVersion": "1",
-          "docRef": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html",
-          "escalation": {
-            "technique": "put-inline-policy",
-            "service": null,
-            "requiredActions": [
-              "*"
-            ],
-            "prerequisites": {
-              "anyOf": [
-                {
-                  "technique": "put-inline-policy",
                   "allOf": [
                     {
                       "role": "primitive",
@@ -1993,6 +1993,24 @@
                   "helpUri": "https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html"
                 },
                 {
+                  "id": "ATTACH-POLICY",
+                  "name": "ATTACH-POLICY",
+                  "shortDescription": {
+                    "text": "Attach managed policy to self / a principal"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type ATTACH-POLICY. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "9.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html"
+                },
+                {
                   "id": "PASSROLE-EC2",
                   "name": "PASSROLE-EC2",
                   "shortDescription": {
@@ -2047,42 +2065,6 @@
                   "helpUri": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html"
                 },
                 {
-                  "id": "ATTACH-POLICY",
-                  "name": "ATTACH-POLICY",
-                  "shortDescription": {
-                    "text": "Attach managed policy to self / a principal"
-                  },
-                  "fullDescription": {
-                    "text": "IAM blast-radius finding type ATTACH-POLICY. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
-                  },
-                  "defaultConfiguration": {
-                    "level": "error"
-                  },
-                  "properties": {
-                    "category": "security",
-                    "security-severity": "7.0"
-                  },
-                  "helpUri": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html"
-                },
-                {
-                  "id": "CREDENTIAL-CREATION",
-                  "name": "CREDENTIAL-CREATION",
-                  "shortDescription": {
-                    "text": "Credential creation for a principal (access key / login profile / federation token)"
-                  },
-                  "fullDescription": {
-                    "text": "IAM blast-radius finding type CREDENTIAL-CREATION. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
-                  },
-                  "defaultConfiguration": {
-                    "level": "error"
-                  },
-                  "properties": {
-                    "category": "security",
-                    "security-severity": "7.0"
-                  },
-                  "helpUri": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html"
-                },
-                {
                   "id": "POLICY-VERSION",
                   "name": "POLICY-VERSION",
                   "shortDescription": {
@@ -2096,7 +2078,7 @@
                   },
                   "properties": {
                     "category": "security",
-                    "security-severity": "7.0"
+                    "security-severity": "9.0"
                   },
                   "helpUri": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html"
                 },
@@ -2108,6 +2090,24 @@
                   },
                   "fullDescription": {
                     "text": "IAM blast-radius finding type PUT-INLINE-POLICY. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
+                  },
+                  "defaultConfiguration": {
+                    "level": "error"
+                  },
+                  "properties": {
+                    "category": "security",
+                    "security-severity": "9.0"
+                  },
+                  "helpUri": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagement.html"
+                },
+                {
+                  "id": "CREDENTIAL-CREATION",
+                  "name": "CREDENTIAL-CREATION",
+                  "shortDescription": {
+                    "text": "Credential creation for a principal (access key / login profile / federation token)"
+                  },
+                  "fullDescription": {
+                    "text": "IAM blast-radius finding type CREDENTIAL-CREATION. Reports POTENTIAL blast radius from the supplied policy context; it does not assert effective permissions."
                   },
                   "defaultConfiguration": {
                     "level": "error"
@@ -2213,6 +2213,53 @@
               "ruleIndex": 0
             },
             {
+              "ruleId": "ATTACH-POLICY",
+              "level": "error",
+              "message": {
+                "text": "Attach managed policy to self / a principal [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v2": "0db40e96c1012486428460314a94a88f"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "high",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "primitive",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode",
+                "baselineId": "05b483e3fbca91eb43b05da1abb5f9cb4a5d1699de1bba0242c7715f6c84293e"
+              },
+              "ruleIndex": 1
+            },
+            {
               "ruleId": "PASSROLE-EC2",
               "level": "error",
               "message": {
@@ -2270,7 +2317,7 @@
                 "statementSid": "GodMode",
                 "baselineId": "8953c0e4a5784f5124ed78d557e7f38396fe90d375d24ced521a0c823413f7a7"
               },
-              "ruleIndex": 1
+              "ruleIndex": 2
             },
             {
               "ruleId": "PASSROLE-LAMBDA",
@@ -2330,7 +2377,7 @@
                 "statementSid": "GodMode",
                 "baselineId": "f3627d7dafef57ff57c450259d21fcd056de51831de7f6a2ef6fe97e8c6e8529"
               },
-              "ruleIndex": 2
+              "ruleIndex": 3
             },
             {
               "ruleId": "PASSROLE-SERVICE",
@@ -2390,7 +2437,7 @@
                 "statementSid": "GodMode",
                 "baselineId": "461d4631034d55d9362f8211a3117f55359a105e06fb9b97c8355711c9b4f503"
               },
-              "ruleIndex": 3
+              "ruleIndex": 4
             },
             {
               "ruleId": "PASSROLE-SERVICE",
@@ -2450,7 +2497,7 @@
                 "statementSid": "GodMode",
                 "baselineId": "63bb72b40183725597b4137f2fd62430089931b966c37fe961b817a343522a54"
               },
-              "ruleIndex": 3
+              "ruleIndex": 4
             },
             {
               "ruleId": "PASSROLE-SERVICE",
@@ -2510,7 +2557,7 @@
                 "statementSid": "GodMode",
                 "baselineId": "a3a363a48fdd124177707e669d03cfc8938298c5b45b9cf0ada4e1c1a5111ae8"
               },
-              "ruleIndex": 3
+              "ruleIndex": 4
             },
             {
               "ruleId": "PASSROLE-SERVICE",
@@ -2570,7 +2617,7 @@
                 "statementSid": "GodMode",
                 "baselineId": "d0a186f8a3bd2f634b6e0cc37ab7d8aafe9073afc7f090122157cdc4bae03021"
               },
-              "ruleIndex": 3
+              "ruleIndex": 4
             },
             {
               "ruleId": "PASSROLE-SERVICE",
@@ -2630,7 +2677,7 @@
                 "statementSid": "GodMode",
                 "baselineId": "5b8b14108a7bdb9bfae8c787178246dd45b8a4e00a4be2fa1b44ebdaf52090e6"
               },
-              "ruleIndex": 3
+              "ruleIndex": 4
             },
             {
               "ruleId": "PASSROLE-SERVICE",
@@ -2690,7 +2737,7 @@
                 "statementSid": "GodMode",
                 "baselineId": "d257c14b092c45813a019c677771fb32d469026cb2bd2aa7f78a5317de842110"
               },
-              "ruleIndex": 3
+              "ruleIndex": 4
             },
             {
               "ruleId": "PASSROLE-SERVICE",
@@ -2750,13 +2797,13 @@
                 "statementSid": "GodMode",
                 "baselineId": "4bcec4c8a37991852b0f608fc1d9a37ad9566f0d377b1dee006fcd1cb084bf99"
               },
-              "ruleIndex": 3
+              "ruleIndex": 4
             },
             {
-              "ruleId": "ATTACH-POLICY",
+              "ruleId": "POLICY-VERSION",
               "level": "error",
               "message": {
-                "text": "Attach managed policy to self / a principal [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+                "text": "Managed-policy version manipulation [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
               },
               "locations": [
                 {
@@ -2768,13 +2815,13 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v2": "0db40e96c1012486428460314a94a88f"
+                "iamBlastRadius/semanticIdentity/v2": "a09c82480b31f4ac612a78ddba089fcc"
               },
               "properties": {
                 "category": "security",
-                "severity": "high",
+                "severity": "critical",
                 "policyFamily": "identity",
-                "security-severity": "7.0",
+                "security-severity": "9.0",
                 "certainty": {
                   "policyEvidence": "high",
                   "pathExploitability": "high",
@@ -2795,9 +2842,56 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "GodMode",
-                "baselineId": "9726c03c19a63a330dc6d6f25f32e25669fd0b9c826a8105ac6094550116eee8"
+                "baselineId": "9e6df8d0e8af9da34a18f056cbec8f3d32b06c1b464ebc5895a1b7cf884e01ef"
               },
-              "ruleIndex": 4
+              "ruleIndex": 5
+            },
+            {
+              "ruleId": "PUT-INLINE-POLICY",
+              "level": "error",
+              "message": {
+                "text": "Write inline policy on self / a principal [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
+              },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "stdin"
+                    }
+                  }
+                }
+              ],
+              "partialFingerprints": {
+                "iamBlastRadius/semanticIdentity/v2": "a09a04e695aa91d349bde71ecd8fa841"
+              },
+              "properties": {
+                "category": "security",
+                "severity": "critical",
+                "policyFamily": "identity",
+                "security-severity": "9.0",
+                "certainty": {
+                  "policyEvidence": "high",
+                  "pathExploitability": "high",
+                  "targetPermissions": "unknown"
+                },
+                "evidence": [
+                  {
+                    "statementIndex": 0,
+                    "statementSid": "GodMode",
+                    "role": "primitive",
+                    "actions": [
+                      "\\*"
+                    ],
+                    "resources": [
+                      "\\*"
+                    ]
+                  }
+                ],
+                "jsonPointer": "/Statement/0",
+                "statementSid": "GodMode",
+                "baselineId": "5a7ea60ce609b8f4a104d9a30a1c2bcd57e4cf3ff155d2fd5d5495b9e9bf3c69"
+              },
+              "ruleIndex": 6
             },
             {
               "ruleId": "CREDENTIAL-CREATION",
@@ -2843,100 +2937,6 @@
                 "jsonPointer": "/Statement/0",
                 "statementSid": "GodMode",
                 "baselineId": "30e3faca78ffdc59053f1d8e79050aa06f715e03d0aaef8a2dd422bcd3ae4582"
-              },
-              "ruleIndex": 5
-            },
-            {
-              "ruleId": "POLICY-VERSION",
-              "level": "error",
-              "message": {
-                "text": "Managed-policy version manipulation [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
-              },
-              "locations": [
-                {
-                  "physicalLocation": {
-                    "artifactLocation": {
-                      "uri": "stdin"
-                    }
-                  }
-                }
-              ],
-              "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v2": "a09c82480b31f4ac612a78ddba089fcc"
-              },
-              "properties": {
-                "category": "security",
-                "severity": "high",
-                "policyFamily": "identity",
-                "security-severity": "7.0",
-                "certainty": {
-                  "policyEvidence": "high",
-                  "pathExploitability": "high",
-                  "targetPermissions": "unknown"
-                },
-                "evidence": [
-                  {
-                    "statementIndex": 0,
-                    "statementSid": "GodMode",
-                    "role": "primitive",
-                    "actions": [
-                      "\\*"
-                    ],
-                    "resources": [
-                      "\\*"
-                    ]
-                  }
-                ],
-                "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode",
-                "baselineId": "3821b313b181caff82b152e18d81dff46614ca1d862d7672a34ba6ea15db13d2"
-              },
-              "ruleIndex": 6
-            },
-            {
-              "ruleId": "PUT-INLINE-POLICY",
-              "level": "error",
-              "message": {
-                "text": "Write inline policy on self / a principal [identity policy] at statement `GodMode`; actions: `*`. Potential blast radius from the supplied policy context only; not effective permissions."
-              },
-              "locations": [
-                {
-                  "physicalLocation": {
-                    "artifactLocation": {
-                      "uri": "stdin"
-                    }
-                  }
-                }
-              ],
-              "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v2": "a09a04e695aa91d349bde71ecd8fa841"
-              },
-              "properties": {
-                "category": "security",
-                "severity": "high",
-                "policyFamily": "identity",
-                "security-severity": "7.0",
-                "certainty": {
-                  "policyEvidence": "high",
-                  "pathExploitability": "high",
-                  "targetPermissions": "unknown"
-                },
-                "evidence": [
-                  {
-                    "statementIndex": 0,
-                    "statementSid": "GodMode",
-                    "role": "primitive",
-                    "actions": [
-                      "\\*"
-                    ],
-                    "resources": [
-                      "\\*"
-                    ]
-                  }
-                ],
-                "jsonPointer": "/Statement/0",
-                "statementSid": "GodMode",
-                "baselineId": "954169a7ac68d05eb3bcc74d7fb710d49dc2376267e7c0b4a57115743f2da8e4"
               },
               "ruleIndex": 7
             },
@@ -3062,7 +3062,7 @@
       },
       {
         "id": "ATTACH-POLICY",
-        "severity": "high",
+        "severity": "critical",
         "title": "Attach managed policy to self / a principal",
         "statementIndex": 0,
         "actions": [
@@ -3225,7 +3225,7 @@
       },
       {
         "id": "POLICY-VERSION",
-        "severity": "high",
+        "severity": "critical",
         "title": "Managed-policy version manipulation",
         "statementIndex": 0,
         "actions": [
@@ -3239,7 +3239,7 @@
       },
       {
         "id": "PUT-INLINE-POLICY",
-        "severity": "high",
+        "severity": "critical",
         "title": "Write inline policy on self / a principal",
         "statementIndex": 0,
         "actions": [

@@ -778,7 +778,7 @@ test('analyzeResource: service principal without source binding -> RESOURCE-CONF
   const res = analyzeResource(model, { arn: 'arn:aws:sns:us-west-2:123456789012:t' });
   const cd = res.findings.find((f) => f.id === 'RESOURCE-CONFUSED-DEPUTY');
   assert.ok(cd, 'a service principal without source binding is a confused-deputy exposure');
-  assert.equal(cd.severity, 'medium', 'unbound service grant is medium');
+  assert.equal(cd.severity, 'high', 'unbound service grant is high (F13)');
   assert.equal(cd.policyEvidence, 'high');
   assert.ok(/not effective access/i.test(cd.limit), 'carries the not-effective caveat');
   assert.ok(/NO source binding/.test(cd.why), 'names the missing source binding');
@@ -881,11 +881,16 @@ test('analyzeResource: multi-account SourceArn where ONE account matches SourceA
       principal: { anyPrincipal: false, byType: { Service: ['cloudtrail.amazonaws.com'] } },
     }],
   };
-  const res = analyzeResource(model, { type: 's3-object', arn: 'arn:aws:s3:::b/*' });
+  const res = analyzeResource(model, { type: 's3-object', arn: 'arn:aws:s3:::b/*', account: '111122223333' });
   const cd = res.findings.find((f) => f.id === 'RESOURCE-CONFUSED-DEPUTY');
   assert.ok(cd, 'binding surfaced');
   assert.equal(cd.severity, 'info', 'a matching SourceArn account keeps this a source-bound negative control');
   assert.equal(cd.resource.sourceBinding.state, 'source-bound');
+  // T2-4: without the owning account the binding cannot be proven own-account.
+  const noOwner = analyzeResource(model, { type: 's3-object', arn: 'arn:aws:s3:::b/*' })
+    .findings.find((f) => f.id === 'RESOURCE-CONFUSED-DEPUTY');
+  assert.equal(noOwner.severity, 'high');
+  assert.equal(noOwner.resource.sourceBinding.state, 'source-unverified');
 });
 
 test('analyzeResource: multi-account SourceAccount all disagreeing with SourceArn -> mismatched (symmetry), not praised', () => {
@@ -933,7 +938,7 @@ test('analyzeResource: agreeing multi-value SourceAccount is NOT falsely flagged
       principal: { anyPrincipal: false, byType: { Service: ['cloudtrail.amazonaws.com'] } },
     }],
   };
-  const res = analyzeResource(model, { type: 's3-object', arn: 'arn:aws:s3:::b/*' });
+  const res = analyzeResource(model, { type: 's3-object', arn: 'arn:aws:s3:::b/*', account: '444455556666' });
   const cd = res.findings.find((f) => f.id === 'RESOURCE-CONFUSED-DEPUTY');
   assert.ok(cd, 'binding surfaced');
   assert.equal(cd.severity, 'info', 'an intersecting SourceAccount set keeps this a source-bound negative control');
@@ -954,7 +959,7 @@ test('analyzeResource: a bypassable (IfExists) source binding does NOT count -> 
   const res = analyzeResource(model, { arn: 'arn:aws:sqs:us-east-1:123456789012:q' });
   const cd = res.findings.find((f) => f.id === 'RESOURCE-CONFUSED-DEPUTY');
   assert.ok(cd, 'confused-deputy finding present');
-  assert.equal(cd.severity, 'medium', 'a bypassable binding leaves the exposure standing');
+  assert.equal(cd.severity, 'high', 'a bypassable binding leaves the exposure standing');
   assert.equal(cd.resource.sourceBinding.state, 'unbound');
   assert.ok(cd.resource.sourceBinding.bypassedKeys.includes('aws:SourceAccount'), 'records the bypassed key');
   assert.ok(/does NOT bind the source/.test(cd.why), 'explains why the present key does not bind');
@@ -971,11 +976,11 @@ test('analyzeResource: a match-all SourceArn value does NOT bind -> still exposu
   };
   const res = analyzeResource(model, { arn: 'arn:aws:sns:us-west-2:123456789012:t' });
   const cd = res.findings.find((f) => f.id === 'RESOURCE-CONFUSED-DEPUTY');
-  assert.equal(cd.severity, 'medium', 'a match-all SourceArn pins nothing');
+  assert.equal(cd.severity, 'high', 'a match-all SourceArn pins nothing');
   assert.equal(cd.resource.sourceBinding.state, 'unbound');
 });
 
-test('analyzeResource: source-bound via aws:SourceOrgID -> negative control info', () => {
+test('analyzeResource: source-bound via aws:SourceOrgID -> bound but not provably own-account', () => {
   const model = {
     statements: [{
       index: 0, sid: 'OrgBound', effect: 'Allow', actions: ['sns:Publish'],
@@ -986,8 +991,9 @@ test('analyzeResource: source-bound via aws:SourceOrgID -> negative control info
   };
   const res = analyzeResource(model, { arn: 'arn:aws:sns:us-west-2:123456789012:t' });
   const cd = res.findings.find((f) => f.id === 'RESOURCE-CONFUSED-DEPUTY');
-  assert.equal(cd.severity, 'info', 'an org-source binding is a confused-deputy mitigation');
-  assert.equal(cd.resource.sourceBinding.state, 'source-bound');
+  // T2-4: an org can't be verified as the owner's without org context (fail closed).
+  assert.equal(cd.severity, 'high', 'an org-source binding is not proven own-account');
+  assert.equal(cd.resource.sourceBinding.state, 'source-unverified');
 });
 
 // --- Principal-scoping fail-open: a ...IfExists / ForAllValues principal condition

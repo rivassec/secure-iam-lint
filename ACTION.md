@@ -178,7 +178,7 @@ run the Action **multiple times** with different `paths` globs and a different
 | Input | Required | Default | Description |
 | ----- | -------- | ------- | ----------- |
 | `paths` | yes | - | Newline-separated files or globs to scan (e.g. `policies/**/*.json`). An empty match is a usage error (exit `2`), not a clean scan. |
-| `family` | yes | - | Policy family, declared explicitly and never auto-detected: `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp`. |
+| `family` | yes | - | Policy family, declared explicitly and never auto-detected: `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp`, `scp-rcp`, `trust` (synonym of `role-trust`). |
 | `subject-account` | no | - | AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). |
 | `resource-arn` | no | - | For `family: resource`: the ARN of the resource the policy is attached to (e.g. `arn:aws:s3:::my-bucket`). Required to analyze a resource policy; without it the resource family fails closed (`RESOURCE_CONTEXT_REQUIRED`, exit `3`). |
 | `resource-type` | no | - | For `family: resource`: the resource type (e.g. `s3-bucket`). |
@@ -356,6 +356,7 @@ One family per run, declared explicitly (never auto-detected):
 | `session` | Session policies: analyzed as a session restriction, not a grant. |
 | `scp` | Organizations Service Control Policies: guardrail semantics. |
 | `rcp` | Organizations Resource Control Policies: guardrail semantics. |
+| `scp-rcp` | Both of the above in one token; `scp` and `rcp` are synonyms. |
 
 A token outside this set, or a policy whose shape does not match the declared
 family, fails closed with exit `3` rather than being guessed.

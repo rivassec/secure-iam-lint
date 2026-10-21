@@ -8,7 +8,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Nothing yet.
 
-## [1.2.0] - 2026-10-20
+## [1.2.0] - 2026-10-21
 
 ### Added
 
@@ -34,6 +34,46 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - China-partition service principals: documented `.amazonaws.com.cn` spellings for
   `ec2` and `datapipeline`; under `aws-cn` the matcher considers both spellings for
   every service.
+
+### Security
+
+- **SCP/RCP guardrails that do nothing no longer read CLEAN.** A Deny whose
+  NotAction matches every action, a negated region `*Like` matching every region,
+  and an RCP org perimeter that admits any organization now report high. Inverted
+  region/org fences and MFA/SecureTransport-gated Denies are high (were medium or
+  undetected).
+- An open GitHub or Cognito federated trust (sub missing or `*`/`repo:*`, no pool
+  id) is critical, so it also fails `--threshold critical`.
+- **SCP/RCP Denies are judged only by what the guardrail evaluator models.** Any
+  other AND'd condition key, an unknown operator or a negated set-qualified
+  operator exits 3 instead of reading CLEAN. Denies that never fire (value unions
+  matching every region, action or principal; `Null "true"` on always-present
+  keys; contradictory `Bool` values; NotResource/Resource scopes that match
+  nothing; a carve-out of the subject account; plain `Bool
+  aws:MultiFactorAuthPresent "false"`) report high, as do `${...}` org values,
+  `Null aws:PrincipalOrgID "false"` and an inverted confused-deputy template. An
+  RCP whose Principal isn't `"*"` exits 3.
+- A Deny of only the catalogued actions no longer suppresses a wildcard grant
+  (`ssm:GetParameter*`, `cloudtrail:Stop*`, `ec2:*` + PassRole, `iam:Create*`); it
+  narrows the finding unless it covers the whole grant in each service.
+  `ArnLike`/`ArnEquals` on `iam:PassedToService` is not a certain Deny.
+- Resource policies: a Numeric, Date or Binary condition on a principal scoping
+  key no longer counts as a pin; `Principal *` under it is critical.
+- A NotAction + NotResource Deny no longer fences a broad grant whose actions the
+  NotAction spares (`Deny NotAction s3:GetObjectVersion` no longer suppresses
+  DATA-EXFIL for `s3:GetObject*` on `*`).
+- An RCP Deny with a positive comparator on any org key (including
+  `aws:PrincipalOrgPaths`) is an inverted perimeter (high); a confused-deputy RCP
+  with a positive `aws:SourceAccount` is limited to that account (high).
+- Guardrail Denies that never fire for the subject account report high: an
+  own-account `aws:PrincipalArn` carve-out, a pin to a foreign account, a Resource
+  that can't match (asserted partition mismatch, a region the fence allows), and
+  contradictory string conditions on one key. An unknown literal partition, or an
+  RCP whose actions all fall outside the services RCPs govern, exits 3.
+- A Deny pinned to principal values no request carries reports high: a literal
+  `*` under StringEquals on `aws:PrincipalArn` (a mistyped root deny), or an sts
+  assumed-role ARN. A cross-region Copy/Replicate Deny pinned to the allowed
+  region exits 3 instead of reading as a no-op.
 
 ### Changed
 
@@ -65,6 +105,49 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ambiguous (variables, wildcard accounts, `NotResource`) stay `high`.
 - Release version bumped to `1.2.0` (`package.json` and
   `VERSION_MANIFEST.releaseVersion`).
+- Admin-equivalent IAM grants that can target the caller (attach, put or version
+  a policy on `*` or a self-scoped resource) are critical. Baseline ids include
+  severity, so a baseline that accepted one of these at high re-fires once.
+- The Cognito authenticated-role trust finding (medium) tells the reviewer to
+  check the role's attached policies, which reach every signed-in pool user.
+
+### Fixed
+
+- Resource policies can exit 0 when every part is modeled (KMS owner delegation,
+  same-account grants, own-account-bound service grants, deny-only policies).
+  Anything unmodeled (NotPrincipal, Allow NotAction/NotResource, unknown condition
+  operators, CanonicalUser/Federated principals, foreign-service actions) stays
+  exit 3 and is located by JSON path. An unknown condition operator is no longer
+  credited as narrowing.
+- Resource-side self-reference conditions (`aws:PrincipalArn == ${aws:PrincipalArn}`)
+  and other no-op `*` conditions are critical with a tautology note; a real
+  account/org/ARN pin stays high. Unbound service-principal grants are high.
+- A NotPrincipal statement in a resource policy fails closed on its own instead of
+  hiding the other statements' findings.
+- Public and federated trusts with `sts:*`, `*`, `sts:AssumeRole*` or NotAction are
+  analyzed (were blocked with no findings). An explicitly chosen identity family is
+  no longer misread as an SCP. `scp-rcp` accepts FullAWSAccess and named-action
+  Deny SCPs.
+- `aws:PrincipalIsAWSService` and `aws:SourceOrgID` are modeled in RCPs; the AWS
+  perimeter template reads CLEAN and its inversion reports high.
+- Denies are judged against the concrete actions a finding needs (`Allow *` +
+  `Deny iam:*,sts:*` no longer reports IAM/STS escalations); a same-scope Deny
+  suppresses OBJECT-ACL-WRITE / RESOURCE-POLICY-WRITE; PassRole no longer reports
+  for user/group ARNs or service-certain PassedToService Denies.
+- Catalog: snapshot/AMI sharing, OIDC/SAML provider changes, IAM tagging,
+  `kms:ScheduleKeyDeletion` and `ec2:ModifyInstanceAttribute` now name their risk;
+  PassRole + `iam:AddRoleToInstanceProfile` reports PASSROLE-EC2.
+- Trust: `${*}`/`${?}`/`${$}` are literal characters; PrincipalArn pins under
+  IfExists/ForAllValues are not bypassable for `sts:AssumeRole`; tautology checks
+  compare the literal value; the Cognito aud + amr pattern is credited.
+- A broad session policy rates high like a permissions boundary. A resource
+  context that doesn't match the policy's ARNs fails closed. All surfaces list the
+  same family tokens.
+- A resource statement naming a Resource outside the attached resource is
+  reported per statement (exit 3) without dropping the other findings; a Deny on
+  another resource no longer blocks analysis.
+- A partial `aws:PrincipalAccount` carve-out such as `["1*","4*"]` is no longer
+  read as matching every account.
 
 ## [1.1.0] - 2026-10-09
 

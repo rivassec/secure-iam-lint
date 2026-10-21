@@ -124,7 +124,8 @@
             "codebuild:UpdateProject",
             "glue:UpdateJob",
             "glue:UpdateDevEndpoint",
-            "cloudformation:UpdateStack"
+            "cloudformation:UpdateStack",
+            "ec2:ModifyInstanceAttribute"
           ],
           "resources": [
             "*"
@@ -146,7 +147,8 @@
               "codebuild:UpdateProject",
               "glue:UpdateJob",
               "glue:UpdateDevEndpoint",
-              "cloudformation:UpdateStack"
+              "cloudformation:UpdateStack",
+              "ec2:ModifyInstanceAttribute"
             ],
             "prerequisites": {
               "anyOf": [
@@ -161,7 +163,8 @@
                         "codebuild:UpdateProject",
                         "glue:UpdateJob",
                         "glue:UpdateDevEndpoint",
-                        "cloudformation:UpdateStack"
+                        "cloudformation:UpdateStack",
+                        "ec2:ModifyInstanceAttribute"
                       ]
                     }
                   ],
@@ -183,7 +186,8 @@
                 "codebuild:UpdateProject",
                 "glue:UpdateJob",
                 "glue:UpdateDevEndpoint",
-                "cloudformation:UpdateStack"
+                "cloudformation:UpdateStack",
+                "ec2:ModifyInstanceAttribute"
               ],
               "resources": [
                 "*"
@@ -202,7 +206,8 @@
                 "codebuild:UpdateProject",
                 "glue:UpdateJob",
                 "glue:UpdateDevEndpoint",
-                "cloudformation:UpdateStack"
+                "cloudformation:UpdateStack",
+                "ec2:ModifyInstanceAttribute"
               ]
             }
           ],
@@ -680,7 +685,7 @@
               "ruleId": "COMPUTE-CODE-OVERWRITE",
               "level": "error",
               "message": {
-                "text": "Overwrite existing compute code/config (runs under its existing role, no PassRole) [identity policy] at statement `EverythingExceptIam`; actions: `cloudformation:UpdateStack`, `codebuild:UpdateProject`, `glue:UpdateDevEndpoint`, `glue:UpdateJob`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`. Potential blast radius from the supplied policy context only; not effective permissions."
+                "text": "Overwrite existing compute code/config (runs under its existing role, no PassRole) [identity policy] at statement `EverythingExceptIam`; actions: `cloudformation:UpdateStack`, `codebuild:UpdateProject`, `ec2:ModifyInstanceAttribute`, `glue:UpdateDevEndpoint`, `glue:UpdateJob`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`. Potential blast radius from the supplied policy context only; not effective permissions."
               },
               "locations": [
                 {
@@ -692,7 +697,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v2": "63011b61443ebe9c821932b6d05d254c"
+                "iamBlastRadius/semanticIdentity/v2": "0a2d3b9587b188bc49a030098dcfc678"
               },
               "properties": {
                 "category": "security",
@@ -715,7 +720,8 @@
                       "codebuild\\:UpdateProject",
                       "glue\\:UpdateJob",
                       "glue\\:UpdateDevEndpoint",
-                      "cloudformation\\:UpdateStack"
+                      "cloudformation\\:UpdateStack",
+                      "ec2\\:ModifyInstanceAttribute"
                     ],
                     "resources": [
                       "\\*"
@@ -724,7 +730,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "EverythingExceptIam",
-                "baselineId": "b70d664f7444c960e7559516d282fc090cd9e3eff190b7a0dc2e145a0a0978b7"
+                "baselineId": "e61a0efc8c655dbca769bed4eb0e0c816b85765a0aee157bc72544ffe9b0b554"
               },
               "ruleIndex": 1
             },
@@ -948,6 +954,7 @@
         "actions": [
           "cloudformation:UpdateStack",
           "codebuild:UpdateProject",
+          "ec2:ModifyInstanceAttribute",
           "glue:UpdateDevEndpoint",
           "glue:UpdateJob",
           "lambda:UpdateFunctionCode",
@@ -957,7 +964,7 @@
           "*"
         ],
         "conditionsPresent": false,
-        "evidenceWhyHash": "91b19b72fe9e21a0"
+        "evidenceWhyHash": "f5594962fe94939b"
       },
       {
         "id": "COMPUTE-SESSION-TAKEOVER",

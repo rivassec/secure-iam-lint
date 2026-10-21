@@ -92,7 +92,8 @@ test('analyze() matches every family-rcp fixture contract', () => {
       assert.equal(f.escalation, undefined, `${file}: ${f.id} must carry no escalation enrichment`);
       // A deny-only guardrail is never a capability grant / compound path.
       assert.notEqual(f.severity, 'critical', `${file}: ${f.id} must never be critical (an RCP grants nothing)`);
-      assert.notEqual(f.severity, 'high', `${file}: ${f.id} is a protective guardrail, not a high-risk grant`);
+      // v1.2.0: only a hazard (a control that is not there) may block at high.
+      if (!f.hazard) assert.notEqual(f.severity, 'high', `${file}: ${f.id} is a protective guardrail, not a high-risk grant`);
       assert.equal(f.denyOnly, true, `${file}: ${f.id} is deny-only`);
       if (e.severities && e.severities[f.id]) {
         assert.equal(f.severity, e.severities[f.id], `${file}: ${f.id} severity`);
@@ -300,8 +301,8 @@ test('F1: positive-operator org-scope Deny is flagged as an inverted-polarity ha
   // Polarity is recorded and surfaced as a misconfiguration hazard.
   assert.equal(g.hazard, true, 'inverted org-scope Deny raised as a hazard');
   assert.equal(g.orgScopePositiveOperator, true, 'positive operator polarity recorded');
-  assert.equal(g.severity, 'medium', 'a likely misconfiguration is raised to medium (never high/critical)');
-  assert.notEqual(g.severity, 'high');
+  assert.equal(g.severity, 'high', 'v1.2.0 F4: an inverted guardrail blocks (high, never critical)');
+  assert.notEqual(g.severity, 'critical');
   assert.notEqual(g.severity, 'critical');
   assert.equal(g.orgScopeNegatedIfExists, false, 'the org check is NOT negated-IfExists here');
   // Narration describes the INVERTED effect and must NOT assert the "deny unless
@@ -334,7 +335,7 @@ test('F1: inverted polarity on an organization-perimeter RCP (no service key) is
   assert.equal(g.guardrailKind, 'organization');
   assert.equal(g.hazard, true);
   assert.equal(g.orgScopePositiveOperator, true);
-  assert.equal(g.severity, 'medium');
+  assert.equal(g.severity, 'high'); // v1.2.0 F4
   assert.match(g.why, /WHEN the request's source \/ principal organization matches/i);
   assert.match(g.why, /INVERSE/i);
   assert.doesNotMatch(g.why, /unless the request's source \/ principal organization matches/i);
@@ -393,9 +394,9 @@ for (const operator of ['ForAnyValue:StringEquals', 'ForAllValues:StringEquals',
     // downgrade it to a credited protective guardrail.
     assert.equal(g.hazard, true, `${operator}: set-op inverted org-scope Deny raised as a hazard`);
     assert.equal(g.orgScopePositiveOperator, true, `${operator}: positive operator polarity recorded through the qualifier`);
-    assert.equal(g.severity, 'medium', `${operator}: raised to medium (never info/high/critical)`);
+    assert.equal(g.severity, 'high', `${operator}: v1.2.0 F4 blocks (high, never critical)`);
     assert.notEqual(g.severity, 'info');
-    assert.notEqual(g.severity, 'high');
+    assert.notEqual(g.severity, 'critical');
     assert.notEqual(g.severity, 'critical');
     assert.match(g.title, /inverted org-scope Deny/i, `${operator}: title flags the inverted polarity`);
     assert.match(g.why, /INVERSE/i);
@@ -420,7 +421,9 @@ test('F1 iter2 control: a set-operator NEGATED org-scope Deny (ForAnyValue:Strin
       Action: 's3:*',
       Resource: '*',
       Condition: {
-        'ForAnyValue:StringNotEqualsIfExists': { 'aws:PrincipalOrgID': 'o-exampleorgid' },
+        // v1.2.0 F12: confused-deputy keys on aws:SourceOrgID; services carry no
+        // aws:PrincipalOrgID, so PrincipalOrgID + IsAWSService true is inverted.
+        'ForAnyValue:StringNotEqualsIfExists': { 'aws:SourceOrgID': 'o-exampleorgid' },
         Bool: { 'aws:PrincipalIsAWSService': 'true' },
       },
     }],

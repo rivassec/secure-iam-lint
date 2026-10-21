@@ -64,10 +64,9 @@ test('resource family + valid context is accepted and routed to the resource eva
   await page.fill('#resource-arn', 'arn:aws:s3:::public-downloads/*');
   await page.click('#analyze-btn');
 
-  // Accepted: no blocking notice. Status is 'warned' (accepted but INCOMPLETE -
-  // the service-specific resource finding rules are a later tranche).
+  // Accepted: no blocking notice; a fully modeled policy is complete (v1.2.0 T2-4).
   await expect(page.locator('#findings .coverage-blocked')).toHaveCount(0);
-  await expect(page.locator('#status')).toHaveAttribute('data-status', 'warned');
+  await expect(page.locator('#status')).toHaveAttribute('data-status', 'ok');
   // Never an identity finding on a resource policy.
   await expect(page.locator('#findings')).not.toContainText('Wildcard');
   // The coverage panel names the resource family.
@@ -102,9 +101,9 @@ test('IAM-1202: Principal "*" resource policy renders PUBLIC-ACCESS; a TLS-only 
   await page.fill('#resource-arn', 'arn:aws:s3:::public-downloads/*');
   await page.click('#analyze-btn');
 
-  // Accepted (not blocked), still INCOMPLETE coverage.
+  // Accepted (not blocked) and complete; the finding is what fails it.
   await expect(page.locator('#findings .coverage-blocked')).toHaveCount(0);
-  await expect(page.locator('#status')).toHaveAttribute('data-status', 'warned');
+  await expect(page.locator('#status')).toHaveAttribute('data-status', 'ok');
 
   // The public-access finding is rendered from the RESOURCE's perspective.
   await expect(page.locator('#findings')).toContainText('Public resource access');
@@ -151,7 +150,7 @@ test('IAM-1204: owning-account field yields a same-account grant finding, not cr
   await page.click('#analyze-btn');
 
   await expect(page.locator('#findings .coverage-blocked')).toHaveCount(0);
-  await expect(page.locator('#status')).toHaveAttribute('data-status', 'warned');
+  await expect(page.locator('#status')).toHaveAttribute('data-status', 'ok');
   await expect(page.locator('#findings')).toContainText('same-account');
   // Not misreported as cross-account or public.
   await expect(page.locator('#findings')).not.toContainText('Cross-account resource grant');

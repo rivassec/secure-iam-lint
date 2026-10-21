@@ -156,3 +156,27 @@ export function hasNonEmptyCondition(stmt) {
     Object.keys(stmt.condition).length > 0
   );
 }
+
+// T2-6: a Deny conditioned only on iam:PassedToService whose values cover every
+// spelling the service may send applies to that service as if unconditional.
+// Arn* on this String key is not certain (V2-4).
+const NEGATED_OP = Object.freeze({
+  stringequals: 'StringNotEquals', stringequalsignorecase: 'StringNotEqualsIgnoreCase',
+  stringlike: 'StringNotLike',
+});
+export function denyCertainForService(condition, principal, partition) {
+  if (!condition || typeof condition !== 'object') return false;
+  const ops = Object.keys(condition);
+  if (ops.length === 0) return false;
+  for (const op of ops) {
+    const block = condition[op];
+    if (!block || typeof block !== 'object') return false;
+    const keys = Object.keys(block);
+    if (keys.length === 0 || keys.some((k) => k.toLowerCase() !== 'iam:passedtoservice')) return false;
+  }
+  return passedToServiceEntries(condition).every((e) => {
+    const neg = NEGATED_OP[normalizeOperator(e.op)];
+    return !!neg && e.values.length > 0 &&
+      operatorPermitsService(neg, e.values, principal, partition) === 'deny';
+  });
+}

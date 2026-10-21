@@ -448,8 +448,7 @@
         ]
       },
       "expect": {
-        "status": "COMPLETE_WITH_WARNINGS",
-        "warningCode": "RESOURCE_ANALYSIS_INCOMPLETE",
+        "status": "COMPLETE",
         "capabilityEdges": 0,
         "resourceAccessEdges": 1,
         "resourceGraphOriginTypes": ["ExternalPrincipal"],
@@ -484,8 +483,7 @@
         ]
       },
       "expect": {
-        "status": "COMPLETE_WITH_WARNINGS",
-        "warningCode": "RESOURCE_ANALYSIS_INCOMPLETE",
+        "status": "COMPLETE",
         "capabilityEdges": 0,
         "expectedRuleIds": [
           "RESOURCE-CONFUSED-DEPUTY"
@@ -525,8 +523,7 @@
         ]
       },
       "expect": {
-        "status": "COMPLETE_WITH_WARNINGS",
-        "warningCode": "RESOURCE_ANALYSIS_INCOMPLETE",
+        "status": "COMPLETE",
         "graph": null,
         "capabilityEdges": 0,
         "forbiddenRuleIds": [

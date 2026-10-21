@@ -4,11 +4,13 @@ import { analyzeTrust, trustFindingDenyState, summarizeTrustDeny } from './trust
 import { analyzeEnvelope } from './envelope.js';
 import { analyzeScp } from './scp.js';
 import { analyzeRcp } from './rcp.js';
+import { scpDenyShape, rcpDenyShape } from './guardrail-deny.js';
 import { analyzeResource } from './resource.js';
 import { buildTrustGraph, buildResourceGraph, GRAPH_LIMITS } from './graph.js';
 import { enrichCoverage, duplicateSids } from './coverage.js';
-import { unsupportedConditionKeys, unsupportedConditionBindings } from './conditions.js';
+import { unsupportedConditionKeys, unsupportedConditionBindings, guardrailUnsupported } from './conditions.js';
 import { defaultCatalog, unrecognizedActions } from './catalog.js';
+import { TRUST_ACTIONS } from './trust-catalogs.js';
 import { sortFindings, stampFamily, CATALOG_VERSION } from './analyze-format.js';
 
 export function emptyGraph() {
@@ -173,7 +175,10 @@ export function trustResult(model, coverage, effectiveFamily, options = null) {
     catalogVersion: defaultCatalog.version,
     unsupportedConditions: unsupportedConditionKeys(model),
     unsupportedConditionBindings: unsupportedConditionBindings(model),
-    unrecognizedActions: unrecognizedActions(model, defaultCatalog),
+    // The trust evaluator models every trust action (incl. TagSession /
+    // SetSourceIdentity), so the catalog gap on them is not an unknown here.
+    unrecognizedActions: unrecognizedActions(model, defaultCatalog)
+      .filter((a) => !TRUST_ACTIONS.has(String(a).toLowerCase())),
     trustDeny: summarizeTrustDeny(model, trust.findings),
     invalidPrincipals,
     // IAM-1007 (test 60): non-unique Sids are an evidence-identity advisory on
@@ -259,8 +264,8 @@ export function envelopeResult(model, coverage, effectiveFamily) {
 // capability edges for this family. Every finding states the intersection
 // semantics (effective access is the intersection with identity policies, not
 // supplied here) and SCPs never grant.
-export function scpResult(model, coverage, effectiveFamily) {
-  const scp = analyzeScp(model);
+export function scpResult(model, coverage, effectiveFamily, opts = {}) {
+  const scp = analyzeScp(model, opts);
   if (!scp.ok) return fail(scp.errors);
 
   const stamped = scp.findings.map((f) => stampFamily(f, effectiveFamily));
@@ -275,8 +280,7 @@ export function scpResult(model, coverage, effectiveFamily) {
     model,
     graph,
     catalogVersion: defaultCatalog.version,
-    unsupportedConditions: unsupportedConditionKeys(model),
-    unsupportedConditionBindings: unsupportedConditionBindings(model),
+    ...guardrailUnsupported(model, (st) => scpDenyShape(st, opts).unmodeled),
     unrecognizedActions: unrecognizedActions(model, defaultCatalog),
     duplicateSids: duplicateSids(model),
   });
@@ -310,8 +314,8 @@ export function scpResult(model, coverage, effectiveFamily) {
 // the intersection semantics (a corresponding Allow must exist elsewhere; effective
 // access is the intersection with identity/resource policies, not supplied here)
 // and preserves the confused-deputy condition interaction as one guardrail.
-export function rcpResult(model, coverage, effectiveFamily) {
-  const rcp = analyzeRcp(model);
+export function rcpResult(model, coverage, effectiveFamily, opts = {}) {
+  const rcp = analyzeRcp(model, opts);
   if (!rcp.ok) return fail(rcp.errors);
 
   const stamped = rcp.findings.map((f) => stampFamily(f, effectiveFamily));
@@ -326,8 +330,7 @@ export function rcpResult(model, coverage, effectiveFamily) {
     model,
     graph,
     catalogVersion: defaultCatalog.version,
-    unsupportedConditions: unsupportedConditionKeys(model),
-    unsupportedConditionBindings: unsupportedConditionBindings(model),
+    ...guardrailUnsupported(model, (st) => rcpDenyShape(st).unmodeled),
     unrecognizedActions: unrecognizedActions(model, defaultCatalog),
     duplicateSids: duplicateSids(model),
   });
@@ -377,17 +380,26 @@ export function resourceResult(model, coverage, effectiveFamily, options) {
   const rg = res.context ? buildResourceGraph(model, res.findings, res.context) : null;
   const graph = rg && rg.ok ? rg.graph : emptyGraph();
 
+  // T2-4: a resource-policy Deny never removes or lowers a finding, so only Allow
+  // statements can leave the analysis incomplete. Findings are principal-centric:
+  // an unknown action is still flagged for a service the catalog covers (S3, KMS),
+  // but an uncatalogued service (SQS, SNS) is not a reason on its own.
+  const allowView = { statements: model.statements.filter((st) => st && st.effect === 'Allow') };
+  const catalogued = (token) => {
+    const svc = String(token).split(':')[0];
+    return typeof defaultCatalog.classifyWildcard === 'function' &&
+      defaultCatalog.classifyWildcard(`${svc}:*`).supported === true;
+  };
   const enriched = enrichCoverage(coverage, {
     model,
     graph,
     catalogVersion: defaultCatalog.version,
-    unsupportedConditions: unsupportedConditionKeys(model),
-    unsupportedConditionBindings: unsupportedConditionBindings(model),
-    unrecognizedActions: unrecognizedActions(model, defaultCatalog),
+    unsupportedConditions: unsupportedConditionKeys(allowView),
+    unsupportedConditionBindings: unsupportedConditionBindings(allowView),
+    unrecognizedActions: unrecognizedActions(allowView, defaultCatalog).filter(catalogued),
     duplicateSids: duplicateSids(model),
-    // IAM-1201: the resource evaluator's coverage (detected service + attached ARN
-    // + enumerated principal types) flips coverage to INCOMPLETE so an accepted
-    // resource policy with zero findings is never presented as proven-safe.
+    // IAM-1201 / T2-4: the resource evaluator's coverage flips coverage to INCOMPLETE
+    // when part of the policy is not modeled.
     resourceCoverage: res.coverage,
   });
 

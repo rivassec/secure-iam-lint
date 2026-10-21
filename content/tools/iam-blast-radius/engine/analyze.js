@@ -23,7 +23,9 @@ import {
 export * from './analyze-format.js';
 import { analyzeRules, ruleFindingDenySuppressed, actionResourceTypeMismatches, survivingBroadReadActions, survivingSparedContainerReads } from './rules.js';
 import { analyzeEscalations } from './escalation.js';
+import { applyDenyToActions } from './escalation-deny.js';
 import { analyzeTrust, trustFindingDenyState, summarizeTrustDeny } from './trust.js';
+import { expandTrustModel } from './trust-classify.js';
 import { analyzeEnvelope } from './envelope.js';
 import { analyzeScp } from './scp.js';
 import { analyzeRcp } from './rcp.js';
@@ -51,6 +53,7 @@ import { defaultCatalog, unrecognizedActions, ACCESS_LEVELS } from './catalog.js
 // separate WALL-CLOCK sentinel (armed only by the Node adapter, cli/scan.mjs) is
 // RE-THROWN so scan() maps it to its timing-dependent RESOURCE_BUDGET_EXCEEDED verdict.
 import { isGlobBudgetError, setWorkLimit, getWorkLimit } from './glob.js';
+import { KNOWN_PARTITIONS } from './escalation-reachability.js';
 
 // Default deterministic WORK ceiling for one analyze() run. Units are ~char-compares
 // / automaton word-steps charged inside the shared matcher. Sized FAR above any
@@ -72,6 +75,9 @@ export const DEFAULT_WORK_LIMIT = 60000000;
 
 // Severity display order (highest blast radius first). Used to sort the
 // findings table deterministically and by the Markdown/JSON export.
+// An asserted, known partition for guardrail Resource checks (B-03); else null.
+const guardPartition = (o) => (o && KNOWN_PARTITIONS.has(o.partition) ? o.partition : null);
+
 function statementScopableReadActions(stmt) {
   if (!stmt || !Array.isArray(stmt.actions)) return [];
   return stmt.actions.filter((a) => {
@@ -162,7 +168,7 @@ export function analyze(text, options) {
     // Every trust finding carries the limitation that the assumed role's
     // permissions are out of scope / unknown.
     if (effectiveFamily === FAMILIES.ROLE_TRUST) {
-      return trustResult(m.model, coverage, effectiveFamily, { subjectAccount: (options && options.subjectAccount) || null });
+      return trustResult(expandTrustModel(m.model), coverage, effectiveFamily, { subjectAccount: (options && options.subjectAccount) || null });
     }
 
     // IAM-1002 (Phase 10): an explicit permissions-boundary / session selection
@@ -185,9 +191,10 @@ export function analyze(text, options) {
     // accepted document is the RCP guardrail and everything else is the SCP ceiling.
     if (effectiveFamily === FAMILIES.SCP_RCP) {
       if (isRcpShape(m.model.statements)) {
-        return rcpResult(m.model, coverage, effectiveFamily);
+        return rcpResult(m.model, coverage, effectiveFamily, { partition: guardPartition(options) });
       }
-      return scpResult(m.model, coverage, effectiveFamily);
+      return scpResult(m.model, coverage, effectiveFamily, { subjectAccount: (options && options.subjectAccount) || null,
+        partition: guardPartition(options) });
     }
 
     // IAM-1201 (Phase 12): an accepted resource family (explicit selection + a
@@ -281,9 +288,13 @@ export function analyze(text, options) {
     // internal asymmetry (a malformed NotResource was already caught, a broad-but-
     // well-formed one was not). Both axes now flip incomplete.
     const broadUndecidableUncovered = [];
+    const idDenies = m.model.statements.filter((d) => d && d.effect === 'Deny' && d.principal == null);
     for (const s of m.model.statements) {
       if (!s || s.effect !== 'Allow') continue;
       if (coveredStatementIndexes.has(s.index)) continue;
+      // Every action definitively denied in scope: the statement grants nothing.
+      if (idDenies.length > 0 && s.notActions.length === 0 && s.actions.length > 0 &&
+        applyDenyToActions(idDenies, s.actions, s).blocked) continue;
       const sid = (typeof s.sid === 'string' && s.sid.length > 0) ? s.sid : `(index ${s.index})`;
       // Iteration 6: the bare "*" is NOT unconditionally a decided/covered scope. For a
       // RESOURCE-SCOPABLE READ (catalog "Read" level: dynamodb:GetItem, iam:GetRole,

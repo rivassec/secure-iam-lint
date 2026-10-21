@@ -302,8 +302,8 @@ test('S4: positive-operator region Deny is flagged as an inverted-polarity hazar
   // Polarity is recorded and surfaced as a misconfiguration hazard.
   assert.equal(g.hazard, true, 'inverted region Deny raised as a hazard');
   assert.equal(g.regionPositiveOperator, true, 'positive operator polarity recorded');
-  assert.equal(g.severity, 'medium', 'a likely misconfiguration is raised to medium (never high/critical)');
-  assert.notEqual(g.severity, 'high');
+  assert.equal(g.severity, 'high', 'v1.2.0 F4: an inverted guardrail blocks (high, never critical)');
+  assert.notEqual(g.severity, 'critical');
   assert.notEqual(g.severity, 'critical');
   // The listed regions are the DENIED set - NEVER surfaced as a protective
   // allowed-region allow-list (that is what crediting a broken fence looks like).
@@ -394,9 +394,9 @@ for (const operator of ['ForAnyValue:StringEquals', 'ForAllValues:StringEquals',
     // downgrade it to a credited protective lock.
     assert.equal(g.hazard, true, `${operator}: set-op inverted region Deny raised as a hazard`);
     assert.equal(g.regionPositiveOperator, true, `${operator}: positive operator polarity recorded through the qualifier`);
-    assert.equal(g.severity, 'medium', `${operator}: raised to medium (never info/high/critical)`);
+    assert.equal(g.severity, 'high', `${operator}: v1.2.0 F4 blocks (high, never critical)`);
     assert.notEqual(g.severity, 'info');
-    assert.notEqual(g.severity, 'high');
+    assert.notEqual(g.severity, 'critical');
     assert.notEqual(g.severity, 'critical');
     // The DENIED region is NEVER surfaced as a protective allowed-region set.
     assert.equal(g.allowedRegions, undefined, `${operator}: a broken fence is never credited with an allowed-region set`);

@@ -41,7 +41,7 @@
     "family": "resource",
     "status": "warned",
     "incomplete": true,
-    "codes": ["RESOURCE_ANALYSIS_INCOMPLETE"],
+    "codes": [],
     "notCodes": ["UNSUPPORTED_POLICY_FAMILY", "RESOURCE_CONTEXT_REQUIRED"],
     "service": "s3-object",
     "principalTypes": ["anonymous"],

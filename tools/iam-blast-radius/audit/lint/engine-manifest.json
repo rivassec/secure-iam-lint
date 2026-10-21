@@ -32,6 +32,7 @@
   "graph-result.js",
   "graph-trust.js",
   "graph.js",
+  "guardrail-deny.js",
   "masked-grant.js",
   "model.js",
   "parse.js",
