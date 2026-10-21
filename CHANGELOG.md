@@ -8,6 +8,77 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Nothing yet.
 
+## [1.3.0] - 2026-10-21
+
+### Added
+
+- **Pulumi input.** `iam-br --input pulumi <file>` and the Action input `pulumi-json`
+  scan every IAM policy in a `pulumi preview --json` or `pulumi stack export`. Each
+  policy's family and attached resource come from its resource type (classic AWS
+  types and the verified aws-native types). Findings are keyed `<urn>#<property>`
+  in JSON and SARIF `logicalLocations`, with the program's source line when it is
+  inside the project. The tool never runs Pulumi or calls AWS.
+  - A default preview reports `scanScope: "delta"` (Action output `scan-scope`):
+    exit 0 then means "no new risk in this change", not "stack clean". Use
+    `--show-sames` or a stack export for a full scan.
+  - The report lists the asserted subject account, each provider's account and
+    partition with the evidence behind them, per-role `groups[]` (trust, inline,
+    attached policies, `can-assume` edges) and `unresolvedEdges[]`. Groups are
+    informational and never change a verdict.
+  - Baselines work with Pulumi input, keyed per `<urn>#<property>` (inline policies
+    by name): a resource or stack rename shows as one stale and one new entry.
+- **TRUST-SAME-ACCOUNT** (low; medium for the account root): a role trust whose
+  principals are all valid ARNs in the role's own account, proven by the role's ARN
+  (`--resource-arn` / `resource-arn`, or the Pulumi stack). `--subject-account`
+  alone never proves it. The JSON report echoes `subjectAccountAsserted`.
+- **Action catalog:** sns, events, logs, config, lambda and cloudformation are
+  snapshotted for Deny statements, so AWS Control Tower guardrail SCPs no longer
+  fail on unknown actions (on a live CT org, statements that read clean went from
+  12 to 66 of 93, with no new highs). All iam reference actions are snapshotted.
+
+### Security
+
+- **The Pulumi adapter fails closed (exit 3), naming the URN and property,** on:
+  preview unknowns (`PULUMI_UNKNOWN`) and secrets (`PULUMI_SECRET`, never read or
+  echoed), on mapped and unmapped properties alike; duplicate JSON keys, URNs or
+  inline policy names; unknown operations, malformed entries and size, count or depth
+  limits; unmapped IAM types and policy documents (JSON or YAML text) in properties
+  it doesn't analyze; an unresolved, ambiguous or mismatched account or partition;
+  and ambiguous resource joins. It never builds a placeholder ARN.
+- Only IAM resources (always in the caller's account) or provider config prove a
+  stack's account; imported, read or ARN-adoptable resources (SNS, SQS, KMS, Lambda
+  and others) never do, and prior-state outputs are reused only for in-place updates
+  on the same provider.
+- **Lambda permissions:** a grant to the public, another account, or a service with
+  no `sourceArn`/`sourceAccount` exits 3 (`PULUMI_UNMODELED_PERMISSION`).
+- In an Allow, actions of the Deny-only services, iam tag/untag actions and the
+  account-wide IAM dumps (`GetAccountAuthorizationDetails`, credential reports)
+  stay unknown (exit 3) until a finding models them.
+
+### Changed
+
+- **Behavior change:** read-only wildcards in the Deny-only services
+  (`lambda:Get*`, `lambda:List*`, `cloudformation:Describe*`, `config:Describe*`)
+  and `iam:Get*` on `*` now exit 3 instead of 0, because they reach data-plane reads
+  (log events, Lambda environment variables, templates) or account-wide IAM dumps.
+  A read-only policy that was green on v1.2.0 may fail closed on v1.3.0.
+- A same-account trust that v1.2.0 reported as TRUST-CROSS-ACCOUNT high is
+  TRUST-SAME-ACCOUNT when the role ARN is supplied. Baseline ids include severity,
+  so an accepted cross-account finding re-fires once as the new finding.
+- `gate:no-network` matches network API names as whole words.
+
+### Known limitations
+
+- Source-bound, org-scoped and own-account Lambda permissions are listed in the
+  Pulumi report's `unanalyzed[]`, not analyzed.
+- `aws-native:events:EventBusPolicy` is not mapped; a policy statement in it fails
+  closed (exit 3).
+- A baseline can accept an engine coverage gap (for example `UNKNOWN_ACTION`), as
+  in v1.2.0; `analysis-status: partial` stays visible. Pulumi adapter states are
+  never accepted.
+- SARIF paths are relative to the Pulumi project; a project in a repo subdirectory
+  does not map to files in code scanning yet.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added
@@ -235,7 +306,8 @@ marks the release and makes the compare/tag links below resolve - is pending.
   self-check runs in CI, and pointed at a real AWS account it verifies the engine
   never reads CLEAN on a policy AWS reports as allowing the action.
 
-[Unreleased]: https://github.com/rivassec/secure-iam-lint/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/rivassec/secure-iam-lint/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/rivassec/secure-iam-lint/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/rivassec/secure-iam-lint/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/rivassec/secure-iam-lint/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/rivassec/secure-iam-lint/releases/tag/v1.0.0

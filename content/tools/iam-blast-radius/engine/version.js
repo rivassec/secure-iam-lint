@@ -40,7 +40,7 @@ export const VERSION_MANIFEST = Object.freeze({
   // canonical release version; the root package.json `version` MUST equal this
   // (enforced by the version-coherence node test). Distinct from the internal
   // rule/action catalog versions below - bump on any user-facing release.
-  releaseVersion: '1.2.0',
+  releaseVersion: '1.3.0',
   // Rule/finding catalog version. analyze.js CATALOG_VERSION, coverage.js
   // RULE_VERSION, worker.js's fallback catalogVersion, and every rule/escalation
   // finding's `ruleVersion` all equal this.
