@@ -56,8 +56,8 @@ export const ACCESS_LEVELS = Object.freeze({
 const L = ACCESS_LEVELS;
 
 // Dated snapshot identity. Bump both when the curated set below changes.
-export const ACTION_CATALOG_VERSION = '2026.10.20.2';
-export const ACTION_CATALOG_DATE = '2026-10-20';
+export const ACTION_CATALOG_VERSION = '2026.10.21.1';
+export const ACTION_CATALOG_DATE = '2026-10-21';
 
 // The curated snapshot: service -> { actionName: accessLevel }. Keys use the
 // canonical AWS casing for readability; lookups are case-insensitive (AWS treats
@@ -338,6 +338,8 @@ function buildIndex(data) {
 // exit 3 into a clean exit 0 on a real escalation (generated list, see
 // scripts/gen-unmodeled-escalation.mjs). Keep an action here until a detector covers it.
 const UNMODELED_SET = new Set(UNMODELED_ESCALATION);
+// Snapshotted in v1.3.0 for guardrail Denies only: their reference actions stay withheld in an Allow.
+export const DENY_ONLY_SERVICES = new Set(['sns', 'events', 'logs', 'config', 'lambda', 'cloudformation']);
 
 // Merge the generated AWS-reference snapshot UNDER the curated data: an action the
 // curated map already names keeps its curated access level (the rules were tuned
@@ -363,7 +365,7 @@ function mergeReference(index, refData) {
       const accessLevel = ACCESS_LEVELS[set[action]];
       if (!accessLevel) continue; // unknown level token: leave the action unknown (fail closed)
       const full = `${svcLower}:${key}`;
-      if (UNMODELED_SET.has(full)
+      if (UNMODELED_SET.has(full) || DENY_ONLY_SERVICES.has(svcLower)
         || (accessLevel === ACCESS_LEVELS.PERMISSIONS && !curatedServices.has(svcLower))) {
         withheld.add(full);
         continue;
