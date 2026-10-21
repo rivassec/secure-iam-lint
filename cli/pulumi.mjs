@@ -119,8 +119,9 @@ function isPolicyShaped(o) {
   }
   return own(o, 'Effect') && ['Principal', 'NotPrincipal', 'Action', 'NotAction'].some((k) => own(o, k));
 }
-const TEXT_STATEMENT = [/^\s*-?\s*["']?Statement["']?\s*:/im, /"Statement"\s*:/i];
-const TEXT_EFFECT = [/^\s*-?\s*["']?Effect["']?\s*:/im, /"Effect"\s*:/i];
+// H-2b: a key may follow a flow delimiter too (`- {Effect: Allow}`, `{Version: .., Statement: [..]}`).
+const TEXT_STATEMENT = [/(^|[\s{,[-])["']?Statement["']?\s*:/im];
+const TEXT_EFFECT = [/(^|[\s{,[-])["']?Effect["']?\s*:/im];
 const docKey = (k) => k != null && (DOC_KEY_RE.test(k) || k.toLowerCase() === 'statement')
   && !/(arn|arns|name|names|id|ids|type)$/i.test(k);
 
