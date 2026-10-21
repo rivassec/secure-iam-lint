@@ -29,6 +29,7 @@ const BASE = 'https://servicereference.us-east-1.amazonaws.com/v1';
 // ec2:Describe* calls), and the global / account-level / billing services a region-deny
 // SCP exempts via NotAction (AWS Organizations example SCP). Keep this list explicit -
 // adding a service changes which actions read as "known".
+// sns/events/logs/config/lambda/cloudformation/iam: Control Tower guardrail SCP actions.
 const SERVICES = [
   's3', 'ec2', 'datapipeline', 'license-manager',
   'consolidatedbilling', 'freetier', 'invoicing', 'payments', 'purchase-orders',
@@ -39,6 +40,7 @@ const SERVICES = [
   'pricing', 'route53', 'route53domains', 'route53-recovery-cluster',
   'route53-recovery-control-config', 'route53-recovery-readiness', 'shield', 'sso',
   'support', 'trustedadvisor', 'waf', 'waf-regional', 'wafv2', 'wellarchitected',
+  'sns', 'events', 'logs', 'config', 'lambda', 'cloudformation', 'iam',
 ];
 
 function accessLevel(action) {
