@@ -41,6 +41,7 @@ const SERVICES = [
   'route53-recovery-control-config', 'route53-recovery-readiness', 'shield', 'sso',
   'support', 'trustedadvisor', 'waf', 'waf-regional', 'wafv2', 'wellarchitected',
   'sns', 'events', 'logs', 'config', 'lambda', 'cloudformation', 'iam',
+  'ecr', 'codeartifact', 'scheduler', 'eks',
 ];
 
 function accessLevel(action) {

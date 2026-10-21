@@ -56,7 +56,7 @@ export const ACCESS_LEVELS = Object.freeze({
 const L = ACCESS_LEVELS;
 
 // Dated snapshot identity. Bump both when the curated set below changes.
-export const ACTION_CATALOG_VERSION = '2026.10.21.1';
+export const ACTION_CATALOG_VERSION = '2026.10.21.2';
 export const ACTION_CATALOG_DATE = '2026-10-21';
 
 // The curated snapshot: service -> { actionName: accessLevel }. Keys use the
@@ -66,6 +66,22 @@ export const ACTION_CATALOG_DATE = '2026-10-21';
 // small, representative slice per service (the actions the rules reason about
 // plus the most common neighbours), NOT an exhaustive enumeration.
 const CATALOG_DATA = Object.freeze({
+  // v1.3.0 r5: CI/ECS role actions known in an Allow (levels from the AWS reference).
+  logs: {
+    CreateLogGroup: L.WRITE,
+    CreateLogStream: L.WRITE,
+    PutLogEvents: L.WRITE,
+    DescribeLogGroups: L.LIST,
+    DescribeLogStreams: L.LIST,
+    DescribeMetricFilters: L.LIST,
+    DescribeSubscriptionFilters: L.LIST,
+  },
+  ecr: {
+    GetAuthorizationToken: L.READ,
+    BatchCheckLayerAvailability: L.READ,
+    GetDownloadUrlForLayer: L.READ,
+    BatchGetImage: L.READ,
+  },
   iam: {
     // Permissions-management surface (self-escalation primitives).
     AttachGroupPolicy: L.PERMISSIONS,
@@ -310,6 +326,7 @@ const REQUIRES_WILDCARD_RESOURCE = Object.freeze(new Set([
   'ec2:describetags',
   'cloudtrail:lookupevents',
   'cloudtrail:describetrails',
+  'ecr:getauthorizationtoken',
 ]));
 
 // Case-insensitive index: lowercased service -> Map(lowercased action -> {name,
@@ -339,7 +356,8 @@ function buildIndex(data) {
 // scripts/gen-unmodeled-escalation.mjs). Keep an action here until a detector covers it.
 const UNMODELED_SET = new Set(UNMODELED_ESCALATION);
 // Snapshotted in v1.3.0 for guardrail Denies only: their reference actions stay withheld in an Allow.
-export const DENY_ONLY_SERVICES = new Set(['sns', 'events', 'logs', 'config', 'lambda', 'cloudformation']);
+export const DENY_ONLY_SERVICES = new Set(['sns', 'events', 'logs', 'config', 'lambda', 'cloudformation',
+  'ecr', 'codeartifact', 'scheduler', 'eks']);
 // Fail closed in an Allow until a finding models them: ABAC tag writes and account-wide IAM dumps.
 const ALLOW_WITHHELD = (full) => /^iam:(?:un)?tag/.test(full) ||
   ['iam:getaccountauthorizationdetails', 'iam:getcredentialreport', 'iam:generatecredentialreport'].includes(full);
