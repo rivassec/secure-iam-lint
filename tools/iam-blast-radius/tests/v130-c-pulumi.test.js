@@ -386,3 +386,15 @@ test('action: pulumi-json scans the file and exposes scan-scope; misuse is usage
   const create = runAction({ env, io: actionIo({ 'preview.json': fx('preview-create.json') }) });
   assert.equal(create.exitCode, EXIT.FAIL_CLOSED);
 });
+
+test('account: a read (external) resource never proves the stack account', () => {
+  const V = '444455556666';
+  const foreignTrust = P({ Effect: 'Allow', Principal: { AWS: `arn:aws:iam::${V}:role/vendor` }, Action: 'sts:AssumeRole' });
+  const text = preview(
+    step('read', 'aws:kms/key:Key', 'shared', { keyId: 'k' }, { ns: { outputs: { arn: `arn:aws:kms:us-east-1:${V}:key/k` } } }),
+    step('create', 'aws:iam/role:Role', 'r', { name: 'r', assumeRolePolicy: foreignTrust }),
+  );
+  const d = docOf(scanText(text, { partition: 'aws' }), 'r#assumeRolePolicy');
+  assert.ok(!ids(d).includes('TRUST-SAME-ACCOUNT'), ids(d).join(','));
+  assert.ok(ids(d).includes('TRUST-CROSS-ACCOUNT'));
+});

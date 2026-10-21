@@ -409,7 +409,8 @@ function providerFacts(items) {
     }
   }
   for (const it of items) {
-    if (it.type.startsWith('pulumi:providers:')) continue;
+    // A read/external resource may live in another account: never account evidence.
+    if (it.type.startsWith('pulumi:providers:') || it.external) continue;
     const p = providerUrnOf(it.provider);
     if (!p) continue;
     const arn = it.outputs.arn;
