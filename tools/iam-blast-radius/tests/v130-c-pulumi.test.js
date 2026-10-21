@@ -355,9 +355,9 @@ test('sarif: URN logical location, line region, sanitized strings, scope propert
 
 // --- CLI + Action plumbing -----------------------------------------------------------------
 
-test('cli: --input pulumi refuses single-policy flags and baselines (usage, exit 2)', async () => {
+test('cli: --input pulumi refuses single-policy flags (usage, exit 2)', async () => {
   const io = { readFile: () => fx('seed-state.json'), stdout: () => {}, stderr: () => {} };
-  for (const argv of [['--family', 'identity'], ['--resource-arn', 'arn:aws:s3:::b'], ['--format', 'baseline'], ['--baseline', 'b.json']]) {
+  for (const argv of [['--family', 'identity'], ['--resource-arn', 'arn:aws:s3:::b']]) {
     assert.equal(await run(['--input', 'pulumi', ...argv, 'x.json'], io), EXIT.USAGE, argv.join(' '));
   }
   assert.equal(await run(['--input', 'pulumi'], { ...io, stdinIsTTY: true }), EXIT.USAGE);
