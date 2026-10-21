@@ -138,6 +138,10 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
     const inputs = sarifSafe ? rawInputs : { ...rawInputs, sarifOutput: DEFAULT_SARIF_OUTPUT };
 
     // --- Adapter-owned usage validation (exit 2), before any scanning. --------
+    if (!isNonEmptyString(inputs.pulumiJson) && isNonEmptyString(inputs.providerAccounts)) {
+      return finalize([{ file: null, result: usageResult('PROVIDER_ACCOUNTS_WITHOUT_PULUMI',
+        'The "provider-accounts" input is only used with "pulumi-json".') }], inputs, manifest);
+    }
     // pulumi-json takes each policy's family from its resource type.
     if (!isNonEmptyString(inputs.pulumiJson) && !isNonEmptyString(inputs.family)) {
       return finalize([{
@@ -394,6 +398,13 @@ function runPulumiInput(inputs, sarifSafe, io, manifest) {
   if (!sarifSafe) return fail('UNSAFE_SARIF_OUTPUT', 'The "sarif-output" input must be a RELATIVE path inside the workspace.');
   if (isNonEmptyString(inputs.paths)) return fail('PULUMI_WITH_PATHS', 'Set either "paths" or "pulumi-json", not both.');
   if (isNonEmptyString(inputs.family)) return fail('PULUMI_WITH_FAMILY', 'The "family" input is not used with "pulumi-json" (each policy\'s family comes from its resource type).');
+  // R5-4: newline-separated <provider>=<account>; the adapter validates names and ids.
+  const providerAccounts = isNonEmptyString(inputs.providerAccounts)
+    ? inputs.providerAccounts.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
+      const i = l.lastIndexOf('=');
+      return i > 0 ? { key: l.slice(0, i), account: l.slice(i + 1) } : { key: '', account: '' };
+    })
+    : undefined;
   if (inputs.resourceContext) return fail('PULUMI_WITH_RESOURCE', 'The "resource-*" inputs are not used with "pulumi-json" (the attached resource is resolved from the stack).');
   let safe = sarifOutputIsContained(inputs.pulumiJson);
   if (safe && io && typeof io.sarifTargetContained === 'function') {
@@ -412,6 +423,7 @@ function runPulumiInput(inputs, sarifSafe, io, manifest) {
     text, oversize,
     subjectAccount: inputs.subjectAccount || undefined,
     partition: inputs.partition || undefined,
+    providerAccounts,
     threshold: inputs.failOn,
     budgetMs: inputs.budgetMs,
   });

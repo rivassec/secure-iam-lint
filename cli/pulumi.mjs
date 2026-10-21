@@ -81,6 +81,12 @@ const TYPE_MAP = Object.freeze({
   'aws-native:secretsmanager:ResourcePolicy': [{ prop: 'resourcePolicy', family: RESOURCE, required: true, ctx: { kind: 'arn', field: 'secretId', type: 'secretsmanager' } }],
   'aws-native:sqs:QueueInlinePolicy': [{ prop: 'policyDocument', family: RESOURCE, required: true, ctx: { kind: 'sqs-url', field: 'queue' } }],
   'aws-native:organizations:Policy': [{ prop: 'content', family: SCP, required: true, orgType: 'type' }],
+  // R5-2: seen in real state. No single attached resource for registry/template/log policies: exit 3.
+  'aws:ssoadmin/permissionSetInlinePolicy:PermissionSetInlinePolicy': [{ prop: 'inlinePolicy', family: IDENTITY, required: true }],
+  'aws:ecr/registryPolicy:RegistryPolicy': [{ prop: 'policy', family: RESOURCE, required: true, ctx: { kind: 'none', type: 'ecr' } }],
+  'aws:ecr/repositoryCreationTemplate:RepositoryCreationTemplate': [{ prop: 'repositoryPolicy', family: RESOURCE, ctx: { kind: 'none', type: 'ecr' } }],
+  'aws:cloudwatch/logResourcePolicy:LogResourcePolicy': [{ prop: 'policyDocument', family: RESOURCE, required: true, ctx: { kind: 'arn', field: 'resourceArn', type: 'logs' } }],
+  'aws:dynamodb/resourcePolicy:ResourcePolicy': [{ prop: 'policy', family: RESOURCE, required: true, ctx: { kind: 'arn', field: 'resourceArn', type: 'dynamodb' } }],
 });
 
 // IAM types with no policy document (schema-derived); any other unmapped IAM type is exit 3.
@@ -372,6 +378,7 @@ function itemFromStep(step, index, states) {
     id: isStr(ns.id) ? ns.id : (oldUsable && isStr(old.id) ? old.id : null),
     provider,
     sourcePosition: ns.sourcePosition,
+    custom: ns.custom !== false, // absent = custom (fail closed)
     external: op === 'read' || ns.external === true,
     protectChanged: !!(old && old.protect) !== !!ns.protect,
   };
@@ -396,6 +403,7 @@ function itemFromResource(r, index, states) {
     id: isStr(r.id) ? r.id : null,
     provider: isStr(r.provider) ? r.provider : null,
     sourcePosition: r.sourcePosition,
+    custom: r.custom !== false,
     external: r.external === true,
     protectChanged: false,
   };
@@ -487,12 +495,38 @@ function resolveScope(it, facts, opts, globalSeen, globalStates) {
   } else if (evidence.size === 1) derivedAcct = [...evidence][0];
   const explicitAcct = isStr(opts.subjectAccount) && /^\d{12}$/.test(opts.subjectAccount.trim()) ? opts.subjectAccount.trim() : null;
   if (explicitAcct && derivedAcct && explicitAcct !== derivedAcct) states.push(st('PULUMI_ACCOUNT_MISMATCH', where));
-  const account = explicitAcct || derivedAcct || null;
+  // R5-4: an operator mapping names the account; it is cross-checked, never proof (accountProven).
+  const mapped = pUrn && opts.mappedAccounts instanceof Map ? opts.mappedAccounts.get(pUrn) || null : null;
+  if (mapped && ((derivedAcct && mapped !== derivedAcct) || (explicitAcct && mapped !== explicitAcct))) {
+    states.push(st('PULUMI_ACCOUNT_MISMATCH', where));
+  }
+  const account = mapped || explicitAcct || derivedAcct || null;
   if (!account && evidence.size <= 1 && !globalSeen.has(`acct:${where}`)) {
     globalSeen.add(`acct:${where}`);
     globalStates.push(st('PULUMI_ACCOUNT_UNRESOLVED', where));
   }
   return { account, partition, accountProven: !!derivedAcct && evidence.size === 1 && (!explicitAcct || explicitAcct === derivedAcct), states };
+}
+
+// R5-4: [{ key, account }] -> Map(provider urn -> account). Key = provider name or full URN;
+// unknown or ambiguous keys and bad ids are usage errors (exit 2), never ignored.
+function resolveProviderMapping(list, items) {
+  const map = new Map();
+  if (list == null) return { map };
+  if (!Array.isArray(list)) return { usage: { reason: 'USAGE', message: 'Invalid provider-account mapping.' } };
+  const provs = items.filter((x) => x.type.startsWith('pulumi:providers:')).map((x) => x.urn);
+  for (const e of list) {
+    const key = e && isStr(e.key) ? e.key.trim() : '';
+    const acct = e && isStr(e.account) ? e.account.trim() : '';
+    if (!key || !/^\d{12}$/.test(acct)) return { usage: { reason: 'USAGE', message: 'Each provider-account entry must be <provider-name-or-urn>=<12-digit account id>.' } };
+    const hits = provs.filter((u) => u === key || u.slice(u.lastIndexOf('::') + 2) === key);
+    if (hits.length !== 1) {
+      return { usage: { reason: 'USAGE', message: `A provider-account entry matches ${hits.length === 0 ? 'no' : 'more than one'} provider in the file; use the provider's full URN.` } };
+    }
+    if (map.has(hits[0]) && map.get(hits[0]) !== acct) return { usage: { reason: 'USAGE', message: 'A provider is mapped to two different accounts.' } };
+    map.set(hits[0], acct);
+  }
+  return { map };
 }
 
 // Per-provider account/partition and the evidence behind them (R2-2), for reviewers.
@@ -501,7 +535,8 @@ function providerSummary(facts, opts) {
     const s = resolveScope({ provider: `${urn}::x`, urn, inputs: {} }, facts, opts, new Set(), []);
     const f = facts.get(urn);
     return { urn, account: s.account, accountProven: s.accountProven, partition: s.partition,
-      evidence: { arnAccounts: [...f.accounts].sort(), configAccounts: [...f.configAccounts].sort(), region: f.region } };
+      evidence: { arnAccounts: [...f.accounts].sort(), configAccounts: [...f.configAccounts].sort(), region: f.region,
+        mapped: opts.mappedAccounts instanceof Map ? opts.mappedAccounts.get(urn) || null : null } };
   });
 }
 
@@ -768,11 +803,21 @@ export function extractPulumiDocuments(text, opts = {}) {
   if (hasSteps && items.some((x) => x.op === 'same' && x.type !== 'pulumi:pulumi:Stack' && !x.protectChanged)) out.scanScope = 'full';
 
   const facts = providerFacts(items);
+  const mapping = resolveProviderMapping(opts.providerAccounts, items);
+  if (mapping.usage) return { usage: mapping.usage };
+  opts = { ...opts, mappedAccounts: mapping.map };
   out.providers = providerSummary(facts, opts);
   const seen = new Set();
   const budget = { n: PULUMI_LIMITS.MAX_WALK_NODES, exhausted: false };
   for (const it of items) {
     if (it.type.startsWith('pulumi:providers:') || it.type === 'pulumi:pulumi:Stack') continue;
+    // R5-1: a component repeats its children's inputs; the children are analyzed on their own.
+    if (!it.custom) {
+      if (TYPE_MAP[it.type] || PERMISSION_TYPES.has(it.type) || /^aws(-native)?:/.test(it.type)) {
+        globalStates.push(st('PULUMI_MALFORMED', it.urn, ANALYSIS_STATE.MALFORMED)); // a provider type cannot be a component
+      }
+      continue;
+    }
     if (PERMISSION_TYPES.has(it.type)) {
       const v = permissionVerdict(it, resolveScope(it, facts, opts, new Set(), []));
       if (v.state) globalStates.push(st(v.state, it.urn, v.state === 'PULUMI_UNMODELED_PERMISSION' ? ANALYSIS_STATE.UNSUPPORTED : ANALYSIS_STATE.INCOMPLETE));
