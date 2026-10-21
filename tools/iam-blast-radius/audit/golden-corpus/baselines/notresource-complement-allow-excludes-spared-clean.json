@@ -10,6 +10,7 @@
       "family": "identity",
       "threshold": "info",
       "partitionAsserted": null,
+      "subjectAccountAsserted": null,
       "analysisStatus": "complete",
       "reason": "CLEAN",
       "exitCode": 0,

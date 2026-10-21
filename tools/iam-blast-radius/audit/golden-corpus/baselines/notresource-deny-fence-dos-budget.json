@@ -10,6 +10,7 @@
       "family": "identity",
       "threshold": "high",
       "partitionAsserted": null,
+      "subjectAccountAsserted": null,
       "analysisStatus": "failed",
       "reason": "RESOURCE_BUDGET_EXCEEDED",
       "exitCode": 3,

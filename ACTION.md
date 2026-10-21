@@ -179,8 +179,8 @@ run the Action **multiple times** with different `paths` globs and a different
 | ----- | -------- | ------- | ----------- |
 | `paths` | yes | - | Newline-separated files or globs to scan (e.g. `policies/**/*.json`). An empty match is a usage error (exit `2`), not a clean scan. |
 | `family` | yes | - | Policy family, declared explicitly and never auto-detected: `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp`, `scp-rcp`, `trust` (synonym of `role-trust`). |
-| `subject-account` | no | - | AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). |
-| `resource-arn` | no | - | For `family: resource`: the ARN of the resource the policy is attached to (e.g. `arn:aws:s3:::my-bucket`). Required to analyze a resource policy; without it the resource family fails closed (`RESOURCE_CONTEXT_REQUIRED`, exit `3`). |
+| `subject-account` | no | - | AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). For `role-trust` it is the account that owns every role in the run; split a `paths` glob that spans accounts. |
+| `resource-arn` | no | - | For `family: role-trust`: the role's own ARN; without it a trust is never reported as same-account (it stays `TRUST-CROSS-ACCOUNT` high). For `family: resource`: the ARN of the resource the policy is attached to (e.g. `arn:aws:s3:::my-bucket`). Required to analyze a resource policy; without it the resource family fails closed (`RESOURCE_CONTEXT_REQUIRED`, exit `3`). |
 | `resource-type` | no | - | For `family: resource`: the resource type (e.g. `s3-bucket`). |
 | `resource-account` | no | - | For `family: resource`: the owning account id, when known. |
 | `partition` | no | - | AWS partition (`aws`, `aws-us-gov`, `aws-cn`, `aws-iso*`). No default on purpose: an omitted partition is "not asserted", not `aws`. A cross-partition role-viability verdict is trusted only when you supply a real partition; otherwise it is treated as unknown and fails closed (exit `3`). |
