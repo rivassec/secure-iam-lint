@@ -35,6 +35,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   snapshotted for Deny statements, so AWS Control Tower guardrail SCPs no longer
   fail on unknown actions (on a live CT org, statements that read clean went from
   12 to 66 of 93, with no new highs). All iam reference actions are snapshotted.
+  ecr, codeartifact, scheduler and eks are snapshotted for Deny statements too.
+- **Known in an Allow:** the CI/ECS role basics, logs `CreateLogGroup`,
+  `CreateLogStream`, `PutLogEvents` and the log-group/stream/filter `Describe*`
+  listings, plus ecr `GetAuthorizationToken`, `BatchCheckLayerAvailability`,
+  `GetDownloadUrlForLayer` and `BatchGetImage`. Log-data reads (`GetLogEvents`,
+  `FilterLogEvents`, queries) stay unknown (exit 3).
+- **Pulumi:** `aws:ssoadmin/permissionSetInlinePolicy`, `aws:ecr/registryPolicy`,
+  `aws:ecr/repositoryCreationTemplate`, `aws:cloudwatch/logResourcePolicy` and
+  `aws:dynamodb/resourcePolicy` are mapped; a resource policy with no single
+  attached resource fails closed.
+- **Pulumi:** `--provider-account <provider>=<account>` and the `provider-accounts`
+  input name the account of a provider the stack can't prove (for example one
+  configured only by profile). It is cross-checked against the stack, a mismatch
+  fails closed, and it never proves a same-account trust on its own.
+- The condition keys `kms:GrantIsForAWSResource` and `kms:CallerAccount` are modeled
+  for the AWS-managed key-policy shapes.
 
 ### Security
 
@@ -66,6 +82,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   TRUST-SAME-ACCOUNT when the role ARN is supplied. Baseline ids include severity,
   so an accepted cross-account finding re-fires once as the new finding.
 - `gate:no-network` matches network API names as whole words.
+- A `2008-10-17` policy without policy variables is analyzed as `2012-10-17` (its
+  only semantic difference is `${...}`); one with a variable still fails closed.
+- A `Principal "*"` trust pinned by an exact `ArnEquals`/`StringEquals` on
+  `aws:PrincipalArn` to concrete principal ARNs is reported as those named
+  principals (TRUST-CROSS-ACCOUNT, or TRUST-SAME-ACCOUNT with the role ARN), not
+  TRUST-PUBLIC. Like operators, wildcards, `IfExists` and set operators stay public.
+- Pulumi component resources (`custom: false`) are no longer backstopped; the child
+  resources they create are analyzed on their own.
 
 ### Known limitations
 
