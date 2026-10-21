@@ -340,6 +340,9 @@ function buildIndex(data) {
 const UNMODELED_SET = new Set(UNMODELED_ESCALATION);
 // Snapshotted in v1.3.0 for guardrail Denies only: their reference actions stay withheld in an Allow.
 export const DENY_ONLY_SERVICES = new Set(['sns', 'events', 'logs', 'config', 'lambda', 'cloudformation']);
+// Fail closed in an Allow until a finding models them: ABAC tag writes and account-wide IAM dumps.
+const ALLOW_WITHHELD = (full) => /^iam:(?:un)?tag/.test(full) ||
+  ['iam:getaccountauthorizationdetails', 'iam:getcredentialreport', 'iam:generatecredentialreport'].includes(full);
 
 // Merge the generated AWS-reference snapshot UNDER the curated data: an action the
 // curated map already names keeps its curated access level (the rules were tuned
@@ -365,7 +368,7 @@ function mergeReference(index, refData) {
       const accessLevel = ACCESS_LEVELS[set[action]];
       if (!accessLevel) continue; // unknown level token: leave the action unknown (fail closed)
       const full = `${svcLower}:${key}`;
-      if (UNMODELED_SET.has(full) || DENY_ONLY_SERVICES.has(svcLower)
+      if (UNMODELED_SET.has(full) || DENY_ONLY_SERVICES.has(svcLower) || ALLOW_WITHHELD(full)
         || (accessLevel === ACCESS_LEVELS.PERMISSIONS && !curatedServices.has(svcLower))) {
         withheld.add(full);
         continue;
