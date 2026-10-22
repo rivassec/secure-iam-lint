@@ -36,6 +36,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fail on unknown actions (on a real Control Tower organization, most guardrail
   statements now read clean, with no new highs). All iam reference actions are snapshotted.
   ecr, codeartifact, scheduler and eks are snapshotted for Deny statements too.
+  cognito-identity is snapshotted, and its credential-exchange flow (`GetId`,
+  `GetCredentialsForIdentity`, `GetOpenIdToken`) is known in an Allow;
+  `GetOpenIdTokenForDeveloperIdentity` and `SetIdentityPoolRoles` stay fail-closed.
 - **Known in an Allow:** the CI/ECS role basics, logs `CreateLogGroup`,
   `CreateLogStream`, `PutLogEvents` and the log-group/stream/filter `Describe*`
   listings, plus ecr `GetAuthorizationToken`, `BatchCheckLayerAvailability`,
