@@ -25,10 +25,10 @@
     ]
   },
   "negativeExpect": {
-    "mustFind": ["PUBLIC-ACCESS"],
-    "mustNotFind": ["RESOURCE-CROSS-ACCOUNT", "RESOURCE-CONFUSED-DEPUTY"],
-    "maxSeverity": { "PUBLIC-ACCESS": "high" },
-    "maxPathExploitability": { "PUBLIC-ACCESS": "medium" }
+    "mustFind": ["RESOURCE-CROSS-ACCOUNT"],
+    "mustNotFind": ["PUBLIC-ACCESS", "RESOURCE-CONFUSED-DEPUTY"],
+    "maxSeverity": { "RESOURCE-CROSS-ACCOUNT": "high" },
+    "maxPathExploitability": { "RESOURCE-CROSS-ACCOUNT": "medium" }
   },
   "rationale": "A '*' principal gated by StringEquals aws:PrincipalOrgID is a principal-IDENTITY constraint with a POSITIVE operator: anonymous, unauthenticated callers carry no aws:PrincipalOrgID and so are exactly what the condition excludes. The grant is therefore NARROWED to principals in organization o-abc1234567, not open to everyone - so it must NOT be reported as the unconditioned 'anyone including anonymous' critical public finding. The engine still surfaces it (fail closed toward surfacing) as PUBLIC-ACCESS but capped at high with the '*' recorded as narrowed by aws:PrincipalOrgID; it must never reach critical here, and the condition value must be preserved verbatim, not rejected. Contrast a NEGATED operator (StringNotEquals) which would be an expansion and stay critical. Ref: docs/resource-policy-semantics.md sec 3.1 / 9."
 }

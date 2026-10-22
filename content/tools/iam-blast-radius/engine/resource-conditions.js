@@ -115,7 +115,8 @@ export function operatorNegatesScope(operator, value) {
 // original-cased, sorted, deduped. A wildcard inside e.g. aws:PrincipalArn is a valid
 // condition value, not a partial-ARN principal wildcard (test 85), but a value that
 // narrows nothing lands in openKeys (T2-5).
-export function principalScopingAnalysis(condition, service) {
+// `ignore` (lowercased keys): vacuous guards (J-4) that neither narrow nor expand.
+export function principalScopingAnalysis(condition, service, ignore = null) {
   const scoping = new Set();
   const expanding = new Set();
   const bypassing = new Set();
@@ -146,6 +147,7 @@ export function principalScopingAnalysis(condition, service) {
     for (const key of keys) {
       const keyLower = String(key).toLowerCase();
       if (!isPrincipalScopingKey(keyLower, service)) continue;
+      if (ignore && ignore.includes(keyLower)) continue;
       if (operatorNegatesScope(op, inner[key])) expanding.add(key);
       else if (bypassable) bypassing.add(key);
       else if (isNull) open.add(key); // Null:false only asks the key exist
@@ -314,19 +316,57 @@ export function vacuousSourceGuards(stmt) {
   return [...byKey.entries()].filter(([, v]) => v).map(([k]) => k).sort();
 }
 
-// R6-1: a positive exact pin of aws:PrincipalArn to concrete ARNs (no IfExists / set operator).
+// R6-1/J-2: the ARNs a positive exact aws:PrincipalArn pin names (concrete, no IfExists / set
+// operator), or null. A negated PrincipalArn entry that matches a pinned ARN contradicts it: null.
 export function exactPrincipalArnPin(condition) {
-  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return false;
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return null;
+  let pins = null;
+  const negs = [];
   for (const op of Object.keys(condition)) {
     const inner = condition[op];
     if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
     const ol = op.toLowerCase();
     for (const k of Object.keys(inner)) {
       if (k.toLowerCase() !== 'aws:principalarn') continue;
+      const vals = toValues(inner[k]).map(String);
+      if (NEGATED_OPERATORS.has(parseOperator(op).base)) { negs.push(...vals); continue; }
       if (!['arnequals', 'stringequals'].includes(ol)) continue;
-      const vals = toValues(inner[k]);
-      if (vals.length > 0 && vals.every((v) => /^arn:[a-z-]+:(iam|sts)::\d{12}:[^*?$]+$/.test(String(v)))) return true;
+      if (vals.length > 0 && vals.every((v) => /^arn:[a-z-]+:(iam|sts)::\d{12}:[^*?$]+$/.test(v))) pins = vals;
     }
   }
-  return false;
+  if (!pins) return null;
+  const hit = (pat, v) => new RegExp(`^${pat.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`).test(v);
+  return pins.some((v) => negs.some((n) => hit(n, v))) ? null : pins;
+}
+
+// R6-2: principal-only keys, absent on a call made by an AWS service principal.
+const PRINCIPAL_ONLY_KEY = (k) => ['aws:principalorgid', 'aws:principalorgpaths', 'aws:principalaccount',
+  'aws:principalarn', 'aws:principaltype'].includes(k) || k.startsWith('aws:principaltag/');
+// A statement whose principals are all Service principals, gated by a principal-only key under an
+// operator that is false on an absent key (positive, no IfExists, not ForAllValues; or Null "false"),
+// never matches: it is inert. Returns the inert keys, or [].
+export function inertServiceStatement(stmt) {
+  const p = stmt && stmt.principal;
+  const by = p && p.byType ? p.byType : null;
+  if (!by || p.anyPrincipal) return [];
+  const types = Object.keys(by).filter((k) => Array.isArray(by[k]) && by[k].length > 0);
+  if (types.length !== 1 || types[0] !== 'Service') return [];
+  const cond = stmt.condition;
+  if (!cond || typeof cond !== 'object' || Array.isArray(cond)) return [];
+  const out = new Set();
+  for (const op of Object.keys(cond)) {
+    const inner = cond[op];
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    const po = parseOperator(op);
+    if (po.ifExists || po.setOperator === 'ForAllValues') continue;
+    for (const k of Object.keys(inner)) {
+      const kl = k.toLowerCase();
+      if (!PRINCIPAL_ONLY_KEY(kl)) continue;
+      const vals = toValues(inner[k]).map((v) => String(v).toLowerCase());
+      if (po.base === 'null') { if (vals.length === 1 && vals[0] === 'false') out.add(kl); continue; }
+      if (NEGATED_OPERATORS.has(po.base)) continue; // a negated match is TRUE on an absent key
+      if (/^(string|arn)/.test(po.base)) out.add(kl);
+    }
+  }
+  return [...out].sort();
 }

@@ -171,6 +171,8 @@ export const RESOURCE_IDS = Object.freeze([
   // external principal (takeover).
   'RESOURCE-DATA-EXPOSURE',
   'RESOURCE-POLICY-TAKEOVER',
+  // R6-2: a service-only statement gated by a principal-only key (never matches).
+  'RESOURCE-INERT-STATEMENT',
 ]);
 
 // Rule revision for resource findings (provenance on every finding/export).

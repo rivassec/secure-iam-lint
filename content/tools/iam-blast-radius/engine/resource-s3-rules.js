@@ -2,7 +2,7 @@
 import { accountOfEntry, hasTransportOnlyDeny } from './resource-shared.js';
 import { classifyPrincipals } from './trust.js';
 import { makeResourceFinding, summarizeEntries } from './resource-finding.js';
-import { principalScopingAnalysis, NETWORK_SELECTOR_KEYS } from './resource-conditions.js';
+import { principalScopingAnalysis, vacuousSourceGuards, NETWORK_SELECTOR_KEYS } from './resource-conditions.js';
 import { DOC_CROSS_ACCOUNT, DOC_S3_BPA, DOC_S3_POLICY_KEYS, RESOURCE_SERVICE_LABELS, RESOURCE_SERVICES } from './resource-catalogs.js';
 
 export const S3_BUCKET_CONTROL_ACTIONS = Object.freeze(new Set([
@@ -223,7 +223,7 @@ export function s3PerServiceRules(model, ctx) {
     // reaches anonymous callers. It never downgrades the generic critical
     // PUBLIC-ACCESS finding.
     if (c.anonymous) {
-      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service);
+      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service, vacuousSourceGuards(stmt));
       const principalScoped = expansionKeys.length === 0 && scopingKeys.length > 0;
       if (!principalScoped) {
         const decoys = s3NonPrincipalDecoyKeys(stmt.condition);

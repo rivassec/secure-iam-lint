@@ -136,3 +136,66 @@ test('R6 s: an exact aws:PrincipalArn pin lowers a cross-account grant to medium
   const glob = run('sm', { ...st, Condition: { ArnLike: { 'aws:PrincipalArn': `arn:aws:iam::${V}:role/*` } } });
   assert.ok(ids(glob).includes('RESOURCE-CROSS-ACCOUNT:high'), ids(glob).join(','));
 });
+
+// --- round 6 review: R6-2, J-1, J-2, J-4, J-5 ---
+const svcPull = (Condition) => ({ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: ['ecr:BatchGetImage'], Resource: ARN.ecr, Condition });
+
+test('R6-2: a service-only statement gated by a principal-only key is inert', () => {
+  for (const c of [{ StringEquals: { 'aws:PrincipalOrgID': ORG } }, { ArnLike: { 'aws:PrincipalArn': 'arn:aws:iam::*:role/x' } },
+    { StringEquals: { 'aws:PrincipalTag/team': 'a' } }, { 'ForAnyValue:StringLike': { 'aws:PrincipalOrgPaths': [`${ORG}/*`] } },
+    { Null: { 'aws:PrincipalAccount': 'false' } }]) {
+    const r = run('ecr', svcPull(c));
+    assert.deepEqual(ids(r), ['RESOURCE-INERT-STATEMENT:info'], JSON.stringify(c));
+  }
+  // Live: IfExists, a negated operator, ForAllValues, or a mixed Service + AWS principal.
+  for (const c of [{ StringEqualsIfExists: { 'aws:PrincipalOrgID': ORG } }, { StringNotEquals: { 'aws:PrincipalOrgID': ORG } },
+    { 'ForAllValues:StringEquals': { 'aws:PrincipalOrgPaths': [`${ORG}/*`] } }]) {
+    assert.ok(has(run('ecr', svcPull(c)), 'RESOURCE-CONFUSED-DEPUTY'), JSON.stringify(c));
+  }
+  const mixed = run('ecr', { ...svcPull({ StringEquals: { 'aws:PrincipalOrgID': ORG } }),
+    Principal: { Service: 'lambda.amazonaws.com', AWS: `arn:aws:iam::${V}:root` } });
+  assert.ok(!has(mixed, 'RESOURCE-INERT-STATEMENT'));
+  // Family-wide: an inert SQS statement grants nothing either.
+  const sqs = scan({ text: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'sns.amazonaws.com' },
+    Action: 'sqs:SendMessage', Resource: `arn:aws:sqs:us-east-1:${A}:q`, Condition: { StringEquals: { 'aws:PrincipalOrgID': ORG } } }] }),
+  family: 'resource', partition: 'aws', resourceContext: { arn: `arn:aws:sqs:us-east-1:${A}:q` } });
+  assert.deepEqual(ids(sqs), ['RESOURCE-INERT-STATEMENT:info']);
+});
+
+test('J-1: a wildcard org source value is not a source binding', () => {
+  for (const c of [{ StringLike: { 'aws:SourceOrgID': 'o-*' } }, { 'ForAnyValue:StringLike': { 'aws:SourceOrgPaths': '*/*' } },
+    { StringLike: { 'aws:SourceOrgPaths': 'o-*/r-ab12/*' } }]) {
+    const r = run('ecr', svcPull(c));
+    assert.notEqual(r.exitCode, EXIT.CLEAN, JSON.stringify(c));
+  }
+  assert.ok(has(run('ecr', svcPull({ StringLike: { 'aws:SourceOrgID': 'o-*' } })), 'RESOURCE-CONFUSED-DEPUTY'));
+  assert.ok(!has(run('ecr', svcPull({ StringEquals: { 'aws:SourceOrgID': ORG } })), 'RESOURCE-CONFUSED-DEPUTY'));
+  assert.ok(!has(run('ecr', svcPull({ StringLike: { 'aws:SourceOrgPaths': `${ORG}/r-ab12/*` } })), 'RESOURCE-CONFUSED-DEPUTY'));
+});
+
+test('J-2: an exact pin lowers only a read-only cross-account grant, in the Principal\'s account', () => {
+  const pin = { ArnEquals: { 'aws:PrincipalArn': `arn:aws:iam::${V}:role/ci` } };
+  const g = (Action, Condition, AWS = `arn:aws:iam::${V}:root`) => run('ecr', { Effect: 'Allow', Principal: { AWS }, Action, Resource: ARN.ecr, Condition });
+  assert.ok(ids(g(['ecr:BatchGetImage'], pin)).includes('RESOURCE-CROSS-ACCOUNT:medium'));
+  for (const act of [['ecr:BatchDeleteImage'], ['ecr:PutImage'], ['ecr:BatchGetImage', 'ecr:SetRepositoryPolicy'], ['ecr:*']]) {
+    assert.ok(ids(g(act, pin)).includes('RESOURCE-CROSS-ACCOUNT:high'), act.join(','));
+  }
+  assert.ok(ids(g(['ecr:BatchGetImage'], { ArnEquals: { 'aws:PrincipalArn': 'arn:aws:iam::777788889999:role/ci' } })).includes('RESOURCE-CROSS-ACCOUNT:high'));
+  assert.ok(ids(g(['ecr:BatchGetImage'], { ...pin, ArnNotEquals: { 'aws:PrincipalArn': `arn:aws:iam::${V}:role/ci` } })).includes('RESOURCE-CROSS-ACCOUNT:high'));
+});
+
+test('J-4: a vacuous guard never escalates an org-scoped "*" to public', () => {
+  const r = run('ecr', { Effect: 'Allow', Principal: '*', Action: 'ecr:BatchGetImage', Resource: ARN.ecr,
+    Condition: { StringEquals: { 'aws:PrincipalOrgID': ORG }, 'ForAllValues:StringNotEquals': { 'aws:SourceAccount': V } } });
+  assert.ok(!has(r, 'PUBLIC-ACCESS') && !has(r, 'RESOURCE-DATA-EXPOSURE'), ids(r).join(','));
+  assert.ok(ids(r).includes('RESOURCE-CROSS-ACCOUNT:high'));
+});
+
+test('J-5: "*" scoped to the owner\'s own account is a same-account grant', () => {
+  const r = run('ecr', { Effect: 'Allow', Principal: '*', Action: 'ecr:BatchGetImage', Resource: ARN.ecr,
+    Condition: { StringEquals: { 'aws:PrincipalAccount': A } } });
+  assert.deepEqual(ids(r), ['RESOURCE-SAME-ACCOUNT-GRANT:medium']);
+  const other = run('ecr', { Effect: 'Allow', Principal: '*', Action: 'ecr:BatchGetImage', Resource: ARN.ecr,
+    Condition: { StringEquals: { 'aws:PrincipalAccount': V } } });
+  assert.ok(ids(other).includes('RESOURCE-CROSS-ACCOUNT:high'));
+});
