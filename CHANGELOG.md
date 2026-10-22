@@ -60,6 +60,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `aws:SourceOrgID` counts as a service source binding, and a `ForAllValues` guard
   on a service-only source key (absent for IAM callers, so it constrains nothing)
   is called out as vacuous.
+- **RESOURCE-INERT-STATEMENT** (info): a resource-policy statement that grants only
+  AWS service principals but requires a principal-only key (`aws:PrincipalOrgID`,
+  `aws:PrincipalArn`, ...) never matches a service call, so it grants nothing and is
+  no longer reported as confused deputy.
 - The condition keys `kms:GrantIsForAWSResource` and `kms:CallerAccount` are modeled
   for the AWS-managed key-policy shapes, and `kms:ListGrants` is a known read.
 
@@ -78,6 +82,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on the same provider.
 - **Lambda permissions:** a grant to the public, another account, or a service with
   no `sourceArn`/`sourceAccount` exits 3 (`PULUMI_UNMODELED_PERMISSION`).
+- A wildcard `aws:SourceOrgID` / `aws:SourceOrgPaths` value (`o-*`, `*/*`) is no
+  longer credited as a source binding. An exact `aws:PrincipalArn` pin lowers only a
+  read-only cross-account grant in the pinned principal's own account. A vacuous
+  `ForAllValues` source guard no longer escalates a scoped `*` to public.
 - In an Allow, actions of the Deny-only services, iam tag/untag actions and the
   account-wide IAM dumps (`GetAccountAuthorizationDetails`, credential reports)
   stay unknown (exit 3) until a finding models them.
@@ -93,6 +101,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   TRUST-SAME-ACCOUNT when the role ARN is supplied. Baseline ids include severity,
   so an accepted cross-account finding re-fires once as the new finding.
 - `gate:no-network` matches network API names as whole words.
+- **Renamed:** across the resource family, a `Principal "*"` scoped by a positive
+  principal condition (`aws:PrincipalOrgID`, `aws:PrincipalAccount`,
+  `aws:PrincipalArn`, `aws:PrincipalTag`, `kms:CallerAccount`, ...) is
+  RESOURCE-CROSS-ACCOUNT instead of PUBLIC-ACCESS, with the same severity; scoped to
+  the owner's own account by `aws:PrincipalAccount`, it is RESOURCE-SAME-ACCOUNT-GRANT.
+  Baseline ids include the rule id, so an accepted PUBLIC-ACCESS on such a policy
+  re-fires once as the new finding.
 - A `2008-10-17` policy without policy variables is analyzed as `2012-10-17` (its
   only semantic difference is `${...}`); one with a variable still fails closed.
 - A `Principal "*"` trust pinned by an exact `ArnEquals`/`StringEquals` on
