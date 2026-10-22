@@ -396,7 +396,8 @@ export function resourceResult(model, coverage, effectiveFamily, options) {
       .some((b) => String(b).toLowerCase() === k);
   };
   // R6-1: the resource family classifies ECR / Secrets Manager / DynamoDB actions itself.
-  const ownCatalog = new Set(['ecr', 'secretsmanager', 'dynamodb']);
+  // R7: sqs keeps its pre-catalog treatment here (the messaging rules classify it).
+  const ownCatalog = new Set(['ecr', 'secretsmanager', 'dynamodb', 'sqs']);
   const catalogued = (token) => {
     const svc = String(token).split(':')[0];
     if (ownCatalog.has(svc.toLowerCase())) return false;

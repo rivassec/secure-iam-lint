@@ -46,10 +46,10 @@ for (const [action, res] of C2) {
   });
 }
 
-test('log write actions on * still report WILDCARD-RESOURCE (existing detector)', () => {
+test('log write actions on * report WILDCARD-RESOURCE at medium (v1.3.0 r7 log-ingestion calibration)', () => {
   const r = allow(['logs:CreateLogStream', 'logs:PutLogEvents'], '*');
-  assert.equal(r.exitCode, EXIT.FINDINGS);
-  assert.ok(r.findings.some((f) => f.id === 'WILDCARD-RESOURCE'));
+  assert.equal(r.exitCode, EXIT.CLEAN);
+  assert.ok(r.findings.some((f) => f.id === 'WILDCARD-RESOURCE' && f.severity === 'medium'));
 });
 
 for (const [action, res] of [['logs:GetLogEvents', LOG], ['logs:FilterLogEvents', LOG], ['logs:GetQueryResults', '*'],

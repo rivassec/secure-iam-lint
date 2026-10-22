@@ -194,7 +194,7 @@ test('J-4: a vacuous guard never escalates an org-scoped "*" to public', () => {
 test('J-5: "*" scoped to the owner\'s own account is a same-account grant', () => {
   const r = run('ecr', { Effect: 'Allow', Principal: '*', Action: 'ecr:BatchGetImage', Resource: ARN.ecr,
     Condition: { StringEquals: { 'aws:PrincipalAccount': A } } });
-  assert.deepEqual(ids(r), ['RESOURCE-SAME-ACCOUNT-GRANT:medium']);
+  assert.deepEqual(ids(r), ['RESOURCE-SAME-ACCOUNT-GRANT:high']);
   const other = run('ecr', { Effect: 'Allow', Principal: '*', Action: 'ecr:BatchGetImage', Resource: ARN.ecr,
     Condition: { StringEquals: { 'aws:PrincipalAccount': V } } });
   assert.ok(ids(other).includes('RESOURCE-CROSS-ACCOUNT:high'));

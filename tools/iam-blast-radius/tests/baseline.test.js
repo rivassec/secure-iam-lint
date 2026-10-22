@@ -54,7 +54,7 @@ test('accepting every result turns a partial exit 3 into exit 0, status stays pa
 
 test('a NEW unknown action is not covered by an accepted unknown-action state', () => {
   const keys = acceptAll(POLICY(['s3:GetObject', 'sqs:SendMessage']));
-  const r = applyBaseline(scanText(POLICY(['s3:GetObject', 'sqs:SendMessage', 'sqs:DeleteQueue'])), 'p.json', keys, 'high');
+  const r = applyBaseline(scanText(POLICY(['s3:GetObject', 'sqs:SendMessage', 'sqs:SendMessageBatch'])), 'p.json', keys, 'high');
   assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
 });
 

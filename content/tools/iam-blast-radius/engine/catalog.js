@@ -56,7 +56,7 @@ export const ACCESS_LEVELS = Object.freeze({
 const L = ACCESS_LEVELS;
 
 // Dated snapshot identity. Bump both when the curated set below changes.
-export const ACTION_CATALOG_VERSION = '2026.10.21.3';
+export const ACTION_CATALOG_VERSION = '2026.10.21.4';
 export const ACTION_CATALOG_DATE = '2026-10-21';
 
 // The curated snapshot: service -> { actionName: accessLevel }. Keys use the
@@ -75,6 +75,17 @@ const CATALOG_DATA = Object.freeze({
     DescribeLogStreams: L.LIST,
     DescribeMetricFilters: L.LIST,
     DescribeSubscriptionFilters: L.LIST,
+  },
+  // R7: SQS ack/visibility/attributes; message reads and producers stay unknown (fail closed).
+  sqs: {
+    GetQueueAttributes: L.READ,
+    GetQueueUrl: L.READ,
+    DeleteMessage: L.WRITE,
+    DeleteMessageBatch: L.WRITE,
+    ChangeMessageVisibility: L.WRITE,
+    ChangeMessageVisibilityBatch: L.WRITE,
+    DeleteQueue: L.WRITE,
+    PurgeQueue: L.WRITE,
   },
   ecr: {
     GetAuthorizationToken: L.READ,
