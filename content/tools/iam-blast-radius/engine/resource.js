@@ -56,6 +56,7 @@ import {
 export * from './resource-principal-classification.js';
 import {
   PRINCIPAL_SCOPING_KEYS, KMS_PRINCIPAL_SCOPING_KEYS, isPrincipalScopingKey, operatorNegatesScope, principalScopingAnalysis, NETWORK_SELECTOR_KEYS, selectorCategory, conditionKeyInventory, describeConditionComposition, conditionShapeProblems,
+  vacuousSourceGuards, exactPrincipalArnPin,
 } from './resource-conditions.js';
 export * from './resource-conditions.js';
 import {
@@ -114,6 +115,8 @@ function resourceFindings(model, ctx) {
     ? String(ctx.ownerAccount)
     : null;
   const isS3 = service === RESOURCE_SERVICES.S3_BUCKET || service === RESOURCE_SERVICES.S3_OBJECT;
+  // R6-1: ECR / Secrets Manager / DynamoDB.
+  const isData = DATA_SERVICE_NS[service] !== undefined;
   // The explicit context account is what lets S3 (whose ARN carries no account)
   // resolve same-vs-cross; distinguishing it drives the "undetermined" reason text.
   const explicitOwnerAccount = resourceAccount !== null
@@ -424,6 +427,19 @@ function resourceFindings(model, ctx) {
             'Deny must not be read as suppressing the public Allow.';
         }
       }
+      // R6-1: a vacuous ForAllValues source-key guard is named, never credited.
+      const vacuous = vacuousSourceGuards(stmt);
+      if (vacuous.length > 0) {
+        why += ` The ForAllValues: guard on ${vacuous.join(', ')} constrains nothing: these keys are ` +
+          'present only on service-to-service requests, so for an IAM caller the key is absent and ' +
+          'ForAllValues over an absent key is TRUE. An intended exclusion written this way never applies ' +
+          '(aws:PrincipalOrgPaths is the key for the caller\'s organization path).';
+      }
+      // R6-1: on these services a "*" scoped to an org/accounts is broad cross-account, not public.
+      const dataScoped = isData && principalScoped;
+      if (dataScoped) {
+        title = 'Broad principal ("*") scoped by a principal condition: cross-account access within that scope';
+      }
       if (isS3 && !principalScoped) {
         // S3 Block Public Access is only relevant to a genuinely-public grant.
         why +=
@@ -432,7 +448,7 @@ function resourceFindings(model, ctx) {
           'supplied here; unsupported context does not mean the resource is safe.';
       }
       findings.push(makeResourceFinding(stmt, anonEntries, {
-        id: 'PUBLIC-ACCESS',
+        id: dataScoped ? 'RESOURCE-CROSS-ACCOUNT' : 'PUBLIC-ACCESS',
         severity,
         title,
         why,
@@ -686,9 +702,12 @@ function resourceFindings(model, ctx) {
           'condition for access. The named principal is enumerated as-is and never ' +
           'collapsed with the resource owner.';
       }
+      // R6-1: an exact aws:PrincipalArn pin narrows a cross-account account grant to one principal.
+      const pinned = isData && exactPrincipalArnPin(stmt.condition);
+      if (pinned) why += ' An exact aws:PrincipalArn condition pins the grant to the named principal ARN(s), not the whole account.';
       findings.push(makeResourceFinding(stmt, grantEntries, {
         id: 'RESOURCE-CROSS-ACCOUNT',
-        severity: 'high',
+        severity: pinned ? 'medium' : 'high',
         title,
         why,
         remediation:
@@ -789,7 +808,7 @@ function resourceFindings(model, ctx) {
           'aws:SourceArn value must equal the aws:SourceAccount value. Set them to the ' +
           'account that actually owns the calling source resource, then re-verify the ' +
           'confused-deputy binding.';
-      } else if (anyBinding && !ownBound) {
+      } else if (anyBinding && !ownBound && !(isData && binding.sourceOrg && foreignSource.length === 0)) {
         // F13/T2-4: bound, but not provably to this account's sources (a foreign
         // account, an account-less ARN, an org, or an unknown owning account).
         state = 'source-unverified';
@@ -868,7 +887,8 @@ function resourceFindings(model, ctx) {
           'service supports.';
       }
 
-      findings.push(makeResourceFinding(stmt, serviceEntries, {
+      // R6-1: on these services a properly source-bound service grant (incl. org-bound) is not reported.
+      if (!(isData && state === 'source-bound')) findings.push(makeResourceFinding(stmt, serviceEntries, {
         id: 'RESOURCE-CONFUSED-DEPUTY',
         severity,
         title,

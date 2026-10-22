@@ -96,3 +96,43 @@ test('a stream or wildcard ARN as the attached resource stays unsupported', () =
     assert.equal(r.exitCode, EXIT.FAIL_CLOSED, arn);
   }
 });
+
+// --- pack s calibration (real-estate findings) ---
+const ORG = 'o-exampleorg1';
+test('R6 s: an org-scoped "*" on these services is cross-account within the org, not public', () => {
+  for (const svc of ['ecr', 'sm', 'ddb']) {
+    const r = run(svc, { Effect: 'Allow', Principal: { AWS: '*' }, Action: ACT[svc].read, Resource: ARN[svc], Condition: { StringEquals: { 'aws:PrincipalOrgID': ORG } } });
+    assert.ok(!has(r, 'PUBLIC-ACCESS'), svc);
+    assert.ok(ids(r).includes('RESOURCE-CROSS-ACCOUNT:high'), ids(r).join(','));
+    assert.equal(r.exitCode, EXIT.FINDINGS);
+  }
+});
+
+test('R6 s: a ForAllValues guard on a source-only key is vacuous for IAM callers', () => {
+  const r = run('ecr', { Effect: 'Allow', Principal: { AWS: '*' }, Action: ['ecr:PutImage', 'ecr:UploadLayerPart'], Resource: ARN.ecr,
+    Condition: { ArnLike: { 'aws:PrincipalArn': 'arn:aws:iam::*:role/github' }, StringEquals: { 'aws:PrincipalOrgID': ORG },
+      'ForAllValues:StringNotLike': { 'aws:SourceOrgPaths': [`${ORG}/r-ab12/ou-ab12-sandbox/*`] } } });
+  assert.equal(r.exitCode, EXIT.FINDINGS);
+  const f = r.findings.find((x) => x.id === 'RESOURCE-CROSS-ACCOUNT');
+  assert.ok(f && f.severity === 'high' && /constrains nothing/.test(f.why));
+  // ForAnyValue on the same absent key is not vacuous-true: still unmodeled.
+  const any = run('ecr', { Effect: 'Allow', Principal: { AWS: '*' }, Action: 'ecr:PutImage', Resource: ARN.ecr,
+    Condition: { StringEquals: { 'aws:PrincipalOrgID': ORG }, 'ForAnyValue:StringNotLike': { 'aws:SourceOrgPaths': ['x/*'] } } });
+  assert.equal(any.exitCode, EXIT.FAIL_CLOSED);
+});
+
+test('R6 s: a service grant bound by aws:SourceOrgID is source-bound', () => {
+  const r = run('ecr', { Effect: 'Allow', Principal: { Service: ['lambda.amazonaws.com'] }, Action: 'ecr:BatchGetImage', Resource: ARN.ecr,
+    Condition: { StringEquals: { 'aws:SourceOrgID': ORG } } });
+  assert.ok(!has(r, 'RESOURCE-CONFUSED-DEPUTY'));
+  assert.notEqual(r.exitCode, EXIT.FAIL_CLOSED);
+});
+
+test('R6 s: an exact aws:PrincipalArn pin lowers a cross-account grant to medium', () => {
+  const st = { Effect: 'Allow', Principal: { AWS: `arn:aws:iam::${V}:root` }, Action: 'secretsmanager:GetSecretValue', Resource: '*' };
+  assert.ok(ids(run('sm', st)).includes('RESOURCE-CROSS-ACCOUNT:high'));
+  const pinned = run('sm', { ...st, Condition: { ArnEquals: { 'aws:PrincipalArn': `arn:aws:iam::${V}:role/reader` } } });
+  assert.deepEqual(ids(pinned), ['RESOURCE-CROSS-ACCOUNT:medium']);
+  const glob = run('sm', { ...st, Condition: { ArnLike: { 'aws:PrincipalArn': `arn:aws:iam::${V}:role/*` } } });
+  assert.ok(ids(glob).includes('RESOURCE-CROSS-ACCOUNT:high'), ids(glob).join(','));
+});
