@@ -1,0 +1,60 @@
+name: False positive
+description: A finding that should not be there, or has the wrong severity.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Post a **synthetic** policy only: fake account ids (111111111111), fake names, no real ARNs.
+        If the tool reported CLEAN on a policy that carries a real capability, stop: that is a
+        fail-open and goes to [private reporting](https://github.com/rivassec/secure-iam-lint/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release tag, Action ref or commit SHA.
+      placeholder: v1.2.0
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options: [GitHub Action, CLI (iam-br), Web tool, scan() API]
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command or Action inputs
+      description: Family, partition, accounts, threshold, input type.
+      placeholder: iam-br --family identity --partition aws --subject-account 111111111111 policy.json
+    validations:
+      required: true
+  - type: textarea
+    id: policy
+    attributes:
+      label: Synthetic policy
+      description: The smallest policy that still shows the finding.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: finding
+    attributes:
+      label: Finding id and severity
+      placeholder: WILDCARD-RESOURCE / high
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it is wrong
+      description: What blocks the capability the finding claims (condition, scope, a missing permission).
+    validations:
+      required: true
+  - type: input
+    id: exit
+    attributes:
+      label: Expected vs actual exit code
+      placeholder: expected 0, got 1

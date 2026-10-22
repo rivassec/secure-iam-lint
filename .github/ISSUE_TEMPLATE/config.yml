@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability or fail-open result (private)
+    url: https://github.com/rivassec/secure-iam-lint/security/advisories/new
+    about: CLEAN / exit 0 on a policy with a real capability is a vulnerability. Report it privately, not here. See SECURITY.md.
