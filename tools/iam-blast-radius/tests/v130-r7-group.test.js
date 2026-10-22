@@ -55,7 +55,13 @@ test('Pod Identity: an unbound pods.eks statement next to a pinned IRSA sub is l
 });
 
 test('Pod Identity: no finding when bound, without IRSA, or with a wildcard sub', () => {
-  assert.ok(!trustIds(P(irsa, pods({ StringEquals: { 'aws:SourceAccount': '111122223333' } }))).some((x) => x.startsWith('TRUST-POD-IDENTITY')));
+  assert.ok(!trustIds(P(irsa, pods({ ArnEquals: { 'aws:SourceArn': 'arn:aws:eks:us-east-2:111122223333:cluster/prod' } }))).some((x) => x.startsWith('TRUST-POD-IDENTITY')));
+  // K-2: SourceAccount alone, globs, negations and IfExists do not bind.
+  for (const c of [{ StringEquals: { 'aws:SourceAccount': '111122223333' } }, { StringLike: { 'aws:SourceAccount': '*' } },
+    { StringNotEquals: { 'aws:SourceAccount': '444455556666' } }, { ArnLike: { 'aws:SourceArn': 'arn:aws:eks:*:*:cluster/*' } },
+    { ArnEqualsIfExists: { 'aws:SourceArn': 'arn:aws:eks:us-east-2:111122223333:cluster/prod' } }]) {
+    assert.ok(trustIds(P(irsa, pods(c))).some((x) => x.startsWith('TRUST-POD-IDENTITY')), JSON.stringify(c));
+  }
   assert.ok(!trustIds(P(pods())).some((x) => x.startsWith('TRUST-POD-IDENTITY')));
   const wild = { ...irsa, Condition: { StringLike: { 'oidc.eks.us-east-2.amazonaws.com/id/ABC:sub': 'system:serviceaccount:*' } } };
   assert.ok(!trustIds(P(wild, pods())).some((x) => x.startsWith('TRUST-POD-IDENTITY')));
@@ -67,4 +73,35 @@ test('Pod Identity: raised to medium when the role can write IAM (Pulumi groupin
   assert.deepEqual(sev(doc(r, 'ctrl#assumeRolePolicy'), 'TRUST-POD-IDENTITY-UNBOUND'), ['medium']);
   const readOnly = P({ Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::b/k' });
   assert.deepEqual(sev(doc(run(role('ctrl', P(irsa, pods()), readOnly)), 'ctrl#assumeRolePolicy'), 'TRUST-POD-IDENTITY-UNBOUND'), ['low']);
+});
+
+const neutral = P({ Effect: 'Allow', Action: ['s3:GetObject', 's3:PutObject'], Resource: 'arn:aws:s3:::acme-app-files/*' });
+const popIds = (r, n) => doc(r, `${n}#inlinePolicies[p]`).result.findings.filter((f) => f.id === 'POPULATION-SCALE-DATA-ACCESS').map((f) => f.severity);
+
+test('R7-1: whole-bucket object access on a Cognito population role is high whatever the bucket name', () => {
+  const r = run(role('front', cognito('authenticated'), neutral));
+  assert.deepEqual(popIds(r, 'front'), ['high']);
+  assert.equal(doc(r, 'front#inlinePolicies[p]').result.exitCode, EXIT.FINDINGS);
+  for (const a of ['s3:*', 's3:Get*', '*']) {
+    const p = P({ Effect: 'Allow', Action: a, Resource: '*' });
+    assert.deepEqual(popIds(run(role('front', cognito('authenticated'), p)), 'front'), ['high'], a);
+  }
+  // Guards: per-user prefix, a narrower prefix, and a non-Cognito trust.
+  assert.deepEqual(popIds(run(role('front', cognito('authenticated'), perUser)), 'front'), []);
+  const prefixed = P({ Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::acme-app-files/public/*' });
+  assert.deepEqual(popIds(run(role('front', cognito('authenticated'), prefixed)), 'front'), []);
+  const svc = P({ Effect: 'Allow', Principal: { Service: 'ec2.amazonaws.com' }, Action: 'sts:AssumeRole' });
+  assert.deepEqual(popIds(run(role('box', svc, neutral)), 'box'), []);
+});
+
+test('K-3: absent, IfExists or globbed amr and wildcard actions are population-scale; a sub pin is not', () => {
+  const t = (cond, action = 'sts:AssumeRoleWithWebIdentity') => P({ Effect: 'Allow', Principal: { Federated: 'cognito-identity.amazonaws.com' }, Action: action, ...(cond ? { Condition: cond } : {}) });
+  const aud = { 'cognito-identity.amazonaws.com:aud': 'us-east-1:11111111-2222-3333-4444-555555555555' };
+  for (const [name, trust] of [
+    ['no amr', t({ StringEquals: aud })],
+    ['amr *', t({ StringEquals: aud, 'ForAnyValue:StringLike': { 'cognito-identity.amazonaws.com:amr': '*' } })],
+    ['AssumeRoleWith*', t({ StringEquals: aud }, 'sts:AssumeRoleWith*')],
+  ]) assert.deepEqual(popIds(run(role('front', trust, neutral)), 'front'), ['high'], name);
+  const pinned = t({ StringEquals: { ...aud, 'cognito-identity.amazonaws.com:sub': 'us-east-1:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' } });
+  assert.deepEqual(popIds(run(role('front', pinned, neutral)), 'front'), []);
 });
