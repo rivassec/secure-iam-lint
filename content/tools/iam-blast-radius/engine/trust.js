@@ -898,6 +898,47 @@ function findingsForStatement(stmt, subjectAccount = null, evidence = null) {
   return found;
 }
 
+// Pod Identity next to a pinned IRSA sub: any same-account Pod Identity association
+// (eks:CreatePodIdentityAssociation + iam:PassRole) can bind the role, bypassing the pin.
+const POD_SVC = /^pods\.eks\.amazonaws\.com(\.cn)?$/i;
+const condKeysLower = (c) => (!c || typeof c !== 'object' ? []
+  : Object.values(c).flatMap((o) => (o && typeof o === 'object' ? Object.keys(o).map((k) => k.toLowerCase()) : [])));
+export function podIdentityUnbound(stmt) {
+  const svc = (stmt.principal && stmt.principal.byType && stmt.principal.byType.Service) || [];
+  if (!svc.some((s) => POD_SVC.test(String(s)))) return false;
+  if (!(stmt.actions || []).some((a) => /^(sts:assumerole|sts:\*|\*)$/i.test(String(a)))) return false;
+  return !condKeysLower(stmt.condition).some((k) => k === 'aws:sourceaccount' || k === 'aws:sourcearn');
+}
+export function pinnedIrsa(stmt) {
+  const fed = (stmt.principal && stmt.principal.byType && stmt.principal.byType.Federated) || [];
+  if (!fed.some((f) => /:oidc-provider\/oidc\.eks\./i.test(String(f)))) return false;
+  for (const [op, inner] of Object.entries(stmt.condition || {})) {
+    if (!/^stringequals$/i.test(op) || !inner || typeof inner !== 'object') continue;
+    for (const [k, v] of Object.entries(inner)) {
+      if (!/:sub$/i.test(k)) continue;
+      const vals = Array.isArray(v) ? v : [v];
+      if (vals.length > 0 && vals.every((x) => typeof x === 'string' && !/[*?$]/.test(x))) return true;
+    }
+  }
+  return false;
+}
+export const POD_IDENTITY_ID = 'TRUST-POD-IDENTITY-UNBOUND';
+function podIdentityFinding(stmt) {
+  return makeFinding(stmt, classifyPrincipals(stmt.principal), {
+    id: POD_IDENTITY_ID,
+    severity: 'low',
+    title: 'Pod Identity trust bypasses the IRSA subject pin',
+    why: 'The trust pins IRSA to one Kubernetes service account (the OIDC sub), but a separate statement lets '
+      + 'pods.eks.amazonaws.com assume the role with no aws:SourceAccount / aws:SourceArn. Anyone in the account '
+      + 'who can create an EKS Pod Identity association (eks:CreatePodIdentityAssociation + iam:PassRole) can bind '
+      + 'this role to any service account in any cluster, bypassing the sub pin.',
+    remediation: 'Remove the pods.eks.amazonaws.com statement if Pod Identity is unused, or add aws:SourceAccount '
+      + '(and aws:SourceArn on the cluster) to it.',
+    docRef: DOC_CONFUSED_DEPUTY,
+    pathExploitability: 'low',
+  });
+}
+
 // --- Same-policy explicit-Deny precedence for trust (IAM-806) ----------------
 //
 // A role trust policy can carry an explicit Deny that removes an assume grant the
@@ -953,6 +994,10 @@ export function analyzeTrust(model, options = null) {
         }));
       }
     }
+
+    const allows = model.statements.filter((s) => s.effect === 'Allow' && isTrustStatement(s));
+    const pod = allows.find(podIdentityUnbound);
+    if (pod && allows.some(pinnedIrsa)) findings.push(podIdentityFinding(pod));
 
     // Deterministic order: by statement index, then by trust id order.
     const idOrder = new Map(TRUST_IDS.map((id, i) => [id, i]));

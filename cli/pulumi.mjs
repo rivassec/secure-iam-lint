@@ -8,7 +8,7 @@
 // shape this adapter does not model is an explicit exit-3 state, never a skip:
 // unknown preview values, secrets, malformed or duplicate entries, unsupported policy
 // types, unresolvable account / partition / resource context. Pure: no Node built-ins.
-import { scan, EXIT, ANALYSIS_STATUS, ANALYSIS_STATE, DEFAULT_BUDGET_MS } from './scan.mjs';
+import { scan, EXIT, ANALYSIS_STATUS, ANALYSIS_STATE, DEFAULT_BUDGET_MS, meetsThreshold } from './scan.mjs';
 import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 import { applyBaseline } from './baseline.mjs';
 
@@ -1090,6 +1090,76 @@ function failClosedResult(states, family) {
   });
 }
 
+// --- Group context (R7): a role's trust audience or privilege changes what its documents mean ---
+
+const COGNITO_FED = /^cognito-identity\.amazonaws\.com(\.cn)?$/i;
+const DATA_IDS = new Set(['DATA-READ', 'DATA-EXFIL', 'DESTRUCTIVE-ACTION']);
+const IAM_WRITE_IDS = new Set(['ATTACH-POLICY', 'PUT-INLINE-POLICY', 'DIRECT-IAM-ADMIN', 'POLICY-VERSION', 'CREDENTIAL-CREATION']);
+const SEV_UP = ['info', 'low', 'medium', 'high', 'critical'];
+const asList = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+const parsedDoc = (text) => { const p = text ? parseJsonStrict(text, 32) : null; return p && p.ok && isObj(p.value) ? p.value : null; };
+
+// A Cognito identity-pool trust whose amr admits signed-in (or guest) identities: every pool user can assume.
+function cognitoPopulationTrust(text) {
+  const doc = parsedDoc(text);
+  return !!doc && asList(doc.Statement).some((s) => isObj(s) && s.Effect === 'Allow'
+    && isObj(s.Principal) && asList(s.Principal.Federated).some((f) => COGNITO_FED.test(String(f)))
+    && asList(s.Action).some((a) => /^(sts:assumerolewithwebidentity|sts:\*|\*)$/i.test(String(a)))
+    && Object.values(isObj(s.Condition) ? s.Condition : {}).some((inner) => isObj(inner)
+      && Object.entries(inner).some(([k, v]) => /:amr$/i.test(k) && asList(v).some((x) => /authenticated/i.test(String(x))))));
+}
+// Every Allow resource carries the per-user prefix, so each user reaches only their own data.
+function perUserScoped(text) {
+  const doc = parsedDoc(text);
+  const allows = doc ? asList(doc.Statement).filter((s) => isObj(s) && s.Effect === 'Allow') : [];
+  return allows.length > 0 && allows.every((s) => asList(s.Resource).length > 0
+    && asList(s.Resource).every((r) => String(r).includes('${cognito-identity.amazonaws.com:sub}')));
+}
+function regate(result, findings, threshold) {
+  if (result.exitCode !== EXIT.CLEAN && result.exitCode !== EXIT.FINDINGS) return Object.freeze({ ...result, findings: Object.freeze(findings) });
+  const blockingCount = findings.filter((f) => meetsThreshold(f && f.severity, threshold || 'high')).length;
+  return Object.freeze({ ...result, findings: Object.freeze(findings), blockingCount,
+    exitCode: blockingCount > 0 ? EXIT.FINDINGS : EXIT.CLEAN,
+    reason: blockingCount > 0 ? 'FINDINGS_AT_OR_ABOVE_THRESHOLD' : 'CLEAN' });
+}
+const raiseTo = (f, sev, note) => (SEV_UP.indexOf(f.severity) >= SEV_UP.indexOf(sev) ? f
+  : Object.freeze({ ...f, severity: sev, why: `${f.why || ''} ${note}`.trim() }));
+
+// Only raises severities; never removes or lowers a finding.
+function applyGroupContext(documents, ext, threshold) {
+  const textOf = new Map(ext.documents.map((d) => [d.artifact, d.text]));
+  const byArt = new Map(documents.map((d) => [d.artifact, d]));
+  const raise = new Map(); // artifact -> (finding -> { sev, note })
+  const want = (art, pred, sev, note) => {
+    const d = byArt.get(art);
+    if (!d || !d.result || !Array.isArray(d.result.findings)) return;
+    for (const f of d.result.findings) if (pred(f)) (raise.get(art) || raise.set(art, new Map()).get(art)).set(f, { sev, note });
+  };
+  for (const g of ext.groups || []) {
+    const trust = g.documents.find((a) => TRUST_PROPS.has(byArt.get(a) ? byArt.get(a).property : ''));
+    const others = g.documents.filter((a) => a !== trust && byArt.get(a) && byArt.get(a).family !== TRUST);
+    if (trust && cognitoPopulationTrust(textOf.get(trust))) {
+      for (const a of others) {
+        if (perUserScoped(textOf.get(a))) continue;
+        want(a, (f) => DATA_IDS.has(f.id), 'high',
+          'This role is assumable by every identity of a Cognito identity pool (population-scale audience), so every signed-in user gets this access.');
+      }
+    }
+    const iamWrite = others.some((a) => (byArt.get(a).result.findings || []).some((f) => IAM_WRITE_IDS.has(f.id)));
+    if (trust && iamWrite) {
+      want(trust, (f) => f.id === 'TRUST-POD-IDENTITY-UNBOUND', 'medium',
+        'The role\'s own policies can write IAM, so binding it through Pod Identity is an escalation path.');
+    }
+  }
+  if (raise.size === 0) return documents;
+  return documents.map((d) => {
+    const r = raise.get(d.artifact);
+    if (!r) return d;
+    const findings = d.result.findings.map((f) => (r.has(f) ? raiseTo(f, r.get(f).sev, r.get(f).note) : f));
+    return Object.freeze({ ...d, result: regate(d.result, findings, threshold) });
+  });
+}
+
 // Adapter states on an analyzed document keep its findings but force exit 3.
 function withStates(result, states) {
   if (states.length === 0) return result;
@@ -1176,7 +1246,7 @@ export function scanPulumi(input) {
         exitCode: EXIT.USAGE, reason: ext.usage.reason, findingsCount: 0, blockingCount: 0,
       });
     }
-    const documents = ext.documents.map((d) => {
+    const scanned = ext.documents.map((d) => {
       let result;
       if (d.text == null) {
         result = failClosedResult(d.states, d.family);
@@ -1195,6 +1265,7 @@ export function scanPulumi(input) {
       for (const k of ['artifact', 'urn', 'property', 'type', 'family', 'op', 'managed', 'location']) meta[k] = d[k];
       return Object.freeze({ ...meta, result });
     });
+    const documents = applyGroupContext(scanned, ext, inp.threshold);
     return aggregate({
       input: 'pulumi',
       kind: ext.kind,
