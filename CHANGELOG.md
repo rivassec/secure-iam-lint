@@ -60,6 +60,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `aws:SourceOrgID` counts as a service source binding, and a `ForAllValues` guard
   on a service-only source key (absent for IAM callers, so it constrains nothing)
   is called out as vacuous.
+- **`--trusted-account-id <id>`** (repeatable or a comma list) and the Action input
+  `trusted-account-ids`: a role trust whose principals are all exact role, user or
+  assumed-role ARNs in a listed account is TRUST-CROSS-ACCOUNT medium instead of high.
+  Account-root principals, wildcards and mixed or unlisted principals stay high; the
+  list is the only source of trust and is never inferred. The JSON report echoes
+  `trustedAccountIdsAsserted`.
+- **Pulumi role grouping carries the trust audience into the role's policies:** a role
+  assumable by every identity of a Cognito identity pool has its data read, write and
+  delete findings raised to at least high, unless every resource is scoped per user by
+  `${cognito-identity.amazonaws.com:sub}`.
+- **TRUST-POD-IDENTITY-UNBOUND** (low): an unbound `pods.eks.amazonaws.com` statement
+  next to a pinned IRSA `sub` lets any same-account Pod Identity association bind the
+  role, bypassing the pin. With Pulumi input it is medium when the role can write IAM.
+- The GitHub OIDC `repository_id` claim is modeled as a single-repository pin: with a
+  branch pin the trust is low, with any ref high, never internet-open critical.
 - **RESOURCE-INERT-STATEMENT** (info): a resource-policy statement that grants only
   AWS service principals but requires a principal-only key (`aws:PrincipalOrgID`,
   `aws:PrincipalArn`, ...) never matches a service call, so it grants nothing and is
@@ -101,11 +116,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   TRUST-SAME-ACCOUNT when the role ARN is supplied. Baseline ids include severity,
   so an accepted cross-account finding re-fires once as the new finding.
 - `gate:no-network` matches network API names as whole words.
+- **Calibrations from a real-estate triage:** log-ingestion writes
+  (`CreateLogGroup`/`CreateLogStream`/`PutLogEvents`) on a broad scope are
+  WILDCARD-RESOURCE medium; reads and writes on the CodePipeline artifact store
+  `codepipeline-<region>-*` are medium; `sqs:DeleteMessage`/`DeleteMessageBatch` are a
+  consumer ack, not destructive (`DeleteQueue`/`PurgeQueue` stay destructive). Any other
+  action, a `logs:` wildcard, or a delete keeps the high.
 - **Renamed:** across the resource family, a `Principal "*"` scoped by a positive
   principal condition (`aws:PrincipalOrgID`, `aws:PrincipalAccount`,
   `aws:PrincipalArn`, `aws:PrincipalTag`, `kms:CallerAccount`, ...) is
   RESOURCE-CROSS-ACCOUNT instead of PUBLIC-ACCESS, with the same severity; scoped to
-  the owner's own account by `aws:PrincipalAccount`, it is RESOURCE-SAME-ACCOUNT-GRANT.
+  the owner's own account by `aws:PrincipalAccount`, it is RESOURCE-SAME-ACCOUNT-GRANT
+  high (it grants every principal in the account directly; the `:root` form stays
+  medium).
   Baseline ids include the rule id, so an accepted PUBLIC-ACCESS on such a policy
   re-fires once as the new finding.
 - A `2008-10-17` policy without policy variables is analyzed as `2012-10-17` (its
@@ -130,6 +153,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   detector), so a key policy whose grant statement allows it still exits 3.
 - DynamoDB stream policies, and a wildcard ARN as the attached resource, stay
   unsupported (exit 3).
+- Without `trusted-account-ids`, an exact cross-account role trust stays
+  TRUST-CROSS-ACCOUNT high: an in-org role can't be told apart from a vendor's.
+- A bare identity policy can't know its role's trust, so the Cognito population-scale
+  raise applies only with Pulumi input.
 - SARIF paths are relative to the Pulumi project; a project in a repo subdirectory
   does not map to files in code scanning yet.
 
