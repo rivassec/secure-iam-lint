@@ -521,7 +521,7 @@ function resolveProviderMapping(list, items) {
     const key = e && isStr(e.key) ? e.key.trim() : '';
     const acct = e && isStr(e.account) ? e.account.trim() : '';
     if (!key || !/^\d{12}$/.test(acct)) return { usage: { reason: 'USAGE', message: 'Each provider-account entry must be <provider-name-or-urn>=<12-digit account id>.' } };
-    const hits = provs.filter((u) => u === key || u.slice(u.lastIndexOf('::') + 2) === key);
+    const hits = provs.filter((u) => u === key || urnName(u) === key);
     if (hits.length !== 1) {
       return { usage: { reason: 'USAGE', message: `A provider-account entry matches ${hits.length === 0 ? 'no' : 'more than one'} provider in the file; use the provider's full URN.` } };
     }
@@ -738,13 +738,14 @@ function findUnanalyzedDocs(inputs, consumed, budget) {
   return hits;
 }
 
-// The resource type a URN names: the segment after the last `$` of its type part.
+// urn:pulumi:<stack>::<project>::<qualified type>::<name>. The name may itself contain `::`
+// (U-1: IPv6 CIDR route names), so the type is read from the front, the name is the rest.
 function urnType(urn) {
   const parts = String(urn).split('::');
   if (parts.length < 4) return null;
-  const q = parts[parts.length - 2];
-  return q.slice(q.lastIndexOf('$') + 1);
+  return parts[2].slice(parts[2].lastIndexOf('$') + 1);
 }
+const urnName = (urn) => String(urn).split('::').slice(3).join('::');
 
 // Policy-shaped values in a component's inputs, canonicalized; unknown/secret/undecodable count as unmatched.
 function componentPolicies(inputs, budget) {
