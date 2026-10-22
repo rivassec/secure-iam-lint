@@ -69,10 +69,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Pulumi role grouping carries the trust audience into the role's policies:** a role
   assumable by every identity of a Cognito identity pool has its data read, write and
   delete findings raised to at least high, unless every resource is scoped per user by
-  `${cognito-identity.amazonaws.com:sub}`.
+  `${cognito-identity.amazonaws.com:sub}`; whatever the bucket is called, S3 object
+  read, write or delete on a whole bucket or `*` reports **POPULATION-SCALE-DATA-ACCESS**
+  (high). A Cognito trust is population-scale unless an exact `:sub` pin narrows it.
 - **TRUST-POD-IDENTITY-UNBOUND** (low): an unbound `pods.eks.amazonaws.com` statement
   next to a pinned IRSA `sub` lets any same-account Pod Identity association bind the
-  role, bypassing the pin. With Pulumi input it is medium when the role can write IAM.
+  role, bypassing the pin; only an exact `aws:SourceArn` pin to EKS cluster ARNs binds
+  it. With Pulumi input it is medium when the role can write IAM.
 - The GitHub OIDC `repository_id` claim is modeled as a single-repository pin: with a
   branch pin the trust is low, with any ref high, never internet-open critical.
 - **RESOURCE-INERT-STATEMENT** (info): a resource-policy statement that grants only
@@ -119,7 +122,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Calibrations from a real-estate triage:** log-ingestion writes
   (`CreateLogGroup`/`CreateLogStream`/`PutLogEvents`) on a broad scope are
   WILDCARD-RESOURCE medium; reads and writes on the CodePipeline artifact store
-  `codepipeline-<region>-*` are medium; `sqs:DeleteMessage`/`DeleteMessageBatch` are a
+  `codepipeline-<region>-*` are medium, only for the AWS artifact-store actions
+  (bucket configuration, lifecycle, versioning and retention writes stay high); `sqs:DeleteMessage`/`DeleteMessageBatch` are a
   consumer ack, not destructive (`DeleteQueue`/`PurgeQueue` stay destructive). Any other
   action, a `logs:` wildcard, or a delete keeps the high.
 - **Renamed:** across the resource family, a `Principal "*"` scoped by a positive
