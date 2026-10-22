@@ -25,6 +25,12 @@ test('CodePipeline artifact store reads/writes are medium; deletes and other glo
   const r = id(P({ Effect: 'Allow', Action: ['s3:PutObject', 's3:GetObject', 's3:GetObjectVersion', 's3:GetBucketAcl', 's3:GetBucketLocation'], Resource: [cp] }));
   assert.ok(maxSev(r) < HIGH, sev(r).join());
   assert.ok(maxSev(id(P({ Effect: 'Allow', Action: ['s3:DeleteObject'], Resource: cp }))) >= HIGH);
+  // K-1: only the artifact-store actions, as exact tokens.
+  for (const a of ['s3:PutLifecycleConfiguration', 's3:PutBucketVersioning', 's3:PutBucketObjectLockConfiguration',
+    's3:PutEncryptionConfiguration', 's3:PutBucketNotification', 's3:BypassGovernanceRetention', 's3:PutObjectRetention',
+    's3:RestoreObject', 's3:Put*']) {
+    assert.ok(maxSev(id(P({ Effect: 'Allow', Action: [a], Resource: [cp, `${cp}/*`] }))) >= HIGH, a);
+  }
   for (const res of ['arn:aws:s3:::prod-*', 'arn:aws:s3:::codepipeline-*', '*']) {
     assert.ok(maxSev(id(P({ Effect: 'Allow', Action: ['s3:GetObject'], Resource: res }))) >= HIGH, res);
   }
