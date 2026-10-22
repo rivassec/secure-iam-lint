@@ -279,9 +279,15 @@ function allResourcesNamed(stmt) {
 // R7: the AWS-generated CodePipeline/CodeBuild policy reads the region's artifact store
 // (arn:<p>:s3:::codepipeline-<region>-*): a named service convention, not an open bucket glob.
 const PIPELINE_ARTIFACT_RE = /^arn:[a-z-]+:s3:::codepipeline-[a-z]{2}(-gov)?-[a-z]+-\d-\*(\/\*)?$/;
+// K-1: and only the artifact-store actions, as exact tokens (a wildcard or any bucket-config,
+// retention or restore action keeps its normal severity).
+const PIPELINE_ARTIFACT_ACTIONS = new Set(['s3:getobject', 's3:getobjectversion', 's3:getbucketversioning',
+  's3:getbucketacl', 's3:getbucketlocation', 's3:listbucket', 's3:putobject', 's3:putobjectacl']);
 function onlyPipelineArtifactBuckets(stmt) {
   return stmt.notResources.length === 0 && stmt.resources.length > 0 &&
-    stmt.resources.every((r) => PIPELINE_ARTIFACT_RE.test(String(r)));
+    stmt.resources.every((r) => PIPELINE_ARTIFACT_RE.test(String(r))) &&
+    stmt.notActions.length === 0 && stmt.actions.length > 0 &&
+    stmt.actions.every((a) => PIPELINE_ARTIFACT_ACTIONS.has(String(a).toLowerCase()));
 }
 
 // 4a. Sensitive data read / exfil.
