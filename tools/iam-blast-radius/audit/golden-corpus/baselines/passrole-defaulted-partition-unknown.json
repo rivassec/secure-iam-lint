@@ -11,6 +11,7 @@
       "threshold": "high",
       "partitionAsserted": null,
       "subjectAccountAsserted": "111122223333",
+      "trustedAccountIdsAsserted": null,
       "analysisStatus": "partial",
       "reason": "UNKNOWN_VIABILITY",
       "exitCode": 3,

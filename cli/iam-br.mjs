@@ -43,6 +43,7 @@ import * as nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { scan, EXIT, SELECTABLE_FAMILIES, DEFAULT_BUDGET_MS } from './scan.mjs';
+import { parseTrustedAccountIds } from './trusted-accounts.mjs';
 // READ-ONLY: the SINGLE source of the input byte cap. The pre-guards below (readStdin /
 // readFileCapped) reject an over-cap input BEFORE materializing it (threat-model T5);
 // they import LIMITS.MAX_BYTES from the SAME module the engine's validate() enforces, so
@@ -85,6 +86,7 @@ const VALUE_FLAGS = Object.freeze(new Set([
   '--resource-account',
   '--input',
   '--provider-account',
+  '--trusted-account-id',
 ]));
 
 // Boolean flags (no value). `-h` is an alias for `--help`. `--debug` is an alias
@@ -249,6 +251,10 @@ REQUIRED
                         usage error (exit 2).
 
 OPTIONS
+  --trusted-account-id <id>  (repeatable, or comma-separated) a 12-digit account you trust.
+                          For role-trust, a trust whose principals are all exact role/user
+                          ARNs in listed accounts is rated medium instead of cross-account
+                          high. Account-root principals stay high. Invalid id: exit 2.
   --subject-account <id>  AWS account id (12 digits) for account-aware checks
                           (e.g. PassRole viability). An invalid id is ignored
                           (the dependent finding stays UNKNOWN and fails closed).
@@ -403,6 +409,7 @@ export function parseArgs(argv) {
         case '--resource-arn': opts.resourceArn = value; break;
         case '--resource-account': opts.resourceAccount = value; break;
         case '--input': opts.input = value; break;
+        case '--trusted-account-id': (opts.trustedAccountIds ||= []).push(value); break;
         case '--provider-account': {
           // R5-4: repeatable <provider-name-or-urn>=<account>; split on the last '='.
           const i = value.lastIndexOf('=');
@@ -434,6 +441,10 @@ export function parseArgs(argv) {
     opts.file = positionals[0];
   }
 
+  if (opts.trustedAccountIds) {
+    const trusted = parseTrustedAccountIds(opts.trustedAccountIds);
+    if (trusted.error) return usage(`--trusted-account-id: ${trusted.error}`);
+  }
   if (opts.input !== 'policy' && opts.input !== 'pulumi') {
     return usage(`unknown --input '${opts.input}' (expected: policy | pulumi)`);
   }
@@ -524,6 +535,7 @@ export function toJsonReport(result, opts, manifest = VERSION_MANIFEST) {
     partitionAsserted: isNonEmptyString(o.partition) ? o.partition.trim() : null,
     // E-1: the account a same-account verdict was judged against (valid ids only).
     subjectAccountAsserted: /^\d{12}$/.test(String(o.subjectAccount ?? '').trim()) ? String(o.subjectAccount).trim() : null,
+    trustedAccountIdsAsserted: parseTrustedAccountIds(o.trustedAccountIds).ids || null,
     analysisStatus: result.analysisStatus,
     reason: result.reason != null ? result.reason : null,
     exitCode: result.exitCode,
@@ -702,6 +714,7 @@ export async function run(argv, io) {
       text,
       family: opts.family,
       subjectAccount: opts.subjectAccount,
+      trustedAccountIds: opts.trustedAccountIds,
       // Pass partition ONLY when explicitly supplied; an omitted partition must
       // stay "not asserted" so a cross-partition viability question fails closed
       // rather than being silently treated as a confident 'aws' assertion.
@@ -821,6 +834,7 @@ function runPulumi(opts, io, out, err, manifest) {
     text: tooLarge ? '' : text,
     oversize: tooLarge,
     subjectAccount: opts.subjectAccount,
+    trustedAccountIds: opts.trustedAccountIds,
     partition: opts.partition,
     providerAccounts: opts.providerAccounts,
     threshold: opts.threshold,
@@ -893,6 +907,7 @@ export function toPulumiJsonReport(result, opts, manifest = VERSION_MANIFEST) {
     threshold: o.threshold != null ? o.threshold : 'high',
     partitionAsserted: isNonEmptyString(o.partition) ? o.partition.trim() : null,
     subjectAccountAsserted: /^\d{12}$/.test(String(o.subjectAccount ?? '').trim()) ? String(o.subjectAccount).trim() : null,
+    trustedAccountIdsAsserted: parseTrustedAccountIds(o.trustedAccountIds).ids || null,
     // R2-2: why each provider's account/partition was believed.
     providers: [...(result.providers || [])],
     // Listed, not analyzed (e.g. source-bound Lambda permissions).

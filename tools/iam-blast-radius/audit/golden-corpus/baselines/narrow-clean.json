@@ -11,6 +11,7 @@
       "threshold": "high",
       "partitionAsserted": null,
       "subjectAccountAsserted": null,
+      "trustedAccountIdsAsserted": null,
       "analysisStatus": "complete",
       "reason": "CLEAN",
       "exitCode": 0,

@@ -31,6 +31,7 @@
 // of analysis truth (architecture invariant: one engine, two adapters); this
 // module derives its verdict from what the engine already reports.
 import { analyze } from '../content/tools/iam-blast-radius/engine/analyze.js';
+import { parseTrustedAccountIds } from './trusted-accounts.mjs';
 // The cooperative wall-clock budget (S3-dos-budget). analyze() is synchronous and
 // CPU-bound, so it cannot be preempted from outside in single-threaded JS. Instead
 // this adapter ARMS an absolute deadline that the engine's hot wildcard matcher
@@ -511,6 +512,9 @@ export function scan(input) {
         'resource, role-trust, trust, permissions-boundary, scp-rcp, scp, rcp, session).',
     );
   }
+  // R7: the explicit trusted-account list; an invalid id is a usage error (exit 2).
+  const trusted = parseTrustedAccountIds(inp.trustedAccountIds);
+  if (trusted.error) return usageError('INVALID_TRUSTED_ACCOUNT_IDS', trusted.error);
 
   // --- 2. Run the engine READ-ONLY. ------------------------------------------
   // requireExplicitFamily is set so the engine also refuses to guess. The family
@@ -533,6 +537,7 @@ export function scan(input) {
       family: familyToken,
       requireExplicitFamily: true,
       subjectAccount: isNonEmptyString(inp.subjectAccount) ? inp.subjectAccount.trim() : undefined,
+      trustedAccountIds: trusted.ids || undefined,
       // Pass only a VALIDATED partition; an unrecognized token is dropped (engine
       // defaults to 'aws') so it cannot masquerade as a confident assertion.
       partition: validPartition || undefined,

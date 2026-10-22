@@ -170,6 +170,7 @@ export function analyze(text, options) {
     if (effectiveFamily === FAMILIES.ROLE_TRUST) {
       const subjectAccount = (options && options.subjectAccount) || null;
       return trustResult(expandTrustModel(m.model), coverage, effectiveFamily, { subjectAccount,
+        trustedAccounts: Array.isArray(options && options.trustedAccountIds) ? new Set(options.trustedAccountIds) : null,
         evidence: roleEvidence(options && options.resourceContext, subjectAccount, guardPartition(options)) });
     }
 

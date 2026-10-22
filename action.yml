@@ -54,6 +54,14 @@ inputs:
       mismatch fails closed. It resolves the account but never proves a
       same-account trust on its own.
     required: false
+  trusted-account-ids:
+    description: >-
+      Comma- or newline-separated 12-digit AWS account ids you trust. For
+      family=role-trust (and pulumi-json trusts), a trust whose principals are all
+      exact role/user ARNs in listed accounts is rated medium instead of
+      cross-account high. Account-root principals, wildcards and mixed lists stay
+      high. Nothing is inferred from other inputs. An invalid id is exit 2.
+    required: false
   subject-account:
     description: >-
       AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). For
