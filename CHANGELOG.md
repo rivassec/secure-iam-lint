@@ -54,7 +54,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dynamodb-table`, or via the Pulumi mapping). Public, cross-account, same-account
   and confused-deputy findings apply, plus RESOURCE-DATA-EXPOSURE (a public read,
   write or delete) and RESOURCE-POLICY-TAKEOVER (a grant that can rewrite the
-  resource policy). An unclassified action keeps the policy at exit 3.
+  resource policy). An unclassified action keeps the policy at exit 3. On these
+  three services an org- or account-scoped `*` is cross-account (not public), an
+  exact `aws:PrincipalArn` pin lowers a cross-account grant to medium,
+  `aws:SourceOrgID` counts as a service source binding, and a `ForAllValues` guard
+  on a service-only source key (absent for IAM callers, so it constrains nothing)
+  is called out as vacuous.
 - The condition keys `kms:GrantIsForAWSResource` and `kms:CallerAccount` are modeled
   for the AWS-managed key-policy shapes, and `kms:ListGrants` is a known read.
 
