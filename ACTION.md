@@ -183,7 +183,7 @@ run the Action **multiple times** with different `paths` globs and a different
 | `pulumi-json` | no | - | Workspace-relative path to a `pulumi preview --json` or `pulumi stack export` file produced earlier in the job. Every IAM policy in it is scanned; each policy's family and attached resource come from its resource type, and findings are located by `<urn>#<property>`. A default preview lists only changed resources (`scan-scope: delta`), so exit `0` means "no new risk in this change", not "stack clean"; use `pulumi preview --show-sames` or a stack export for a full scan. Unknown preview values, secrets and unsupported policy types fail closed (exit `3`). Mutually exclusive with `paths`; `family` and `resource-*` are not used with it. `baseline` / `baseline-output` work, keyed per `<urn>#<property>`. |
 | `subject-account` | no | - | AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). For `role-trust` it is the account that owns every role in the run; split a `paths` glob that spans accounts. |
 | `resource-arn` | no | - | For `family: role-trust`: the role's own ARN; without it a trust is never reported as same-account (it stays `TRUST-CROSS-ACCOUNT` high). For `family: resource`: the ARN of the resource the policy is attached to (e.g. `arn:aws:s3:::my-bucket`). Required to analyze a resource policy; without it the resource family fails closed (`RESOURCE_CONTEXT_REQUIRED`, exit `3`). |
-| `resource-type` | no | - | For `family: resource`: the resource type (e.g. `s3-bucket`). |
+| `resource-type` | no | - | For `family: resource`: the resource type (e.g. `s3-bucket`, `kms-key`, `ecr-repository`, `secretsmanager-secret`, `dynamodb-table`). |
 | `resource-account` | no | - | For `family: resource`: the owning account id, when known. |
 | `partition` | no | - | AWS partition (`aws`, `aws-us-gov`, `aws-cn`, `aws-iso*`). No default on purpose: an omitted partition is "not asserted", not `aws`. A cross-partition role-viability verdict is trusted only when you supply a real partition; otherwise it is treated as unknown and fails closed (exit `3`). |
 | `fail-on` | no | `high` | Minimum severity that fails the check: `critical`, `high`, `medium`, `low`, `info`, `none`. `none` does not turn a fail-closed `3` into `0`. |
@@ -354,7 +354,7 @@ One family per run, declared explicitly (never auto-detected):
 | ------ | ------ |
 | `identity` | IAM identity (user/group/role) policies: escalation, PassRole chains, credential creation, data exfiltration reach. |
 | `role-trust` | Role trust policies (`sts:AssumeRole`): who can assume the role. Synonym: `trust`. |
-| `resource` | Resource-based policies (S3, KMS, SNS, SQS, per-service): public/cross-account exposure. |
+| `resource` | Resource-based policies (S3, KMS, SNS, SQS, ECR repository, Secrets Manager secret, DynamoDB table; per-service): public/cross-account exposure. |
 | `permissions-boundary` | Permissions-boundary policies: analyzed as a ceiling, not a grant. |
 | `session` | Session policies: analyzed as a session restriction, not a grant. |
 | `scp` | Organizations Service Control Policies: guardrail semantics. |

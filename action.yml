@@ -69,7 +69,7 @@ inputs:
       resource family fails closed (RESOURCE_CONTEXT_REQUIRED, exit 3).
     required: false
   resource-type:
-    description: 'For family=resource: the resource type (e.g. s3-bucket).'
+    description: 'For family=resource: the resource type (e.g. s3-bucket, ecr-repository, secretsmanager-secret, dynamodb-table).'
     required: false
   resource-account:
     description: 'For family=resource: the owning account id, when known.'
