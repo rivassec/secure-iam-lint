@@ -130,3 +130,18 @@ test('I-1: component skip needs children that repeat its policies; URN type must
   const bad = { ...comp('x:index:C', svc), type: 'pulumi-nodejs:dynamic:Resource' };
   assert.ok(codes(run(bad, child(svc))).includes('PULUMI_MALFORMED'));
 });
+
+test('U-1: resource and provider names may contain "::"', async () => {
+  const { scanPulumi: sp } = await import('../../../cli/pulumi.mjs');
+  const PRV = 'urn:pulumi:dev::p::pulumi:providers:aws::net::east';
+  const pub = JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: '*' }, Action: 'sts:AssumeRole' }] });
+  const res = [
+    { urn: PRV, type: 'pulumi:providers:aws', custom: true, inputs: { region: 'us-east-1' } },
+    { urn: 'urn:pulumi:dev::p::aws:ec2/route:Route::peer-2600:1f26:20:8000::/56', type: 'aws:ec2/route:Route', custom: true, provider: `${PRV}::id1`, inputs: {} },
+    { urn: 'urn:pulumi:dev::p::aws:iam/role:Role::role-with::colons', type: 'aws:iam/role:Role', custom: true, provider: `${PRV}::id1`, inputs: { name: 'r', assumeRolePolicy: pub } },
+  ];
+  const r = sp({ text: JSON.stringify({ deployment: { resources: res } }), partition: 'aws', providerAccounts: [{ key: 'net::east', account: '111122223333' }] });
+  assert.ok(!r.analysisStates.some((s) => s.code === 'PULUMI_MALFORMED'), r.analysisStates.map((s) => s.code).join(','));
+  const d = r.documents.find((x) => x.urn.endsWith('role-with::colons'));
+  assert.ok(d && d.result.findings.some((f) => f.id === 'TRUST-PUBLIC'));
+});
