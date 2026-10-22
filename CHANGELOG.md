@@ -33,8 +33,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   alone never proves it. The JSON report echoes `subjectAccountAsserted`.
 - **Action catalog:** sns, events, logs, config, lambda and cloudformation are
   snapshotted for Deny statements, so AWS Control Tower guardrail SCPs no longer
-  fail on unknown actions (on a live CT org, statements that read clean went from
-  12 to 66 of 93, with no new highs). All iam reference actions are snapshotted.
+  fail on unknown actions (on a real Control Tower organization, most guardrail
+  statements now read clean, with no new highs). All iam reference actions are snapshotted.
   ecr, codeartifact, scheduler and eks are snapshotted for Deny statements too.
 - **Known in an Allow:** the CI/ECS role basics, logs `CreateLogGroup`,
   `CreateLogStream`, `PutLogEvents` and the log-group/stream/filter `Describe*`
@@ -49,6 +49,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   input name the account of a provider the stack can't prove (for example one
   configured only by profile). It is cross-checked against the stack, a mismatch
   fails closed, and it never proves a same-account trust on its own.
+- **Resource policies on ECR repositories, Secrets Manager secrets and DynamoDB
+  tables** are analyzed (`--resource-type ecr-repository | secretsmanager-secret |
+  dynamodb-table`, or via the Pulumi mapping). Public, cross-account, same-account
+  and confused-deputy findings apply, plus RESOURCE-DATA-EXPOSURE (a public read,
+  write or delete) and RESOURCE-POLICY-TAKEOVER (a grant that can rewrite the
+  resource policy). An unclassified action keeps the policy at exit 3.
 - The condition keys `kms:GrantIsForAWSResource` and `kms:CallerAccount` are modeled
   for the AWS-managed key-policy shapes, and `kms:ListGrants` is a known read.
 
@@ -102,6 +108,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   never accepted.
 - `kms:RevokeGrant` stays unknown in an Allow (a permissions change with no
   detector), so a key policy whose grant statement allows it still exits 3.
+- DynamoDB stream policies, and a wildcard ARN as the attached resource, stay
+  unsupported (exit 3).
 - SARIF paths are relative to the Pulumi project; a project in a repo subdirectory
   does not map to files in code scanning yet.
 
