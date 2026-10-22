@@ -290,3 +290,43 @@ export function describeConditionComposition(condition) {
 // mirror trust.js / conditions.js POSITIVE_STRING_MATCH_OPERATORS: a Date/Numeric/
 // Bool/negated operator on a source key does NOT bind the source, so it must never
 // be credited as a confused-deputy constraint.
+
+// R6-1: keys set only on service-to-service requests; absent when an IAM principal calls.
+const SOURCE_ONLY_KEYS = new Set(['aws:sourceorgpaths', 'aws:sourceorgid', 'aws:sourceaccount', 'aws:sourcearn']);
+// A ForAllValues: guard on a source-only key in a statement with no service principal is
+// vacuously true (ForAllValues over an absent key passes), so it constrains nothing.
+export function vacuousSourceGuards(stmt) {
+  const cond = stmt && stmt.condition;
+  if (!cond || typeof cond !== 'object' || Array.isArray(cond)) return [];
+  const p = stmt.principal;
+  if (p && p.byType && Array.isArray(p.byType.Service) && p.byType.Service.length > 0) return [];
+  const byKey = new Map();
+  for (const op of Object.keys(cond)) {
+    const inner = cond[op];
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    for (const k of Object.keys(inner)) {
+      const kl = k.toLowerCase();
+      if (!SOURCE_ONLY_KEYS.has(kl)) continue;
+      const all = byKey.get(kl) ?? true;
+      byKey.set(kl, all && op.toLowerCase().startsWith('forallvalues:'));
+    }
+  }
+  return [...byKey.entries()].filter(([, v]) => v).map(([k]) => k).sort();
+}
+
+// R6-1: a positive exact pin of aws:PrincipalArn to concrete ARNs (no IfExists / set operator).
+export function exactPrincipalArnPin(condition) {
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return false;
+  for (const op of Object.keys(condition)) {
+    const inner = condition[op];
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    const ol = op.toLowerCase();
+    for (const k of Object.keys(inner)) {
+      if (k.toLowerCase() !== 'aws:principalarn') continue;
+      if (!['arnequals', 'stringequals'].includes(ol)) continue;
+      const vals = toValues(inner[k]);
+      if (vals.length > 0 && vals.every((v) => /^arn:[a-z-]+:(iam|sts)::\d{12}:[^*?$]+$/.test(String(v)))) return true;
+    }
+  }
+  return false;
+}
