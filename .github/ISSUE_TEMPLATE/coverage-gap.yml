@@ -1,0 +1,54 @@
+name: Coverage gap (exit 3)
+description: An action, condition key or resource shape the tool cannot analyze yet.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Exit 3 is the tool failing closed on purpose: it never guesses. This form asks for the
+        missing model, not for exit 3 to turn green. Use a synthetic policy (fake accounts and names).
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: v1.2.0
+    validations:
+      required: true
+  - type: dropdown
+    id: state
+    attributes:
+      label: State code
+      options:
+        - UNKNOWN_ACTION
+        - UNSUPPORTED_CONDITION
+        - RESOURCE_CONTEXT_REQUIRED
+        - BROAD_RESOURCE_UNDECIDABLE
+        - Other (say which below)
+    validations:
+      required: true
+  - type: input
+    id: item
+    attributes:
+      label: Action, condition key or resource type
+      placeholder: ec2:CreateNetworkInterface
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command or Action inputs
+      placeholder: iam-br --family identity --partition aws policy.json
+    validations:
+      required: true
+  - type: textarea
+    id: policy
+    attributes:
+      label: Synthetic policy
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Where the policy comes from
+      description: For example a published AWS managed policy or a well-known controller (load-balancer controller, VPC CNI). Helps prioritize.

@@ -1,0 +1,48 @@
+name: Bug
+description: A crash (exit 4), wrong usage error (exit 2), bad output or an Action problem.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a wrong finding use "False positive"; for exit 3 use "Coverage gap".
+        A CLEAN result that should not be clean goes to [private reporting](https://github.com/rivassec/secure-iam-lint/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: v1.2.0
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options: [GitHub Action, CLI (iam-br), Web tool, scan() API]
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Command or workflow step, and a synthetic input if one is needed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: Include the exit code and the reason line.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output
+      description: Stderr or the Action log. Remove account ids and names.
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: Node 22, ubuntu-latest runner
