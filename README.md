@@ -118,6 +118,7 @@ Each GitHub Release lists the exact commit SHA for that tag; copy it into the
 | `pulumi-json` | no | A `pulumi preview --json` or `pulumi stack export` file to scan instead of `paths`. See [Scanning Pulumi programs](#scanning-pulumi-programs). |
 | `family` | yes, unless `pulumi-json` | `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp` or `scp-rcp` (also `trust` for `role-trust`). Never auto-detected: one family per run, so a mixed repo runs the Action once per family. |
 | `resource-arn`, `resource-type`, `resource-account` | for `resource`; `resource-arn` for same-account `role-trust` | The resource the policy is attached to. Without `resource-arn` the `resource` family fails closed. For `role-trust`, the role's own ARN: without it a trust is never reported as same-account. |
+| `trusted-account-ids` | no | Account ids you trust: a role-trust whose principals are all exact role/user ARNs there is rated medium, not cross-account high. Account roots stay high. |
 | `subject-account` | no | 12-digit account id for account-aware checks (e.g. `iam:PassRole` viability). For `role-trust` it is the account that owns every role in the run. |
 | `partition` | no | `aws`, `aws-us-gov`, `aws-cn`, ... Deliberately has **no default**: an omitted partition is "not asserted", and any verdict that depends on it fails closed (exit `3`). |
 | `fail-on` | no | Minimum severity that fails the check (default `high`; `none` disables). |

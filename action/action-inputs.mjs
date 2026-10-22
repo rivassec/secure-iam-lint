@@ -114,7 +114,7 @@ export const DECLARED_INPUTS = Object.freeze([
   'paths', 'family', 'subject-account', 'resource-arn', 'resource-type', 'resource-account',
   'partition', 'fail-on', 'sarif-output', 'baseline', 'baseline-output', 'budget-ms',
   'max-files', 'max-total-bytes', 'max-sarif-results', 'max-sarif-bytes', 'pulumi-json',
-  'provider-accounts',
+  'provider-accounts', 'trusted-account-ids',
 ]);
 
 // Undeclared INPUT_* names; odd names are only counted.
@@ -140,6 +140,7 @@ export function readInputs(env) {
     providerAccounts: getInput(env, 'provider-accounts'),
     family: getInput(env, 'family'),
     subjectAccount: getInput(env, 'subject-account'),
+    trustedAccountIds: getInput(env, 'trusted-account-ids'),
     // The resource family's attached-resource context (review finding D1): built from
     // resource-arn / resource-type (+ optional resource-account). Omitted entirely when
     // neither is given, so a resource policy WITHOUT context still fails closed.

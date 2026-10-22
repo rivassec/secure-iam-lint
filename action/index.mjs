@@ -30,6 +30,7 @@
 //   4 internal invariant error
 // A CI gate treats 1,2,3,4 as FAILED. Code 3 is DISTINCT from 0 and from 1.
 
+import { parseTrustedAccountIds } from '../cli/trusted-accounts.mjs';
 import { randomUUID } from 'node:crypto';
 import {
   applyBaseline, parseBaseline, buildBaseline, formatBaseline, baselineWriteProblem, MAX_BASELINE_BYTES,
@@ -138,6 +139,10 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
     const inputs = sarifSafe ? rawInputs : { ...rawInputs, sarifOutput: DEFAULT_SARIF_OUTPUT };
 
     // --- Adapter-owned usage validation (exit 2), before any scanning. --------
+    if (parseTrustedAccountIds(inputs.trustedAccountIds || null).error) {
+      return finalize([{ file: null, result: usageResult('INVALID_TRUSTED_ACCOUNT_IDS',
+        'The "trusted-account-ids" input must list 12-digit AWS account ids.') }], inputs, manifest);
+    }
     if (!isNonEmptyString(inputs.pulumiJson) && isNonEmptyString(inputs.providerAccounts)) {
       return finalize([{ file: null, result: usageResult('PROVIDER_ACCOUNTS_WITHOUT_PULUMI',
         'The "provider-accounts" input is only used with "pulumi-json".') }], inputs, manifest);
@@ -346,6 +351,7 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
             text,
             family: inputs.family,
             subjectAccount: inputs.subjectAccount || undefined,
+            trustedAccountIds: inputs.trustedAccountIds || undefined,
             // Attached-resource context for the resource family (review finding D1).
             resourceContext: inputs.resourceContext,
             // Forward partition ONLY when the consumer EXPLICITLY supplied one. An
@@ -423,6 +429,7 @@ function runPulumiInput(inputs, sarifSafe, io, manifest) {
     text, oversize,
     subjectAccount: inputs.subjectAccount || undefined,
     partition: inputs.partition || undefined,
+    trustedAccountIds: inputs.trustedAccountIds || undefined,
     providerAccounts,
     threshold: inputs.failOn,
     budgetMs: inputs.budgetMs,

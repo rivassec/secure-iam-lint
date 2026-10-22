@@ -105,6 +105,20 @@ function sameAccountKind(ext, ev) {
   }
   return root ? 'root' : 'principal';
 }
+// R7: the sorted trusted accounts when every entry is an exact role/user/assumed-role ARN in one of
+// them, else null (root, bare account, glob, variable or an unlisted account).
+const TRUSTED_STS_PRINCIPAL = /^arn:([a-z-]+):sts::(\d{12}):assumed-role\/[\w+=,.@/-]+$/;
+function trustedNamedAccounts(ext, trusted) {
+  if (!(trusted instanceof Set) || trusted.size === 0 || ext.entries.length === 0) return null;
+  const accts = new Set();
+  for (const e of ext.entries) {
+    if (e.type !== 'aws-principal-arn') return null;
+    const m = IAM_PRINCIPAL.exec(String(e.value)) || TRUSTED_STS_PRINCIPAL.exec(String(e.value));
+    if (!m || !KNOWN_PARTITIONS.has(m[1]) || !trusted.has(m[2])) return null;
+    accts.add(m[2]);
+  }
+  return [...accts].sort();
+}
 // Every principal names the asserted subject account, but no role ARN proves it owns the role.
 function unprovenSameAccount(ext, subjectAccount) {
   const acct = /^\d{12}$/.test(String(subjectAccount ?? '')) ? String(subjectAccount) : null;
@@ -188,7 +202,7 @@ function exactPinRewrite(stmt) {
 const EXACT_PIN_NOTE = ' The policy names Principal "*", but an exact aws:PrincipalArn condition pins it to these ' +
   'principals, so it is rated as if they were named directly.';
 
-function findingsForStatement(stmt, subjectAccount = null, evidence = null) {
+function findingsForStatement(stmt, subjectAccount = null, evidence = null, trustedAccounts = null) {
   const allPrincipals = classifyPrincipals(stmt.principal);
   const found = [];
   if (allPrincipals.anonymous) {
@@ -747,6 +761,10 @@ function findingsForStatement(stmt, subjectAccount = null, evidence = null) {
     if (constrainedLowers) severity = 'low';
     else if (principalScopeNarrows) severity = scopeSeverity;
     else severity = 'high';
+    // R7: every principal is an exact role/user/session ARN in an account the operator listed in
+    // trusted-account-ids. Only the explicit list counts; root/account principals stay whole-account.
+    const trustedIds = trustedNamedAccounts(ext, trustedAccounts);
+    if (severity === 'high' && trustedIds) severity = 'medium';
 
     let pathExpl;
     if (constrained || defenseInDepth) pathExpl = 'low';
@@ -807,6 +825,10 @@ function findingsForStatement(stmt, subjectAccount = null, evidence = null) {
         'aws:SourceArn/aws:SourceAccount for a service caller).';
       docRefUsed = DOC_PRINCIPAL;
     }
+    const trustedNote = trustedIds && severity === 'medium' && !principalScopeNarrows
+      ? ` Account ${trustedIds.join(', ')} is listed as trusted (trusted-account-ids), and the trusted ` +
+        'principal is an exact role/user ARN there, so this is rated below an untrusted cross-account trust.'
+      : '';
     const unproven = !evidence && unprovenSameAccount(ext, subjectAccount)
       ? ` Every principal names the asserted subject account (${subjectAccount}), but nothing proves this role ` +
         'is in that account; supply the role ARN (--resource-arn) to confirm a same-account trust.'
@@ -815,7 +837,7 @@ function findingsForStatement(stmt, subjectAccount = null, evidence = null) {
       id: 'TRUST-CROSS-ACCOUNT',
       severity,
       title: 'External / cross-account role trust',
-      why: whyText + unproven,
+      why: whyText + trustedNote + unproven,
       remediation: remediationText,
       docRef: docRefUsed,
       pathExploitability: pathExpl,
@@ -979,7 +1001,8 @@ export function analyzeTrust(model, options = null) {
       // Deny-unaware; analyze.js + graph.js apply IAM-302 precedence).
       if (stmt.effect !== 'Allow') continue;
       if (!isTrustStatement(stmt)) continue;
-      for (const f of findingsForStatement(stmt, options && options.subjectAccount, options && options.evidence)) findings.push(f);
+      for (const f of findingsForStatement(stmt, options && options.subjectAccount, options && options.evidence,
+        options && options.trustedAccounts)) findings.push(f);
       const selfRefs = selfReferenceKeys(stmt.condition);
       if (selfRefs.length > 0) {
         findings.push(makeFinding(stmt, classifyPrincipals(stmt.principal), {

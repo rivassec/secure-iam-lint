@@ -8,6 +8,7 @@
 // shape this adapter does not model is an explicit exit-3 state, never a skip:
 // unknown preview values, secrets, malformed or duplicate entries, unsupported policy
 // types, unresolvable account / partition / resource context. Pure: no Node built-ins.
+import { parseTrustedAccountIds } from './trusted-accounts.mjs';
 import { scan, EXIT, ANALYSIS_STATUS, ANALYSIS_STATE, DEFAULT_BUDGET_MS, meetsThreshold } from './scan.mjs';
 import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 import { applyBaseline } from './baseline.mjs';
@@ -1237,6 +1238,15 @@ export function applyPulumiBaseline(result, accepted, threshold) {
 export function scanPulumi(input) {
   const inp = input || {};
   try {
+    const trusted = parseTrustedAccountIds(inp.trustedAccountIds);
+    if (trusted.error) {
+      return Object.freeze({
+        input: 'pulumi', kind: null, scanScope: null, scannedUrns: [], documents: [],
+        analysisStatus: ANALYSIS_STATUS.FAILED,
+        analysisStates: [state(ANALYSIS_STATE.MALFORMED, 'INVALID_TRUSTED_ACCOUNT_IDS', trusted.error, null)],
+        exitCode: EXIT.USAGE, reason: 'INVALID_TRUSTED_ACCOUNT_IDS', findingsCount: 0, blockingCount: 0,
+      });
+    }
     const ext = extractPulumiDocuments(inp.text, inp);
     if (ext.usage) {
       return Object.freeze({
@@ -1256,6 +1266,7 @@ export function scanPulumi(input) {
           family: d.family,
           subjectAccount: d.subjectAccount || undefined,
           partition: d.partition || undefined,
+          trustedAccountIds: trusted.ids || undefined,
           threshold: inp.threshold,
           budgetMs: Number.isFinite(inp.budgetMs) ? inp.budgetMs : DEFAULT_BUDGET_MS,
           resourceContext: d.resourceContext,

@@ -11,6 +11,7 @@
       "threshold": "info",
       "partitionAsserted": null,
       "subjectAccountAsserted": "111122223333",
+      "trustedAccountIdsAsserted": null,
       "analysisStatus": "complete",
       "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
       "exitCode": 1,
