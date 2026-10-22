@@ -96,6 +96,17 @@ export function sourceAccountSet(values) {
 // bypassedKeys so the exposure finding can name why a would-be binding does not
 // count. IAM combines a key's multiple values with OR, so a co-listed match-all
 // value defeats the whole binding (.every, matching the trust family).
+// J-1: an org source value binds only when it names one concrete org: aws:SourceOrgID a literal
+// o-... id, aws:SourceOrgPaths a path whose first segment is one. Other source keys pass through.
+const ORG_ID_RE = /^o-[a-z0-9]{10,32}$/;
+export function concreteOrgSourceValue(key, value) {
+  const k = String(key).toLowerCase();
+  const v = String(value);
+  if (k === 'aws:sourceorgid') return ORG_ID_RE.test(v);
+  if (k === 'aws:sourceorgpaths') return ORG_ID_RE.test(v.split('/')[0]);
+  return true;
+}
+
 export function sourceBindingAnalysis(condition) {
   const out = {
     sourceArn: { bound: false, account: null, accounts: [] },
@@ -142,7 +153,8 @@ export function sourceBindingAnalysis(condition) {
       // T1-03: ${...} is caller-controlled; read it as '*' (so key == ${key} binds nothing).
       const values = toSourceValueList(inner[rawKey]).map(substitutePolicyVars);
       const binds = positive && !negated && !bypassable &&
-        values.length > 0 && values.every((v) => !isMatchAllSourceValue(v));
+        values.length > 0 && values.every((v) => !isMatchAllSourceValue(v)) &&
+        values.every((v) => concreteOrgSourceValue(key, v));
       if (!binds) {
         out.bypassedKeys.push(rawKey);
         continue;

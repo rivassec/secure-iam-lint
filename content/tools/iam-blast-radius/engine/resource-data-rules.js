@@ -2,7 +2,7 @@
 import { accountOfEntry, hasTransportOnlyDeny } from './resource-shared.js';
 import { classifyPrincipals } from './trust.js';
 import { makeResourceFinding, summarizeEntries } from './resource-finding.js';
-import { principalScopingAnalysis } from './resource-conditions.js';
+import { principalScopingAnalysis, vacuousSourceGuards } from './resource-conditions.js';
 import { globMatch } from './glob.js';
 import { DOC_CROSS_ACCOUNT, DOC_PRINCIPAL, RESOURCE_SERVICE_LABELS, RESOURCE_SERVICES } from './resource-catalogs.js';
 
@@ -117,7 +117,7 @@ export function dataPerServiceRules(model, ctx) {
 
     // (a) Public data-plane exposure: a genuinely public "*" naming a data action.
     if (anonEntries.length > 0) {
-      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service);
+      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service, vacuousSourceGuards(stmt));
       const scoped = expansionKeys.length === 0 && scopingKeys.length > 0;
       const vectors = ['read', 'write', 'destructive'].filter((k) => reached.has(k)).map((k) => VECTOR[ns][k]);
       if (!scoped && vectors.length > 0) {

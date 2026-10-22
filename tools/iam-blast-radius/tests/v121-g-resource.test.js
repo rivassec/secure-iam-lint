@@ -107,14 +107,15 @@ test('T2-5/T1-03: a principal condition that narrows nothing scores like "*"; a 
     assert.ok(ids(r).includes('PUBLIC-ACCESS:critical'), `${name}: ${ids(r)}`);
     assert.equal(r.exitCode, EXIT.FINDINGS, name);
   }
-  for (const [name, cond] of [
-    ['org exact', { StringEquals: { 'aws:PrincipalOrgID': 'o-exampleorgid' } }],
-    ['own account', { StringEquals: { 'aws:PrincipalAccount': A } }],
-    ['own role arn', { ArnEquals: { 'aws:PrincipalArn': `arn:aws:iam::${A}:role/a` } }],
+  // v1.3.0: a scoped "*" is cross-account within the scope (J-5: own account = same-account).
+  for (const [name, cond, want] of [
+    ['org exact', { StringEquals: { 'aws:PrincipalOrgID': 'o-exampleorgid' } }, 'RESOURCE-CROSS-ACCOUNT:high'],
+    ['own account', { StringEquals: { 'aws:PrincipalAccount': A } }, 'RESOURCE-SAME-ACCOUNT-GRANT:medium'],
+    ['own role arn', { ArnEquals: { 'aws:PrincipalArn': `arn:aws:iam::${A}:role/a` } }, 'RESOURCE-CROSS-ACCOUNT:high'],
   ]) {
     const r = run('s3', allow('*', 's3:GetObject', OBJ, cond));
-    assert.ok(ids(r).includes('PUBLIC-ACCESS:high'), `${name}: ${ids(r)}`);
-    assert.equal(r.exitCode, EXIT.FINDINGS, `${name}: a tight pin still gates`);
+    assert.ok(ids(r).includes(want), `${name}: ${ids(r)}`);
+    assert.ok(!ids(r).some((x) => x.startsWith('PUBLIC-ACCESS')), `${name}: not public`);
   }
   // key == ${key} is named as a tautology.
   const t = run('s3', allow('*', 's3:GetObject', OBJ, { StringEquals: { 'aws:PrincipalAccount': '${aws:PrincipalAccount}' } }));

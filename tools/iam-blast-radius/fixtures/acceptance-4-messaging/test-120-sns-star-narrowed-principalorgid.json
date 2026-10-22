@@ -24,12 +24,12 @@
   "expect": { "valid": true },
   "expectMessaging": {
     "coverageIncomplete": false,
-    "findingIds": ["PUBLIC-ACCESS"],
-    "findingSeverities": { "PUBLIC-ACCESS": "high" },
-    "notCritical": ["PUBLIC-ACCESS"],
-    "notFindingIds": ["MESSAGING-PUBLIC-EXPOSURE", "MESSAGING-POLICY-TAKEOVER", "RESOURCE-CROSS-ACCOUNT", "RESOURCE-CONFUSED-DEPUTY"],
-    "scopedBy": { "PUBLIC-ACCESS": ["aws:PrincipalOrgID"] },
-    "whyIncludes": { "PUBLIC-ACCESS": ["NARROWED", "aws:PrincipalOrgID"] },
-    "forbidWhy": { "PUBLIC-ACCESS": ["anyone can", "grants public access to anonymous"] }
+    "findingIds": ["RESOURCE-CROSS-ACCOUNT"],
+    "findingSeverities": { "RESOURCE-CROSS-ACCOUNT": "high" },
+    "notCritical": ["RESOURCE-CROSS-ACCOUNT"],
+    "notFindingIds": ["MESSAGING-PUBLIC-EXPOSURE", "MESSAGING-POLICY-TAKEOVER", "PUBLIC-ACCESS", "RESOURCE-CONFUSED-DEPUTY"],
+    "scopedBy": { "RESOURCE-CROSS-ACCOUNT": ["aws:PrincipalOrgID"] },
+    "whyIncludes": { "RESOURCE-CROSS-ACCOUNT": ["NARROWED", "aws:PrincipalOrgID"] },
+    "forbidWhy": { "RESOURCE-CROSS-ACCOUNT": ["anyone can", "grants public access to anonymous"] }
   }
 }

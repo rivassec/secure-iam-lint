@@ -414,7 +414,7 @@ test('analyzeResource: "*" narrowed by aws:PrincipalArn is NOT unconditioned ano
     }],
   };
   const res = analyzeResource(model, { type: 's3-object', arn: 'arn:aws:s3:::deployments/*' });
-  const pub = res.findings.find((f) => f.id === 'PUBLIC-ACCESS');
+  const pub = res.findings.find((f) => f.id === 'RESOURCE-CROSS-ACCOUNT');
   assert.ok(pub, 'a "*" grant still surfaces (fail closed toward surfacing)');
   // Not the unconditioned-critical public framing.
   assert.notEqual(pub.severity, 'critical', 'a principal-scoped "*" is not unconditioned-critical');
@@ -453,7 +453,7 @@ test('analyzeResource: "*" scoped by aws:PrincipalTag is narrowed, not anonymous
     }],
   };
   const res = analyzeResource(model, { type: 's3-object', arn: 'arn:aws:s3:::release-artifacts/*' });
-  const pub = res.findings.find((f) => f.id === 'PUBLIC-ACCESS');
+  const pub = res.findings.find((f) => f.id === 'RESOURCE-CROSS-ACCOUNT');
   assert.ok(pub, 'a "*" grant still surfaces (fail closed toward surfacing)');
   assert.notEqual(pub.severity, 'critical', 'a principal-tag-scoped "*" is not unconditioned-critical');
   assert.equal(pub.severity, 'high');
@@ -475,7 +475,7 @@ test('analyzeResource: aws:userid also counts as principal-scoping (narrowed, no
     }],
   };
   const res = analyzeResource(model, { type: 's3-object', arn: 'arn:aws:s3:::b/*' });
-  const pub = res.findings.find((f) => f.id === 'PUBLIC-ACCESS');
+  const pub = res.findings.find((f) => f.id === 'RESOURCE-CROSS-ACCOUNT');
   assert.equal(pub.severity, 'high', 'aws:userid narrows the anonymous "*"');
   assert.deepEqual(pub.resource.principalScopedBy, ['aws:userid']);
   assert.ok(!/including anonymous/i.test(pub.why));
@@ -1002,7 +1002,7 @@ test('analyzeResource: source-bound via aws:SourceOrgID -> bound but not provabl
 // anonymous callers are NOT excluded. It must stay PUBLIC-ACCESS / critical and must
 // NEVER be credited as narrowing (adversarial-critic: principalScopingAnalysis missed
 // the bypass guard its source-binding + trust siblings already carry). --------------
-const bypassablePublic = (condition, ctx) => {
+const bypassablePublic = (condition, ctx, id = 'PUBLIC-ACCESS') => {
   const model = {
     statements: [{
       index: 0, sid: 'Pub', effect: 'Allow', actions: ['s3:GetObject'],
@@ -1010,7 +1010,7 @@ const bypassablePublic = (condition, ctx) => {
       principal: { anyPrincipal: true, byType: {} },
     }],
   };
-  return analyzeResource(model, ctx).findings.find((f) => f.id === 'PUBLIC-ACCESS');
+  return analyzeResource(model, ctx).findings.find((f) => f.id === id);
 };
 
 test('analyzeResource: StringEqualsIfExists on a principal key does NOT narrow "*" -> stays critical PUBLIC-ACCESS, no "anonymous excluded" claim', () => {
@@ -1051,7 +1051,7 @@ test('analyzeResource: a KMS "*" gated by a bypassable principal condition stays
 test('analyzeResource: a GENUINE positive principal condition (StringEquals aws:PrincipalArn) still narrows "*" -> high (regression guard, not over-corrected)', () => {
   const f = bypassablePublic(
     { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::111122223333:role/app' } },
-    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' });
+    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' }, 'RESOURCE-CROSS-ACCOUNT');
   assert.ok(f);
   assert.equal(f.severity, 'high', 'a non-bypassable positive scoping key genuinely narrows to authenticated principals');
 });
@@ -1062,7 +1062,7 @@ test('analyzeResource: a genuine scoping key alongside a bypassable one still na
       StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::111122223333:role/app' },
       StringEqualsIfExists: { 'aws:PrincipalOrgID': 'o-abc123' },
     },
-    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' });
+    { type: 's3-object', arn: 'arn:aws:s3:::bucket/*' }, 'RESOURCE-CROSS-ACCOUNT');
   assert.ok(f);
   assert.equal(f.severity, 'high', 'the non-bypassable StringEquals still narrows; the bypassable key adds nothing');
 });
