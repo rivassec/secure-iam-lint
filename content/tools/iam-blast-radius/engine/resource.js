@@ -481,7 +481,13 @@ function resourceFindings(model, ctx) {
         title = ownScoped
           ? 'Broad principal ("*") scoped to the resource-owning account: same-account grant'
           : 'Broad principal ("*") scoped by a principal condition: cross-account access within that scope';
-        if (ownScoped) severity = 'medium';
+        // J-5 (Oliver): "*" scoped to the own account grants every principal there directly, with no
+        // identity grant needed (unlike naming the root), so it keeps the narrowed severity.
+        if (ownScoped) {
+          why += ' Scoped to the owning account, this still grants every IAM principal in that account ' +
+            'directly, with no identity-policy permission required (naming the account root would ' +
+            'only delegate to IAM).';
+        }
       }
       if (isS3 && !principalScoped) {
         // S3 Block Public Access is only relevant to a genuinely-public grant.

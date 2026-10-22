@@ -69,6 +69,23 @@ const COGNITO_HOST = 'cognito-identity.amazonaws.com';
 
 // `alwaysPresentKeys` (lowercased): keys every request this statement admits
 // carries, so IfExists / ForAllValues cannot be bypassed on them (T1-07).
+function githubRepoIdPinned(condition, alwaysPresentKeys) {
+  for (const op of Object.keys(condition)) {
+    const inner = condition[op];
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    const { base, setOperator, ifExists } = parseOperatorParts(op);
+    if (!POSITIVE_STRING_MATCH_OPERATORS.has(base) || base.includes('like')) continue;
+    for (const rawKey of Object.keys(inner)) {
+      const key = String(rawKey).toLowerCase();
+      if (key !== 'token.actions.githubusercontent.com:repository_id') continue;
+      if ((ifExists || setOperator === 'ForAllValues') && !(alwaysPresentKeys && alwaysPresentKeys.has(key))) continue;
+      const vals = toValues(inner[rawKey]).map(String);
+      if (vals.length > 0 && vals.every((v) => /^\d{1,20}$/.test(v))) return true;
+    }
+  }
+  return false;
+}
+
 export function conditionSignals(condition, principals, subjectAccount = null, alwaysPresentKeys = null) {
   // Does the named Principal already pin the account? Used to intersect a
   // positive aws:PrincipalArn scoping value with the Principal so a wildcard the
@@ -115,6 +132,10 @@ export function conditionSignals(condition, principals, subjectAccount = null, a
     cognitoAmr: null, // 'authenticated' | 'unauthenticated' | 'mixed' | null
   };
   if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return sig;
+  // R7: a positive, non-bypassable GitHub repository_id pin to concrete numeric ids fixes the repo,
+  // so a sub glob confined to the repo-name segment no longer widens the subject.
+  const repoIdPinned = githubRepoIdPinned(condition, alwaysPresentKeys);
+  if (repoIdPinned) sig.subScoped = true; // one repository: not open to any GitHub token
 
   for (const op of Object.keys(condition)) {
     const inner = condition[op];
@@ -257,7 +278,8 @@ export function conditionSignals(condition, principals, subjectAccount = null, a
         // (adversarial-critic IAM-804 iteration 4 finding 1).
         // Tight needs a non-bypassable positive string match on literal values; Null/Bool/
         // Date/Numeric never pin the subject. Operators AND, so any one tight entry wins regardless of key order.
-        const tight = positiveStringMatch && !bypassable && values.length > 0 && !values.some((v) => hasGlob(v));
+        const subTight = (v) => !hasGlob(v) || (repoIdPinned && /^repo:[^:]+:(.+)$/.test(v) && !hasGlob(v.split(':').slice(2).join(':')));
+        const tight = positiveStringMatch && !bypassable && values.length > 0 && values.every(subTight);
         if (tight) sig.subScope = 'tight';
         else if (sig.subScope === null) sig.subScope = 'broad';
       }

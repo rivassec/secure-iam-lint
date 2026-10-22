@@ -110,7 +110,7 @@ test('T2-5/T1-03: a principal condition that narrows nothing scores like "*"; a 
   // v1.3.0: a scoped "*" is cross-account within the scope (J-5: own account = same-account).
   for (const [name, cond, want] of [
     ['org exact', { StringEquals: { 'aws:PrincipalOrgID': 'o-exampleorgid' } }, 'RESOURCE-CROSS-ACCOUNT:high'],
-    ['own account', { StringEquals: { 'aws:PrincipalAccount': A } }, 'RESOURCE-SAME-ACCOUNT-GRANT:medium'],
+    ['own account', { StringEquals: { 'aws:PrincipalAccount': A } }, 'RESOURCE-SAME-ACCOUNT-GRANT:high'],
     ['own role arn', { ArnEquals: { 'aws:PrincipalArn': `arn:aws:iam::${A}:role/a` } }, 'RESOURCE-CROSS-ACCOUNT:high'],
   ]) {
     const r = run('s3', allow('*', 's3:GetObject', OBJ, cond));

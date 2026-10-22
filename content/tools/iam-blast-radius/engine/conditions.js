@@ -164,9 +164,14 @@ function federationMeta(keyLower, statementHosts = null) {
   const lastColon = keyLower.lastIndexOf(':');
   if (lastColon <= 0 || lastColon === keyLower.length - 1) return null;
   const claim = keyLower.slice(lastColon + 1);
-  if (claim !== 'aud' && claim !== 'sub' && claim !== 'amr') return null;
+  if (claim !== 'aud' && claim !== 'sub' && claim !== 'amr' && claim !== 'repository_id') return null;
   const host = keyLower.slice(0, lastColon);
   if (!RECOGNIZED_FEDERATION_HOSTS.has(host) && !(statementHosts && statementHosts.has(host))) return null;
+  // R7: GitHub's repository_id is a globally unique numeric repo pin (GitHub only).
+  if (claim === 'repository_id') {
+    if (host !== 'token.actions.githubusercontent.com') return null;
+    return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-repository-id', label: 'GitHub repository id', federation: 'repository_id' };
+  }
   // amr is Cognito-specific: authenticated/unauthenticated sign-in state (G3).
   if (claim === 'amr') {
     if (host !== 'cognito-identity.amazonaws.com') return null;

@@ -50,6 +50,15 @@ export function ruleWildcardAction(stmt, out) {
   );
 }
 
+// R7: Lambda/CodeBuild-style log ingestion (create group/stream, put events) on a broad scope
+// is routine; only these exact actions (plus log-group/stream listing), never a wildcard.
+const LOG_INGESTION = new Set(['logs:createloggroup', 'logs:createlogstream', 'logs:putlogevents',
+  'logs:describeloggroups', 'logs:describelogstreams']);
+function onlyLogIngestion(stmt) {
+  return stmt.notActions.length === 0 && stmt.actions.length > 0 &&
+    stmt.actions.every((a) => LOG_INGESTION.has(String(a).toLowerCase()));
+}
+
 // 2. Wildcard / overly broad resource on a non-read grant.
 export function ruleWildcardResource(stmt, out) {
   if (!resourceIsBroad(stmt)) return;
@@ -67,7 +76,7 @@ export function ruleWildcardResource(stmt, out) {
       // keying on stmt.resources alone under-rated it to 'medium' and it slipped the
       // default 'high' gate (a syntax-keyed-severity fail-open). Every shape that
       // reaches here already passed the resourceIsBroad guard, so this is HIGH.
-      severity: resourceIsBroad(stmt) ? 'high' : 'medium',
+      severity: resourceIsBroad(stmt) && !onlyLogIngestion(stmt) && !onlyPipelineArtifactBuckets(stmt) ? 'high' : 'medium',
       policyEvidence: 'high',
       // Per-action (suite-3 test 95): for the explicit-actions path list ONLY the
       // remediable non-read actions, so a required-wildcard enumeration action
@@ -267,6 +276,14 @@ function allResourcesNamed(stmt) {
   });
 }
 
+// R7: the AWS-generated CodePipeline/CodeBuild policy reads the region's artifact store
+// (arn:<p>:s3:::codepipeline-<region>-*): a named service convention, not an open bucket glob.
+const PIPELINE_ARTIFACT_RE = /^arn:[a-z-]+:s3:::codepipeline-[a-z]{2}(-gov)?-[a-z]+-\d-\*(\/\*)?$/;
+function onlyPipelineArtifactBuckets(stmt) {
+  return stmt.notResources.length === 0 && stmt.resources.length > 0 &&
+    stmt.resources.every((r) => PIPELINE_ARTIFACT_RE.test(String(r)));
+}
+
 // 4a. Sensitive data read / exfil.
 export function ruleDataExfil(stmt, out) {
   const secret = matchPatterns(stmt, SECRET_READ_ACTIONS, false);
@@ -276,7 +293,8 @@ export function ruleDataExfil(stmt, out) {
   const matched = secret.concat(bulk);
   if (matched.length === 0) return;
   // G11: a secret read on named resources only is routine -> medium, not high.
-  const highSeverity = (broad || secret.length > 0) && !(!broad && allResourcesNamed(stmt));
+  const highSeverity = (broad || secret.length > 0) && !(!broad && allResourcesNamed(stmt)) &&
+    !(secret.length === 0 && onlyPipelineArtifactBuckets(stmt));
   const whyParts = [];
   if (secret.length > 0) {
     whyParts.push(
@@ -1095,12 +1113,15 @@ export function survivingSparedContainerReads(model, ctx) {
 
 // 4b. Destructive actions (generic delete/terminate families), excluding the
 // security services handled by DETECTION-IMPAIRMENT.
+// R7: an SQS consumer acknowledging (deleting) messages it received is not destructive.
+const CONSUMER_ACK = new Set(['sqs:deletemessage', 'sqs:deletemessagebatch']);
 export function ruleDestructive(stmt, out) {
   const matched = [];
   for (const p of stmt.actions) {
     if (isFullWildcard(p)) continue;
     if (isServiceWildcard(p)) continue; // reported by WILDCARD-ACTION
     if (DETECTION_SERVICES.has(actionService(p))) continue; // -> detection rule
+    if (CONSUMER_ACK.has(String(p).toLowerCase())) continue; // R7: exact tokens only, never a wildcard
     if (DESTRUCTIVE_VERB.test(actionVerb(p))) matched.push(p);
   }
   for (const p of matchPatterns(stmt, DESTRUCTIVE_EXTRA_ACTIONS, false)) {
