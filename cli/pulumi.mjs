@@ -12,6 +12,7 @@ import { parseTrustedAccountIds } from './trusted-accounts.mjs';
 import { scan, EXIT, ANALYSIS_STATUS, ANALYSIS_STATE, DEFAULT_BUDGET_MS, meetsThreshold } from './scan.mjs';
 import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 import { applyBaseline } from './baseline.mjs';
+import { actionGrants } from '../content/tools/iam-blast-radius/engine/escalation-action-grants.js';
 
 // Preview placeholder for a value not known until apply (whole property collapses to it).
 export const PULUMI_UNKNOWN = '04da6b54-80e4-46f7-96ec-b56ff0331ba9';
@@ -1100,14 +1101,58 @@ const SEV_UP = ['info', 'low', 'medium', 'high', 'critical'];
 const asList = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
 const parsedDoc = (text) => { const p = text ? parseJsonStrict(text, 32) : null; return p && p.ok && isObj(p.value) ? p.value : null; };
 
-// A Cognito identity-pool trust whose amr admits signed-in (or guest) identities: every pool user can assume.
+// K-3: a Cognito identity-pool trust is population-scale (every signed-in or guest identity) unless
+// a positive, exact `:sub` pin narrows it to named identities. Absent/IfExists/globbed amr is broader.
+const subPinned = (cond) => Object.entries(isObj(cond) ? cond : {}).some(([op, inner]) => /^stringequals$/i.test(op)
+  && isObj(inner) && Object.entries(inner).some(([k, v]) => /:sub$/i.test(k) && asList(v).length > 0
+    && asList(v).every((x) => isStr(x) && !/[*?$]/.test(x))));
 function cognitoPopulationTrust(text) {
   const doc = parsedDoc(text);
   return !!doc && asList(doc.Statement).some((s) => isObj(s) && s.Effect === 'Allow'
     && isObj(s.Principal) && asList(s.Principal.Federated).some((f) => COGNITO_FED.test(String(f)))
-    && asList(s.Action).some((a) => /^(sts:assumerolewithwebidentity|sts:\*|\*)$/i.test(String(a)))
-    && Object.values(isObj(s.Condition) ? s.Condition : {}).some((inner) => isObj(inner)
-      && Object.entries(inner).some(([k, v]) => /:amr$/i.test(k) && asList(v).some((x) => /authenticated/i.test(String(x))))));
+    && asList(s.Action).some((a) => actionGrants(String(a), 'sts:AssumeRoleWithWebIdentity'))
+    && !subPinned(s.Condition));
+}
+// R7-1: S3 object read/write/delete (and listing) on `*` or a whole bucket, whatever its name.
+const S3_DATA_OPS = ['s3:GetObject', 's3:GetObjectVersion', 's3:PutObject', 's3:DeleteObject', 's3:DeleteObjectVersion', 's3:ListBucket'];
+const SUB_VAR = '${cognito-identity.amazonaws.com:sub}';
+const wholeBucket = (r) => r === '*' || /^arn:[^:]+:s3:::[^/]+(\/\*)?$/.test(r) || /^arn:[^:]+:s3:::\*/.test(r);
+function populationStatements(text) {
+  const doc = parsedDoc(text);
+  const out = [];
+  asList(doc ? doc.Statement : []).forEach((s, i) => {
+    if (!isObj(s) || s.Effect !== 'Allow') return;
+    const acts = asList(s.Action).map(String);
+    const ops = s.NotAction !== undefined ? S3_DATA_OPS : S3_DATA_OPS.filter((op) => acts.some((a) => actionGrants(a, op)));
+    if (ops.length === 0) return;
+    const res = asList(s.Resource).map(String);
+    if (s.NotResource === undefined && (res.length === 0 || res.every((r) => r.includes(SUB_VAR)))) return;
+    if (s.NotResource === undefined && !res.some((r) => !r.includes(SUB_VAR) && wholeBucket(r))) return;
+    out.push({ index: i, sid: isStr(s.Sid) ? s.Sid : null, ops, resources: s.NotResource !== undefined ? ['(NotResource)'] : res });
+  });
+  return out;
+}
+function populationFinding(st) {
+  return Object.freeze({
+    id: 'POPULATION-SCALE-DATA-ACCESS',
+    severity: 'high',
+    title: 'Every Cognito identity-pool user gets object access to a whole bucket',
+    statementSid: st.sid || `(index ${st.index})`,
+    statementIndex: st.index,
+    actions: st.ops,
+    resources: st.resources,
+    conditions: null,
+    policyEvidence: 'high',
+    pathExploitability: 'high',
+    why: 'This role is assumable by every identity of a Cognito identity pool (population-scale audience), and this '
+      + `statement grants ${st.ops.join(', ')} on a whole bucket or "*". Every signed-in (or guest) user can therefore `
+      + 'read or change every object, not only their own.',
+    limit: 'From this policy and the role trust in the same stack; other policies, bucket policies, SCPs and conditions '
+      + 'may narrow it.',
+    remediation: `Scope object access per user with the prefix ${SUB_VAR}/*, or move shared data behind an API.`,
+    ruleVersion: '1',
+    docRef: 'https://docs.aws.amazon.com/cognito/latest/developerguide/iam-roles.html',
+  });
 }
 // Every Allow resource carries the per-user prefix, so each user reaches only their own data.
 function perUserScoped(text) {
@@ -1131,6 +1176,7 @@ function applyGroupContext(documents, ext, threshold) {
   const textOf = new Map(ext.documents.map((d) => [d.artifact, d.text]));
   const byArt = new Map(documents.map((d) => [d.artifact, d]));
   const raise = new Map(); // artifact -> (finding -> { sev, note })
+  const added = new Map(); // artifact -> [finding]
   const want = (art, pred, sev, note) => {
     const d = byArt.get(art);
     if (!d || !d.result || !Array.isArray(d.result.findings)) return;
@@ -1144,6 +1190,7 @@ function applyGroupContext(documents, ext, threshold) {
         if (perUserScoped(textOf.get(a))) continue;
         want(a, (f) => DATA_IDS.has(f.id), 'high',
           'This role is assumable by every identity of a Cognito identity pool (population-scale audience), so every signed-in user gets this access.');
+        for (const st of populationStatements(textOf.get(a))) (added.get(a) || added.set(a, []).get(a)).push(populationFinding(st));
       }
     }
     const iamWrite = others.some((a) => (byArt.get(a).result.findings || []).some((f) => IAM_WRITE_IDS.has(f.id)));
@@ -1152,12 +1199,13 @@ function applyGroupContext(documents, ext, threshold) {
         'The role\'s own policies can write IAM, so binding it through Pod Identity is an escalation path.');
     }
   }
-  if (raise.size === 0) return documents;
+  if (raise.size === 0 && added.size === 0) return documents;
   return documents.map((d) => {
-    const r = raise.get(d.artifact);
-    if (!r) return d;
-    const findings = d.result.findings.map((f) => (r.has(f) ? raiseTo(f, r.get(f).sev, r.get(f).note) : f));
-    return Object.freeze({ ...d, result: regate(d.result, findings, threshold) });
+    const r = raise.get(d.artifact) || new Map();
+    const extra = added.get(d.artifact) || [];
+    if (r.size === 0 && extra.length === 0) return d;
+    const findings = [...d.result.findings.map((f) => (r.has(f) ? raiseTo(f, r.get(f).sev, r.get(f).note) : f)), ...extra];
+    return Object.freeze({ ...d, result: regate({ ...d.result, findingsCount: findings.length }, findings, threshold) });
   });
 }
 

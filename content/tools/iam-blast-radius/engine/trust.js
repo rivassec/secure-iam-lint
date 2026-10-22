@@ -923,13 +923,19 @@ function findingsForStatement(stmt, subjectAccount = null, evidence = null, trus
 // Pod Identity next to a pinned IRSA sub: any same-account Pod Identity association
 // (eks:CreatePodIdentityAssociation + iam:PassRole) can bind the role, bypassing the pin.
 const POD_SVC = /^pods\.eks\.amazonaws\.com(\.cn)?$/i;
-const condKeysLower = (c) => (!c || typeof c !== 'object' ? []
-  : Object.values(c).flatMap((o) => (o && typeof o === 'object' ? Object.keys(o).map((k) => k.toLowerCase()) : [])));
 export function podIdentityUnbound(stmt) {
   const svc = (stmt.principal && stmt.principal.byType && stmt.principal.byType.Service) || [];
   if (!svc.some((s) => POD_SVC.test(String(s)))) return false;
   if (!(stmt.actions || []).some((a) => /^(sts:assumerole|sts:\*|\*)$/i.test(String(a)))) return false;
-  return !condKeysLower(stmt.condition).some((k) => k === 'aws:sourceaccount' || k === 'aws:sourcearn');
+  return !eksClusterBound(stmt.condition);
+}
+// K-2: only a positive, non-IfExists, glob-free aws:SourceArn pin to EKS cluster ARNs binds the
+// Pod Identity path; aws:SourceAccount alone still allows any same-account cluster.
+const EKS_CLUSTER_ARN = /^arn:[a-z-]+:eks:[a-z0-9-]+:\d{12}:cluster\/[^*?$]+$/;
+function eksClusterBound(cond) {
+  return Object.entries(cond && typeof cond === 'object' ? cond : {}).some(([op, inner]) => /^(arnequals|arnlike|stringequals|stringlike)$/i.test(op)
+    && inner && typeof inner === 'object' && Object.entries(inner).some(([k, v]) => k.toLowerCase() === 'aws:sourcearn'
+      && (Array.isArray(v) ? v : [v]).length > 0 && (Array.isArray(v) ? v : [v]).every((x) => typeof x === 'string' && EKS_CLUSTER_ARN.test(x))));
 }
 export function pinnedIrsa(stmt) {
   const fed = (stmt.principal && stmt.principal.byType && stmt.principal.byType.Federated) || [];
