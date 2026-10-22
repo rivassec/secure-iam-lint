@@ -379,6 +379,7 @@ function itemFromStep(step, index, states) {
     provider,
     sourcePosition: ns.sourcePosition,
     custom: ns.custom !== false, // absent = custom (fail closed)
+    parent: isStr(ns.parent) ? ns.parent : null,
     external: op === 'read' || ns.external === true,
     protectChanged: !!(old && old.protect) !== !!ns.protect,
   };
@@ -404,6 +405,7 @@ function itemFromResource(r, index, states) {
     provider: isStr(r.provider) ? r.provider : null,
     sourcePosition: r.sourcePosition,
     custom: r.custom !== false,
+    parent: isStr(r.parent) ? r.parent : null,
     external: r.external === true,
     protectChanged: false,
   };
@@ -736,6 +738,37 @@ function findUnanalyzedDocs(inputs, consumed, budget) {
   return hits;
 }
 
+// The resource type a URN names: the segment after the last `$` of its type part.
+function urnType(urn) {
+  const parts = String(urn).split('::');
+  if (parts.length < 4) return null;
+  const q = parts[parts.length - 2];
+  return q.slice(q.lastIndexOf('$') + 1);
+}
+
+// Policy-shaped values in a component's inputs, canonicalized; unknown/secret/undecodable count as unmatched.
+function componentPolicies(inputs, budget) {
+  const out = [];
+  const walk = (v, path, depth) => {
+    if (budget.n <= 0 || depth > 32) { budget.exhausted = true; return; }
+    budget.n -= 1;
+    if (isStr(v)) {
+      const s = v.trimStart();
+      const p = s[0] === '{' || s[0] === '[' ? parseJsonStrict(v, 32) : null;
+      if (p && p.ok) walk(p.value, path, depth + 1);
+      else if (TEXT_STATEMENT.some((re) => re.test(v)) && TEXT_EFFECT.some((re) => re.test(v))) out.push({ path, canon: null });
+      return;
+    }
+    if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${path}[${i}]`, depth + 1)); return; }
+    if (isObj(v)) {
+      if (isPolicyShaped(v)) { out.push({ path, canon: taint(v) ? null : stableStringify(v) }); return; }
+      for (const k of Object.keys(v).sort()) walk(v[k], path ? `${path}.${k}` : k, depth + 1);
+    }
+  };
+  for (const k of Object.keys(inputs).sort()) walk(inputs[k], k, 0);
+  return out;
+}
+
 /**
  * Turn a Pulumi preview / stack export text into scannable documents plus adapter states.
  * Pure and deterministic. Returns { usage } for input that is not Pulumi JSON at all.
@@ -809,14 +842,20 @@ export function extractPulumiDocuments(text, opts = {}) {
   out.providers = providerSummary(facts, opts);
   const seen = new Set();
   const budget = { n: PULUMI_LIMITS.MAX_WALK_NODES, exhausted: false };
+  // I-1: a component is skipped only when its children are in the file.
+  const parents = new Set(items.map((x) => x.parent).filter(Boolean));
+  const components = [];
   for (const it of items) {
+    // I-1: the URN's type segment must be the resource type.
+    if (urnType(it.urn) !== it.type) { globalStates.push(st('PULUMI_MALFORMED', it.urn, ANALYSIS_STATE.MALFORMED)); continue; }
     if (it.type.startsWith('pulumi:providers:') || it.type === 'pulumi:pulumi:Stack') continue;
     // R5-1: a component repeats its children's inputs; the children are analyzed on their own.
     if (!it.custom) {
       if (TYPE_MAP[it.type] || PERMISSION_TYPES.has(it.type) || /^aws(-native)?:/.test(it.type)) {
         globalStates.push(st('PULUMI_MALFORMED', it.urn, ANALYSIS_STATE.MALFORMED)); // a provider type cannot be a component
+        continue;
       }
-      continue;
+      if (parents.has(it.urn)) { components.push(it); continue; }
     }
     if (PERMISSION_TYPES.has(it.type)) {
       const v = permissionVerdict(it, resolveScope(it, facts, opts, new Set(), []));
@@ -907,6 +946,31 @@ export function extractPulumiDocuments(text, opts = {}) {
     for (const h of findUnanalyzedDocs(it.inputs, consumed, budget)) {
       globalStates.push(st(h.code, `${it.urn}#${h.path}`,
         h.code === 'PULUMI_UNSUPPORTED_TYPE' ? ANALYSIS_STATE.UNSUPPORTED : ANALYSIS_STATE.INCOMPLETE));
+    }
+  }
+  // I-1: a skipped component is safe only if each policy in its inputs is a descendant's document.
+  if (components.length > 0) {
+    const byParent = new Map();
+    for (const x of items) if (x.parent) (byParent.get(x.parent) || byParent.set(x.parent, []).get(x.parent)).push(x.urn);
+    const docsOf = new Map();
+    for (const d of out.documents) {
+      const p = d.text != null ? parseJsonStrict(d.text, 32) : null;
+      if (p && p.ok) (docsOf.get(d.urn) || docsOf.set(d.urn, new Set()).get(d.urn)).add(stableStringify(p.value));
+    }
+    for (const c of components) {
+      const seenU = new Set();
+      const descDocs = new Set();
+      const stack = [...(byParent.get(c.urn) || [])];
+      while (stack.length > 0) {
+        const u = stack.pop();
+        if (seenU.has(u)) continue;
+        seenU.add(u);
+        for (const s of docsOf.get(u) || []) descDocs.add(s);
+        stack.push(...(byParent.get(u) || []));
+      }
+      for (const h of componentPolicies(c.inputs, budget)) {
+        if (!descDocs.has(h.canon)) globalStates.push(st('PULUMI_UNSUPPORTED_TYPE', `${c.urn}#${h.path}`, ANALYSIS_STATE.UNSUPPORTED));
+      }
     }
   }
   if (budget.exhausted) globalStates.push(st('PULUMI_LIMIT', 'pulumi-input'));

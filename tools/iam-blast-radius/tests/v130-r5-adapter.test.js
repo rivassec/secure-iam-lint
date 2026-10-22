@@ -108,3 +108,25 @@ test('R5-4: CLI --provider-account and the Action input; misuse is usage', async
   assert.equal(runAction({ env: { ...env, 'INPUT_PROVIDER-ACCOUNTS': 'nope=111122223333' }, io: aio }).exitCode, EXIT.USAGE);
   assert.equal(runAction({ env: { INPUT_PATHS: 'export.json', INPUT_FAMILY: 'identity', 'INPUT_PROVIDER-ACCOUNTS': `aws=${ACCT}` }, io: aio }).exitCode, EXIT.USAGE);
 });
+
+// --- Round-5 review I-1: a component skip must be provably safe ---
+test('I-1: component skip needs children that repeat its policies; URN type must match', async () => {
+  const { scanPulumi: sp } = await import('../../../cli/pulumi.mjs');
+  const PRV = 'urn:pulumi:dev::p::pulumi:providers:aws::aws';
+  const pub = { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: '*' }, Action: 'sts:AssumeRole' }] };
+  const svc = { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'ec2.amazonaws.com' }, Action: 'sts:AssumeRole' }] };
+  const comp = (type, policy) => ({ urn: `urn:pulumi:dev::p::${type}::c`, type, custom: false, inputs: { doc: policy } });
+  const child = (policy) => ({ urn: 'urn:pulumi:dev::p::x:index:C$aws:iam/role:Role::r', type: 'aws:iam/role:Role', custom: true,
+    parent: 'urn:pulumi:dev::p::x:index:C::c', provider: `${PRV}::id1`, inputs: { name: 'r', assumeRolePolicy: JSON.stringify(policy) }, outputs: {} });
+  const run = (...res) => sp({ text: JSON.stringify({ deployment: { resources: [{ urn: PRV, type: 'pulumi:providers:aws', custom: true, inputs: { region: 'us-east-1' } }, ...res] } }), partition: 'aws' });
+  const codes = (r) => r.analysisStates.map((s) => s.code);
+  // A real component whose child repeats the policy: skipped cleanly.
+  assert.ok(!codes(run(comp('x:index:C', svc), child(svc))).includes('PULUMI_UNSUPPORTED_TYPE'));
+  // The child does not carry the component's policy: fail closed.
+  assert.ok(codes(run(comp('x:index:C', pub), child(svc))).includes('PULUMI_UNSUPPORTED_TYPE'));
+  // No children: the backstop runs.
+  assert.ok(codes(run(comp('x:index:C', pub))).includes('PULUMI_UNSUPPORTED_TYPE'));
+  // A type that disagrees with the URN: malformed.
+  const bad = { ...comp('x:index:C', svc), type: 'pulumi-nodejs:dynamic:Resource' };
+  assert.ok(codes(run(bad, child(svc))).includes('PULUMI_MALFORMED'));
+});
