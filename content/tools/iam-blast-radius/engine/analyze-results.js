@@ -385,8 +385,11 @@ export function resourceResult(model, coverage, effectiveFamily, options) {
   // an unknown action is still flagged for a service the catalog covers (S3, KMS),
   // but an uncatalogued service (SQS, SNS) is not a reason on its own.
   const allowView = { statements: model.statements.filter((st) => st && st.effect === 'Allow') };
+  // R6-1: the resource family classifies ECR / Secrets Manager / DynamoDB actions itself.
+  const ownCatalog = new Set(['ecr', 'secretsmanager', 'dynamodb']);
   const catalogued = (token) => {
     const svc = String(token).split(':')[0];
+    if (ownCatalog.has(svc.toLowerCase())) return false;
     return typeof defaultCatalog.classifyWildcard === 'function' &&
       defaultCatalog.classifyWildcard(`${svc}:*`).supported === true;
   };

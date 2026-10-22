@@ -32,6 +32,10 @@ export const RESOURCE_SERVICES = Object.freeze({
   SNS: 'sns',
   SQS: 'sqs',
   KMS_KEY: 'kms-key',
+  // R6-1: data-holding resources with resource policies.
+  ECR_REPOSITORY: 'ecr-repository',
+  SECRET: 'secretsmanager-secret',
+  DYNAMODB_TABLE: 'dynamodb-table',
   GENERIC: 'generic',
 });
 
@@ -44,6 +48,9 @@ export const MODELED_RESOURCE_SERVICES = Object.freeze(new Set([
   RESOURCE_SERVICES.SNS,
   RESOURCE_SERVICES.SQS,
   RESOURCE_SERVICES.KMS_KEY,
+  RESOURCE_SERVICES.ECR_REPOSITORY,
+  RESOURCE_SERVICES.SECRET,
+  RESOURCE_SERVICES.DYNAMODB_TABLE,
 ]));
 
 // Resource finding ids owned by the resource evaluator. IAM-1202 adds the
@@ -158,6 +165,12 @@ export const RESOURCE_IDS = Object.freeze([
   // aws:SourceArn/aws:SourceAccount. Informational; never a missing-binding warning and
   // never a public-write claim (a service principal is not "*").
   'MESSAGING-DEPRECATED-SOURCE-OWNER',
+  // R6-1: ECR / Secrets Manager / DynamoDB. A genuinely public "*" naming a data action
+  // (pull/push images, read a secret, read/write items), additive to PUBLIC-ACCESS; and a
+  // resource-policy write (SetRepositoryPolicy / PutResourcePolicy ...) to "*" or an
+  // external principal (takeover).
+  'RESOURCE-DATA-EXPOSURE',
+  'RESOURCE-POLICY-TAKEOVER',
 ]);
 
 // Rule revision for resource findings (provenance on every finding/export).
@@ -232,6 +245,9 @@ export const RESOURCE_SERVICE_LABELS = Object.freeze({
   sns: 'Amazon SNS topic',
   sqs: 'Amazon SQS queue',
   'kms-key': 'AWS KMS key',
+  'ecr-repository': 'Amazon ECR repository',
+  'secretsmanager-secret': 'AWS Secrets Manager secret',
+  'dynamodb-table': 'Amazon DynamoDB table',
   generic: 'Other AWS resource',
 });
 

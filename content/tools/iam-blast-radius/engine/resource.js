@@ -32,6 +32,8 @@ import {
   MESSAGING_DATA_PLANE_VECTORS, SNS_CONTROL_ACTIONS, SQS_CONTROL_ACTIONS, messagingActionParts, isMessagingServiceWildcard, messagingControlSet, namesSourceOwner, messagingPerServiceRules,
 } from './resource-messaging-rules.js';
 export * from './resource-messaging-rules.js';
+import { dataPerServiceRules, actionClasses, DATA_SERVICE_NS } from './resource-data-rules.js';
+export * from './resource-data-rules.js';
 import {
   KMS_VIA_SERVICE_KEY, KMS_GRANT_IS_FOR_AWS_RESOURCE_KEY, kmsActionName, kmsChannelDecoyKeys, namesGrantIsForAwsResource, kmsHasAccountDelegation, kmsHasAnonymousAllow, kmsPerServiceRules,
 } from './resource-kms-rules.js';
@@ -1044,6 +1046,9 @@ const PER_SERVICE_RULES = new Map([
   [RESOURCE_SERVICES.KMS_KEY, kmsPerServiceRules],
   [RESOURCE_SERVICES.SNS, messagingPerServiceRules],
   [RESOURCE_SERVICES.SQS, messagingPerServiceRules],
+  [RESOURCE_SERVICES.ECR_REPOSITORY, dataPerServiceRules],
+  [RESOURCE_SERVICES.SECRET, dataPerServiceRules],
+  [RESOURCE_SERVICES.DYNAMODB_TABLE, dataPerServiceRules],
 ]);
 
 /**
@@ -1096,6 +1101,9 @@ const SERVICE_ACTION_PREFIX = Object.freeze({
   [RESOURCE_SERVICES.SNS]: 'sns',
   [RESOURCE_SERVICES.SQS]: 'sqs',
   [RESOURCE_SERVICES.KMS_KEY]: 'kms',
+  [RESOURCE_SERVICES.ECR_REPOSITORY]: 'ecr',
+  [RESOURCE_SERVICES.SECRET]: 'secretsmanager',
+  [RESOURCE_SERVICES.DYNAMODB_TABLE]: 'dynamodb',
 });
 function unmodeledReasons(model, ctx) {
   const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
@@ -1152,6 +1160,10 @@ function unmodeledReasons(model, ctx) {
       return t !== '*' && t.split(':')[0].toLowerCase() !== prefix;
     });
     if (prefix && foreign.length > 0) unmodeled("actions outside this resource's service", `${at}.Action`);
+    // R6-1: an unclassified concrete action of a data service is unmodeled (fail closed).
+    if (DATA_SERVICE_NS[ctx.service] && actions.some((a) => actionClasses(a, DATA_SERVICE_NS[ctx.service]) === null)) {
+      unmodeled('an action this evaluator does not classify', `${at}.Action`);
+    }
   }
   return out;
 }

@@ -61,12 +61,18 @@ export function serviceForArn(arn) {
   if (svc === 'kms') {
     return /^key\//i.test(resource) ? RESOURCE_SERVICES.KMS_KEY : RESOURCE_SERVICES.GENERIC;
   }
+  // R6-1: only the repository / secret / table itself (a stream ARN stays generic).
+  if (svc === 'ecr') return /^repository\/[^*?]+$/.test(resource) ? RESOURCE_SERVICES.ECR_REPOSITORY : RESOURCE_SERVICES.GENERIC;
+  if (svc === 'secretsmanager') return /^secret:[^*?]+$/.test(resource) ? RESOURCE_SERVICES.SECRET : RESOURCE_SERVICES.GENERIC;
+  if (svc === 'dynamodb') return /^table\/[^/*?]+$/.test(resource) ? RESOURCE_SERVICES.DYNAMODB_TABLE : RESOURCE_SERVICES.GENERIC;
   return RESOURCE_SERVICES.GENERIC;
 }
 
 // F14: type hint -> ARN service token; hints outside this map (e.g. "other") are not checked.
 const TYPE_HINT_SERVICE = Object.freeze({
   's3': 's3', 's3-bucket': 's3', 's3-object': 's3', 'sns': 'sns', 'sqs': 'sqs', 'kms': 'kms', 'kms-key': 'kms',
+  'ecr': 'ecr', 'ecr-repository': 'ecr', 'secretsmanager': 'secretsmanager', 'secretsmanager-secret': 'secretsmanager',
+  'dynamodb': 'dynamodb', 'dynamodb-table': 'dynamodb',
 });
 
 // F14: message when the type hint contradicts the context ARN, else null.
@@ -91,7 +97,8 @@ export function statementNamesForeignResource(stmt, arnRaw) {
       ? true // non-ARN Resource values are rejected elsewhere
       : globMatch(r.service.toLowerCase(), svc) && (svc === 's3'
         ? globMatch(r.resource.split('/')[0], arn.resource.split('/')[0])
-        : globMatch(res, arnRaw));
+        // R6-1: a table's index/stream sub-resources belong to the attached table.
+        : globMatch(svc === 'dynamodb' ? res.replace(/\/(index|stream)\/.*$/, '') : res, arnRaw));
     if (!ok) return true;
   }
   return false;
@@ -162,8 +169,9 @@ export function parseResourceContext(context) {
       type: typeHint,
       message:
         `The attached resource "${arnRaw}" is a resource-based-policy shape this ` +
-        'analyzer does not yet model (only Amazon S3, SNS, SQS, and KMS key ' +
-        'policies are modeled in this release). Analysis stops rather than apply ' +
+        'analyzer does not yet model (only Amazon S3, SNS, SQS, KMS key, ECR repository, ' +
+        'Secrets Manager secret and DynamoDB table policies are modeled in this release). ' +
+        'Analysis stops rather than apply ' +
         'S3/KMS-specific reasoning to a service whose semantics are unmodeled - ' +
         'unsupported does NOT mean safe.',
     };

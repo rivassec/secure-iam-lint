@@ -312,7 +312,8 @@ test('analyzeResource: REJECTED context fails closed at the boundary (ok:false, 
     assert.ok(Array.isArray(res.errors) && res.errors[0] && res.errors[0].code === RESOURCE_CODES.RESOURCE_CONTEXT_REQUIRED, 'error carries the parser code');
   }
   // (c) a valid ARN for an UNMODELED service -> UNSUPPORTED_RESOURCE_SHAPE, same fail-closed.
-  const unsupported = analyzeResource(model, { arn: 'arn:aws:dynamodb:us-east-1:123456789012:table/t' });
+  // R6-1: dynamodb is modeled now; a Lambda function policy is still unmodeled.
+  const unsupported = analyzeResource(model, { arn: 'arn:aws:lambda:us-east-1:123456789012:function:f' });
   assert.equal(unsupported.ok, false);
   assert.equal(unsupported.coverage.code, RESOURCE_CODES.UNSUPPORTED_RESOURCE_SHAPE, 'unsupported shape code surfaced');
   assert.ok(/REJECTED/.test(unsupported.coverage.note));
