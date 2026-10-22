@@ -42,6 +42,7 @@ const SERVICES = [
   'support', 'trustedadvisor', 'waf', 'waf-regional', 'wafv2', 'wellarchitected',
   'sns', 'events', 'logs', 'config', 'lambda', 'cloudformation', 'iam',
   'ecr', 'codeartifact', 'scheduler', 'eks',
+  'cognito-identity',
 ];
 
 function accessLevel(action) {

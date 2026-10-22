@@ -56,7 +56,7 @@ export const ACCESS_LEVELS = Object.freeze({
 const L = ACCESS_LEVELS;
 
 // Dated snapshot identity. Bump both when the curated set below changes.
-export const ACTION_CATALOG_VERSION = '2026.10.21.4';
+export const ACTION_CATALOG_VERSION = '2026.10.21.5';
 export const ACTION_CATALOG_DATE = '2026-10-21';
 
 // The curated snapshot: service -> { actionName: accessLevel }. Keys use the
@@ -86,6 +86,10 @@ const CATALOG_DATA = Object.freeze({
     ChangeMessageVisibilityBatch: L.WRITE,
     DeleteQueue: L.WRITE,
     PurgeQueue: L.WRITE,
+  },
+  // Cognito pool roles: the identity credential-exchange flow (trial finding T-1).
+  'cognito-identity': {
+    GetId: L.WRITE,
   },
   ecr: {
     GetAuthorizationToken: L.READ,
@@ -372,7 +376,9 @@ export const DENY_ONLY_SERVICES = new Set(['sns', 'events', 'logs', 'config', 'l
   'ecr', 'codeartifact', 'scheduler', 'eks']);
 // Fail closed in an Allow until a finding models them: ABAC tag writes and account-wide IAM dumps.
 const ALLOW_WITHHELD = (full) => /^iam:(?:un)?tag/.test(full) ||
-  ['iam:getaccountauthorizationdetails', 'iam:getcredentialreport', 'iam:generatecredentialreport'].includes(full);
+  ['iam:getaccountauthorizationdetails', 'iam:getcredentialreport', 'iam:generatecredentialreport',
+    // Mints an OpenID token for any identity in the pool (assume its roles as anyone).
+    'cognito-identity:getopenidtokenfordeveloperidentity'].includes(full);
 
 // Merge the generated AWS-reference snapshot UNDER the curated data: an action the
 // curated map already names keeps its curated access level (the rules were tuned
