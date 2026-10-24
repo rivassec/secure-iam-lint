@@ -108,7 +108,51 @@ const KNOWN_KEYS = Object.freeze({
   // ones an AWS service creates for a resource; CallerAccount pins the calling account.
   'kms:grantisforawsresource': { class: CONDITION_CLASS.CONSTRAINT, role: 'grant-scope', label: 'KMS grant created by an AWS service' },
   'kms:calleraccount': { class: CONDITION_CLASS.CONSTRAINT, role: 'principal', label: 'KMS caller account' },
+  // F-3 org keys (IAM UG reference_policies_condition-keys.html). ResourceOrgID: org of the
+  // account that owns the resource, absent outside an org. The *OrgPaths keys are
+  // multivalued: AWS requires ForAnyValue/ForAllValues, so a bare operator is undecided.
+  // PrincipalOrgPaths is never credited (trust.js does not credit it; keep them agreeing).
+  'aws:resourceorgid': { class: CONDITION_CLASS.CONSTRAINT, role: 'resource-org', label: 'Resource organization' },
+  'aws:resourceorgpaths': { class: CONDITION_CLASS.CONSTRAINT, role: 'resource-org', label: 'Resource organization path', multivalued: true },
+  'aws:principalorgpaths': { class: CONDITION_CLASS.CONSTRAINT, role: 'org', label: 'Principal organization path', multivalued: true, uncredited: true },
+  // E-2 keys. Each only narrows an Allow; selectors are never credited.
+  // iam:AWSServiceName: service of the service-linked role CreateServiceLinkedRole makes;
+  // sts:AWSServiceName: service a bearer token is for (reference_policies_iam-condition-keys.html).
+  'iam:awsservicename': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'Service-linked role service' },
+  'sts:awsservicename': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'Bearer token service' },
+  // ec2:AuthorizedService: service granted a network-interface permission; ec2:Subnet: subnet
+  // ARN; ec2:CreateAction: create API that may tag (service-authorization list_amazonec2.html).
+  'ec2:authorizedservice': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'Network interface permission service' },
+  'ec2:subnet': { class: CONDITION_CLASS.CONSTRAINT, role: 'network', label: 'Subnet ARN' },
+  'ec2:createaction': { class: CONDITION_CLASS.CONSTRAINT, role: 'create-action', label: 'Tag-on-create API' },
+  // Same tag-on-create gate for ELB (list_awselasticloadbalancingv2.html).
+  'elasticloadbalancing:createaction': { class: CONDITION_CLASS.CONSTRAINT, role: 'create-action', label: 'Tag-on-create API' },
+  // acm-pca:TemplateArn: certificate template IssueCertificate may use (list_awsprivatecertificateauthority.html).
+  'acm-pca:templatearn': { class: CONDITION_CLASS.SELECTOR, role: 'resource', label: 'Private CA certificate template' },
 });
+
+// Keys whose credit needs a positive string/ARN operator (a Date/Numeric op pins no value).
+const POSITIVE_OP_KEYS = new Set([
+  'aws:resourceorgid', 'aws:resourceorgpaths', 'aws:principalorgpaths',
+  'ec2:subnet', 'ec2:createaction', 'elasticloadbalancing:createaction',
+]);
+
+// E-2: keys that carry a caller-chosen suffix. Tags (aws:RequestTag/<k>,
+// aws:ResourceTag/<k>, ec2:ResourceTag/<k>: reference_policies_condition-keys.html,
+// list_amazonec2.html) and kms:EncryptionContext:<k> (kms conditions-kms.html) select a
+// value; the caller may be able to set it, so they are never credited. Empty suffix: unknown.
+const PREFIXED_KEYS = Object.freeze([
+  { prefix: 'aws:requesttag/', meta: { class: CONDITION_CLASS.SELECTOR, role: 'tag', label: 'Request tag' } },
+  { prefix: 'aws:resourcetag/', meta: { class: CONDITION_CLASS.SELECTOR, role: 'tag', label: 'Resource tag' } },
+  { prefix: 'ec2:resourcetag/', meta: { class: CONDITION_CLASS.SELECTOR, role: 'tag', label: 'EC2 resource tag' } },
+  { prefix: 'kms:encryptioncontext:', meta: { class: CONDITION_CLASS.SELECTOR, role: 'encryption-context', label: 'KMS encryption context pair' } },
+]);
+function prefixedMeta(keyLower) {
+  for (const { prefix, meta } of PREFIXED_KEYS) {
+    if (keyLower.startsWith(prefix) && keyLower.length > prefix.length) return meta;
+  }
+  return null;
+}
 
 // Recognized federation PROVIDER HOSTS (docs/trust-policy-semantics.md 4.4/4.5).
 // A federation claim key is `<provider-host>:<claim>`; the host must be one AWS
@@ -164,9 +208,15 @@ function federationMeta(keyLower, statementHosts = null) {
   const lastColon = keyLower.lastIndexOf(':');
   if (lastColon <= 0 || lastColon === keyLower.length - 1) return null;
   const claim = keyLower.slice(lastColon + 1);
-  if (claim !== 'aud' && claim !== 'sub' && claim !== 'amr' && claim !== 'repository_id') return null;
+  if (claim !== 'aud' && claim !== 'sub' && claim !== 'amr' && claim !== 'repository_id' && claim !== 'ref') return null;
   const host = keyLower.slice(0, lastColon);
   if (!RECOGNIZED_FEDERATION_HOSTS.has(host) && !(statementHosts && statementHosts.has(host))) return null;
+  // E-2: GitHub's ref claim (branch/tag; reference_policies_iam-condition-keys.html#condition-keys-wif).
+  // A ref does not pin a repository, so it narrows but is never credited.
+  if (claim === 'ref') {
+    if (host !== 'token.actions.githubusercontent.com') return null;
+    return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-ref', label: 'GitHub git ref', federation: 'ref', uncredited: true };
+  }
   // R7: GitHub's repository_id is a globally unique numeric repo pin (GitHub only).
   if (claim === 'repository_id') {
     if (host !== 'token.actions.githubusercontent.com') return null;
@@ -367,6 +417,12 @@ function accountOrOrgValueNarrows(value) {
   return !hasGlob(s);
 }
 
+// An org path (o-x/r-y/ou-z/...) narrows only when its org segment is a literal o-id.
+// MUST mirror trust-principal-helpers.js orgPathValueNarrows.
+function orgPathValueNarrows(value) {
+  return /^o-[a-z0-9]+$/i.test(String(value).split('/')[0]);
+}
+
 // Common AWS ARN resource-TYPE keywords. In an ARN resource of the form
 // "<type>/<id>" or "<type>:<id>", the LEADING token is a resource-type CATEGORY
 // (role, secret, function, trail, ...), not a specific resource. A value whose
@@ -461,8 +517,14 @@ function valueNarrowsKey(keyLower, value) {
     case 'aws:sourceaccount':
     case 'aws:principalaccount':
     case 'aws:principalorgid':
+    case 'aws:resourceorgid':
     case 'kms:calleraccount':
       return accountOrOrgValueNarrows(value);
+    case 'aws:resourceorgpaths':
+    case 'aws:principalorgpaths':
+      return orgPathValueNarrows(value);
+    case 'ec2:subnet':
+      return arnValueNarrows(value);
     case 's3:resourceaccount':
     case 'aws:resourceaccount':
       // F2-09: credit only a full-literal account id (an 11-digit typo matches no
@@ -556,7 +618,7 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
   // context-required, surfaced in coverage (unsupported does NOT mean safe).
   const meta = Object.prototype.hasOwnProperty.call(KNOWN_KEYS, keyLower)
     ? KNOWN_KEYS[keyLower]
-    : federationMeta(keyLower, federationHosts);
+    : (prefixedMeta(keyLower) || federationMeta(keyLower, federationHosts));
   const known = meta !== null;
 
   const negated = NEGATED_OPERATORS.has(base);
@@ -573,6 +635,10 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
     // credited. Still describe the operator shape so the note is useful.
     cls = CONDITION_CLASS.CONTEXT_REQUIRED;
     notes.push(`condition key "${keyStr}" is not modelled by this version; its effect cannot be resolved from the policy text`);
+  } else if (meta.multivalued && !setOperator && !isNull) {
+    // AWS requires a set operator on a multivalued key; without one the match is undecided.
+    cls = CONDITION_CLASS.CONTEXT_REQUIRED;
+    notes.push(`"${keyStr}" is multivalued and operator ${operator} has no ForAnyValue/ForAllValues qualifier; its effect cannot be resolved from the policy text`);
   } else if (isNull) {
     // A Null test is about key presence, independent of the key's own semantics.
     const kind = nullTestKind(values);
@@ -593,7 +659,8 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
     if (kind === 'true') {
       cls = meta.class; // constraint
       // Bool on a federated aud/sub claim compares no claim value, so it is not a guardrail.
-      credited = cls === CONDITION_CLASS.CONSTRAINT && !ifExists && !setOperator && !meta.federation;
+      credited = cls === CONDITION_CLASS.CONSTRAINT && !ifExists && !setOperator && !meta.federation &&
+        !POSITIVE_OP_KEYS.has(keyLower) && !meta.uncredited;
       notes.push(`asserts ${meta.label}`);
     } else if (kind === 'false') {
       cls = CONDITION_CLASS.EXPANSION;
@@ -681,9 +748,13 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
     // correctly keeps HIGH (adversarial-critic IAM-804 iteration 5). Mirrors
     // trust.js scopesValue (positive-operator gate). The class stays CONSTRAINT
     // (the key IS a known scoping key), but credited flips off with a note.
-    if (credited && (VALUE_SCOPING_TRUST_KEYS.has(keyLower) || ACCOUNT_SCOPING_KEYS.has(keyLower) || meta.federation) && !POSITIVE_STRING_MATCH_OPERATORS.has(base)) {
+    if (credited && (VALUE_SCOPING_TRUST_KEYS.has(keyLower) || ACCOUNT_SCOPING_KEYS.has(keyLower) || POSITIVE_OP_KEYS.has(keyLower) || meta.federation) && !POSITIVE_STRING_MATCH_OPERATORS.has(base)) {
       credited = false;
       notes.push(`operator "${operator}" is not a positive string/ARN match, so it does not scope ${meta.label} by value and is not credited as a guardrail`);
+    }
+    if (credited && meta.uncredited) {
+      credited = false;
+      notes.push(`${meta.label} is not credited as a dependable guardrail by this version`);
     }
   }
 

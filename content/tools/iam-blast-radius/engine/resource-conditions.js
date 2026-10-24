@@ -3,7 +3,7 @@ import { chargeWork } from './glob.js';
 import { parseOperator, NEGATED_OPERATORS } from './conditions.js';
 import { RESOURCE_SERVICES } from './resource-catalogs.js';
 import { selfReferenceKeys, substitutePolicyVars, toValues } from './trust-conditions.js';
-import { accountOrOrgValueNarrows, isAllGlobOrEmpty } from './trust-principal-helpers.js';
+import { accountOrOrgValueNarrows, isAllGlobOrEmpty, orgPathValueNarrows } from './trust-principal-helpers.js';
 
 // Every AWS condition operator base (after ForAllValues:/ForAnyValue: and IfExists).
 export const KNOWN_CONDITION_OPERATORS = Object.freeze(new Set([
@@ -38,6 +38,7 @@ const ACCOUNT_LIKE_KEYS = new Set(['aws:principalaccount', 'aws:sourceaccount', 
 function scopingValueNarrows(keyLower, raw) {
   const s = substitutePolicyVars(raw);
   if (ACCOUNT_LIKE_KEYS.has(keyLower)) return accountOrOrgValueNarrows(s);
+  if (keyLower === 'aws:principalorgpaths') return orgPathValueNarrows(s);
   if (keyLower === 'aws:principalarn' || keyLower === 'aws:sourcearn') {
     const segs = s.split(':');
     if (segs.length < 6 || segs[0].toLowerCase() !== 'arn') return false;

@@ -207,6 +207,31 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   can accept it like `UNKNOWN_ACTION`; a baseline that accepted these names under
   `UNKNOWN_ACTION` must be regenerated.
 
+### Round 8, lane B: condition keys
+
+- **Org keys (F-3).** `aws:ResourceOrgID`, `aws:ResourceOrgPaths` and
+  `aws:PrincipalOrgPaths` are modeled, so an org gate no longer fails the run closed
+  (exit 3). A positive, literal `aws:ResourceOrgID` (or `ForAnyValue` org path) on a
+  wildcard-account `sts:AssumeRole` keeps ASSUME-ROLE-EXPANSION at its severity and
+  names the org condition as the bound. `IfExists`, negated, globbed (`o-*`) and
+  `${...}` org values are not credited.
+  - The `*OrgPaths` keys are multivalued: without `ForAnyValue`/`ForAllValues` they
+    stay UNSUPPORTED_CONDITION.
+  - Resource policies: `aws:PrincipalOrgPaths` narrows a `"*"` grant only when its
+    org segment is a literal org id; `o-*/...` stays public.
+  - Role trust: `aws:PrincipalOrgPaths` is not credited; the trust keeps its ungated
+    severity.
+- **Trial condition keys (E-2).** Modeled as gates that can only narrow an Allow, so
+  findings are unchanged and the run no longer fails closed on them:
+  `iam:AWSServiceName`, `sts:AWSServiceName`, `ec2:AuthorizedService`,
+  `acm-pca:TemplateArn`, `aws:RequestTag/<k>`, `aws:ResourceTag/<k>`,
+  `ec2:ResourceTag/<k>` and `kms:EncryptionContext:<k>` (selectors, never credited);
+  `ec2:Subnet`, `ec2:CreateAction` and `elasticloadbalancing:CreateAction`
+  (constraints, credited only under a positive match); and the GitHub OIDC
+  `token.actions.githubusercontent.com:ref` claim (never credited: a ref does not pin a
+  repository). A tag or encryption-context key with an empty suffix, and a `:ref` claim
+  on any other provider, stay unsupported.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added
