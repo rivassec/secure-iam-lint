@@ -167,11 +167,11 @@ test('E-4: an unknown action on an unbound service grant still fails closed', ()
 });
 
 test('E-4/e7: an unmodeled permission never names the run when another document can', () => {
-  const e7 = scanPulumi({ text: exportOf(ROLE, FN, perm({ principal: 'secretsmanager.amazonaws.com' }), inline('ec2:CreateNetworkInterface')), ...opts });
+  const e7 = scanPulumi({ text: exportOf(ROLE, FN, perm({ principal: 'secretsmanager.amazonaws.com' }), inline('ec2:CreateRoute')), ...opts });
   assert.equal(e7.exitCode, EXIT.FAIL_CLOSED);
   assert.equal(e7.reason, doc(e7, 'fnrole-inline#policy').result.reason);
   // The public permission sorts first among the exit-3 documents but is demoted.
-  const pub = scanPulumi({ text: exportOf(ROLE, FN, perm({ principal: '*' }), inline('ec2:CreateNetworkInterface')), ...opts });
+  const pub = scanPulumi({ text: exportOf(ROLE, FN, perm({ principal: '*' }), inline('ec2:CreateRoute')), ...opts });
   assert.equal(doc(pub, 'fn-perm#principal').result.reason, 'PULUMI_UNMODELED_PERMISSION');
   assert.notEqual(pub.reason, 'PULUMI_UNMODELED_PERMISSION');
   assert.equal(pub.exitCode, EXIT.FAIL_CLOSED);

@@ -63,11 +63,11 @@
     "type": "aws:iam/rolePolicy:RolePolicy",
     "inputs": {
      "role": "fnrole",
-     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"ec2:CreateNetworkInterface\", \"Resource\": \"arn:aws:dynamodb:us-east-2:111111111111:table/t\"}]}"
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"ec2:CreateRoute\", \"Resource\": \"arn:aws:dynamodb:us-east-2:111111111111:table/t\"}]}"
     },
     "outputs": {
      "role": "fnrole",
-     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"ec2:CreateNetworkInterface\", \"Resource\": \"arn:aws:dynamodb:us-east-2:111111111111:table/t\"}]}"
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"ec2:CreateRoute\", \"Resource\": \"arn:aws:dynamodb:us-east-2:111111111111:table/t\"}]}"
     },
     "provider": "urn:pulumi:syn::syn-fx::pulumi:providers:aws::a::prov-a"
    }

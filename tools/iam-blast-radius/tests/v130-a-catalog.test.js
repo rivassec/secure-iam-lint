@@ -16,7 +16,7 @@ const allow = (action) => P({ Effect: 'Allow', Action: action, Resource: '*' });
 // One withheld (unmodeled write/permissions) action per added service.
 const PICKS = {
   sns: 'sns:CreateTopic',
-  events: 'events:PutRule',
+  events: 'events:CreateConnection',
   logs: 'logs:PutRetentionPolicy',
   config: 'config:PutConfigRule',
   lambda: 'lambda:PutFunctionConcurrency',
@@ -57,7 +57,7 @@ test('control: a made-up action in a known service is still unknown (NOT_IN_REFE
 
 // Deny-only services (sns/logs/config) and actions still withheld after r8 E-1 fail closed in an Allow.
 const NOT_IN_ALLOW = ['logs:GetLogEvents', 'logs:GetQueryResults', 'lambda:GetDurableExecutionState',
-  'cloudformation:SetStackPolicy', 'events:PutRule', 'sns:ListTopics'];
+  'cloudformation:SetStackPolicy', 'events:CreateConnection', 'sns:ListTopics'];
 for (const action of NOT_IN_ALLOW) {
   test(`${action} in an Allow still fails closed`, () => {
     const narrow = P({ Effect: 'Allow', Action: action, Resource: `arn:aws:${action.split(':')[0]}:us-east-1:${ACCT}:x` });

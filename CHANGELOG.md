@@ -203,13 +203,24 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     `lambda:UpdateAlias` and `ecr:PutImage`.
   - The PassRole paths cover `cloudformation:CreateChangeSet` and
     `scheduler:CreateSchedule` / `UpdateSchedule` (new scheduler entry); they are
-    known because alone they cannot run as a role. `events:PutTargets` stays withheld:
-    SNS, SQS, Lambda and event-bus targets need no role, so alone it can redirect events.
+    known because alone they cannot run as a role.
   - RESOURCE-POLICY-WRITE covers `ec2:CreateNetworkInterfacePermission`.
   - Deletes are DESTRUCTIVE-ACTION. ECR layer uploads and `ecr:CreateRepository` are
     known: nothing runs what they stage until `ecr:PutImage`.
-  - Still withheld (exit 3): ENI writes (`ec2:CreateNetworkInterface`, IP assignment,
-    attach / modify), ELB writes, `ecr:BatchImportUpstreamImage`, `events:PutRule`,
+  - New rule **TRAFFIC-ROUTING** covers the ENI, security-group, ELB and EventBridge
+    routing writes. High (exit 1 at the default `fail-on`) for the actions that can point
+    existing traffic or events at a target the holder picks, including one in another
+    account: `elasticloadbalancing:CreateListener` / `CreateRule` / `ModifyListener` /
+    `ModifyRule`, `events:PutTargets` (SNS, SQS, Lambda and bus targets need no role) and
+    `events:UpdateApiDestination`. Medium for the rest: ENI create / attach / detach /
+    modify and IP assignment, security-group rule writes, the other ELB writes, and
+    `events:PutRule`, `EnableRule` / `DisableRule`, `PutEvents`, buses, API destinations,
+    endpoints, archives and replays. On Resource `*` these also keep WILDCARD-RESOURCE
+    high. `ec2:AuthorizeSecurityGroupIngress` on a named group used to read CLEAN with no
+    finding; it is now a medium finding. The AWS VPC CNI policy moves from exit 3 to 1.
+  - Still withheld (exit 3): ELB trust stores, EventBridge connections
+    (`RetrieveConnectionCredentials`, `CreateConnection`), partner sources, subscribers and
+    `InvokeApiDestination`, route-table writes, `ecr:BatchImportUpstreamImage`,
     `lambda:PublishVersion` and the other unmodeled writes, tag writes in these
     services, `eks:AccessKubernetesApi`, Lambda durable-execution and new microVM /
     web-function reads (so `lambda:Get*` stays unknown), and sns, logs and config
@@ -224,6 +235,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unsnapshotted services and the curated-only services keep `UNKNOWN_ACTION`. A baseline
   can accept it like `UNKNOWN_ACTION`; a baseline that accepted these names under
   `UNKNOWN_ACTION` must be regenerated.
+- **Work budget:** rule matching skips catalog entries a pattern cannot match (wrong
+  length with no `*`, or wrong service before the first `:`), an exact filter with a
+  randomized equivalence test. The 9,998-pattern deny-fence case uses about 34M of the
+  60M work budget (it was at 59.7M in v1.2.0, and the bigger catalogs pushed it over).
+  `scripts/gen-unmodeled-escalation.mjs` runs again (its baseline shim lacked
+  `AWS_REF_DATE`) and counts a sub-threshold detector finding as coverage.
 
 ### Round 8, lane B: condition keys
 

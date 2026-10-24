@@ -123,11 +123,11 @@ test('E-1 (b): role-taking writes complete a PassRole path; alone they cannot ru
 });
 
 // A target needs no role for SNS/SQS/Lambda/event-bus delivery, so alone it can redirect events.
-test('E-1: events:PutTargets stays withheld alone and still completes the PassRole path', () => {
+test('E-1: events:PutTargets alone is a high TRAFFIC-ROUTING finding and still completes the PassRole path', () => {
   const res = arn('events', 'rule/r');
   const alone = run(allow('events:PutTargets', res));
-  assert.equal(alone.exitCode, EXIT.FAIL_CLOSED);
-  assert.ok(codes(alone).includes('UNKNOWN_ACTION'), codes(alone).join(','));
+  assert.equal(alone.exitCode, EXIT.FINDINGS);
+  assert.ok(alone.findings.some((f) => f.id === 'TRAFFIC-ROUTING' && f.severity === 'high'));
   assert.ok(ids(run(allow('events:PutTargets', res), passRole)).includes('PASSROLE-SERVICE'));
 });
 
@@ -145,12 +145,10 @@ test('E-1 (b): ECR push staging is clean alone and flagged once PutImage moves a
 
 test('E-1: actions left withheld still fail closed (UNKNOWN_ACTION)', () => {
   const STILL = [
-    'ec2:CreateNetworkInterface', 'ec2:AssignPrivateIpAddresses', 'ec2:UnassignPrivateIpAddresses',
-    'ec2:AttachNetworkInterface', 'ec2:ModifyNetworkInterfaceAttribute',
-    'elasticloadbalancing:CreateLoadBalancer', 'elasticloadbalancing:CreateTargetGroup',
-    'elasticloadbalancing:ModifyListener', 'elasticloadbalancing:AddTags',
+    'ec2:CreateRoute', 'ec2:ReplaceRoute', 'elasticloadbalancing:CreateTrustStore',
+    'elasticloadbalancing:ModifyTrustStore', 'elasticloadbalancing:AddTags',
     'ecr:BatchImportUpstreamImage', 'ecr:PutLifecyclePolicy', 'ecr:PutRegistryPolicy',
-    'events:PutRule', 'lambda:PublishVersion', 'lambda:PutFunctionEventInvokeConfig',
+    'events:CreateConnection', 'events:RetrieveConnectionCredentials', 'lambda:PublishVersion', 'lambda:PutFunctionEventInvokeConfig',
     'lambda:CreateFunctionUrlConfig', 'lambda:TagResource', 'lambda:GetDurableExecutionState',
     'cloudformation:SetStackPolicy', 'eks:CreateAccessEntry', 'eks:AssociateAccessPolicy',
     'eks:AccessKubernetesApi', 'codeartifact:PublishPackageVersion', 'ecr-public:PutImage',
@@ -205,11 +203,11 @@ test('F-2 f2d control: the real action alone is a finding, not a state', () => {
 });
 
 test('F-2: withheld actions, unsnapshotted services and curated-only services stay UNKNOWN_ACTION', () => {
-  const r = run(allow(['events:PutRule', 'lambda:Get*', 'madeupsvc:Thing', 'chime:GetMeeting', 'sqs:SendMessage',
+  const r = run(allow(['events:CreateConnection', 'lambda:Get*', 'madeupsvc:Thing', 'chime:GetMeeting', 'sqs:SendMessage',
     's3:GetObjcet'], 'arn:aws:s3:::b/k'));
   assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
   assert.deepEqual(state(r, 'UNKNOWN_ACTION').details.actions,
-    ['chime:GetMeeting', 'events:PutRule', 'lambda:Get*', 'madeupsvc:Thing', 'sqs:SendMessage']);
+    ['chime:GetMeeting', 'events:CreateConnection', 'lambda:Get*', 'madeupsvc:Thing', 'sqs:SendMessage']);
   assert.deepEqual(state(r, 'NOT_IN_REFERENCE').details.actions, ['s3:GetObjcet']);
   assert.deepEqual(state(r, 'NOT_IN_REFERENCE').details.hints, [{ action: 's3:GetObjcet', suggestion: 's3:GetObject' }]);
 });

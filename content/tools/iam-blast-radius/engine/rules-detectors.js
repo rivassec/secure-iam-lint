@@ -1,5 +1,5 @@
 // rules-detectors.js - the identity-policy rule detectors (wildcard action/resource, direct-IAM-admin, data-exfil, kms-decrypt, scoped data-read + container-read spared-resource analysis, destructive, detection-impairment, notaction-allow, group-membership). Extracted (behavior-preserving).
-import { actionGrants, actionService, actionVerb, concreteResourceAccount, groupNameFromArn, groupNameSuggestsPrivilege, isFullWildcard, isServiceWildcard, isWholeContainerRead, resourceAccountFromCondition, resourceHasVariable, resourceInfersSensitive, BULK_READ_ACTIONS, CONCRETE_ACCOUNT_ID_RE, DATA_READ_ACTIONS, DB_AUTH_ACTIONS, DESTRUCTIVE_EXTRA_ACTIONS, DESTRUCTIVE_VERB, DETECTION_ACTIONS, DETECTION_SERVICES, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, IAM_FEDERATION_ACTIONS, IAM_TAG_ACTIONS, KMS_DECRYPT_ACTIONS, OBJECT_ACL_WRITE_ACTIONS, RESOURCE_POLICY_WRITE_ACTIONS, RESOURCE_SHARE_ACTIONS, SECRET_READ_ACTIONS } from './rules-classify.js';
+import { actionGrants, actionService, actionVerb, concreteResourceAccount, groupNameFromArn, groupNameSuggestsPrivilege, isFullWildcard, isServiceWildcard, isWholeContainerRead, resourceAccountFromCondition, resourceHasVariable, resourceInfersSensitive, BULK_READ_ACTIONS, CONCRETE_ACCOUNT_ID_RE, DATA_READ_ACTIONS, DB_AUTH_ACTIONS, DESTRUCTIVE_EXTRA_ACTIONS, DESTRUCTIVE_VERB, DETECTION_ACTIONS, DETECTION_SERVICES, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, IAM_FEDERATION_ACTIONS, IAM_TAG_ACTIONS, KMS_DECRYPT_ACTIONS, OBJECT_ACL_WRITE_ACTIONS, RESOURCE_POLICY_WRITE_ACTIONS, RESOURCE_SHARE_ACTIONS, SECRET_READ_ACTIONS, TRAFFIC_REDIRECT_ACTIONS, TRAFFIC_ROUTING_ACTIONS } from './rules-classify.js';
 import { denyFencesToNarrow, grantsNonReadAction, makeFinding, remediableWildcardActions, resourceIsBroad, resourceScope, isBroadArnResource, ruleFindingDenySuppressed, survivingBroadReadActions } from './rules-finding.js';
 import { chargeWork, globMatch } from './glob.js';
 import { classifyResource, parseArn, RESOURCE_CLASS } from './resource-arn.js';
@@ -107,13 +107,48 @@ export function ruleWildcardResource(stmt, out) {
 // destructive/exfil/detection rules, where "service:*" is already reported by
 // WILDCARD-ACTION and re-flagging it would be noise).
 export function matchPatterns(stmt, catalog, includeServiceWildcards) {
+  const groups = catalogByService(catalog);
   const matched = [];
   for (const p of stmt.actions) {
     if (isFullWildcard(p)) continue; // "*" is owned by WILDCARD-ACTION
     if (!includeServiceWildcards && isServiceWildcard(p)) continue;
-    if (catalog.some((sensitive) => actionGrants(p, sensitive))) matched.push(p);
+    if (candidatesFor(p, groups).some((sensitive) => actionGrants(p, sensitive))) matched.push(p);
   }
   return matched;
+}
+
+// Exact prefilters that keep matcher work flat as catalogs grow: a pattern with no '*' only
+// matches an action of its own length; with no '*' before its first ':', only an action whose
+// service it glob-matches at the same length (actions have one ':').
+const SERVICE_GROUPS = new WeakMap();
+function catalogByService(catalog) {
+  let g = SERVICE_GROUPS.get(catalog);
+  if (g) return g;
+  g = { all: catalog.slice(), byLength: new Map(), byService: new Map(), loose: [] };
+  for (const a of catalog) {
+    const s = String(a).toLowerCase();
+    if (!g.byLength.has(s.length)) g.byLength.set(s.length, []);
+    g.byLength.get(s.length).push(a);
+    const i = s.indexOf(':');
+    if (i <= 0 || s.indexOf(':', i + 1) !== -1) { g.loose.push(a); continue; }
+    const svc = s.slice(0, i);
+    if (!g.byService.has(svc)) g.byService.set(svc, []);
+    g.byService.get(svc).push(a);
+  }
+  SERVICE_GROUPS.set(catalog, g);
+  return g;
+}
+function candidatesFor(p, groups) {
+  const s = String(p).toLowerCase();
+  if (!s.includes('*')) return groups.byLength.get(s.length) || [];
+  const i = s.indexOf(':');
+  const head = i === -1 ? '' : s.slice(0, i);
+  if (i === -1 || head.includes('*')) return groups.all;
+  const out = groups.loose.slice();
+  for (const [svc, acts] of groups.byService) {
+    if (svc.length === head.length && globMatch(head, svc)) out.push(...acts);
+  }
+  return out;
 }
 
 // F15: true when every matched pattern grants only `subset` actions of `all`, so
@@ -1244,6 +1279,35 @@ export function ruleGroupMembership(stmt, out) {
         'Scope iam:AddUserToGroup to the specific non-privileged group ARNs it ' +
         'must manage, keep privileged groups out of self-service membership, and ' +
         'review the target group\'s attached policies to confirm its actual reach.',
+    }),
+  );
+}
+
+// r8: ENI / ELB / EventBridge writes. High when an action can send existing traffic or events
+// to a destination the holder picks (listener/rule actions, rule targets, API destinations);
+// medium for the rest (interfaces, IPs, LB settings, rules, buses).
+export function ruleTrafficRouting(stmt, out) {
+  const matched = matchPatterns(stmt, TRAFFIC_ROUTING_ACTIONS, false);
+  if (matched.length === 0) return;
+  const redirect = matched.filter((p) => TRAFFIC_REDIRECT_ACTIONS.some((a) => actionGrants(p, a)));
+  out.push(
+    makeFinding('TRAFFIC-ROUTING', stmt, {
+      severity: redirect.length > 0 ? 'high' : 'medium',
+      policyEvidence: 'high',
+      actions: matched,
+      resources: resourceScope(stmt),
+      why: redirect.length > 0
+        ? `Grants ${redirect.join(', ')}: the holder can point a listener, listener rule, event rule or ` +
+          'API destination at a target it chooses, including one in another account (traffic hijack or ' +
+          'event exfiltration).'
+        : `Grants network / event routing writes (${matched.join(', ')}): security group rules, network ` +
+          'interfaces and their security groups or IPs, load balancer subnets, security groups, certificates and targets, or ' +
+          'EventBridge rules, buses and events. These change what can reach a workload or which events ' +
+          'reach existing targets.',
+      remediation:
+        'Scope these actions to the specific load balancers, rules, buses or subnets the workload owns, ' +
+        'and gate them with tag or resource conditions (e.g. aws:ResourceTag, events:TargetArn, ' +
+        'ec2:Subnet).',
     }),
   );
 }
