@@ -115,12 +115,44 @@ const KNOWN_KEYS = Object.freeze({
   'aws:resourceorgid': { class: CONDITION_CLASS.CONSTRAINT, role: 'resource-org', label: 'Resource organization' },
   'aws:resourceorgpaths': { class: CONDITION_CLASS.CONSTRAINT, role: 'resource-org', label: 'Resource organization path', multivalued: true },
   'aws:principalorgpaths': { class: CONDITION_CLASS.CONSTRAINT, role: 'org', label: 'Principal organization path', multivalued: true, uncredited: true },
+  // E-2 keys. Each only narrows an Allow; selectors are never credited.
+  // iam:AWSServiceName: service of the service-linked role CreateServiceLinkedRole makes;
+  // sts:AWSServiceName: service a bearer token is for (reference_policies_iam-condition-keys.html).
+  'iam:awsservicename': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'Service-linked role service' },
+  'sts:awsservicename': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'Bearer token service' },
+  // ec2:AuthorizedService: service granted a network-interface permission; ec2:Subnet: subnet
+  // ARN; ec2:CreateAction: create API that may tag (service-authorization list_amazonec2.html).
+  'ec2:authorizedservice': { class: CONDITION_CLASS.SELECTOR, role: 'service', label: 'Network interface permission service' },
+  'ec2:subnet': { class: CONDITION_CLASS.CONSTRAINT, role: 'network', label: 'Subnet ARN' },
+  'ec2:createaction': { class: CONDITION_CLASS.CONSTRAINT, role: 'create-action', label: 'Tag-on-create API' },
+  // Same tag-on-create gate for ELB (list_awselasticloadbalancingv2.html).
+  'elasticloadbalancing:createaction': { class: CONDITION_CLASS.CONSTRAINT, role: 'create-action', label: 'Tag-on-create API' },
+  // acm-pca:TemplateArn: certificate template IssueCertificate may use (list_awsprivatecertificateauthority.html).
+  'acm-pca:templatearn': { class: CONDITION_CLASS.SELECTOR, role: 'resource', label: 'Private CA certificate template' },
 });
 
 // Keys whose credit needs a positive string/ARN operator (a Date/Numeric op pins no value).
 const POSITIVE_OP_KEYS = new Set([
   'aws:resourceorgid', 'aws:resourceorgpaths', 'aws:principalorgpaths',
+  'ec2:subnet', 'ec2:createaction', 'elasticloadbalancing:createaction',
 ]);
+
+// E-2: keys that carry a caller-chosen suffix. Tags (aws:RequestTag/<k>,
+// aws:ResourceTag/<k>, ec2:ResourceTag/<k>: reference_policies_condition-keys.html,
+// list_amazonec2.html) and kms:EncryptionContext:<k> (kms conditions-kms.html) select a
+// value; the caller may be able to set it, so they are never credited. Empty suffix: unknown.
+const PREFIXED_KEYS = Object.freeze([
+  { prefix: 'aws:requesttag/', meta: { class: CONDITION_CLASS.SELECTOR, role: 'tag', label: 'Request tag' } },
+  { prefix: 'aws:resourcetag/', meta: { class: CONDITION_CLASS.SELECTOR, role: 'tag', label: 'Resource tag' } },
+  { prefix: 'ec2:resourcetag/', meta: { class: CONDITION_CLASS.SELECTOR, role: 'tag', label: 'EC2 resource tag' } },
+  { prefix: 'kms:encryptioncontext:', meta: { class: CONDITION_CLASS.SELECTOR, role: 'encryption-context', label: 'KMS encryption context pair' } },
+]);
+function prefixedMeta(keyLower) {
+  for (const { prefix, meta } of PREFIXED_KEYS) {
+    if (keyLower.startsWith(prefix) && keyLower.length > prefix.length) return meta;
+  }
+  return null;
+}
 
 // Recognized federation PROVIDER HOSTS (docs/trust-policy-semantics.md 4.4/4.5).
 // A federation claim key is `<provider-host>:<claim>`; the host must be one AWS
@@ -176,9 +208,15 @@ function federationMeta(keyLower, statementHosts = null) {
   const lastColon = keyLower.lastIndexOf(':');
   if (lastColon <= 0 || lastColon === keyLower.length - 1) return null;
   const claim = keyLower.slice(lastColon + 1);
-  if (claim !== 'aud' && claim !== 'sub' && claim !== 'amr' && claim !== 'repository_id') return null;
+  if (claim !== 'aud' && claim !== 'sub' && claim !== 'amr' && claim !== 'repository_id' && claim !== 'ref') return null;
   const host = keyLower.slice(0, lastColon);
   if (!RECOGNIZED_FEDERATION_HOSTS.has(host) && !(statementHosts && statementHosts.has(host))) return null;
+  // E-2: GitHub's ref claim (branch/tag; reference_policies_iam-condition-keys.html#condition-keys-wif).
+  // A ref does not pin a repository, so it narrows but is never credited.
+  if (claim === 'ref') {
+    if (host !== 'token.actions.githubusercontent.com') return null;
+    return { class: CONDITION_CLASS.CONSTRAINT, role: 'federation-ref', label: 'GitHub git ref', federation: 'ref', uncredited: true };
+  }
   // R7: GitHub's repository_id is a globally unique numeric repo pin (GitHub only).
   if (claim === 'repository_id') {
     if (host !== 'token.actions.githubusercontent.com') return null;
@@ -485,6 +523,8 @@ function valueNarrowsKey(keyLower, value) {
     case 'aws:resourceorgpaths':
     case 'aws:principalorgpaths':
       return orgPathValueNarrows(value);
+    case 'ec2:subnet':
+      return arnValueNarrows(value);
     case 's3:resourceaccount':
     case 'aws:resourceaccount':
       // F2-09: credit only a full-literal account id (an 11-digit typo matches no
@@ -578,7 +618,7 @@ export function classifyConditionEntry(operator, key, value, presenceCheckedKeys
   // context-required, surfaced in coverage (unsupported does NOT mean safe).
   const meta = Object.prototype.hasOwnProperty.call(KNOWN_KEYS, keyLower)
     ? KNOWN_KEYS[keyLower]
-    : federationMeta(keyLower, federationHosts);
+    : (prefixedMeta(keyLower) || federationMeta(keyLower, federationHosts));
   const known = meta !== null;
 
   const negated = NEGATED_OPERATORS.has(base);

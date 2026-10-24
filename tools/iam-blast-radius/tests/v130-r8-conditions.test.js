@@ -1,4 +1,4 @@
-// v1.3.0 round 8 Lane B: org condition keys (F-3).
+// v1.3.0 round 8 Lane B: org condition keys (F-3) and the trial's E-2 keys.
 // Shapes mirror the trial bundle probes (probes/conditions/*, batch-2 f1*).
 
 import test from 'node:test';
@@ -14,9 +14,21 @@ const codes = (r) => (r.analysisStates || []).map((s) => s.code);
 const ids = (r) => r.findings.map((f) => `${f.id}:${f.severity}`).sort();
 const allow = (Action, Condition, Resource = '*') => ({ Effect: 'Allow', Action, Resource, Condition });
 
-// Trial probes (aws:SourceVpce is the supported control, already modeled).
+// The 13 trial probes (aws:SourceVpce is the supported control, already modeled).
 const PROBES = [
+  ['acm-pca:IssueCertificate', { ArnLike: { 'acm-pca:TemplateArn': 'arn:aws:acm-pca:::template/EndEntityCertificate/V1' } }],
   ['s3:GetObject', { 'ForAnyValue:StringLike': { 'aws:PrincipalOrgPaths': `${ORG}/r-ab12/ou-ab12-11111111/*` } }],
+  ['elasticloadbalancing:CreateLoadBalancer', { Null: { 'aws:RequestTag/elbv2.k8s.aws/cluster': 'false' } }],
+  ['elasticloadbalancing:DeleteLoadBalancer', { Null: { 'aws:ResourceTag/elbv2.k8s.aws/cluster': 'false' } }],
+  ['ec2:CreateNetworkInterfacePermission', { StringEquals: { 'ec2:AuthorizedService': 'codebuild.amazonaws.com' } }],
+  ['ec2:CreateTags', { StringEquals: { 'ec2:CreateAction': 'CreateSecurityGroup' } }],
+  ['ec2:DeleteNetworkInterface', { StringEquals: { 'ec2:ResourceTag/eks:eni:owner': 'amazon-vpc-cni' } }],
+  ['ec2:CreateNetworkInterfacePermission', { ArnEquals: { 'ec2:Subnet': 'arn:aws:ec2:us-east-2:111111111111:subnet/subnet-0example' } }],
+  ['elasticloadbalancing:AddTags', { StringEquals: { 'elasticloadbalancing:CreateAction': 'CreateTargetGroup' } }],
+  ['iam:CreateServiceLinkedRole', { StringEquals: { 'iam:AWSServiceName': 'elasticloadbalancing.amazonaws.com' } }],
+  ['kms:Decrypt', { StringEquals: { 'kms:EncryptionContext:aws:s3:arn': 'arn:aws:s3:::example-bucket' } }],
+  ['sts:GetServiceBearerToken', { StringEquals: { 'sts:AWSServiceName': 'codeartifact.amazonaws.com' } }],
+  ['s3:GetObject', { StringEquals: { 'token.actions.githubusercontent.com:ref': 'refs/heads/main' } }],
 ];
 
 test('E-2/F-3: every trial probe key is modeled (no UNSUPPORTED_CONDITION)', () => {
@@ -38,6 +50,12 @@ test('E-2/F-3: a modeled key never turns a finding into a clean pass', () => {
 
 const NEW_KEYS = [
   ['aws:ResourceOrgID', ORG], ['aws:ResourceOrgPaths', `${ORG}/*`], ['aws:PrincipalOrgPaths', `${ORG}/*`],
+  ['iam:AWSServiceName', 'x.amazonaws.com'], ['sts:AWSServiceName', 'x.amazonaws.com'],
+  ['ec2:AuthorizedService', 'x.amazonaws.com'], ['ec2:Subnet', 'arn:aws:ec2:us-east-1:111111111111:subnet/subnet-1'],
+  ['ec2:CreateAction', 'RunInstances'], ['elasticloadbalancing:CreateAction', 'CreateTargetGroup'],
+  ['aws:RequestTag/team', 'a'], ['aws:ResourceTag/karpenter.sh/nodepool', 'a'], ['ec2:ResourceTag/x', 'a'],
+  ['acm-pca:TemplateArn', 'arn:aws:acm-pca:::template/EndEntityCertificate/V1'],
+  ['kms:EncryptionContext:app', 'a'], ['token.actions.githubusercontent.com:ref', 'refs/heads/main'],
 ];
 const OPS = ['StringEquals', 'StringLike', 'StringNotEquals', 'StringEqualsIfExists', 'ForAnyValue:StringLike',
   'ForAllValues:StringEquals', 'ForAnyValue:StringNotLike', 'ArnLike', 'Null', 'Bool'];
@@ -61,6 +79,11 @@ test('E-2/F-3: undecidable shapes stay UNSUPPORTED_CONDITION (exit 3)', () => {
     // Multivalued keys need ForAnyValue/ForAllValues.
     { StringLike: { 'aws:PrincipalOrgPaths': `${ORG}/*` } },
     { StringEquals: { 'aws:ResourceOrgPaths': `${ORG}/r-ab12/` } },
+    // Empty suffix, unrelated host, non-GitHub ref.
+    { StringEquals: { 'aws:RequestTag/': 'a' } },
+    { StringEquals: { 'kms:EncryptionContext:': 'a' } },
+    { StringEquals: { 'accounts.google.com:ref': 'refs/heads/main' } },
+    { StringEquals: { 'evil.example.com:ref': 'refs/heads/main' } },
     { StringEquals: { 'aws:ResourceOrgIDs': ORG } },
   ]) {
     const r = run(P(allow('s3:GetObject', cond)));
@@ -82,8 +105,11 @@ test('F-3: credit follows the PrincipalOrgID rules', () => {
   assert.equal(c('ForAnyValue:StringLike', 'aws:ResourceOrgPaths', '*/r-ab12/*'), false);
   assert.equal(c('ForAllValues:StringLike', 'aws:ResourceOrgPaths', `${ORG}/*`), false);
   assert.equal(c('ForAnyValue:StringLike', 'aws:ResourceOrgPaths', [`${ORG}/*`, '*']), false);
-  // Never credited: principal org paths (trust.js does not credit them).
+  // Never credited: principal org paths (trust.js does not credit them) and selectors.
   assert.equal(c('ForAnyValue:StringLike', 'aws:PrincipalOrgPaths', `${ORG}/*`), false);
+  assert.equal(c('StringEquals', 'aws:RequestTag/team', 'a'), false);
+  assert.equal(c('StringEquals', 'iam:AWSServiceName', 'x.amazonaws.com'), false);
+  assert.equal(c('StringEquals', 'token.actions.githubusercontent.com:ref', 'refs/heads/main'), false);
   assert.equal(c('Bool', 'aws:ResourceOrgID', 'true'), false);
   assert.equal(classifyConditionEntry('StringNotEquals', 'aws:ResourceOrgID', ORG).class, 'expansion');
 });
