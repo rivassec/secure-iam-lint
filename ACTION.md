@@ -146,6 +146,7 @@ jobs:
           path: iam-blast-radius.sarif
           if-no-files-found: ignore
           retention-days: 1
+          overwrite: true   # v4+ artifact names are immutable per run; a re-run needs this
 
   upload:
     needs: scan
@@ -206,6 +207,7 @@ run the Action **multiple times** with different `paths` globs and a different
 | `findings-count` | Total findings emitted across all scanned files. |
 | `blocking-findings-count` | Total findings at/above the `fail-on` threshold. |
 | `analysis-status` | Aggregate analysis status: `complete`, `partial`, or `failed`. |
+| `reason` | Headline reason for the run: `clean`, or an enum code such as `FINDINGS`, `COVERAGE_INCOMPLETE` or `PULUMI_ACCOUNT_UNRESOLVED`. Enum values only, never input-derived text. When several units share the worst exit code, a run-level cause (an account that could not be resolved, an unmodeled resource) is preferred over `COVERAGE_INCOMPLETE` / `FINDINGS`. |
 | `scan-scope` | With `pulumi-json` only: `delta` (a default preview, changed resources only) or `full` (a stack export, or a preview with `--show-sames`). |
 | `baselined-count` | Baseline entries that matched a result this run. Set only when `baseline` is given. |
 | `baseline-stale-count` | Baseline entries that matched nothing this run and can be pruned. Set only when `baseline` is given. |
@@ -314,6 +316,25 @@ analyzer-state result is appended, so a truncated document is never mistaken for
 complete one. Truncation shapes only the SARIF document; it **never** changes the
 exit code (that is driven only by finding severity: a fail-closed `3` stays `3`).
 
+### Data in the SARIF and in the CLI's JSON
+
+Both carry policy details, so treat them as sensitive as the policy files themselves
+(checked against a synthetic policy with a `Sid`, a bucket ARN, `sts:ExternalId` and
+`aws:SourceVpce`):
+
+- **SARIF** always carries the `Sid`, action names and the file path. Findings that
+  carry an evidence block (for example `PASSROLE-*` and `TRUST-*`) also carry the
+  statement's resource ARNs, account ids and its condition **keys and values**
+  (including `sts:ExternalId` and `aws:SourceVpce`), markdown-escaped. Findings
+  without one (for example `WILDCARD-ACTION`, `DATA-EXFIL`) carry only the message.
+  Do not assume SARIF is free of ARNs or condition values.
+- **`iam-br --format json`** always carries all of it: ARNs, account ids and every
+  condition value.
+- The step summary and the runner log carry counts and reason codes only.
+
+A SARIF uploaded to code scanning is visible to everyone who can read the repo's
+Security tab; a workflow artifact is visible to everyone who can read the run.
+
 ## Permissions
 
 - Default required permission is **`contents: read`**. The Action reads files and
@@ -321,6 +342,19 @@ exit code (that is driven only by finding severity: a fail-closed `3` stays `3`)
 - Grant **`security-events: write` only** in a job that runs
   `github/codeql-action/upload-sarif`, and only on that job. Do not grant it in the
   job that runs the Action on untrusted pull-request content.
+
+## Credentials
+
+The Action reads files and makes no network calls, so it needs **no AWS
+credentials**. If `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` or `AWS_SESSION_TOKEN`
+is set in its step environment, it logs a warning `AWS_CREDENTIALS_IN_ENV` naming the
+variables (never their values). Scope credentials to the steps that need them:
+
+- Run the Action in a job (or a step ordered before) that has no credentials.
+- With `aws-actions/configure-aws-credentials`, set `output-env-credentials: false`
+  so the keys are not exported to the job environment, and read the step outputs for
+  the steps that need them.
+- Do not set credentials in a job-level `env:`.
 
 ## Security guidance for consumers
 

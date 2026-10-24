@@ -220,9 +220,9 @@ test('Action: baseline-output then baseline turns exit 3 into 0 with truthful ou
   assert.equal(second.outputs['baseline-stale-count'], '0');
 });
 
-test('Action: without a baseline the output set is unchanged', () => {
+test('Action: without a baseline the output set has no baseline outputs', () => {
   const r = runAction({ env: { INPUT_PATHS: 'p/*.json', INPUT_FAMILY: 'identity', INPUT_PARTITION: 'aws' }, io: actionIo({ 'p/a.json': POLICY(['s3:GetObject']) }) });
-  assert.deepEqual(Object.keys(r.outputs).sort(), ['analysis-status', 'blocking-findings-count', 'exit-code', 'findings-count', 'sarif-path']);
+  assert.deepEqual(Object.keys(r.outputs).sort(), ['analysis-status', 'blocking-findings-count', 'exit-code', 'findings-count', 'reason', 'sarif-path']);
   assert.equal(r.baselinePath, null);
 });
 

@@ -43,7 +43,7 @@ import {
 export * from './action-output.mjs';
 import {
   exceedsInputByteCap, sarifOutputIsContained, sarifTargetContainedFs, getInput, readInputs, budgetMsInput,
-  unrecognizedInputs,
+  unrecognizedInputs, credentialsInEnv,
 } from './action-inputs.mjs';
 export * from './action-inputs.mjs';
 import {
@@ -455,6 +455,9 @@ function safeInputs(env) {
 }
 
 // Aggregate a list of scanned units into the final structured result + outputs.
+// Reasons that name a document-level gap, not a run-level cause.
+const WEAK_REASONS = new Set(['COVERAGE_INCOMPLETE', 'FINDINGS']);
+
 function finalize(rawUnits, inputs, manifest) {
   // Attach baseline keys to every unit (so the SARIF publishes them) and apply an opt-in
   // baseline. applyBaseline never changes a usage/internal/failed unit, so synthetic
@@ -504,13 +507,15 @@ function finalize(rawUnits, inputs, manifest) {
   const blockingCount = units.reduce((n, u) => n + toCount(u.result && u.result.blockingCount), 0);
   const analysisStatus = aggregateStatus(units.map((u) => u.result && u.result.analysisStatus));
 
-  // Reason for the failure message: the reason of the FIRST unit whose code equals
-  // the worst aggregate code, else 'clean'.
+  // Headline reason: among units at the worst code, prefer a run-level state over
+  // COVERAGE_INCOMPLETE / FINDINGS (they say less); else the first. Enum-shaped only.
   let reason = 'clean';
   if (exitCode !== EXIT.CLEAN) {
-    const worstUnit = units.find((u) => normalizeExitCode(u.result && u.result.exitCode) === exitCode);
-    reason = (worstUnit && worstUnit.result && worstUnit.result.reason) || 'FAILED';
+    const worst = units.filter((u) => normalizeExitCode(u.result && u.result.exitCode) === exitCode);
+    const pick = worst.find((u) => u.result && isNonEmptyString(u.result.reason) && !WEAK_REASONS.has(u.result.reason)) || worst[0];
+    reason = (pick && pick.result && pick.result.reason) || 'FAILED';
   }
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(String(reason))) reason = 'FAILED';
 
   const sarifPath = inputs.sarifOutput;
   const outputs = {
@@ -519,6 +524,7 @@ function finalize(rawUnits, inputs, manifest) {
     'findings-count': String(findingsCount),
     'blocking-findings-count': String(blockingCount),
     'analysis-status': analysisStatus,
+    reason,
   };
   if (inputs && isNonEmptyString(inputs.scanScope)) outputs['scan-scope'] = inputs.scanScope;
   // Baseline outputs exist only when a baseline was applied (absent otherwise, so runs
@@ -745,6 +751,12 @@ export async function main() {
     const listed = stray.names.length > 0 ? stray.names.join(', ') : '';
     const more = stray.odd > 0 ? `${listed ? ' and ' : ''}${stray.odd} with an unusual name` : '';
     process.stderr.write(`IAM Blast Radius: ignoring unrecognized input(s): ${listed}${more} (not declared in action.yml).\n`);
+  }
+
+  // The Action reads files only and needs no AWS credentials. Names are fixed constants.
+  const creds = credentialsInEnv(process.env);
+  if (creds.length > 0) {
+    process.stderr.write(`IAM Blast Radius: AWS_CREDENTIALS_IN_ENV: ${creds.join(', ')} set in this step's environment; this action needs no AWS credentials, scope them to the steps that do (see ACTION.md, Credentials).\n`);
   }
 
   // Stale baseline entries (accepted keys that matched nothing this run) are harmless but

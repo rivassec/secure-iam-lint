@@ -148,6 +148,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Pulumi component resources (`custom: false`) are no longer backstopped; the child
   resources they create are analyzed on their own.
 
+### Action outputs and docs (round 8, lane E)
+
+- Action: the failure headline prefers a run-level state (for example
+  `PULUMI_ACCOUNT_UNRESOLVED`) over a document-level `COVERAGE_INCOMPLETE` when both
+  share the worst exit code. The exit code is unchanged.
+- Action: new `reason` output, the headline reason as an enum code (or `clean`),
+  never input-derived text.
+- Action: a runner warning `AWS_CREDENTIALS_IN_ENV` (variable names only, never
+  values) when AWS credentials are in the step environment; the Action needs none.
+- Docs: ACTION.md Credentials section; data in the SARIF vs the CLI's JSON (SARIF
+  evidence blocks can carry ARNs, account ids and condition values); the
+  `actions/upload-artifact` `overwrite: true` note for re-runs; README scope section
+  on what the tool does not see.
+
 ### Known limitations
 
 - Source-bound, org-scoped and own-account Lambda permissions are listed in the
