@@ -1,0 +1,102 @@
+# CLI container image: build + smoke-test on PRs; publish to GHCR on a version tag.
+#
+# Publishing is DORMANT until a v*.*.* tag is pushed (the same trigger as release.yml).
+# The image is pushed to ghcr.io/rivassec/secure-iam-lint:<version> with a SLSA build
+# provenance attestation (actions/attest) plus BuildKit provenance and SBOM.
+name: container
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'package.json'
+      - 'cli/**'
+      - 'action/**'
+      - 'content/tools/iam-blast-radius/engine/**'
+      - 'scripts/container-smoke.sh'
+      - '.github/container-smoke/**'
+      - '.github/workflows/container.yml'
+
+# Least privilege: jobs below widen this only where they need to.
+permissions:
+  contents: read
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build image
+        run: docker build -t secure-iam-lint:ci .
+      - name: Smoke test (exit codes 0/1/3, non-root, --network none)
+        run: scripts/container-smoke.sh secure-iam-lint:ci
+
+  publish:
+    # Tag pushes only. Needs the smoke job; the tag must match package.json and sit on main.
+    if: github.event_name == 'push'
+    needs: smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write       # push to GHCR
+      id-token: write       # sign the provenance attestation (Sigstore OIDC)
+      attestations: write   # store the attestation
+    env:
+      IMAGE: ghcr.io/rivassec/secure-iam-lint
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0   # the ancestry gate needs the tag <-> main merge base
+
+      - name: Verify the tag matches package.json and is on origin/main
+        id: verify
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          pkg_version="$(node -p "require('./package.json').version")"
+          if [ "${REF_NAME#v}" != "$pkg_version" ]; then
+            echo "::error::tag $REF_NAME != package.json version $pkg_version"
+            exit 1
+          fi
+          echo "version=$pkg_version" >> "$GITHUB_OUTPUT"
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tagged commit $GITHUB_SHA is not reachable from origin/main"
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.verify.outputs.version }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

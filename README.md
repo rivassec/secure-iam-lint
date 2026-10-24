@@ -268,6 +268,23 @@ Notes:
 - The pins above are the versions current at the v1.1.0 release; let Dependabot
   keep your copies current (it also rewrites the `# vX.Y.Z` comments).
 
+## Container image
+
+The CLI is also available as a container image, for runners that are not GitHub Actions
+(Argo Workflows, EventBridge-triggered tasks, any CI). It is `node:24-alpine` plus the
+shipped CLI, with no runtime dependencies, running as a non-root user. It needs no
+network and no AWS credentials.
+
+    docker run --rm --network none -v "$PWD:/work:ro" -w /work \
+      ghcr.io/rivassec/secure-iam-lint:1.3.0 --family identity policy.json
+
+Arguments are the `iam-br` CLI's, and the exit-code contract is unchanged (`0` clean,
+`1` findings, `2` usage, `3` could not analyze, `4` internal): fail the job on any
+non-zero exit. Pin the image by digest in production. Each tag push (`v*.*.*`) publishes
+one image with a build provenance attestation; verify it with
+`gh attestation verify oci://ghcr.io/rivassec/secure-iam-lint:<version> --repo rivassec/secure-iam-lint`.
+Build it yourself with `docker build -t secure-iam-lint .` from a checkout.
+
 ## History
 
 This repository began as a Python IAM-policy linter (2025). It was repurposed in
