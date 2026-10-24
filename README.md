@@ -169,6 +169,9 @@ findings are located by `<urn>#<property>`.
   `scan-scope: delta` and exit `0` means "no new risk in this change", not "stack
   clean". For a full scan use `pulumi preview --show-sames --json` or
   `pulumi stack export`. On `main` a workflow can require `scan-scope == 'full'`.
+- **Export vs preview.** `pulumi stack export` scans the deployed state, not the
+  change under review (a stack whose applies have been failing still shows what is
+  deployed). Gate a PR with `pulumi preview --json --show-sames`.
 - **Fail closed.** Values Pulumi doesn't know until `up` (`PULUMI_UNKNOWN`), secrets
   (`PULUMI_SECRET`, never read or echoed), unsupported policy-bearing types, and an
   unresolved or ambiguous account or partition are exit `3`. A brand-new stack's
@@ -181,6 +184,9 @@ findings are located by `<urn>#<property>`.
   configured only by `profile`) is `PULUMI_ACCOUNT_UNRESOLVED` (exit `3`). Name its
   account with `provider-accounts` (`<provider>=<account>`, one per line); it is
   cross-checked against the stack and never proves a same-account trust by itself.
+  When providers span more than one account, leave `subject-account` unset: with it
+  set, the other accounts' documents fail closed (`PULUMI_ACCOUNT_MISMATCH`) and the
+  run warns `PULUMI_PROVIDERS_MULTI_ACCOUNT`.
 - **Baselines** work as for files, keyed per `<urn>#<property>`: a renamed resource or
   stack shows up as one stale and one new entry.
 - **Keep `preview.json` inside the job.** Secrets are redacted, but config and resource

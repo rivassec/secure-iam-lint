@@ -72,8 +72,12 @@ export function serviceForArn(arn) {
 const TYPE_HINT_SERVICE = Object.freeze({
   's3': 's3', 's3-bucket': 's3', 's3-object': 's3', 'sns': 'sns', 'sqs': 'sqs', 'kms': 'kms', 'kms-key': 'kms',
   'ecr': 'ecr', 'ecr-repository': 'ecr', 'secretsmanager': 'secretsmanager', 'secretsmanager-secret': 'secretsmanager',
-  'dynamodb': 'dynamodb', 'dynamodb-table': 'dynamodb',
+  'dynamodb': 'dynamodb', 'dynamodb-table': 'dynamodb', 'ecr-registry': 'ecr',
 });
+
+// E-3: a registry policy or creation template covers every repository (under a prefix).
+// Only with the explicit 'ecr-registry' hint: repository/* or repository/<prefix>/*.
+const ECR_REGISTRY_RE = /^repository\/(?:[a-z0-9][a-z0-9._/-]*\/)?\*$/;
 
 // F14: message when the type hint contradicts the context ARN, else null.
 function contextMismatch(arn, typeHint, arnRaw) {
@@ -159,7 +163,9 @@ export function parseResourceContext(context) {
     };
   }
 
-  const service = serviceForArn(arn);
+  const registry = typeHint && typeHint.trim().toLowerCase() === 'ecr-registry';
+  const service = registry && String(arn.service).toLowerCase() === 'ecr' && ECR_REGISTRY_RE.test(String(arn.resource))
+    ? RESOURCE_SERVICES.ECR_REPOSITORY : serviceForArn(arn);
   if (!MODELED_RESOURCE_SERVICES.has(service)) {
     return {
       ok: false,

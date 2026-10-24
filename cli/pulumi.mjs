@@ -13,6 +13,8 @@ import { scan, EXIT, ANALYSIS_STATUS, ANALYSIS_STATE, DEFAULT_BUDGET_MS, meetsTh
 import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 import { applyBaseline } from './baseline.mjs';
 import { actionGrants } from '../content/tools/iam-blast-radius/engine/escalation-action-grants.js';
+import { isMatchAllSourceValue } from '../content/tools/iam-blast-radius/engine/resource-source-binding.js';
+import { DOC_CONFUSED_DEPUTY, RESOURCE_RULE_VERSION } from '../content/tools/iam-blast-radius/engine/resource-catalogs.js';
 
 // Preview placeholder for a value not known until apply (whole property collapses to it).
 export const PULUMI_UNKNOWN = '04da6b54-80e4-46f7-96ec-b56ff0331ba9';
@@ -83,11 +85,11 @@ const TYPE_MAP = Object.freeze({
   'aws-native:secretsmanager:ResourcePolicy': [{ prop: 'resourcePolicy', family: RESOURCE, required: true, ctx: { kind: 'arn', field: 'secretId', type: 'secretsmanager' } }],
   'aws-native:sqs:QueueInlinePolicy': [{ prop: 'policyDocument', family: RESOURCE, required: true, ctx: { kind: 'sqs-url', field: 'queue' } }],
   'aws-native:organizations:Policy': [{ prop: 'content', family: SCP, required: true, orgType: 'type' }],
-  // R5-2: seen in real state. No single attached resource for registry/template/log policies: exit 3.
+  // R5-2: seen in real state. E-3: registry/template/log context comes from the provider's proven account.
   'aws:ssoadmin/permissionSetInlinePolicy:PermissionSetInlinePolicy': [{ prop: 'inlinePolicy', family: IDENTITY, required: true }],
-  'aws:ecr/registryPolicy:RegistryPolicy': [{ prop: 'policy', family: RESOURCE, required: true, ctx: { kind: 'none', type: 'ecr' } }],
-  'aws:ecr/repositoryCreationTemplate:RepositoryCreationTemplate': [{ prop: 'repositoryPolicy', family: RESOURCE, ctx: { kind: 'none', type: 'ecr' } }],
-  'aws:cloudwatch/logResourcePolicy:LogResourcePolicy': [{ prop: 'policyDocument', family: RESOURCE, required: true, ctx: { kind: 'arn', field: 'resourceArn', type: 'logs' } }],
+  'aws:ecr/registryPolicy:RegistryPolicy': [{ prop: 'policy', family: RESOURCE, required: true, ctx: { kind: 'ecr-registry' } }],
+  'aws:ecr/repositoryCreationTemplate:RepositoryCreationTemplate': [{ prop: 'repositoryPolicy', family: RESOURCE, ctx: { kind: 'ecr-template', field: 'prefix' } }],
+  'aws:cloudwatch/logResourcePolicy:LogResourcePolicy': [{ prop: 'policyDocument', family: RESOURCE, required: true, ctx: { kind: 'logs-account', field: 'resourceArn' } }],
   'aws:dynamodb/resourcePolicy:ResourcePolicy': [{ prop: 'policy', family: RESOURCE, required: true, ctx: { kind: 'arn', field: 'resourceArn', type: 'dynamodb' } }],
 });
 
@@ -314,7 +316,13 @@ const MSG = Object.freeze({
   PULUMI_PARTITION_UNRESOLVED: 'The provider region does not map to a known AWS partition, so the partition is not assumed.',
   PULUMI_PARTITION_MISMATCH: 'The supplied partition differs from the partition the stack proves for these resources, or the resource and provider regions disagree.',
   PULUMI_CONTEXT_AMBIGUOUS: 'More than one resource in the stack matches the resource this policy is attached to.',
-  PULUMI_UNMODELED_PERMISSION: 'A Lambda permission grants invoke to the public, another account, or a service with no source binding. It is not modeled yet; unsupported does NOT mean safe.',
+  PULUMI_CONTEXT_UNPROVEN: 'The resource type implies the attached resource (the ECR registry or CloudWatch Logs of the provider account and region), but the stack does not prove that account (a managed IAM resource ARN, allowedAccountIds or an assume-role ARN). subject-account and provider-account name an account but do not prove it, so the context is not inferred.',
+  PULUMI_UNMODELED_PERMISSION: 'A Lambda permission grants invoke to the public or to another account. It is not modeled yet; unsupported does NOT mean safe.',
+});
+
+// E-5: run-level warnings (never change a verdict). Messages are fixed text plus a count.
+export const PULUMI_WARNING = Object.freeze({
+  PULUMI_PROVIDERS_MULTI_ACCOUNT: (n) => `Providers resolve to ${n} AWS accounts but subject-account is set, so documents in the other accounts fail closed with PULUMI_ACCOUNT_MISMATCH. Omit subject-account for a multi-account stack; provider-account names each provider's account.`,
 });
 const st = (code, path, kind = ANALYSIS_STATE.INCOMPLETE) => state(kind, code, MSG[code] || 'Pulumi input could not be fully analyzed.', path);
 
@@ -483,6 +491,8 @@ function resolveScope(it, facts, opts, globalSeen, globalStates) {
     derivedPart = derivedPart || arnPart;
   }
   const resRegion = it.inputs.region;
+  const regionOf = (r) => (isStr(r) && !taint(r) && partitionForRegion(r) ? r : null);
+  const region = regionOf(resRegion) || (f ? regionOf(f.region) : null);
   if (isStr(resRegion) && !taint(resRegion)) {
     const rp = partitionForRegion(resRegion);
     if (!rp || (derivedPart && rp !== derivedPart)) states.push(st('PULUMI_PARTITION_MISMATCH', it.urn));
@@ -509,7 +519,7 @@ function resolveScope(it, facts, opts, globalSeen, globalStates) {
     globalSeen.add(`acct:${where}`);
     globalStates.push(st('PULUMI_ACCOUNT_UNRESOLVED', where));
   }
-  return { account, partition, accountProven: !!derivedAcct && evidence.size === 1 && (!explicitAcct || explicitAcct === derivedAcct), states };
+  return { account, partition, region, accountProven: !!derivedAcct && evidence.size === 1 && (!explicitAcct || explicitAcct === derivedAcct), states };
 }
 
 // R5-4: [{ key, account }] -> Map(provider urn -> account). Key = provider name or full URN;
@@ -544,14 +554,16 @@ function providerSummary(facts, opts) {
   });
 }
 
-// Lambda permissions (option d): exit 3 only for risky shapes; source-bound service grants are listed.
+// Lambda permissions: source-bound service, org and own-account grants are listed; an unbound
+// service grant is a confused-deputy finding (E-4); other risky shapes are a per-document exit 3.
 const PERMISSION_TYPES = new Set(['aws:lambda/permission:Permission',
   'aws:lambda/layerVersionPermission:LayerVersionPermission', 'aws-native:lambda:Permission']);
 const SERVICE_PRINCIPAL_RE = /^[a-z0-9.-]+\.amazonaws\.com(?:\.cn)?$/;
-// Returns { state } (exit 3) or { reason } (listed in unanalyzed[]).
+const ACTION_RE = /^[A-Za-z0-9-]{1,64}:[A-Za-z0-9*?]{1,128}$/;
+// Returns { state } (exit 3), { unbound } (finding) or { reason } (listed in unanalyzed[]).
 function permissionVerdict(it, scope) {
   const f = it.inputs;
-  for (const k of ['principal', 'sourceAccount', 'sourceArn', 'principalOrgId', 'organizationId']) {
+  for (const k of ['principal', 'sourceAccount', 'sourceArn', 'principalOrgId', 'organizationId', 'action', 'functionUrlAuthType']) {
     const t = taint(f[k]);
     if (t) return { state: t === 'secret' ? 'PULUMI_SECRET' : 'PULUMI_UNKNOWN' };
   }
@@ -559,7 +571,11 @@ function permissionVerdict(it, scope) {
   const risky = { state: 'PULUMI_UNMODELED_PERMISSION' };
   if (!concrete(p)) return risky;
   if (SERVICE_PRINCIPAL_RE.test(p)) {
-    return concrete(f.sourceArn) || concrete(f.sourceAccount) ? { reason: 'service-principal-source-bound' } : risky;
+    // A match-all sourceArn or a non-account sourceAccount binds nothing.
+    const bound = (concrete(f.sourceArn) && !isMatchAllSourceValue(f.sourceArn))
+      || (concrete(f.sourceAccount) && /^\d{12}$/.test(f.sourceAccount));
+    if (bound) return { reason: 'service-principal-source-bound' };
+    return concrete(f.action) && ACTION_RE.test(f.action) ? { unbound: p } : risky;
   }
   if (concrete(f.principalOrgId) || concrete(f.organizationId)) return { reason: 'org-scoped' };
   const acct = /^\d{12}$/.test(p) ? p : (ARN_ACCOUNT_RE.exec(p) || [])[2];
@@ -569,9 +585,38 @@ function permissionVerdict(it, scope) {
   return risky;
 }
 
+// E-4: the permission as a one-statement resource policy on the function (same id as the engine).
+function confusedDeputyFinding(it, svc) {
+  const f = it.inputs;
+  const fn = concrete(f.function) ? f.function : null;
+  return Object.freeze({
+    id: 'RESOURCE-CONFUSED-DEPUTY',
+    severity: 'high',
+    title: 'Service principal grant without a confused-deputy source binding',
+    statementSid: concrete(f.statementId) ? f.statementId : null,
+    statementIndex: 0,
+    actions: [f.action],
+    resources: fn ? [fn] : [],
+    conditions: null,
+    policyEvidence: 'high',
+    pathExploitability: 'medium',
+    why: `The Lambda permission lets the AWS service principal ${svc} call ${f.action} on this function with NO source `
+      + 'binding (sourceArn / sourceAccount). AWS authorizes the service, not the account that configured it, so an '
+      + 'actor who can make that service act from their own account may be able to induce it to invoke this function '
+      + '(the cross-service confused-deputy problem).',
+    limit: 'From the aws.lambda.Permission resource alone; other permissions on the function are separate resources.',
+    remediation: 'Set sourceArn to the calling resource and/or sourceAccount to its account on the Lambda permission.',
+    ruleVersion: RESOURCE_RULE_VERSION,
+    docRef: DOC_CONFUSED_DEPUTY,
+    sourceBinding: Object.freeze({ state: 'unbound', boundKeys: [], bypassedKeys: [] }),
+  });
+}
+
 // --- Resource context (P4): exact join to the REFERENCED resource ------------------------
 
 const S3_NAME_RE = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+// ECR namespace prefix (CreateRepositoryCreationTemplate API); ROOT is handled apart.
+const ECR_PREFIX_RE = /^(?=.{1,256}$)(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*\/?$/;
 const SQS_URL_RE = /^https:\/\/sqs\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?\/(\d{12})\/([A-Za-z0-9_-]{1,80}(?:\.fifo)?)$/;
 
 function concrete(v) { return isStr(v) && v !== '' && !taint(v); }
@@ -645,6 +690,28 @@ function resolveContext(it, ctx, items, scope) {
       }
       break;
     }
+    case 'ecr-registry':
+    case 'ecr-template':
+    case 'logs-account': {
+      // E-3: implied by the type, in the provider's proven account and region. Never guessed.
+      if (ctx.kind === 'logs-account' && concrete(fieldVal) && fieldVal.startsWith('arn:')) { arn = fieldVal; break; }
+      let res = ctx.kind === 'logs-account' ? '*' : 'repository/*';
+      if (ctx.kind === 'ecr-template') {
+        if (fieldVal === undefined) { states.push(st('PULUMI_PROPERTY_MISSING', `${it.urn}#prefix`, ANALYSIS_STATE.MALFORMED)); break; }
+        if (!concrete(fieldVal) || !(fieldVal === 'ROOT' || ECR_PREFIX_RE.test(fieldVal))) {
+          states.push(st('PULUMI_PROPERTY_INVALID', `${it.urn}#prefix`, ANALYSIS_STATE.MALFORMED));
+          break;
+        }
+        if (fieldVal !== 'ROOT') res = `repository/${fieldVal.replace(/\/$/, '')}/*`;
+      }
+      if (!scope.accountProven || !scope.partition || !scope.region || partitionForRegion(scope.region) !== scope.partition) {
+        states.push(st('PULUMI_CONTEXT_UNPROVEN', it.urn));
+        break;
+      }
+      arn = `arn:${scope.partition}:${ctx.kind === 'logs-account' ? 'logs' : 'ecr'}:${scope.region}:${scope.account}:${res}`;
+      account = scope.account;
+      break;
+    }
     case 'ecr-name': {
       if (!concrete(fieldVal)) break;
       const hits = matchOne(items, ['aws:ecr/repository:Repository'], ['name'], fieldVal);
@@ -663,6 +730,8 @@ function ctxType(ctx) {
   if (ctx.kind === 's3' || ctx.kind === 's3-self') return 's3-bucket';
   if (ctx.kind === 'sqs-url') return 'sqs';
   if (ctx.kind === 'ecr-name') return 'ecr';
+  if (ctx.kind === 'ecr-registry' || ctx.kind === 'ecr-template') return 'ecr-registry';
+  if (ctx.kind === 'logs-account') return 'logs';
   return ctx.type;
 }
 
@@ -781,7 +850,7 @@ function componentPolicies(inputs, budget) {
 export function extractPulumiDocuments(text, opts = {}) {
   const globalStates = [];
   const out = { kind: null, scanScope: 'delta', scannedUrns: [], documents: [], unanalyzed: [], providers: [],
-    groups: [], unresolvedEdges: [], states: globalStates };
+    groups: [], unresolvedEdges: [], states: globalStates, warnings: [] };
   if (opts.oversize === true) { globalStates.push(st('PULUMI_LIMIT', 'pulumi-input')); return out; }
   if (!isStr(text) || text.trim() === '') return { usage: { reason: 'MISSING_INPUT', message: 'No Pulumi JSON supplied (input is missing or empty).' } };
   if (text.length > PULUMI_LIMITS.MAX_BYTES) { globalStates.push(st('PULUMI_LIMIT', 'pulumi-input')); return out; }
@@ -843,6 +912,11 @@ export function extractPulumiDocuments(text, opts = {}) {
   if (mapping.usage) return { usage: mapping.usage };
   opts = { ...opts, mappedAccounts: mapping.map };
   out.providers = providerSummary(facts, opts);
+  // E-5: subject-account on a stack whose providers resolve to several accounts.
+  if (isStr(opts.subjectAccount) && /^\d{12}$/.test(opts.subjectAccount.trim())) {
+    const n = new Set(providerSummary(facts, { ...opts, subjectAccount: undefined }).map((p) => p.account).filter(Boolean)).size;
+    if (n > 1) out.warnings.push({ code: 'PULUMI_PROVIDERS_MULTI_ACCOUNT', accounts: n, message: PULUMI_WARNING.PULUMI_PROVIDERS_MULTI_ACCOUNT(n) });
+  }
   const seen = new Set();
   const budget = { n: PULUMI_LIMITS.MAX_WALK_NODES, exhausted: false };
   // I-1: a component is skipped only when its children are in the file.
@@ -861,9 +935,18 @@ export function extractPulumiDocuments(text, opts = {}) {
       if (parents.has(it.urn)) { components.push(it); continue; }
     }
     if (PERMISSION_TYPES.has(it.type)) {
-      const v = permissionVerdict(it, resolveScope(it, facts, opts, new Set(), []));
-      if (v.state) globalStates.push(st(v.state, it.urn, v.state === 'PULUMI_UNMODELED_PERMISSION' ? ANALYSIS_STATE.UNSUPPORTED : ANALYSIS_STATE.INCOMPLETE));
-      else out.unanalyzed.push({ urn: it.urn, type: it.type, reason: v.reason });
+      // E-4: a per-document verdict, never a run-level state.
+      const ps = resolveScope(it, facts, opts, new Set(), []);
+      const v = permissionVerdict(it, ps);
+      if (v.reason) { out.unanalyzed.push({ urn: it.urn, type: it.type, reason: v.reason }); continue; }
+      const kind = v.state === 'PULUMI_UNMODELED_PERMISSION' ? ANALYSIS_STATE.UNSUPPORTED : ANALYSIS_STATE.INCOMPLETE;
+      out.documents.push({
+        artifact: `${it.urn}#principal`, urn: it.urn, property: 'principal', type: it.type, family: RESOURCE, op: it.op,
+        managed: it.external ? 'external' : 'program', location: safeSourcePosition(it.sourcePosition), text: null,
+        finding: v.unbound ? confusedDeputyFinding(it, v.unbound) : null,
+        subjectAccount: ps.account, partition: ps.partition, resourceContext: undefined,
+        states: [...ps.states, ...(v.state ? [st(v.state, it.urn, kind)] : [])],
+      });
       continue;
     }
     const entries = TYPE_MAP[it.type];
@@ -1076,6 +1159,13 @@ function buildGroups(items, documents) {
 const RANK = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
 const worse = (a, b) => ((RANK[a] ?? 4) >= (RANK[b] ?? 4) ? a : b);
 
+// E-4: an adapter-modeled document (no engine run). States still force exit 3.
+function modeledResult(finding, states, family, threshold) {
+  const base = { analysisStatus: ANALYSIS_STATUS.COMPLETE, analysisStates: Object.freeze([]), findings: Object.freeze([]),
+    blockingCount: 0, findingsCount: 1, exitCode: EXIT.CLEAN, reason: 'CLEAN', family, coverage: null, engineOk: true };
+  return withStates(regate(base, [finding], threshold), states);
+}
+
 function failClosedResult(states, family) {
   const malformed = states.some((s) => s.analysisState === ANALYSIS_STATE.MALFORMED);
   return Object.freeze({
@@ -1221,6 +1311,7 @@ function withStates(result, states) {
   });
 }
 
+const DEMOTED_REASONS = new Set(['PULUMI_UNMODELED_PERMISSION']);
 // Run verdict from the documents plus file-level states (any state forces exit 3).
 function aggregate(meta, documents) {
   const states = meta.analysisStates || [];
@@ -1235,7 +1326,9 @@ function aggregate(meta, documents) {
     ? ANALYSIS_STATUS.COMPLETE : (failed ? ANALYSIS_STATUS.FAILED : ANALYSIS_STATUS.PARTIAL);
   let reason = exitCode === EXIT.CLEAN ? 'CLEAN' : exitCode === EXIT.FINDINGS ? 'FINDINGS_AT_OR_ABOVE_THRESHOLD' : null;
   if (reason == null) {
-    const worst = documents.find((d) => d.result.exitCode === exitCode);
+    // E-4: a per-document unmodeled Lambda permission never names the run when another document can.
+    const worstDocs = documents.filter((d) => d.result.exitCode === exitCode);
+    const worst = worstDocs.find((d) => !DEMOTED_REASONS.has(d.result.reason)) || worstDocs[0];
     reason = (exitCode === EXIT.FAIL_CLOSED && states[0]) ? states[0].code
       : (worst ? worst.result.reason : 'PULUMI_INCOMPLETE');
   }
@@ -1306,7 +1399,9 @@ export function scanPulumi(input) {
     }
     const scanned = ext.documents.map((d) => {
       let result;
-      if (d.text == null) {
+      if (d.finding) {
+        result = modeledResult(d.finding, d.states, d.family, inp.threshold);
+      } else if (d.text == null) {
         result = failClosedResult(d.states, d.family);
       } else {
         result = withStates(scan({
@@ -1335,6 +1430,7 @@ export function scanPulumi(input) {
       groups: ext.groups,
       unresolvedEdges: ext.unresolvedEdges,
       analysisStates: ext.states,
+      warnings: ext.warnings,
     }, documents);
   } catch {
     return Object.freeze({
@@ -1353,6 +1449,8 @@ export function scanPulumi(input) {
  */
 export function pulumiUnits(result, fallbackUri) {
   const fb = isStr(fallbackUri) && fallbackUri.trim() !== '' ? fallbackUri.trim() : 'Pulumi.yaml';
+  const codes = (result.warnings || []).map((w) => w.code).filter((c) => /^[A-Z0-9_]+$/.test(c));
+  const warnProp = codes.length > 0 ? { warnings: codes.join(',') } : {};
   const units = (result.documents || []).map((d) => ({
     file: d.location ? d.location.uri : fb,
     baselineUri: pulumiBaselineUri(d),
@@ -1361,12 +1459,12 @@ export function pulumiUnits(result, fallbackUri) {
       logicalLocation: d.artifact,
       startLine: d.location ? d.location.startLine : undefined,
       startColumn: d.location ? d.location.startColumn : undefined,
-      runProperties: { scanScope: result.scanScope, artifact: d.artifact, managed: d.managed },
+      runProperties: { scanScope: result.scanScope, artifact: d.artifact, managed: d.managed, ...warnProp },
     },
     result: d.result,
   }));
   if ((result.analysisStates || []).length > 0) {
-    units.push({ file: fb, baselineUri: 'pulumi-input', sarif: { file: fb, logicalLocation: 'pulumi-input', runProperties: { scanScope: result.scanScope } }, result: failClosedResult(result.analysisStates, null) });
+    units.push({ file: fb, baselineUri: 'pulumi-input', sarif: { file: fb, logicalLocation: 'pulumi-input', runProperties: { scanScope: result.scanScope, ...warnProp } }, result: failClosedResult(result.analysisStates, null) });
   }
   return units;
 }
