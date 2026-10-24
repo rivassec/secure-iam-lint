@@ -101,8 +101,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stack's account; imported, read or ARN-adoptable resources (SNS, SQS, KMS, Lambda
   and others) never do, and prior-state outputs are reused only for in-place updates
   on the same provider.
-- **Lambda permissions:** a grant to the public, another account, or a service with
-  no `sourceArn`/`sourceAccount` exits 3 (`PULUMI_UNMODELED_PERMISSION`).
+- **Lambda permissions:** a grant to the public or another account exits 3
+  (`PULUMI_UNMODELED_PERMISSION`, per document); a service grant with no
+  `sourceArn`/`sourceAccount` is RESOURCE-CONFUSED-DEPUTY high (lane D, E-4).
 - A wildcard `aws:SourceOrgID` / `aws:SourceOrgPaths` value (`o-*`, `*/*`) is no
   longer credited as a source binding. An exact `aws:PrincipalArn` pin lowers only a
   read-only cross-account grant in the pinned principal's own account. A vacuous
@@ -179,6 +180,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`ecr:ReplicateImage`, `ecr:CreateRepository`) are not classified yet and Logs
   resource policies are not modeled (`UNSUPPORTED_RESOURCE_SHAPE`), so both still
   exit 3 per document, now with their findings.
+- **E-4:** `aws:lambda/permission:Permission` verdicts are per document
+  (`<urn>#principal`), never run-level. A service-principal grant without a real
+  `sourceArn`/`sourceAccount` (a `*` sourceArn binds nothing) is
+  RESOURCE-CONFUSED-DEPUTY high. A public or cross-account grant stays exit 3
+  (`PULUMI_UNMODELED_PERMISSION`) but no longer names the run when another document
+  can.
 
 ## [1.2.0] - 2026-10-21
 

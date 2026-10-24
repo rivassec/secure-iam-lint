@@ -105,3 +105,54 @@ test('E-3 engine: a registry-wide repository ARN needs the explicit ecr-registry
     assert.equal(go(type, arn).exitCode, EXIT.FAIL_CLOSED, `${type} ${arn}`);
   }
 });
+
+// --- E-4 / e7 ---
+const ROLE = res('aws:iam/role:Role', 'fnrole', { name: 'fnrole', assumeRolePolicy: pol({ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }) });
+const FN = res('aws:lambda/function:Function', 'fn', { name: 'fn', role: `arn:aws:iam::${A}:role/fnrole` });
+const perm = (inputs) => res('aws:lambda/permission:Permission', 'fn-perm', { action: 'lambda:InvokeFunction', function: 'fn', ...inputs });
+const inline = (Action) => res('aws:iam/rolePolicy:RolePolicy', 'fnrole-inline', { role: 'fnrole',
+  policy: pol({ Effect: 'Allow', Action, Resource: `arn:aws:dynamodb:us-east-2:${A}:table/t` }) });
+
+test('E-4: an unbound service-principal permission is a confused-deputy finding (bundle e4)', () => {
+  const r = scanPulumi({ text: exportOf(ROLE, FN, perm({ principal: 'secretsmanager.amazonaws.com' }), inline('dynamodb:GetItem')), ...opts });
+  const d = doc(r, 'fn-perm#principal');
+  assert.deepEqual(ids(d), ['RESOURCE-CONFUSED-DEPUTY/high']);
+  assert.equal(d.family, 'resource');
+  assert.deepEqual(r.analysisStates, []);
+  assert.equal(r.exitCode, EXIT.FINDINGS);
+  assert.equal(r.reason, 'FINDINGS_AT_OR_ABOVE_THRESHOLD');
+  const sarif = JSON.stringify(buildAggregateSarif(pulumiUnits(r, 'Pulumi.yaml')));
+  assert.ok(sarif.includes('RESOURCE-CONFUSED-DEPUTY'));
+  assert.ok(!sarif.includes(']('));
+});
+
+test('E-4: a match-all sourceArn or a non-account sourceAccount binds nothing', () => {
+  for (const extra of [{ sourceArn: '*' }, { sourceArn: 'arn:aws:*:*:*:*' }, { sourceAccount: '*' }]) {
+    const r = scanPulumi({ text: exportOf(perm({ principal: 's3.amazonaws.com', ...extra })), ...opts });
+    assert.deepEqual(ids(doc(r, 'fn-perm#principal')), ['RESOURCE-CONFUSED-DEPUTY/high'], JSON.stringify(extra));
+  }
+  const bound = scanPulumi({ text: exportOf(perm({ principal: 's3.amazonaws.com', sourceAccount: A })), ...opts });
+  assert.equal(doc(bound, 'fn-perm#principal'), undefined);
+  assert.deepEqual(bound.unanalyzed.map((u) => u.reason), ['service-principal-source-bound']);
+});
+
+test('E-4: an unknown action on an unbound service grant still fails closed', () => {
+  const r = scanPulumi({ text: exportOf(perm({ principal: 's3.amazonaws.com', action: '04da6b54-80e4-46f7-96ec-b56ff0331ba9' })), ...opts });
+  assert.ok(codes(doc(r, 'fn-perm#principal')).includes('PULUMI_UNKNOWN'));
+  assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
+});
+
+test('E-4/e7: an unmodeled permission never names the run when another document can', () => {
+  const e7 = scanPulumi({ text: exportOf(ROLE, FN, perm({ principal: 'secretsmanager.amazonaws.com' }), inline('ec2:CreateNetworkInterface')), ...opts });
+  assert.equal(e7.exitCode, EXIT.FAIL_CLOSED);
+  assert.equal(e7.reason, doc(e7, 'fnrole-inline#policy').result.reason);
+  // The public permission sorts first among the exit-3 documents but is demoted.
+  const pub = scanPulumi({ text: exportOf(ROLE, FN, perm({ principal: '*' }), inline('ec2:CreateNetworkInterface')), ...opts });
+  assert.equal(doc(pub, 'fn-perm#principal').result.reason, 'PULUMI_UNMODELED_PERMISSION');
+  assert.notEqual(pub.reason, 'PULUMI_UNMODELED_PERMISSION');
+  assert.equal(pub.exitCode, EXIT.FAIL_CLOSED);
+  // Alone it still names the run and exits 3.
+  const alone = scanPulumi({ text: exportOf(perm({ principal: '*' })), ...opts });
+  assert.equal(alone.reason, 'PULUMI_UNMODELED_PERMISSION');
+  assert.equal(alone.exitCode, EXIT.FAIL_CLOSED);
+});

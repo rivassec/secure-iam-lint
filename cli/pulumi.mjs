@@ -13,6 +13,8 @@ import { scan, EXIT, ANALYSIS_STATUS, ANALYSIS_STATE, DEFAULT_BUDGET_MS, meetsTh
 import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 import { applyBaseline } from './baseline.mjs';
 import { actionGrants } from '../content/tools/iam-blast-radius/engine/escalation-action-grants.js';
+import { isMatchAllSourceValue } from '../content/tools/iam-blast-radius/engine/resource-source-binding.js';
+import { DOC_CONFUSED_DEPUTY, RESOURCE_RULE_VERSION } from '../content/tools/iam-blast-radius/engine/resource-catalogs.js';
 
 // Preview placeholder for a value not known until apply (whole property collapses to it).
 export const PULUMI_UNKNOWN = '04da6b54-80e4-46f7-96ec-b56ff0331ba9';
@@ -315,7 +317,7 @@ const MSG = Object.freeze({
   PULUMI_PARTITION_MISMATCH: 'The supplied partition differs from the partition the stack proves for these resources, or the resource and provider regions disagree.',
   PULUMI_CONTEXT_AMBIGUOUS: 'More than one resource in the stack matches the resource this policy is attached to.',
   PULUMI_CONTEXT_UNPROVEN: 'The resource type implies the attached resource (the ECR registry or CloudWatch Logs of the provider account and region), but the stack does not prove that account (a managed IAM resource ARN, allowedAccountIds or an assume-role ARN). subject-account and provider-account name an account but do not prove it, so the context is not inferred.',
-  PULUMI_UNMODELED_PERMISSION: 'A Lambda permission grants invoke to the public, another account, or a service with no source binding. It is not modeled yet; unsupported does NOT mean safe.',
+  PULUMI_UNMODELED_PERMISSION: 'A Lambda permission grants invoke to the public or to another account. It is not modeled yet; unsupported does NOT mean safe.',
 });
 const st = (code, path, kind = ANALYSIS_STATE.INCOMPLETE) => state(kind, code, MSG[code] || 'Pulumi input could not be fully analyzed.', path);
 
@@ -547,14 +549,16 @@ function providerSummary(facts, opts) {
   });
 }
 
-// Lambda permissions (option d): exit 3 only for risky shapes; source-bound service grants are listed.
+// Lambda permissions: source-bound service, org and own-account grants are listed; an unbound
+// service grant is a confused-deputy finding (E-4); other risky shapes are a per-document exit 3.
 const PERMISSION_TYPES = new Set(['aws:lambda/permission:Permission',
   'aws:lambda/layerVersionPermission:LayerVersionPermission', 'aws-native:lambda:Permission']);
 const SERVICE_PRINCIPAL_RE = /^[a-z0-9.-]+\.amazonaws\.com(?:\.cn)?$/;
-// Returns { state } (exit 3) or { reason } (listed in unanalyzed[]).
+const ACTION_RE = /^[A-Za-z0-9-]{1,64}:[A-Za-z0-9*?]{1,128}$/;
+// Returns { state } (exit 3), { unbound } (finding) or { reason } (listed in unanalyzed[]).
 function permissionVerdict(it, scope) {
   const f = it.inputs;
-  for (const k of ['principal', 'sourceAccount', 'sourceArn', 'principalOrgId', 'organizationId']) {
+  for (const k of ['principal', 'sourceAccount', 'sourceArn', 'principalOrgId', 'organizationId', 'action', 'functionUrlAuthType']) {
     const t = taint(f[k]);
     if (t) return { state: t === 'secret' ? 'PULUMI_SECRET' : 'PULUMI_UNKNOWN' };
   }
@@ -562,7 +566,11 @@ function permissionVerdict(it, scope) {
   const risky = { state: 'PULUMI_UNMODELED_PERMISSION' };
   if (!concrete(p)) return risky;
   if (SERVICE_PRINCIPAL_RE.test(p)) {
-    return concrete(f.sourceArn) || concrete(f.sourceAccount) ? { reason: 'service-principal-source-bound' } : risky;
+    // A match-all sourceArn or a non-account sourceAccount binds nothing.
+    const bound = (concrete(f.sourceArn) && !isMatchAllSourceValue(f.sourceArn))
+      || (concrete(f.sourceAccount) && /^\d{12}$/.test(f.sourceAccount));
+    if (bound) return { reason: 'service-principal-source-bound' };
+    return concrete(f.action) && ACTION_RE.test(f.action) ? { unbound: p } : risky;
   }
   if (concrete(f.principalOrgId) || concrete(f.organizationId)) return { reason: 'org-scoped' };
   const acct = /^\d{12}$/.test(p) ? p : (ARN_ACCOUNT_RE.exec(p) || [])[2];
@@ -570,6 +578,33 @@ function permissionVerdict(it, scope) {
   if (ownAcct && acct === ownAcct) return { reason: 'own-account-principal' };
   if (ownAcct && p === '*' && f.sourceAccount === ownAcct) return { reason: 'source-account-bound' };
   return risky;
+}
+
+// E-4: the permission as a one-statement resource policy on the function (same id as the engine).
+function confusedDeputyFinding(it, svc) {
+  const f = it.inputs;
+  const fn = concrete(f.function) ? f.function : null;
+  return Object.freeze({
+    id: 'RESOURCE-CONFUSED-DEPUTY',
+    severity: 'high',
+    title: 'Service principal grant without a confused-deputy source binding',
+    statementSid: concrete(f.statementId) ? f.statementId : null,
+    statementIndex: 0,
+    actions: [f.action],
+    resources: fn ? [fn] : [],
+    conditions: null,
+    policyEvidence: 'high',
+    pathExploitability: 'medium',
+    why: `The Lambda permission lets the AWS service principal ${svc} call ${f.action} on this function with NO source `
+      + 'binding (sourceArn / sourceAccount). AWS authorizes the service, not the account that configured it, so an '
+      + 'actor who can make that service act from their own account may be able to induce it to invoke this function '
+      + '(the cross-service confused-deputy problem).',
+    limit: 'From the aws.lambda.Permission resource alone; other permissions on the function are separate resources.',
+    remediation: 'Set sourceArn to the calling resource and/or sourceAccount to its account on the Lambda permission.',
+    ruleVersion: RESOURCE_RULE_VERSION,
+    docRef: DOC_CONFUSED_DEPUTY,
+    sourceBinding: Object.freeze({ state: 'unbound', boundKeys: [], bypassedKeys: [] }),
+  });
 }
 
 // --- Resource context (P4): exact join to the REFERENCED resource ------------------------
@@ -890,9 +925,18 @@ export function extractPulumiDocuments(text, opts = {}) {
       if (parents.has(it.urn)) { components.push(it); continue; }
     }
     if (PERMISSION_TYPES.has(it.type)) {
-      const v = permissionVerdict(it, resolveScope(it, facts, opts, new Set(), []));
-      if (v.state) globalStates.push(st(v.state, it.urn, v.state === 'PULUMI_UNMODELED_PERMISSION' ? ANALYSIS_STATE.UNSUPPORTED : ANALYSIS_STATE.INCOMPLETE));
-      else out.unanalyzed.push({ urn: it.urn, type: it.type, reason: v.reason });
+      // E-4: a per-document verdict, never a run-level state.
+      const ps = resolveScope(it, facts, opts, new Set(), []);
+      const v = permissionVerdict(it, ps);
+      if (v.reason) { out.unanalyzed.push({ urn: it.urn, type: it.type, reason: v.reason }); continue; }
+      const kind = v.state === 'PULUMI_UNMODELED_PERMISSION' ? ANALYSIS_STATE.UNSUPPORTED : ANALYSIS_STATE.INCOMPLETE;
+      out.documents.push({
+        artifact: `${it.urn}#principal`, urn: it.urn, property: 'principal', type: it.type, family: RESOURCE, op: it.op,
+        managed: it.external ? 'external' : 'program', location: safeSourcePosition(it.sourcePosition), text: null,
+        finding: v.unbound ? confusedDeputyFinding(it, v.unbound) : null,
+        subjectAccount: ps.account, partition: ps.partition, resourceContext: undefined,
+        states: [...ps.states, ...(v.state ? [st(v.state, it.urn, kind)] : [])],
+      });
       continue;
     }
     const entries = TYPE_MAP[it.type];
@@ -1105,6 +1149,13 @@ function buildGroups(items, documents) {
 const RANK = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
 const worse = (a, b) => ((RANK[a] ?? 4) >= (RANK[b] ?? 4) ? a : b);
 
+// E-4: an adapter-modeled document (no engine run). States still force exit 3.
+function modeledResult(finding, states, family, threshold) {
+  const base = { analysisStatus: ANALYSIS_STATUS.COMPLETE, analysisStates: Object.freeze([]), findings: Object.freeze([]),
+    blockingCount: 0, findingsCount: 1, exitCode: EXIT.CLEAN, reason: 'CLEAN', family, coverage: null, engineOk: true };
+  return withStates(regate(base, [finding], threshold), states);
+}
+
 function failClosedResult(states, family) {
   const malformed = states.some((s) => s.analysisState === ANALYSIS_STATE.MALFORMED);
   return Object.freeze({
@@ -1250,6 +1301,7 @@ function withStates(result, states) {
   });
 }
 
+const DEMOTED_REASONS = new Set(['PULUMI_UNMODELED_PERMISSION']);
 // Run verdict from the documents plus file-level states (any state forces exit 3).
 function aggregate(meta, documents) {
   const states = meta.analysisStates || [];
@@ -1264,7 +1316,9 @@ function aggregate(meta, documents) {
     ? ANALYSIS_STATUS.COMPLETE : (failed ? ANALYSIS_STATUS.FAILED : ANALYSIS_STATUS.PARTIAL);
   let reason = exitCode === EXIT.CLEAN ? 'CLEAN' : exitCode === EXIT.FINDINGS ? 'FINDINGS_AT_OR_ABOVE_THRESHOLD' : null;
   if (reason == null) {
-    const worst = documents.find((d) => d.result.exitCode === exitCode);
+    // E-4: a per-document unmodeled Lambda permission never names the run when another document can.
+    const worstDocs = documents.filter((d) => d.result.exitCode === exitCode);
+    const worst = worstDocs.find((d) => !DEMOTED_REASONS.has(d.result.reason)) || worstDocs[0];
     reason = (exitCode === EXIT.FAIL_CLOSED && states[0]) ? states[0].code
       : (worst ? worst.result.reason : 'PULUMI_INCOMPLETE');
   }
@@ -1335,7 +1389,9 @@ export function scanPulumi(input) {
     }
     const scanned = ext.documents.map((d) => {
       let result;
-      if (d.text == null) {
+      if (d.finding) {
+        result = modeledResult(d.finding, d.states, d.family, inp.threshold);
+      } else if (d.text == null) {
         result = failClosedResult(d.states, d.family);
       } else {
         result = withStates(scan({

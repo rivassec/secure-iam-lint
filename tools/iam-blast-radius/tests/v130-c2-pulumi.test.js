@@ -46,21 +46,24 @@ test('R2-2: the Pulumi report shows the subject account and per-provider evidenc
 });
 
 const perm = (inputs) => step('aws:lambda/permission:Permission', 'perm', { action: 'lambda:InvokeFunction', function: 'f', ...inputs });
-const unmodeled = (r) => codes(r).some((c) => c.startsWith('PULUMI_UNMODELED_PERMISSION'));
+// E-4: permission verdicts are per document (artifact <urn>#principal), never run-level.
+const permDoc = (r) => r.documents.find((d) => d.artifact.endsWith('perm#principal'));
+const permCodes = (r) => (permDoc(r) ? permDoc(r).result.analysisStates.map((s) => s.code) : []);
+const unmodeled = (r) => permCodes(r).includes('PULUMI_UNMODELED_PERMISSION');
 
-test('Lambda permission: risky shapes fail closed', () => {
+test('Lambda permission: risky shapes fail closed per document', () => {
   for (const inputs of [
     { principal: '*' },
     { principal: V },
     { principal: `arn:aws:iam::${V}:root` },
-    { principal: 'apigateway.amazonaws.com' },
     { principal: '*', sourceAccount: V },
   ]) {
     const r = run(perm(inputs));
     assert.ok(unmodeled(r), JSON.stringify(inputs));
     assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
+    assert.ok(!codes(r).some((c) => c.startsWith('PULUMI_UNMODELED_PERMISSION')), 'not a run-level state');
   }
-  assert.ok(codes(run(perm({ principal: '04da6b54-80e4-46f7-96ec-b56ff0331ba9' }))).some((c) => c.startsWith('PULUMI_UNKNOWN')));
+  assert.ok(permCodes(run(perm({ principal: '04da6b54-80e4-46f7-96ec-b56ff0331ba9' }))).includes('PULUMI_UNKNOWN'));
 });
 
 test('Lambda permission: source-bound, org-scoped and own-account grants are listed, not failed', () => {
@@ -79,7 +82,7 @@ test('Lambda permission: source-bound, org-scoped and own-account grants are lis
 
 test('Lambda permission: own-account needs a proven account, not just --subject-account', () => {
   const text = JSON.stringify({ steps: [prov, perm({ principal: ACCT })] });
-  assert.ok(scanPulumi({ text, partition: 'aws', subjectAccount: ACCT }).analysisStates.some((s) => s.code === 'PULUMI_UNMODELED_PERMISSION'));
+  assert.ok(unmodeled(scanPulumi({ text, partition: 'aws', subjectAccount: ACCT })));
 });
 
 // --- Round-2 review root cause A: only a resource's own computed ARN proves the account ---
