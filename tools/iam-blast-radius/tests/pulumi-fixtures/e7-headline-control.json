@@ -1,0 +1,76 @@
+{
+ "version": 3,
+ "deployment": {
+  "manifest": {
+   "time": "2026-10-22T00:00:00Z",
+   "magic": "x",
+   "version": "v3.267.0"
+  },
+  "resources": [
+   {
+    "urn": "urn:pulumi:syn::syn-fx::pulumi:pulumi:Stack::syn-fx-syn",
+    "custom": false,
+    "type": "pulumi:pulumi:Stack"
+   },
+   {
+    "urn": "urn:pulumi:syn::syn-fx::pulumi:providers:aws::a",
+    "custom": true,
+    "id": "prov-a",
+    "type": "pulumi:providers:aws",
+    "inputs": {
+     "region": "us-east-2",
+     "version": "7.48.0"
+    },
+    "outputs": {
+     "region": "us-east-2",
+     "version": "7.48.0"
+    }
+   },
+   {
+    "urn": "urn:pulumi:syn::syn-fx::aws:iam/role:Role::fnrole",
+    "custom": true,
+    "id": "fnrole",
+    "type": "aws:iam/role:Role",
+    "inputs": {
+     "name": "fnrole",
+     "assumeRolePolicy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"Service\": \"lambda.amazonaws.com\"}, \"Action\": \"sts:AssumeRole\"}]}"
+    },
+    "outputs": {
+     "name": "fnrole",
+     "assumeRolePolicy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Principal\": {\"Service\": \"lambda.amazonaws.com\"}, \"Action\": \"sts:AssumeRole\"}]}"
+    },
+    "provider": "urn:pulumi:syn::syn-fx::pulumi:providers:aws::a::prov-a"
+   },
+   {
+    "urn": "urn:pulumi:syn::syn-fx::aws:lambda/function:Function::fn",
+    "custom": true,
+    "id": "fn",
+    "type": "aws:lambda/function:Function",
+    "inputs": {
+     "name": "fn",
+     "role": "arn:aws:iam::111111111111:role/fnrole"
+    },
+    "outputs": {
+     "name": "fn",
+     "role": "arn:aws:iam::111111111111:role/fnrole"
+    },
+    "provider": "urn:pulumi:syn::syn-fx::pulumi:providers:aws::a::prov-a"
+   },
+   {
+    "urn": "urn:pulumi:syn::syn-fx::aws:iam/rolePolicy:RolePolicy::fnrole-inline",
+    "custom": true,
+    "id": "fnrole-inline",
+    "type": "aws:iam/rolePolicy:RolePolicy",
+    "inputs": {
+     "role": "fnrole",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"ec2:CreateRoute\", \"Resource\": \"arn:aws:dynamodb:us-east-2:111111111111:table/t\"}]}"
+    },
+    "outputs": {
+     "role": "fnrole",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"ec2:CreateRoute\", \"Resource\": \"arn:aws:dynamodb:us-east-2:111111111111:table/t\"}]}"
+    },
+    "provider": "urn:pulumi:syn::syn-fx::pulumi:providers:aws::a::prov-a"
+   }
+  ]
+ }
+}

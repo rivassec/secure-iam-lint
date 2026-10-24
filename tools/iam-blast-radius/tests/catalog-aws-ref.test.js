@@ -110,7 +110,7 @@ test('a scopable reference READ on Resource "*" still fails closed (broad read s
 });
 
 test('services the suite treats as unknown stay out of the snapshot', () => {
-  for (const svc of ['sqs', 'bedrock', 'fakesvc', 'madeupsvc', 'ghostsvc']) {
+  for (const svc of ['bedrock', 'fakesvc', 'madeupsvc', 'ghostsvc']) { // sqs: curated consumer set since v1.3.0
     assert.equal(defaultCatalog.hasService(svc), false, `${svc} must stay unknown`);
   }
 });

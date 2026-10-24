@@ -72,8 +72,66 @@ export * from './trust-catalogs.js';
 // masking it as an INTERNAL trust-analysis failure (which would bypass analyze()'s
 // graceful fail-closed mapping and the CLI clock re-throw).
 import { chargeWork, isGlobBudgetError } from './glob.js';
+import { KNOWN_PARTITIONS } from './escalation-reachability.js';
 
 const ALWAYS_PRESENT_ON_ASSUME_ROLE = Object.freeze(new Set(['aws:principalarn', 'aws:principalaccount', 'aws:principaltype']));
+
+// P6 (E-1/E-2): same-account needs the role's own ARN as evidence, and only principals
+// AWS would accept (case-sensitive, known partition, IAM name charset) count.
+const ROLE_ARN = /^arn:([a-z-]+):iam::(\d{12}):role\/[\w+=,.@/-]+$/;
+const IAM_PRINCIPAL = /^arn:([a-z-]+):iam::(\d{12}):(?:role|user)\/[\w+=,.@/-]+$/;
+const STS_PRINCIPAL = /^arn:([a-z-]+):sts::(\d{12}):(?:assumed-role|federated-user)\/[\w+=,.@/-]+$/;
+const ROOT_PRINCIPAL = /^arn:([a-z-]+):iam::(\d{12}):root$/;
+// { account, partition, arn } from a role resourceContext, or null (absent, invalid, contradicted).
+export function roleEvidence(resourceContext, subjectAccount = null, partition = null) {
+  const arn = resourceContext && typeof resourceContext.arn === 'string' ? resourceContext.arn : '';
+  const m = ROLE_ARN.exec(arn);
+  if (!m || !KNOWN_PARTITIONS.has(m[1])) return null;
+  if (partition && m[1] !== partition) return null;
+  if (subjectAccount && String(subjectAccount) !== m[2]) return null;
+  return { account: m[2], partition: m[1], arn };
+}
+const inRole = (m, ev) => !!m && m[1] === ev.partition && m[2] === ev.account;
+// 'root' / 'principal' when every entry is proven in the role's own account, else null.
+function sameAccountKind(ext, ev) {
+  if (!ev || ext.entries.length === 0) return null;
+  let root = false;
+  for (const e of ext.entries) {
+    const v = String(e.value);
+    if (e.type === 'aws-account' && v === ev.account) root = true;
+    else if (e.type === 'aws-root' && inRole(ROOT_PRINCIPAL.exec(v), ev)) root = true;
+    else if (e.type !== 'aws-principal-arn' ||
+      !(inRole(IAM_PRINCIPAL.exec(v), ev) || inRole(STS_PRINCIPAL.exec(v), ev))) return null;
+  }
+  return root ? 'root' : 'principal';
+}
+// R7: the sorted trusted accounts when every entry is an exact role/user/assumed-role ARN in one of
+// them, else null (root, bare account, glob, variable or an unlisted account).
+const TRUSTED_STS_PRINCIPAL = /^arn:([a-z-]+):sts::(\d{12}):assumed-role\/[\w+=,.@/-]+$/;
+function trustedNamedAccounts(ext, trusted) {
+  if (!(trusted instanceof Set) || trusted.size === 0 || ext.entries.length === 0) return null;
+  const accts = new Set();
+  for (const e of ext.entries) {
+    if (e.type !== 'aws-principal-arn') return null;
+    const m = IAM_PRINCIPAL.exec(String(e.value)) || TRUSTED_STS_PRINCIPAL.exec(String(e.value));
+    if (!m || !KNOWN_PARTITIONS.has(m[1]) || !trusted.has(m[2])) return null;
+    accts.add(m[2]);
+  }
+  return [...accts].sort();
+}
+// Every principal names the asserted subject account, but no role ARN proves it owns the role.
+function unprovenSameAccount(ext, subjectAccount) {
+  const acct = /^\d{12}$/.test(String(subjectAccount ?? '')) ? String(subjectAccount) : null;
+  return !!acct && ext.entries.length > 0 && ext.entries.every((e) => {
+    const v = String(e.value);
+    return e.type === 'aws-account' ? v === acct : (v.split(':')[4] === acct);
+  });
+}
+// Single constant so the root wording can be revised in one place.
+const SAME_ACCOUNT_ROOT_WHY = (who) =>
+  `The trust policy delegates assume-role to the role's own account root (${who}). ` +
+  'That delegates to every IAM principal in the account whose own policy allows ' +
+  'sts:AssumeRole on this role, not only the root user.';
 // Multi-tenant providers: anyone on the internet can obtain a token (F5).
 const GITHUB_OIDC_HOST = 'token.actions.githubusercontent.com';
 const COGNITO_FED_HOST = 'cognito-identity.amazonaws.com';
@@ -111,9 +169,46 @@ const fedHost = (v) => String(v).toLowerCase().replace(/^arn:[^:]*:iam::[^:]*:oi
 // IAM-804 iteration 4 finding 2). Only a value carrying at least one LITERAL
 // character narrows (a partial ExternalId still forces the caller to present that
 // literal substring). Mirrors conditions.js valueNarrowsKey default arm.
-function findingsForStatement(stmt, subjectAccount = null) {
+// R5-5: Principal "*" pinned by ONE positive exact ArnEquals/StringEquals on
+// aws:PrincipalArn (no IfExists, no set operator) to concrete principal ARNs is the
+// named-principal trust. Returns the statement rewritten to name them, or null.
+const EXACT_PIN_OPS = new Set(['arnequals', 'stringequals']);
+const PINNED_ARN = /^arn:[a-z-]+:(?:iam::\d{12}:(?:role|user)|sts::\d{12}:(?:assumed-role|federated-user))\/[\w+=,.@/-]+$/;
+function exactPinRewrite(stmt) {
+  const cond = stmt.condition;
+  if (!cond || typeof cond !== 'object') return null;
+  let pin = null;
+  for (const op of Object.keys(cond)) {
+    const inner = cond[op];
+    if (!inner || typeof inner !== 'object') return null;
+    for (const k of Object.keys(inner)) {
+      if (String(k).toLowerCase() !== 'aws:principalarn') continue;
+      const p = parseOperatorParts(op);
+      if (pin || p.setOperator || p.ifExists || !EXACT_PIN_OPS.has(p.base)) return null;
+      const vals = toValues(inner[k]);
+      if (vals.length === 0 || !vals.every((v) => typeof v === 'string' && PINNED_ARN.test(v))) return null;
+      pin = { op, key: k, vals };
+    }
+  }
+  if (!pin) return null;
+  const rest = {};
+  for (const op of Object.keys(cond)) {
+    const inner = {};
+    for (const k of Object.keys(cond[op])) if (!(op === pin.op && k === pin.key)) inner[k] = cond[op][k];
+    if (Object.keys(inner).length > 0) rest[op] = inner;
+  }
+  return { ...stmt, principal: { anyPrincipal: false, byType: { AWS: [...pin.vals] } }, condition: rest };
+}
+const EXACT_PIN_NOTE = ' The policy names Principal "*", but an exact aws:PrincipalArn condition pins it to these ' +
+  'principals, so it is rated as if they were named directly.';
+
+function findingsForStatement(stmt, subjectAccount = null, evidence = null, trustedAccounts = null) {
   const allPrincipals = classifyPrincipals(stmt.principal);
   const found = [];
+  if (allPrincipals.anonymous) {
+    const named = exactPinRewrite(stmt);
+    if (named) return findingsForStatement(named, subjectAccount, evidence).map((f) => ({ ...f, why: f.why + EXACT_PIN_NOTE }));
+  }
 
   // S3-trust-calibration (1) - defense in depth. model.js normalizePrincipal() now
   // rejects an empty principal object / empty value array before analysis, so a
@@ -526,7 +621,27 @@ function findingsForStatement(stmt, subjectAccount = null) {
   // (trust-policy-semantics 2.2-2.4 / 5, acceptance test 16).
   const externalCats = ['aws-account', 'aws-root', 'aws-principal-arn', 'canonical-user']
     .filter((c) => principals.categories.has(c));
-  if (externalCats.length > 0) {
+  // P6: every such principal proven in the role's own account is a same-account trust.
+  const sameKind = externalCats.length > 0
+    ? sameAccountKind(subsetPrincipals(principals, externalCats), evidence) : null;
+  if (sameKind) {
+    const own = subsetPrincipals(principals, externalCats);
+    found.push(makeFinding(stmt, own, {
+      id: 'TRUST-SAME-ACCOUNT',
+      severity: sameKind === 'root' ? 'medium' : 'low',
+      title: 'Same-account role trust',
+      why: (sameKind === 'root' ? SAME_ACCOUNT_ROOT_WHY(principalSummary(own))
+        : `The trust policy delegates assume-role to principal(s) in the role's own account (${principalSummary(own)}). ` +
+          'Same-account trust does not reach outside the account.') +
+        ` Same-account is proven by the role ARN ${evidence.arn} (account ${evidence.account}).`,
+      remediation: sameKind === 'root'
+        ? 'Name the specific role/user ARNs that must assume this role instead of the account root.'
+        : 'Keep the trusted Principal scoped to the roles/users that need it.',
+      docRef: DOC_PRINCIPAL,
+      pathExploitability: 'low',
+    }));
+  }
+  if (externalCats.length > 0 && !sameKind) {
     const ext = subsetPrincipals(principals, externalCats);
     const extWho = principalSummary(ext);
     const constrained = hasConfusedDeputyConstraint(sig);
@@ -646,6 +761,10 @@ function findingsForStatement(stmt, subjectAccount = null) {
     if (constrainedLowers) severity = 'low';
     else if (principalScopeNarrows) severity = scopeSeverity;
     else severity = 'high';
+    // R7: every principal is an exact role/user/session ARN in an account the operator listed in
+    // trusted-account-ids. Only the explicit list counts; root/account principals stay whole-account.
+    const trustedIds = trustedNamedAccounts(ext, trustedAccounts);
+    if (severity === 'high' && trustedIds) severity = 'medium';
 
     let pathExpl;
     if (constrained || defenseInDepth) pathExpl = 'low';
@@ -706,11 +825,19 @@ function findingsForStatement(stmt, subjectAccount = null) {
         'aws:SourceArn/aws:SourceAccount for a service caller).';
       docRefUsed = DOC_PRINCIPAL;
     }
+    const trustedNote = trustedIds && severity === 'medium' && !principalScopeNarrows
+      ? ` Account ${trustedIds.join(', ')} is listed as trusted (trusted-account-ids), and the trusted ` +
+        'principal is an exact role/user ARN there, so this is rated below an untrusted cross-account trust.'
+      : '';
+    const unproven = !evidence && unprovenSameAccount(ext, subjectAccount)
+      ? ` Every principal names the asserted subject account (${subjectAccount}), but nothing proves this role ` +
+        'is in that account; supply the role ARN (--resource-arn) to confirm a same-account trust.'
+      : '';
     found.push(makeFinding(stmt, ext, {
       id: 'TRUST-CROSS-ACCOUNT',
       severity,
       title: 'External / cross-account role trust',
-      why: whyText,
+      why: whyText + trustedNote + unproven,
       remediation: remediationText,
       docRef: docRefUsed,
       pathExploitability: pathExpl,
@@ -793,6 +920,53 @@ function findingsForStatement(stmt, subjectAccount = null) {
   return found;
 }
 
+// Pod Identity next to a pinned IRSA sub: any same-account Pod Identity association
+// (eks:CreatePodIdentityAssociation + iam:PassRole) can bind the role, bypassing the pin.
+const POD_SVC = /^pods\.eks\.amazonaws\.com(\.cn)?$/i;
+export function podIdentityUnbound(stmt) {
+  const svc = (stmt.principal && stmt.principal.byType && stmt.principal.byType.Service) || [];
+  if (!svc.some((s) => POD_SVC.test(String(s)))) return false;
+  if (!(stmt.actions || []).some((a) => /^(sts:assumerole|sts:\*|\*)$/i.test(String(a)))) return false;
+  return !eksClusterBound(stmt.condition);
+}
+// K-2: only a positive, non-IfExists, glob-free aws:SourceArn pin to EKS cluster ARNs binds the
+// Pod Identity path; aws:SourceAccount alone still allows any same-account cluster.
+const EKS_CLUSTER_ARN = /^arn:[a-z-]+:eks:[a-z0-9-]+:\d{12}:cluster\/[^*?$]+$/;
+function eksClusterBound(cond) {
+  return Object.entries(cond && typeof cond === 'object' ? cond : {}).some(([op, inner]) => /^(arnequals|arnlike|stringequals|stringlike)$/i.test(op)
+    && inner && typeof inner === 'object' && Object.entries(inner).some(([k, v]) => k.toLowerCase() === 'aws:sourcearn'
+      && (Array.isArray(v) ? v : [v]).length > 0 && (Array.isArray(v) ? v : [v]).every((x) => typeof x === 'string' && EKS_CLUSTER_ARN.test(x))));
+}
+export function pinnedIrsa(stmt) {
+  const fed = (stmt.principal && stmt.principal.byType && stmt.principal.byType.Federated) || [];
+  if (!fed.some((f) => /:oidc-provider\/oidc\.eks\./i.test(String(f)))) return false;
+  for (const [op, inner] of Object.entries(stmt.condition || {})) {
+    if (!/^stringequals$/i.test(op) || !inner || typeof inner !== 'object') continue;
+    for (const [k, v] of Object.entries(inner)) {
+      if (!/:sub$/i.test(k)) continue;
+      const vals = Array.isArray(v) ? v : [v];
+      if (vals.length > 0 && vals.every((x) => typeof x === 'string' && !/[*?$]/.test(x))) return true;
+    }
+  }
+  return false;
+}
+export const POD_IDENTITY_ID = 'TRUST-POD-IDENTITY-UNBOUND';
+function podIdentityFinding(stmt) {
+  return makeFinding(stmt, classifyPrincipals(stmt.principal), {
+    id: POD_IDENTITY_ID,
+    severity: 'low',
+    title: 'Pod Identity trust bypasses the IRSA subject pin',
+    why: 'The trust pins IRSA to one Kubernetes service account (the OIDC sub), but a separate statement lets '
+      + 'pods.eks.amazonaws.com assume the role with no aws:SourceAccount / aws:SourceArn. Anyone in the account '
+      + 'who can create an EKS Pod Identity association (eks:CreatePodIdentityAssociation + iam:PassRole) can bind '
+      + 'this role to any service account in any cluster, bypassing the sub pin.',
+    remediation: 'Remove the pods.eks.amazonaws.com statement if Pod Identity is unused, or add aws:SourceAccount '
+      + '(and aws:SourceArn on the cluster) to it.',
+    docRef: DOC_CONFUSED_DEPUTY,
+    pathExploitability: 'low',
+  });
+}
+
 // --- Same-policy explicit-Deny precedence for trust (IAM-806) ----------------
 //
 // A role trust policy can carry an explicit Deny that removes an assume grant the
@@ -833,7 +1007,8 @@ export function analyzeTrust(model, options = null) {
       // Deny-unaware; analyze.js + graph.js apply IAM-302 precedence).
       if (stmt.effect !== 'Allow') continue;
       if (!isTrustStatement(stmt)) continue;
-      for (const f of findingsForStatement(stmt, options && options.subjectAccount)) findings.push(f);
+      for (const f of findingsForStatement(stmt, options && options.subjectAccount, options && options.evidence,
+        options && options.trustedAccounts)) findings.push(f);
       const selfRefs = selfReferenceKeys(stmt.condition);
       if (selfRefs.length > 0) {
         findings.push(makeFinding(stmt, classifyPrincipals(stmt.principal), {
@@ -848,6 +1023,10 @@ export function analyzeTrust(model, options = null) {
         }));
       }
     }
+
+    const allows = model.statements.filter((s) => s.effect === 'Allow' && isTrustStatement(s));
+    const pod = allows.find(podIdentityUnbound);
+    if (pod && allows.some(pinnedIrsa)) findings.push(podIdentityFinding(pod));
 
     // Deterministic order: by statement index, then by trust id order.
     const idOrder = new Map(TRUST_IDS.map((id, i) => [id, i]));

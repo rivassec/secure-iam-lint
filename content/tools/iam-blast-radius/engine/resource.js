@@ -32,6 +32,8 @@ import {
   MESSAGING_DATA_PLANE_VECTORS, SNS_CONTROL_ACTIONS, SQS_CONTROL_ACTIONS, messagingActionParts, isMessagingServiceWildcard, messagingControlSet, namesSourceOwner, messagingPerServiceRules,
 } from './resource-messaging-rules.js';
 export * from './resource-messaging-rules.js';
+import { dataPerServiceRules, actionClasses, DATA_SERVICE_NS } from './resource-data-rules.js';
+export * from './resource-data-rules.js';
 import {
   KMS_VIA_SERVICE_KEY, KMS_GRANT_IS_FOR_AWS_RESOURCE_KEY, kmsActionName, kmsChannelDecoyKeys, namesGrantIsForAwsResource, kmsHasAccountDelegation, kmsHasAnonymousAllow, kmsPerServiceRules,
 } from './resource-kms-rules.js';
@@ -54,6 +56,7 @@ import {
 export * from './resource-principal-classification.js';
 import {
   PRINCIPAL_SCOPING_KEYS, KMS_PRINCIPAL_SCOPING_KEYS, isPrincipalScopingKey, operatorNegatesScope, principalScopingAnalysis, NETWORK_SELECTOR_KEYS, selectorCategory, conditionKeyInventory, describeConditionComposition, conditionShapeProblems,
+  vacuousSourceGuards, exactPrincipalArnPin, inertServiceStatement,
 } from './resource-conditions.js';
 export * from './resource-conditions.js';
 import {
@@ -99,6 +102,21 @@ import { chargeWork } from './glob.js';
 // collapses an assumed-role session to its underlying role (test 33).
 
 
+// J-5: a positive StringEquals aws:PrincipalAccount naming only the owning account.
+function principalAccountIsOwner(condition, owner) {
+  if (!owner || !condition || typeof condition !== 'object') return false;
+  for (const op of Object.keys(condition)) {
+    if (!['stringequals', 'stringequalsignorecase'].includes(op.toLowerCase())) continue;
+    const inner = condition[op];
+    for (const k of Object.keys(inner || {})) {
+      if (k.toLowerCase() !== 'aws:principalaccount') continue;
+      const vals = (Array.isArray(inner[k]) ? inner[k] : [inner[k]]).map(String);
+      if (vals.length > 0 && vals.every((v) => v === owner)) return true;
+    }
+  }
+  return false;
+}
+
 function resourceFindings(model, ctx) {
   const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
   const findings = [];
@@ -112,6 +130,8 @@ function resourceFindings(model, ctx) {
     ? String(ctx.ownerAccount)
     : null;
   const isS3 = service === RESOURCE_SERVICES.S3_BUCKET || service === RESOURCE_SERVICES.S3_OBJECT;
+  // R6-1: ECR / Secrets Manager / DynamoDB.
+  const isData = DATA_SERVICE_NS[service] !== undefined;
   // The explicit context account is what lets S3 (whose ARN carries no account)
   // resolve same-vs-cross; distinguishing it drives the "undetermined" reason text.
   const explicitOwnerAccount = resourceAccount !== null
@@ -150,6 +170,28 @@ function resourceFindings(model, ctx) {
       continue;
     }
     const c = classifyPrincipals(stmt.principal);
+    // R6-2: a service-only statement gated by a principal-only key never matches a service call.
+    const inertKeys = inertServiceStatement(stmt);
+    if (inertKeys.length > 0) {
+      findings.push(makeResourceFinding(stmt, c.entries, {
+        id: 'RESOURCE-INERT-STATEMENT',
+        severity: 'info',
+        title: 'Statement never matches: principal-only condition key on a service principal',
+        why: `This statement grants only AWS service principals, but its condition requires ${inertKeys.join(', ')}, ` +
+          'a key that is present only when an IAM principal calls. On a service call the key is absent, so the ' +
+          'condition is false and the statement grants nothing. If the intent was to bind the calling source, ' +
+          'the source keys are aws:SourceOrgID, aws:SourceOrgPaths, aws:SourceAccount and aws:SourceArn.',
+        remediation: 'Replace the principal-only key with the matching source key (for example ' +
+          'aws:PrincipalOrgID -> aws:SourceOrgID), or remove the statement.',
+        docRef: DOC_CONFUSED_DEPUTY,
+        policyEvidence: 'high',
+        pathExploitability: 'low',
+        service,
+        attachedArn,
+        transportOnlyDeny,
+      }));
+      continue;
+    }
     const conditioned = stmt.condition && typeof stmt.condition === 'object'
       && !Array.isArray(stmt.condition) && Object.keys(stmt.condition).length > 0;
 
@@ -219,7 +261,7 @@ function resourceFindings(model, ctx) {
     // this narrowing (section 5).
     if (c.anonymous) {
       const anonEntries = c.entries.filter((e) => e.type === 'anonymous');
-      const { scopingKeys, expansionKeys, bypassKeys, openKeys } = principalScopingAnalysis(stmt.condition, service);
+      const { scopingKeys, expansionKeys, bypassKeys, openKeys } = principalScopingAnalysis(stmt.condition, service, vacuousSourceGuards(stmt));
       // A KMS key policy's "*" is NOT anonymous/public: KMS has no unauthenticated
       // request path, so "*" = every AWS identity in every account (cross-account
       // still double-authorized). This service-scoped reframe changes ONLY the KMS
@@ -422,6 +464,31 @@ function resourceFindings(model, ctx) {
             'Deny must not be read as suppressing the public Allow.';
         }
       }
+      // R6-1: a vacuous ForAllValues source-key guard is named, never credited.
+      const vacuous = vacuousSourceGuards(stmt);
+      if (vacuous.length > 0) {
+        why += ` The ForAllValues: guard on ${vacuous.join(', ')} constrains nothing: these keys are ` +
+          'present only on service-to-service requests, so for an IAM caller the key is absent and ' +
+          'ForAllValues over an absent key is TRUE. An intended exclusion written this way never applies ' +
+          '(aws:PrincipalOrgPaths is the key for the caller\'s organization path).';
+      }
+      // A "*" scoped to an org/accounts by a positive principal condition is broad cross-account
+      // access within that scope, not public (whole family, v1.3.0). J-5: scoped to the owner's own
+      // account by aws:PrincipalAccount, it is a same-account grant.
+      const ownScoped = principalScoped && principalAccountIsOwner(stmt.condition, resourceAccount);
+      const scopedId = !principalScoped ? 'PUBLIC-ACCESS' : (ownScoped ? 'RESOURCE-SAME-ACCOUNT-GRANT' : 'RESOURCE-CROSS-ACCOUNT');
+      if (principalScoped) {
+        title = ownScoped
+          ? 'Broad principal ("*") scoped to the resource-owning account: same-account grant'
+          : 'Broad principal ("*") scoped by a principal condition: cross-account access within that scope';
+        // J-5 (Oliver): "*" scoped to the own account grants every principal there directly, with no
+        // identity grant needed (unlike naming the root), so it keeps the narrowed severity.
+        if (ownScoped) {
+          why += ' Scoped to the owning account, this still grants every IAM principal in that account ' +
+            'directly, with no identity-policy permission required (naming the account root would ' +
+            'only delegate to IAM).';
+        }
+      }
       if (isS3 && !principalScoped) {
         // S3 Block Public Access is only relevant to a genuinely-public grant.
         why +=
@@ -430,7 +497,7 @@ function resourceFindings(model, ctx) {
           'supplied here; unsupported context does not mean the resource is safe.';
       }
       findings.push(makeResourceFinding(stmt, anonEntries, {
-        id: 'PUBLIC-ACCESS',
+        id: scopedId,
         severity,
         title,
         why,
@@ -684,9 +751,21 @@ function resourceFindings(model, ctx) {
           'condition for access. The named principal is enumerated as-is and never ' +
           'collapsed with the resource owner.';
       }
+      // R6-1/J-2: an exact aws:PrincipalArn pin (same account as the Principal, not contradicted)
+      // lowers a read-only cross-account grant; write/destructive/policy stay high.
+      const pins = isData ? exactPrincipalArnPin(stmt.condition) : null;
+      const pinAccts = pins ? [...new Set(pins.map((a) => a.split(':')[4]))] : [];
+      const grantAccts = [...new Set(grantEntries.map(accountOfEntry))];
+      const readOnly = isData && stmt.actions.every((a) => {
+        const cls = actionClasses(a, DATA_SERVICE_NS[service]);
+        return Array.isArray(cls) && cls.every((k) => k === 'read' || k === 'meta');
+      });
+      const pinned = !!pins && readOnly && grantAccts.length === 1 && grantAccts[0] !== null &&
+        pinAccts.length === 1 && pinAccts[0] === grantAccts[0];
+      if (pinned) why += ' An exact aws:PrincipalArn condition pins the grant to the named principal ARN(s), not the whole account.';
       findings.push(makeResourceFinding(stmt, grantEntries, {
         id: 'RESOURCE-CROSS-ACCOUNT',
-        severity: 'high',
+        severity: pinned ? 'medium' : 'high',
         title,
         why,
         remediation:
@@ -787,7 +866,7 @@ function resourceFindings(model, ctx) {
           'aws:SourceArn value must equal the aws:SourceAccount value. Set them to the ' +
           'account that actually owns the calling source resource, then re-verify the ' +
           'confused-deputy binding.';
-      } else if (anyBinding && !ownBound) {
+      } else if (anyBinding && !ownBound && !(isData && binding.sourceOrg && foreignSource.length === 0)) {
         // F13/T2-4: bound, but not provably to this account's sources (a foreign
         // account, an account-less ARN, an org, or an unknown owning account).
         state = 'source-unverified';
@@ -866,7 +945,8 @@ function resourceFindings(model, ctx) {
           'service supports.';
       }
 
-      findings.push(makeResourceFinding(stmt, serviceEntries, {
+      // R6-1: on these services a properly source-bound service grant (incl. org-bound) is not reported.
+      if (!(isData && state === 'source-bound')) findings.push(makeResourceFinding(stmt, serviceEntries, {
         id: 'RESOURCE-CONFUSED-DEPUTY',
         severity,
         title,
@@ -1044,6 +1124,10 @@ const PER_SERVICE_RULES = new Map([
   [RESOURCE_SERVICES.KMS_KEY, kmsPerServiceRules],
   [RESOURCE_SERVICES.SNS, messagingPerServiceRules],
   [RESOURCE_SERVICES.SQS, messagingPerServiceRules],
+  [RESOURCE_SERVICES.ECR_REPOSITORY, dataPerServiceRules],
+  [RESOURCE_SERVICES.SECRET, dataPerServiceRules],
+  [RESOURCE_SERVICES.DYNAMODB_TABLE, dataPerServiceRules],
+  [RESOURCE_SERVICES.LOGS, dataPerServiceRules],
 ]);
 
 /**
@@ -1096,6 +1180,10 @@ const SERVICE_ACTION_PREFIX = Object.freeze({
   [RESOURCE_SERVICES.SNS]: 'sns',
   [RESOURCE_SERVICES.SQS]: 'sqs',
   [RESOURCE_SERVICES.KMS_KEY]: 'kms',
+  [RESOURCE_SERVICES.ECR_REPOSITORY]: 'ecr',
+  [RESOURCE_SERVICES.SECRET]: 'secretsmanager',
+  [RESOURCE_SERVICES.DYNAMODB_TABLE]: 'dynamodb',
+  [RESOURCE_SERVICES.LOGS]: 'logs',
 });
 function unmodeledReasons(model, ctx) {
   const statements = (model && Array.isArray(model.statements)) ? model.statements : [];
@@ -1152,6 +1240,10 @@ function unmodeledReasons(model, ctx) {
       return t !== '*' && t.split(':')[0].toLowerCase() !== prefix;
     });
     if (prefix && foreign.length > 0) unmodeled("actions outside this resource's service", `${at}.Action`);
+    // R6-1: an unclassified concrete action of a data service is unmodeled (fail closed).
+    if (DATA_SERVICE_NS[ctx.service] && actions.some((a) => actionClasses(a, DATA_SERVICE_NS[ctx.service]) === null)) {
+      unmodeled('an action this evaluator does not classify', `${at}.Action`);
+    }
   }
   return out;
 }
@@ -1229,7 +1321,9 @@ export function analyzeResource(model, resourceContext) {
   // add their service-specific refinements to the generic set here. Concatenated in a
   // fixed order (generic first, then per-service) so exports/coverage/UI all read
   // from this single combined finding set and the ordering stays deterministic.
-  const perServiceFindings = dispatchPerServiceRules(model, parsed);
+  // R6-2: inert statements grant nothing, so per-service rules never see them.
+  const live = { ...model, statements: (model.statements || []).filter((s) => inertServiceStatement(s).length === 0) };
+  const perServiceFindings = dispatchPerServiceRules(live, parsed);
   const findings = genericFindings.concat(perServiceFindings);
 
   const reasons = unmodeledReasons(model, parsed);

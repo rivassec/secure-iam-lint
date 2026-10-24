@@ -5,7 +5,7 @@ import { analyzeEnvelope } from './envelope.js';
 import { analyzeScp } from './scp.js';
 import { analyzeRcp } from './rcp.js';
 import { scpDenyShape, rcpDenyShape } from './guardrail-deny.js';
-import { analyzeResource } from './resource.js';
+import { analyzeResource, vacuousSourceGuards, sourceBindingAnalysis } from './resource.js';
 import { buildTrustGraph, buildResourceGraph, GRAPH_LIMITS } from './graph.js';
 import { enrichCoverage, duplicateSids } from './coverage.js';
 import { unsupportedConditionKeys, unsupportedConditionBindings, guardrailUnsupported } from './conditions.js';
@@ -385,8 +385,22 @@ export function resourceResult(model, coverage, effectiveFamily, options) {
   // an unknown action is still flagged for a service the catalog covers (S3, KMS),
   // but an uncatalogued service (SQS, SNS) is not a reason on its own.
   const allowView = { statements: model.statements.filter((st) => st && st.effect === 'Allow') };
+  // R6-1: keys the resource evaluator reads itself: a vacuous ForAllValues source guard (a no-op for
+  // IAM callers) and a positive, concrete aws:SourceOrgID / SourceOrgPaths binding on a service grant.
+  const resourceModelsKey = (stmt, key) => {
+    const k = String(key).toLowerCase();
+    if (vacuousSourceGuards(stmt).includes(k)) return true;
+    if (k !== 'aws:sourceorgid' && k !== 'aws:sourceorgpaths') return false;
+    const svc = stmt && stmt.principal && stmt.principal.byType ? stmt.principal.byType.Service : null;
+    return Array.isArray(svc) && svc.length > 0 && sourceBindingAnalysis(stmt.condition).boundKeys
+      .some((b) => String(b).toLowerCase() === k);
+  };
+  // R6-1: the resource family classifies ECR / Secrets Manager / DynamoDB (r8: and Logs) actions itself.
+  // R7: sqs keeps its pre-catalog treatment here (the messaging rules classify it).
+  const ownCatalog = new Set(['ecr', 'secretsmanager', 'dynamodb', 'sqs', 'logs']);
   const catalogued = (token) => {
     const svc = String(token).split(':')[0];
+    if (ownCatalog.has(svc.toLowerCase())) return false;
     return typeof defaultCatalog.classifyWildcard === 'function' &&
       defaultCatalog.classifyWildcard(`${svc}:*`).supported === true;
   };
@@ -394,8 +408,8 @@ export function resourceResult(model, coverage, effectiveFamily, options) {
     model,
     graph,
     catalogVersion: defaultCatalog.version,
-    unsupportedConditions: unsupportedConditionKeys(allowView),
-    unsupportedConditionBindings: unsupportedConditionBindings(allowView),
+    unsupportedConditions: unsupportedConditionKeys(allowView, resourceModelsKey),
+    unsupportedConditionBindings: unsupportedConditionBindings(allowView, resourceModelsKey),
     unrecognizedActions: unrecognizedActions(allowView, defaultCatalog).filter(catalogued),
     duplicateSids: duplicateSids(model),
     // IAM-1201 / T2-4: the resource evaluator's coverage flips coverage to INCOMPLETE

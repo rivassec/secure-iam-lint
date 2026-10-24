@@ -188,6 +188,7 @@ test('every rule family has at least one positive and one negative fixture', () 
     'DETECTION-IMPAIRMENT': ['detection'],
     'NOTACTION-ALLOW': ['notaction-allow'],
     'GROUP-MEMBERSHIP': ['group-membership'],
+    'TRAFFIC-ROUTING': ['traffic-routing'],
     // S2-crossaccount-scoped-surface (B): context-gated; the exfil/ fixtures that
     // produce it carry a `context.subjectAccount` passed through below.
     'CROSS-ACCOUNT-DATA-READ': ['exfil'],

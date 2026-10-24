@@ -1,14 +1,16 @@
 [
-  { "file": "action/index.mjs", "class": "candidate-drop", "line": 195,
+  { "file": "action/index.mjs", "class": "candidate-drop", "line": 206,
     "reason": "unreadable baseline rejects the WHOLE run as a usage error (exit 2, BASELINE_UNREADABLE); nothing is dropped and the run never proceeds without it" },
-  { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 110,
+  { "file": "action/index.mjs", "class": "candidate-drop", "line": 426,
+    "reason": "unreadable pulumi-json rejects the WHOLE run as a usage error (exit 2, PULUMI_UNREADABLE); nothing is scanned or reported clean" },
+  { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 111,
     "reason": "oversize baseline returns ok:false (INVALID_BASELINE), which every caller turns into exit 2; no partial baseline is ever used" },
-  { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 117,
+  { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 118,
     "reason": "unparseable baseline returns ok:false (INVALID_BASELINE) -> exit 2; never treated as an empty baseline" },
-  { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 126,
+  { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 127,
     "reason": "over-cap entry count returns ok:false (INVALID_BASELINE) -> exit 2; entries are never truncated" },
-  { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 259,
+  { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 260,
     "reason": "baselineWriteProblem: too many entries -> BASELINE_TOO_LARGE usage error (exit 2), nothing written" },
-  { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 263,
+  { "file": "cli/baseline.mjs", "class": "candidate-drop", "line": 264,
     "reason": "baselineWriteProblem: too many bytes -> BASELINE_TOO_LARGE usage error (exit 2), nothing written" }
 ]

@@ -10,11 +10,18 @@
       "family": "identity",
       "threshold": "high",
       "partitionAsserted": null,
+      "subjectAccountAsserted": null,
+      "trustedAccountIdsAsserted": null,
       "analysisStatus": "complete",
       "reason": "FINDINGS_AT_OR_ABOVE_THRESHOLD",
       "exitCode": 1,
       "findingsCount": 1,
       "blockingCount": 1,
+      "statementCoverage": {
+        "total": 1,
+        "withoutVerdict": 0,
+        "indexes": []
+      },
       "analysisStates": [],
       "findings": [
         {
@@ -95,7 +102,9 @@
             "analysisStatus": "complete",
             "exitCode": 1,
             "blockingCount": 1,
-            "findingsCount": 1
+            "findingsCount": 1,
+            "statementsTotal": 1,
+            "statementsWithoutVerdict": 0
           },
           "results": [
             {

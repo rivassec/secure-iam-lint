@@ -129,6 +129,8 @@ export const RESOURCE_POLICY_WRITE_ACTIONS = Object.freeze([
   'ec2:ModifyImageAttribute',
   'rds:ModifyDBSnapshotAttribute',
   'rds:ModifyDBClusterSnapshotAttribute',
+  // r8 E-1: lets another account attach this ENI to its instance (cross-account grant).
+  'ec2:CreateNetworkInterfacePermission',
 ]);
 
 // F15: actions that share a resource copy rather than rewrite its policy.
@@ -211,6 +213,44 @@ export const DESTRUCTIVE_EXTRA_ACTIONS = Object.freeze(['kms:ScheduleKeyDeletion
 // by the Resource. Its blast radius is whatever policies that group carries -
 // inferred, at best, from the group NAME, never confirmed from this policy alone.
 export const GROUP_MEMBERSHIP_ACTIONS = Object.freeze(['iam:AddUserToGroup']);
+
+// r8: network / event routing writes (ENI, ELB, EventBridge). REDIRECT can send existing
+// traffic or events to a destination the holder picks, possibly in another account.
+// Trust stores, connections and partner sources stay withheld (not modeled).
+export const TRAFFIC_REDIRECT_ACTIONS = Object.freeze([
+  'elasticloadbalancing:CreateListener', 'elasticloadbalancing:CreateRule',
+  'elasticloadbalancing:ModifyListener', 'elasticloadbalancing:ModifyRule',
+  'events:PutTargets', 'events:UpdateApiDestination',
+]);
+export const TRAFFIC_ROUTING_ACTIONS = Object.freeze([
+  ...TRAFFIC_REDIRECT_ACTIONS,
+  'ec2:CreateNetworkInterface', 'ec2:AttachNetworkInterface', 'ec2:DetachNetworkInterface',
+  'ec2:ModifyNetworkInterfaceAttribute', 'ec2:ResetNetworkInterfaceAttribute',
+  'ec2:AssignPrivateIpAddresses', 'ec2:UnassignPrivateIpAddresses',
+  'ec2:AssignIpv6Addresses', 'ec2:UnassignIpv6Addresses',
+  'ec2:CreateSecurityGroup', 'ec2:AuthorizeSecurityGroupIngress', 'ec2:AuthorizeSecurityGroupEgress',
+  'ec2:RevokeSecurityGroupIngress', 'ec2:RevokeSecurityGroupEgress', 'ec2:ModifySecurityGroupRules',
+  'elasticloadbalancing:AddListenerCertificates', 'elasticloadbalancing:ApplySecurityGroupsToLoadBalancer',
+  'elasticloadbalancing:AttachLoadBalancerToSubnets', 'elasticloadbalancing:ConfigureHealthCheck',
+  'elasticloadbalancing:CreateAppCookieStickinessPolicy', 'elasticloadbalancing:CreateLBCookieStickinessPolicy',
+  'elasticloadbalancing:CreateLoadBalancer', 'elasticloadbalancing:CreateLoadBalancerListeners',
+  'elasticloadbalancing:CreateLoadBalancerPolicy', 'elasticloadbalancing:CreateTargetGroup',
+  'elasticloadbalancing:CreateWebACLAssociation', 'elasticloadbalancing:DetachLoadBalancerFromSubnets',
+  'elasticloadbalancing:DisableAvailabilityZonesForLoadBalancer',
+  'elasticloadbalancing:EnableAvailabilityZonesForLoadBalancer',
+  'elasticloadbalancing:ModifyCapacityReservation', 'elasticloadbalancing:ModifyIpPools',
+  'elasticloadbalancing:ModifyListenerAttributes', 'elasticloadbalancing:ModifyLoadBalancerAttributes',
+  'elasticloadbalancing:ModifyTargetGroup', 'elasticloadbalancing:ModifyTargetGroupAttributes',
+  'elasticloadbalancing:RegisterInstancesWithLoadBalancer', 'elasticloadbalancing:RegisterTargets',
+  'elasticloadbalancing:SetIpAddressType', 'elasticloadbalancing:SetLoadBalancerListenerSSLCertificate',
+  'elasticloadbalancing:SetLoadBalancerPoliciesForBackendServer',
+  'elasticloadbalancing:SetLoadBalancerPoliciesOfListener', 'elasticloadbalancing:SetRulePriorities',
+  'elasticloadbalancing:SetSecurityGroups', 'elasticloadbalancing:SetSubnets', 'elasticloadbalancing:SetWebAcl',
+  'events:PutRule', 'events:EnableRule', 'events:DisableRule', 'events:PutEvents',
+  'events:CreateEventBus', 'events:UpdateEventBus', 'events:CreateApiDestination',
+  'events:CreateEndpoint', 'events:UpdateEndpoint', 'events:CreateArchive', 'events:UpdateArchive',
+  'events:StartReplay', 'events:CancelReplay',
+]);
 
 // Group-name tokens that SUGGEST (never confirm) elevated privilege. Matched
 // case-insensitively as substrings of the group name. Used only to phrase an

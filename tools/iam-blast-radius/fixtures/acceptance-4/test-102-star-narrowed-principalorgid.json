@@ -34,31 +34,31 @@
   },
   "expectS3": {
     "findingIds": [
-      "PUBLIC-ACCESS"
+      "RESOURCE-CROSS-ACCOUNT"
     ],
     "findingSeverities": {
-      "PUBLIC-ACCESS": "high"
+      "RESOURCE-CROSS-ACCOUNT": "high"
     },
     "notCritical": [
-      "PUBLIC-ACCESS"
+      "RESOURCE-CROSS-ACCOUNT"
     ],
     "notFindingIds": [
       "S3-PUBLIC-NOT-NARROWED",
       "S3-BUCKET-POLICY-TAKEOVER"
     ],
     "scopedBy": {
-      "PUBLIC-ACCESS": [
+      "RESOURCE-CROSS-ACCOUNT": [
         "aws:PrincipalOrgID"
       ]
     },
     "whyIncludes": {
-      "PUBLIC-ACCESS": [
+      "RESOURCE-CROSS-ACCOUNT": [
         "NARROWED",
         "aws:PrincipalOrgID"
       ]
     },
     "forbidWhy": {
-      "PUBLIC-ACCESS": [
+      "RESOURCE-CROSS-ACCOUNT": [
         "anyone can"
       ]
     }

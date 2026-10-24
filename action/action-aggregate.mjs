@@ -104,7 +104,9 @@ export function buildAggregateSarif(units, manifest = VERSION_MANIFEST, caps = {
     ? caps.maxBytes : DEFAULT_MAX_SARIF_BYTES;
 
   const runs = list.map((u) => {
-    const opts = isNonEmptyString(u && u.file) ? { file: u.file } : { artifactUri: 'action-inputs' };
+    // A Pulumi unit carries its own location model (URN logical location, line, scope).
+    const opts = (u && u.sarif && typeof u.sarif === 'object') ? u.sarif
+      : (isNonEmptyString(u && u.file) ? { file: u.file } : { artifactUri: 'action-inputs' });
     return buildSarifLog(u.result, opts, manifest).runs[0];
   });
   const SCHEMA = 'https://json.schemastore.org/sarif-2.1.0.json';

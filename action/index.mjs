@@ -30,6 +30,7 @@
 //   4 internal invariant error
 // A CI gate treats 1,2,3,4 as FAILED. Code 3 is DISTINCT from 0 and from 1.
 
+import { parseTrustedAccountIds } from '../cli/trusted-accounts.mjs';
 import { randomUUID } from 'node:crypto';
 import {
   applyBaseline, parseBaseline, buildBaseline, formatBaseline, baselineWriteProblem, MAX_BASELINE_BYTES,
@@ -42,7 +43,7 @@ import {
 export * from './action-output.mjs';
 import {
   exceedsInputByteCap, sarifOutputIsContained, sarifTargetContainedFs, getInput, readInputs, budgetMsInput,
-  unrecognizedInputs,
+  unrecognizedInputs, credentialsInEnv,
 } from './action-inputs.mjs';
 export * from './action-inputs.mjs';
 import {
@@ -58,6 +59,7 @@ import {
 } from './action-glob.mjs';
 export * from './action-glob.mjs';
 import { scan, EXIT, DEFAULT_BUDGET_MS } from '../cli/scan.mjs';
+import { scanPulumi, pulumiUnits, PULUMI_LIMITS, PULUMI_WARNING } from '../cli/pulumi.mjs';
 import { buildSarifLog } from '../cli/sarif.mjs';
 // READ-ONLY canonical version manifest (browser-safe, no Node deps) so the SARIF
 // semanticVersion ties to the same identifiers the engine reports.
@@ -137,7 +139,16 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
     const inputs = sarifSafe ? rawInputs : { ...rawInputs, sarifOutput: DEFAULT_SARIF_OUTPUT };
 
     // --- Adapter-owned usage validation (exit 2), before any scanning. --------
-    if (!isNonEmptyString(inputs.family)) {
+    if (parseTrustedAccountIds(inputs.trustedAccountIds || null).error) {
+      return finalize([{ file: null, result: usageResult('INVALID_TRUSTED_ACCOUNT_IDS',
+        'The "trusted-account-ids" input must list 12-digit AWS account ids.') }], inputs, manifest);
+    }
+    if (!isNonEmptyString(inputs.pulumiJson) && isNonEmptyString(inputs.providerAccounts)) {
+      return finalize([{ file: null, result: usageResult('PROVIDER_ACCOUNTS_WITHOUT_PULUMI',
+        'The "provider-accounts" input is only used with "pulumi-json".') }], inputs, manifest);
+    }
+    // pulumi-json takes each policy's family from its resource type.
+    if (!isNonEmptyString(inputs.pulumiJson) && !isNonEmptyString(inputs.family)) {
       return finalize([{
         file: null,
         result: usageResult(
@@ -223,6 +234,10 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
         }], { ...inputs, baselineOutput: '' }, manifest);
       }
     }
+
+    // --- v1.3.0: Pulumi preview / stack export input (exclusive with paths). ------
+    // After the baseline block, so a Pulumi run applies and writes baselines too (P8).
+    if (isNonEmptyString(inputs.pulumiJson)) return runPulumiInput(inputs, sarifSafe, io, manifest);
 
     const patterns = splitPaths(inputs.paths);
 
@@ -336,6 +351,7 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
             text,
             family: inputs.family,
             subjectAccount: inputs.subjectAccount || undefined,
+            trustedAccountIds: inputs.trustedAccountIds || undefined,
             // Attached-resource context for the resource family (review finding D1).
             resourceContext: inputs.resourceContext,
             // Forward partition ONLY when the consumer EXPLICITLY supplied one. An
@@ -381,6 +397,54 @@ export function runAction({ env, io, scanFn = scan, manifest = VERSION_MANIFEST 
   }
 }
 
+// pulumi-json: confine and read the file, scan every document, aggregate like paths.
+function runPulumiInput(inputs, sarifSafe, io, manifest) {
+  const fail = (reason, message) => finalize([{ file: null, result: usageResult(reason, message, null) }],
+    { ...inputs, baselineOutput: '' }, manifest);
+  if (!sarifSafe) return fail('UNSAFE_SARIF_OUTPUT', 'The "sarif-output" input must be a RELATIVE path inside the workspace.');
+  if (isNonEmptyString(inputs.paths)) return fail('PULUMI_WITH_PATHS', 'Set either "paths" or "pulumi-json", not both.');
+  if (isNonEmptyString(inputs.family)) return fail('PULUMI_WITH_FAMILY', 'The "family" input is not used with "pulumi-json" (each policy\'s family comes from its resource type).');
+  // R5-4: newline-separated <provider>=<account>; the adapter validates names and ids.
+  const providerAccounts = isNonEmptyString(inputs.providerAccounts)
+    ? inputs.providerAccounts.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
+      const i = l.lastIndexOf('=');
+      return i > 0 ? { key: l.slice(0, i), account: l.slice(i + 1) } : { key: '', account: '' };
+    })
+    : undefined;
+  if (inputs.resourceContext) return fail('PULUMI_WITH_RESOURCE', 'The "resource-*" inputs are not used with "pulumi-json" (the attached resource is resolved from the stack).');
+  let safe = sarifOutputIsContained(inputs.pulumiJson);
+  if (safe && io && typeof io.sarifTargetContained === 'function') {
+    try { safe = io.sarifTargetContained(inputs.pulumiJson) === true; } catch { safe = false; }
+  }
+  if (!safe) return fail('UNSAFE_PULUMI_PATH', 'The "pulumi-json" input must be a RELATIVE path inside the workspace with no symlink component.');
+  let text = '';
+  let oversize = false;
+  try {
+    text = io.readFile(inputs.pulumiJson, PULUMI_LIMITS.MAX_BYTES);
+  } catch (e) {
+    if (e && e.code === INPUT_TOO_LARGE) oversize = true;
+    else return fail('PULUMI_UNREADABLE', 'The "pulumi-json" file could not be read (missing, a symlink, or not a regular file).');
+  }
+  const result = scanPulumi({
+    text, oversize,
+    subjectAccount: inputs.subjectAccount || undefined,
+    partition: inputs.partition || undefined,
+    trustedAccountIds: inputs.trustedAccountIds || undefined,
+    providerAccounts,
+    threshold: inputs.failOn,
+    budgetMs: inputs.budgetMs,
+  });
+  if (result.exitCode === EXIT.USAGE) return fail(result.reason, result.analysisStates[0].message);
+  // E-5: keyed by code; the text is fixed plus a count, never an input value.
+  for (const w of result.warnings || []) {
+    if (Object.hasOwn(PULUMI_WARNING, w.code) && Number.isInteger(w.accounts)) process.stderr.write(`IAM Blast Radius warning ${w.code}: ${PULUMI_WARNING[w.code](w.accounts)}\n`);
+  }
+  const units = pulumiUnits(result, inputs.pulumiJson);
+  // An empty stack (no policies, no states) still reports one clean unit, never "nothing scanned".
+  if (units.length === 0) units.push({ file: inputs.pulumiJson, sarif: { file: inputs.pulumiJson, runProperties: { scanScope: result.scanScope } }, result: { analysisStatus: 'complete', analysisStates: [], findings: [], blockingCount: 0, findingsCount: 0, exitCode: EXIT.CLEAN, reason: 'CLEAN', family: null } });
+  return finalize(units, { ...inputs, scanScope: result.scanScope }, manifest);
+}
+
 function safeInputs(env) {
   try {
     const inputs = readInputs(env);
@@ -391,6 +455,9 @@ function safeInputs(env) {
 }
 
 // Aggregate a list of scanned units into the final structured result + outputs.
+// Reasons that name a document-level gap, not a run-level cause.
+const WEAK_REASONS = new Set(['COVERAGE_INCOMPLETE', 'FINDINGS']);
+
 function finalize(rawUnits, inputs, manifest) {
   // Attach baseline keys to every unit (so the SARIF publishes them) and apply an opt-in
   // baseline. applyBaseline never changes a usage/internal/failed unit, so synthetic
@@ -399,7 +466,9 @@ function finalize(rawUnits, inputs, manifest) {
   const threshold = String((inputs && inputs.failOn) || 'high').trim().toLowerCase();
   const units = rawUnits.map((u) => ({
     ...u,
-    result: applyBaseline(u.result, isNonEmptyString(u && u.file) ? u.file : 'action-inputs', baselineKeys, threshold),
+    // A Pulumi unit carries its own <urn>#<property> baseline URI (P8).
+    result: applyBaseline(u.result, isNonEmptyString(u && u.baselineUri) ? u.baselineUri
+      : (isNonEmptyString(u && u.file) ? u.file : 'action-inputs'), baselineKeys, threshold),
   }));
   // A baseline entry whose id matches a result but whose file / ruleId / severity does not
   // was NOT accepted (applyBaseline); it also fails the run as a usage error, so a
@@ -438,13 +507,15 @@ function finalize(rawUnits, inputs, manifest) {
   const blockingCount = units.reduce((n, u) => n + toCount(u.result && u.result.blockingCount), 0);
   const analysisStatus = aggregateStatus(units.map((u) => u.result && u.result.analysisStatus));
 
-  // Reason for the failure message: the reason of the FIRST unit whose code equals
-  // the worst aggregate code, else 'clean'.
+  // Headline reason: among units at the worst code, prefer a run-level state over
+  // COVERAGE_INCOMPLETE / FINDINGS (they say less); else the first. Enum-shaped only.
   let reason = 'clean';
   if (exitCode !== EXIT.CLEAN) {
-    const worstUnit = units.find((u) => normalizeExitCode(u.result && u.result.exitCode) === exitCode);
-    reason = (worstUnit && worstUnit.result && worstUnit.result.reason) || 'FAILED';
+    const worst = units.filter((u) => normalizeExitCode(u.result && u.result.exitCode) === exitCode);
+    const pick = worst.find((u) => u.result && isNonEmptyString(u.result.reason) && !WEAK_REASONS.has(u.result.reason)) || worst[0];
+    reason = (pick && pick.result && pick.result.reason) || 'FAILED';
   }
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(String(reason))) reason = 'FAILED';
 
   const sarifPath = inputs.sarifOutput;
   const outputs = {
@@ -453,7 +524,9 @@ function finalize(rawUnits, inputs, manifest) {
     'findings-count': String(findingsCount),
     'blocking-findings-count': String(blockingCount),
     'analysis-status': analysisStatus,
+    reason,
   };
+  if (inputs && isNonEmptyString(inputs.scanScope)) outputs['scan-scope'] = inputs.scanScope;
   // Baseline outputs exist only when a baseline was applied (absent otherwise, so runs
   // without one keep the exact pre-baseline output set).
   let baselineStale = 0;
@@ -678,6 +751,12 @@ export async function main() {
     const listed = stray.names.length > 0 ? stray.names.join(', ') : '';
     const more = stray.odd > 0 ? `${listed ? ' and ' : ''}${stray.odd} with an unusual name` : '';
     process.stderr.write(`IAM Blast Radius: ignoring unrecognized input(s): ${listed}${more} (not declared in action.yml).\n`);
+  }
+
+  // The Action reads files only and needs no AWS credentials. Names are fixed constants.
+  const creds = credentialsInEnv(process.env);
+  if (creds.length > 0) {
+    process.stderr.write(`IAM Blast Radius: AWS_CREDENTIALS_IN_ENV: ${creds.join(', ')} set in this step's environment; this action needs no AWS credentials, scope them to the steps that do (see ACTION.md, Credentials).\n`);
   }
 
   // Stale baseline entries (accepted keys that matched nothing this run) are harmless but

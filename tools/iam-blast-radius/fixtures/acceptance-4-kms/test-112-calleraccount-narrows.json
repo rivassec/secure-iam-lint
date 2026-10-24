@@ -33,19 +33,19 @@
     "valid": true
   },
   "expectKms": {
-    "findingIds": ["PUBLIC-ACCESS"],
-    "findingSeverities": { "PUBLIC-ACCESS": "high" },
-    "notCritical": ["PUBLIC-ACCESS"],
+    "findingIds": ["RESOURCE-CROSS-ACCOUNT"],
+    "findingSeverities": { "RESOURCE-CROSS-ACCOUNT": "high" },
+    "notCritical": ["RESOURCE-CROSS-ACCOUNT"],
     "notFindingIds": [
       "KMS-VIASERVICE-NOT-SCOPING",
       "KMS-SILENT-POLICY-UNKNOWN"
     ],
-    "scopedBy": { "PUBLIC-ACCESS": ["kms:CallerAccount"] },
+    "scopedBy": { "RESOURCE-CROSS-ACCOUNT": ["kms:CallerAccount"] },
     "whyIncludes": {
-      "PUBLIC-ACCESS": ["NARROWED", "kms:CallerAccount", "logical AND"]
+      "RESOURCE-CROSS-ACCOUNT": ["NARROWED", "kms:CallerAccount", "logical AND"]
     },
     "forbidWhy": {
-      "PUBLIC-ACCESS": ["anyone can", "open to every account", "any account can use"]
+      "RESOURCE-CROSS-ACCOUNT": ["anyone can", "open to every account", "any account can use"]
     }
   }
 }

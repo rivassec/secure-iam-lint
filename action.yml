@@ -26,26 +26,58 @@ branding:
 
 inputs:
   paths:
-    description: Newline-separated files or globs to scan (e.g. "policies/**/*.json").
-    required: true
+    description: >-
+      Newline-separated files or globs to scan (e.g. "policies/**/*.json").
+      Required unless pulumi-json is set (the two are mutually exclusive).
+    required: false
   family:
     description: >-
-      Policy family (REQUIRED; never auto-detected): identity | role-trust |
+      Policy family (required with paths; never auto-detected): identity | role-trust |
       resource | permissions-boundary | session | scp | rcp | scp-rcp
       (trust = role-trust). Mixed repos run the
-      action multiple times with different globs/families.
-    required: true
+      action multiple times with different globs/families. Not used with pulumi-json.
+    required: false
+  pulumi-json:
+    description: >-
+      Workspace-relative path to a `pulumi preview --json` or `pulumi stack export`
+      file produced earlier in the job. Every IAM policy in it is scanned, with the
+      family and attached resource taken from each resource type. A default preview
+      lists only changed resources (scan-scope "delta"); use
+      `preview --show-sames` or a stack export for a full scan. Mutually exclusive
+      with paths; family and resource-* are not used with it (baselines are).
+    required: false
+  provider-accounts:
+    description: >-
+      With pulumi-json only: newline-separated `<provider>=<12-digit account id>`
+      lines (provider resource name or full URN) for providers the stack can't prove,
+      e.g. ones configured only by profile. Cross-checked against the stack; a
+      mismatch fails closed. It resolves the account but never proves a
+      same-account trust on its own.
+    required: false
+  trusted-account-ids:
+    description: >-
+      Comma- or newline-separated 12-digit AWS account ids you trust. For
+      family=role-trust (and pulumi-json trusts), a trust whose principals are all
+      exact role/user ARNs in listed accounts is rated medium instead of
+      cross-account high. Account-root principals, wildcards and mixed lists stay
+      high. Nothing is inferred from other inputs. An invalid id is exit 2.
+    required: false
   subject-account:
-    description: AWS account id (12 digits) for account-aware checks (e.g. PassRole viability).
+    description: >-
+      AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). For
+      family=role-trust it is the account that owns EVERY role in this run; split a paths
+      glob that spans accounts.
     required: false
   resource-arn:
     description: >-
-      For family=resource: the ARN of the resource the policy is ATTACHED to (e.g.
+      For family=role-trust: the role's own ARN, required to report a trust as
+      same-account (otherwise it stays cross-account high). For family=resource: the
+      ARN of the resource the policy is ATTACHED to (e.g.
       arn:aws:s3:::my-bucket). Required to analyze a resource policy; without it the
       resource family fails closed (RESOURCE_CONTEXT_REQUIRED, exit 3).
     required: false
   resource-type:
-    description: 'For family=resource: the resource type (e.g. s3-bucket).'
+    description: 'For family=resource: the resource type (e.g. s3-bucket, ecr-repository, secretsmanager-secret, dynamodb-table, logs).'
     required: false
   resource-account:
     description: 'For family=resource: the owning account id, when known.'
@@ -150,6 +182,16 @@ outputs:
     description: Total findings at/above the fail-on threshold across all scanned files.
   analysis-status:
     description: Aggregate analysis status - complete, partial, or failed.
+  reason:
+    description: >-
+      Headline reason for the run: an enum code such as FINDINGS, COVERAGE_INCOMPLETE or
+      PULUMI_ACCOUNT_UNRESOLVED, or "clean". Never input-derived text. A run-level cause
+      is preferred over COVERAGE_INCOMPLETE when both share the worst exit code.
+  scan-scope:
+    description: >-
+      With pulumi-json only - "delta" (a default preview, changed resources only) or
+      "full" (a stack export, or a preview with --show-sames). Require "full" on main
+      if a delta pass must not count as a whole-stack check.
   baselined-count:
     description: Number of baseline entries that matched a result this run (only set when `baseline` is given).
   baseline-stale-count:

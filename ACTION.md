@@ -146,6 +146,7 @@ jobs:
           path: iam-blast-radius.sarif
           if-no-files-found: ignore
           retention-days: 1
+          overwrite: true   # v4+ artifact names are immutable per run; a re-run needs this
 
   upload:
     needs: scan
@@ -177,11 +178,14 @@ run the Action **multiple times** with different `paths` globs and a different
 
 | Input | Required | Default | Description |
 | ----- | -------- | ------- | ----------- |
-| `paths` | yes | - | Newline-separated files or globs to scan (e.g. `policies/**/*.json`). An empty match is a usage error (exit `2`), not a clean scan. |
-| `family` | yes | - | Policy family, declared explicitly and never auto-detected: `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp`, `scp-rcp`, `trust` (synonym of `role-trust`). |
-| `subject-account` | no | - | AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). |
-| `resource-arn` | no | - | For `family: resource`: the ARN of the resource the policy is attached to (e.g. `arn:aws:s3:::my-bucket`). Required to analyze a resource policy; without it the resource family fails closed (`RESOURCE_CONTEXT_REQUIRED`, exit `3`). |
-| `resource-type` | no | - | For `family: resource`: the resource type (e.g. `s3-bucket`). |
+| `paths` | yes, unless `pulumi-json` | - | Newline-separated files or globs to scan (e.g. `policies/**/*.json`). An empty match is a usage error (exit `2`), not a clean scan. |
+| `family` | yes, with `paths` | - | Policy family, declared explicitly and never auto-detected: `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp`, `scp-rcp`, `trust` (synonym of `role-trust`). |
+| `provider-accounts` | no | - | With `pulumi-json` only: newline-separated `<provider>=<12-digit account id>` lines (the provider's resource name or full URN) for providers the stack can't prove, such as ones configured only by profile. Cross-checked against the stack; a mismatch fails closed (exit `3`), an unknown or ambiguous provider name is exit `2`. It resolves the account for account-aware checks but never proves a same-account trust on its own. When providers span more than one account, map each one here and leave `subject-account` empty: with it set, documents in the other accounts fail closed as `PULUMI_ACCOUNT_MISMATCH`, and the run warns once (`PULUMI_PROVIDERS_MULTI_ACCOUNT`). |
+| `pulumi-json` | no | - | Workspace-relative path to a `pulumi preview --json` or `pulumi stack export` file produced earlier in the job. Every IAM policy in it is scanned; each policy's family and attached resource come from its resource type, and findings are located by `<urn>#<property>`. A default preview lists only changed resources (`scan-scope: delta`), so exit `0` means "no new risk in this change", not "stack clean"; use `pulumi preview --show-sames` or a stack export for a full scan. A `pulumi stack export` scans the deployed state, not the change under review; gate a PR with `pulumi preview --json --show-sames`. Unknown preview values, secrets and unsupported policy types fail closed (exit `3`). Mutually exclusive with `paths`; `family` and `resource-*` are not used with it. `baseline` / `baseline-output` work, keyed per `<urn>#<property>`. |
+| `trusted-account-ids` | no | - | Comma- or newline-separated 12-digit account ids you trust. For `role-trust`, a trust whose principals are all exact role/user ARNs in listed accounts is `TRUST-CROSS-ACCOUNT` medium instead of high; account-root principals, wildcards and mixed lists stay high. Never inferred. An invalid id is exit `2`. |
+| `subject-account` | no | - | AWS account id (12 digits) for account-aware checks (e.g. PassRole viability). For `role-trust` it is the account that owns every role in the run; split a `paths` glob that spans accounts. |
+| `resource-arn` | no | - | For `family: role-trust`: the role's own ARN; without it a trust is never reported as same-account (it stays `TRUST-CROSS-ACCOUNT` high). For `family: resource`: the ARN of the resource the policy is attached to (e.g. `arn:aws:s3:::my-bucket`). Required to analyze a resource policy; without it the resource family fails closed (`RESOURCE_CONTEXT_REQUIRED`, exit `3`). |
+| `resource-type` | no | - | For `family: resource`: the resource type (e.g. `s3-bucket`, `kms-key`, `ecr-repository`, `secretsmanager-secret`, `dynamodb-table`, `logs`; `logs` with `arn:aws:logs:<region>:<account>:*` is the account-wide Logs resource policy). |
 | `resource-account` | no | - | For `family: resource`: the owning account id, when known. |
 | `partition` | no | - | AWS partition (`aws`, `aws-us-gov`, `aws-cn`, `aws-iso*`). No default on purpose: an omitted partition is "not asserted", not `aws`. A cross-partition role-viability verdict is trusted only when you supply a real partition; otherwise it is treated as unknown and fails closed (exit `3`). |
 | `fail-on` | no | `high` | Minimum severity that fails the check: `critical`, `high`, `medium`, `low`, `info`, `none`. `none` does not turn a fail-closed `3` into `0`. |
@@ -203,6 +207,8 @@ run the Action **multiple times** with different `paths` globs and a different
 | `findings-count` | Total findings emitted across all scanned files. |
 | `blocking-findings-count` | Total findings at/above the `fail-on` threshold. |
 | `analysis-status` | Aggregate analysis status: `complete`, `partial`, or `failed`. |
+| `reason` | Headline reason for the run: `clean`, or an enum code such as `FINDINGS`, `COVERAGE_INCOMPLETE` or `PULUMI_ACCOUNT_UNRESOLVED`. Enum values only, never input-derived text. When several units share the worst exit code, a run-level cause (an account that could not be resolved, an unmodeled resource) is preferred over `COVERAGE_INCOMPLETE` / `FINDINGS`. |
+| `scan-scope` | With `pulumi-json` only: `delta` (a default preview, changed resources only) or `full` (a stack export, or a preview with `--show-sames`). |
 | `baselined-count` | Baseline entries that matched a result this run. Set only when `baseline` is given. |
 | `baseline-stale-count` | Baseline entries that matched nothing this run and can be pruned. Set only when `baseline` is given. |
 
@@ -310,6 +316,25 @@ analyzer-state result is appended, so a truncated document is never mistaken for
 complete one. Truncation shapes only the SARIF document; it **never** changes the
 exit code (that is driven only by finding severity: a fail-closed `3` stays `3`).
 
+### Data in the SARIF and in the CLI's JSON
+
+Both carry policy details, so treat them as sensitive as the policy files themselves
+(checked against a synthetic policy with a `Sid`, a bucket ARN, `sts:ExternalId` and
+`aws:SourceVpce`):
+
+- **SARIF** always carries the `Sid`, action names and the file path. Findings that
+  carry an evidence block (for example `PASSROLE-*` and `TRUST-*`) also carry the
+  statement's resource ARNs, account ids and its condition **keys and values**
+  (including `sts:ExternalId` and `aws:SourceVpce`), markdown-escaped. Findings
+  without one (for example `WILDCARD-ACTION`, `DATA-EXFIL`) carry only the message.
+  Do not assume SARIF is free of ARNs or condition values.
+- **`iam-br --format json`** always carries all of it: ARNs, account ids and every
+  condition value.
+- The step summary and the runner log carry counts and reason codes only.
+
+A SARIF uploaded to code scanning is visible to everyone who can read the repo's
+Security tab; a workflow artifact is visible to everyone who can read the run.
+
 ## Permissions
 
 - Default required permission is **`contents: read`**. The Action reads files and
@@ -317,6 +342,19 @@ exit code (that is driven only by finding severity: a fail-closed `3` stays `3`)
 - Grant **`security-events: write` only** in a job that runs
   `github/codeql-action/upload-sarif`, and only on that job. Do not grant it in the
   job that runs the Action on untrusted pull-request content.
+
+## Credentials
+
+The Action reads files and makes no network calls, so it needs **no AWS
+credentials**. If `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` or `AWS_SESSION_TOKEN`
+is set in its step environment, it logs a warning `AWS_CREDENTIALS_IN_ENV` naming the
+variables (never their values). Scope credentials to the steps that need them:
+
+- Run the Action in a job (or a step ordered before) that has no credentials.
+- With `aws-actions/configure-aws-credentials`, set `output-env-credentials: false`
+  so the keys are not exported to the job environment, and read the step outputs for
+  the steps that need them.
+- Do not set credentials in a job-level `env:`.
 
 ## Security guidance for consumers
 
@@ -351,7 +389,7 @@ One family per run, declared explicitly (never auto-detected):
 | ------ | ------ |
 | `identity` | IAM identity (user/group/role) policies: escalation, PassRole chains, credential creation, data exfiltration reach. |
 | `role-trust` | Role trust policies (`sts:AssumeRole`): who can assume the role. Synonym: `trust`. |
-| `resource` | Resource-based policies (S3, KMS, SNS, SQS, per-service): public/cross-account exposure. |
+| `resource` | Resource-based policies (S3, KMS, SNS, SQS, ECR repository, Secrets Manager secret, DynamoDB table; per-service): public/cross-account exposure. |
 | `permissions-boundary` | Permissions-boundary policies: analyzed as a ceiling, not a grant. |
 | `session` | Session policies: analyzed as a session restriction, not a grant. |
 | `scp` | Organizations Service Control Policies: guardrail semantics. |
@@ -388,6 +426,13 @@ reported as a clean pass. See the `max-files` / `max-total-bytes` inputs.
 
 This Action is an MVP: built-in SARIF upload, Terraform plan parsing,
 family auto-detection, and PR review comments are intentionally out of scope.
+
+## Container
+
+The same CLI ships as a non-root container image, `ghcr.io/rivassec/secure-iam-lint:<version>`,
+for pipelines outside GitHub Actions (for example Argo Workflows or an EventBridge-triggered
+task). Run it with `--network none` and the policy files mounted read-only; exit codes are
+the table above. See the README "Container image" section.
 
 ## Versioning
 

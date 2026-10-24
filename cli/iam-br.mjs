@@ -43,6 +43,7 @@ import * as nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { scan, EXIT, SELECTABLE_FAMILIES, DEFAULT_BUDGET_MS } from './scan.mjs';
+import { parseTrustedAccountIds } from './trusted-accounts.mjs';
 // READ-ONLY: the SINGLE source of the input byte cap. The pre-guards below (readStdin /
 // readFileCapped) reject an over-cap input BEFORE materializing it (threat-model T5);
 // they import LIMITS.MAX_BYTES from the SAME module the engine's validate() enforces, so
@@ -51,7 +52,10 @@ import { scan, EXIT, SELECTABLE_FAMILIES, DEFAULT_BUDGET_MS } from './scan.mjs';
 import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 // The SARIF 2.1.0 adapter (story P15-sarif): a PURE projection of a scan() result.
 // The CLI just picks it when --format sarif; the exit code is unaffected.
-import { formatSarif, artifactUri } from './sarif.mjs';
+import { formatSarif, artifactUri, statementVerdictCoverage } from './sarif.mjs';
+// v1.3.0: Pulumi preview / stack export input (one aggregate result over many documents).
+import { scanPulumi, pulumiUnits, applyPulumiBaseline, PULUMI_LIMITS, PULUMI_WARNING } from './pulumi.mjs';
+import { buildAggregateSarif } from '../action/action-aggregate.mjs';
 import {
   applyBaseline, parseBaseline, buildBaseline, formatBaseline, baselineWriteProblem, MAX_BASELINE_BYTES,
 } from './baseline.mjs';
@@ -80,6 +84,9 @@ const VALUE_FLAGS = Object.freeze(new Set([
   '--resource-type',
   '--resource-arn',
   '--resource-account',
+  '--input',
+  '--provider-account',
+  '--trusted-account-id',
 ]));
 
 // Boolean flags (no value). `-h` is an alias for `--help`. `--debug` is an alias
@@ -227,6 +234,7 @@ export const HELP_TEXT = `iam-br - IAM Blast Radius headless scanner (fail-close
 
 USAGE
   iam-br --family <family> [options] [policy.json]
+  iam-br --input pulumi [options] preview-or-export.json
   cat policy.json | iam-br --family <family> [options]
 
 Reads one AWS IAM policy document from a file argument or, if none is given,
@@ -243,10 +251,18 @@ REQUIRED
                         usage error (exit 2).
 
 OPTIONS
+  --trusted-account-id <id>  (repeatable, or comma-separated) a 12-digit account you trust.
+                          For role-trust, a trust whose principals are all exact role/user
+                          ARNs in listed accounts is rated medium instead of cross-account
+                          high. Account-root principals stay high. Invalid id: exit 2.
   --subject-account <id>  AWS account id (12 digits) for account-aware checks
                           (e.g. PassRole viability). An invalid id is ignored
                           (the dependent finding stays UNKNOWN and fails closed).
-  --resource-arn <arn>    For --family resource: the ARN of the resource the policy
+                          For role-trust it is the account that owns EVERY role in
+                          the run; split a glob that spans accounts.
+  --resource-arn <arn>    For --family role-trust: the role's own ARN; required to
+                          report a trust as same-account (else cross-account high).
+                          For --family resource: the ARN of the resource the policy
   --resource-type <t>     is ATTACHED to (e.g. --resource-type s3-bucket
   --resource-account <id> --resource-arn arn:aws:s3:::my-bucket). Required to analyze
                           a resource policy; without it the resource family fails
@@ -268,8 +284,9 @@ OPTIONS
                           The format never changes the exit code.
   --baseline <file>       Accept the results listed in a committed baseline file
                           (see --format baseline). Only accepted findings and
-                          accepted UNKNOWN_ACTION / UNSUPPORTED_CONDITION states
-                          stop counting; any other fail-closed state still exits
+                          accepted UNKNOWN_ACTION / NOT_IN_REFERENCE /
+                          UNSUPPORTED_CONDITION states stop counting; any other
+                          fail-closed state still exits
                           3. Keys are bound to the artifact URI, so pass the same
                           path (or --artifact-uri) the baseline was built with.
   --budget-ms <ms>        Wall-clock budget for analyzing the policy, in
@@ -278,7 +295,23 @@ OPTIONS
                           RESOURCE_BUDGET_EXCEEDED); it never reports a clean pass.
   --output <path>         Write formatted output to <path> instead of STDOUT.
   --artifact-uri <uri>    Location URI recorded in SARIF output for the analyzed
-                          policy (default: the file path, or 'stdin').
+                          policy (default: the file path, or 'stdin'). With
+                          --input pulumi: the fallback location (default
+                          Pulumi.yaml) when a resource has no usable source line.
+  --input <kind>          policy (default) | pulumi. 'pulumi' reads a
+                          'pulumi preview --json' or 'pulumi stack export' file
+                          and scans every IAM policy in it; --family and
+                          --resource-* are not used. A default preview lists only
+                          changed resources (scanScope "delta"): exit 0 then means
+                          "no new risk in this change", not "stack clean". Use
+                          'preview --show-sames' or a stack export for a full scan.
+  --provider-account <p>=<id>
+                          With --input pulumi (repeatable): the AWS account of the
+                          provider named <p> (its resource name or full URN).
+                          Cross-checked against the stack; a mismatch fails closed.
+                          It resolves the account but never proves a same-account
+                          trust on its own. When providers span several accounts,
+                          omit --subject-account (it would mismatch the others).
   --verbose, --debug      Include the underlying errno/detail in read/write error
                           diagnostics. OFF by default so a read failure does NOT
                           reveal whether a path is missing (ENOENT) vs a directory
@@ -315,6 +348,7 @@ export function parseArgs(argv) {
     output: undefined,
     artifactUri: undefined,
     budgetMs: DEFAULT_BUDGET_MS,
+    input: 'policy',
     file: undefined,
     // S5-cli-hardening: default OFF. When true, read/write error diagnostics may
     // include the underlying errno/detail; when false they stay generic so they do
@@ -376,6 +410,15 @@ export function parseArgs(argv) {
         case '--resource-type': opts.resourceType = value; break;
         case '--resource-arn': opts.resourceArn = value; break;
         case '--resource-account': opts.resourceAccount = value; break;
+        case '--input': opts.input = value; break;
+        case '--trusted-account-id': (opts.trustedAccountIds ||= []).push(value); break;
+        case '--provider-account': {
+          // R5-4: repeatable <provider-name-or-urn>=<account>; split on the last '='.
+          const i = value.lastIndexOf('=');
+          if (i <= 0) return usage("--provider-account expects <provider>=<12-digit account id>");
+          (opts.providerAccounts ||= []).push({ key: value.slice(0, i), account: value.slice(i + 1) });
+          break;
+        }
         default: return usage(`unknown option '${name}'`);
       }
       continue;
@@ -400,8 +443,20 @@ export function parseArgs(argv) {
     opts.file = positionals[0];
   }
 
-  // Required: --family. NEVER auto-detected -> a missing family is a usage error.
-  if (!isNonEmptyString(opts.family)) {
+  if (opts.trustedAccountIds) {
+    const trusted = parseTrustedAccountIds(opts.trustedAccountIds);
+    if (trusted.error) return usage(`--trusted-account-id: ${trusted.error}`);
+  }
+  if (opts.input !== 'policy' && opts.input !== 'pulumi') {
+    return usage(`unknown --input '${opts.input}' (expected: policy | pulumi)`);
+  }
+  if (opts.input === 'pulumi') {
+    const problem = pulumiArgProblem(opts);
+    if (problem) return usage(problem);
+  } else if (opts.providerAccounts) {
+    return usage('--provider-account is only valid with --input pulumi');
+  } else if (!isNonEmptyString(opts.family)) {
+    // Required: --family. NEVER auto-detected -> a missing family is a usage error.
     return usage(
       'the --family option is required and is never auto-detected ' +
       '(identity | resource | role-trust | trust | permissions-boundary | scp-rcp | scp | rcp | session)',
@@ -410,12 +465,12 @@ export function parseArgs(argv) {
   // Validate the family VALUE here too (like --format) so a bad value is a usage
   // error on stderr with no stdout, consistent with a missing family. scan()
   // enforces the same SELECTABLE_FAMILIES set for the programmatic / action path.
-  const familyLower = opts.family.trim().toLowerCase();
+  const familyLower = opts.input === 'pulumi' ? null : opts.family.trim().toLowerCase();
   if (familyLower === 'auto' || familyLower === 'auto-detect') {
     return usage('family auto-detection is not permitted; select an explicit family '
       + '(identity | resource | role-trust | trust | permissions-boundary | scp-rcp | scp | rcp | session)');
   }
-  if (!SELECTABLE_FAMILIES.has(familyLower)) {
+  if (familyLower !== null && !SELECTABLE_FAMILIES.has(familyLower)) {
     return usage(`unknown --family '${opts.family}' `
       + '(expected: identity | resource | role-trust | trust | permissions-boundary | scp-rcp | scp | rcp | session)');
   }
@@ -456,6 +511,15 @@ function usage(message) {
   return { ok: false, error: { reason: 'USAGE', message } };
 }
 
+// --input pulumi: each document's family and context come from the file, so the
+// single-policy flags are refused; baselines arrive with URN keys (round 3).
+function pulumiArgProblem(opts) {
+  if (isNonEmptyString(opts.family)) return '--family is not used with --input pulumi (each policy\'s family comes from its resource type)';
+  if (opts.resourceType || opts.resourceArn || opts.resourceAccount) return '--resource-* is not used with --input pulumi (the attached resource is resolved from the stack)';
+  if (!isNonEmptyString(opts.file)) return '--input pulumi needs the preview/export JSON as a file argument (stdin is not read)';
+  return null;
+}
+
 // --- Output formatting --------------------------------------------------------
 
 // A deterministic JSON report envelope. Deliberately does NOT dump the engine's
@@ -471,6 +535,9 @@ export function toJsonReport(result, opts, manifest = VERSION_MANIFEST) {
     // Echo the partition ONLY when the caller asserted one; omission is meaningful
     // (it is what keeps a cross-partition viability question fail-closed).
     partitionAsserted: isNonEmptyString(o.partition) ? o.partition.trim() : null,
+    // E-1: the account a same-account verdict was judged against (valid ids only).
+    subjectAccountAsserted: /^\d{12}$/.test(String(o.subjectAccount ?? '').trim()) ? String(o.subjectAccount).trim() : null,
+    trustedAccountIdsAsserted: parseTrustedAccountIds(o.trustedAccountIds).ids || null,
     analysisStatus: result.analysisStatus,
     reason: result.reason != null ? result.reason : null,
     exitCode: result.exitCode,
@@ -478,6 +545,8 @@ export function toJsonReport(result, opts, manifest = VERSION_MANIFEST) {
       ? result.findingsCount
       : (Array.isArray(result.findings) ? result.findings.length : 0),
     blockingCount: result.blockingCount,
+    // F-6: { total, withoutVerdict, indexes } or null when not analyzed.
+    statementCoverage: statementVerdictCoverage(result),
     analysisStates: [...(result.analysisStates || [])],
     findings: [...(result.findings || [])],
   };
@@ -571,6 +640,8 @@ export async function run(argv, io) {
       }
     }
 
+    if (opts.input === 'pulumi') return runPulumi(opts, io, out, err, manifest);
+
     // Resolve the policy text: a file argument, else STDIN.
     // `oversize` records that a pre-guard tripped the MAX_BYTES cap BEFORE the whole
     // input was materialized (threat-model T5). It is routed down the existing
@@ -637,26 +708,9 @@ export async function run(argv, io) {
     // An opt-in baseline is read + validated BEFORE analysis: an unreadable or malformed
     // baseline is a usage error (exit 2), never "no baseline" (which would silently fail
     // every accepted result) and never a clean pass.
-    let acceptedKeys = null;
-    if (opts.baseline != null) {
-      let baselineText;
-      try {
-        baselineText = io.readFile(opts.baseline, MAX_BASELINE_BYTES);
-      } catch (e) {
-        if (opts.verbose) {
-          err(`iam-br: cannot read baseline file '${opts.baseline}': ${(e && (e.code || e.message)) || 'error'}\n`);
-        } else {
-          err('iam-br: cannot read baseline file (use --verbose for details).\n');
-        }
-        return EXIT.USAGE;
-      }
-      const parsedBaseline = parseBaseline(baselineText);
-      if (!parsedBaseline.ok) {
-        err(`iam-br: ${parsedBaseline.message}\n`);
-        return EXIT.USAGE;
-      }
-      acceptedKeys = parsedBaseline.keys;
-    }
+    const bl = readAcceptedKeys(opts, io, err);
+    if (bl.exit != null) return bl.exit;
+    const acceptedKeys = bl.keys;
 
     // Run the analysis. scan() owns the exit-code contract; the CLI propagates it.
     const scanFn = (io && io.scan) || scan;
@@ -664,6 +718,7 @@ export async function run(argv, io) {
       text,
       family: opts.family,
       subjectAccount: opts.subjectAccount,
+      trustedAccountIds: opts.trustedAccountIds,
       // Pass partition ONLY when explicitly supplied; an omitted partition must
       // stay "not asserted" so a cross-partition viability question fails closed
       // rather than being silently treated as a confident 'aws' assertion.
@@ -736,6 +791,169 @@ export async function run(argv, io) {
     err(`iam-br: internal error: ${(e && e.message) || 'unexpected failure'}\n`);
     return EXIT.INTERNAL;
   }
+}
+
+// Read + validate an opt-in baseline BEFORE analysis: unreadable or malformed is exit 2,
+// never "no baseline". Returns { keys } (null when none) or { exit }.
+function readAcceptedKeys(opts, io, err) {
+  if (opts.baseline == null) return { keys: null };
+  let baselineText;
+  try {
+    baselineText = io.readFile(opts.baseline, MAX_BASELINE_BYTES);
+  } catch (e) {
+    if (opts.verbose) {
+      err(`iam-br: cannot read baseline file '${opts.baseline}': ${(e && (e.code || e.message)) || 'error'}\n`);
+    } else {
+      err('iam-br: cannot read baseline file (use --verbose for details).\n');
+    }
+    return { exit: EXIT.USAGE };
+  }
+  const parsedBaseline = parseBaseline(baselineText);
+  if (!parsedBaseline.ok) {
+    err(`iam-br: ${parsedBaseline.message}\n`);
+    return { exit: EXIT.USAGE };
+  }
+  return { keys: parsedBaseline.keys };
+}
+
+// --input pulumi: read the file (larger cap than one policy), scan every document,
+// emit one aggregate report. Same exit contract; formatting never changes the code.
+function runPulumi(opts, io, out, err, manifest) {
+  const bl = readAcceptedKeys(opts, io, err);
+  if (bl.exit != null) return bl.exit;
+  let text;
+  let tooLarge = false;
+  try {
+    text = io.readFile(opts.file, PULUMI_LIMITS.MAX_BYTES);
+  } catch (e) {
+    if (e && e.code === INPUT_TOO_LARGE) tooLarge = true;
+    else {
+      err(opts.verbose
+        ? `iam-br: cannot read Pulumi file '${opts.file}': ${(e && (e.code || e.message)) || 'error'}\n`
+        : 'iam-br: cannot read Pulumi file (use --verbose for details).\n');
+      return EXIT.USAGE;
+    }
+  }
+  const scanned = scanPulumi({
+    text: tooLarge ? '' : text,
+    oversize: tooLarge,
+    subjectAccount: opts.subjectAccount,
+    trustedAccountIds: opts.trustedAccountIds,
+    partition: opts.partition,
+    providerAccounts: opts.providerAccounts,
+    threshold: opts.threshold,
+    budgetMs: opts.budgetMs,
+  });
+  if (scanned.exitCode === EXIT.USAGE) {
+    err(`iam-br: ${scanned.analysisStates[0] ? scanned.analysisStates[0].message : 'not Pulumi JSON'}\n`);
+    return EXIT.USAGE;
+  }
+  // P8: keys per <urn>#<property> (always attached), opt-in acceptance per document.
+  const threshold = isNonEmptyString(opts.threshold) ? opts.threshold.trim().toLowerCase() : 'high';
+  const result = applyPulumiBaseline(scanned, bl.keys, threshold);
+  if (result.baseline && result.baseline.mismatched.length > 0) {
+    err(`iam-br: ${result.baseline.mismatched.length} baseline entr${result.baseline.mismatched.length === 1 ? 'y matches' : 'ies match'} a result by id `
+      + 'but not by file / ruleId / severity; regenerate the baseline (--format baseline) and review it.\n');
+    return EXIT.USAGE;
+  }
+  const code = Number.isInteger(result.exitCode) ? result.exitCode : EXIT.INTERNAL;
+  let formatted;
+  try {
+    if (opts.format === 'baseline') {
+      const doc = buildBaseline(pulumiUnits(result, opts.artifactUri));
+      formatted = formatBaseline(doc);
+      const problem = baselineWriteProblem(doc, formatted);
+      if (problem) throw new Error(`baseline too large to read back: ${problem}`);
+    } else {
+      formatted = opts.format === 'sarif'
+        ? `${JSON.stringify(buildAggregateSarif(pulumiUnits(result, opts.artifactUri), manifest), null, 2)}\n`
+        : `${JSON.stringify(toPulumiJsonReport(result, opts, manifest), null, 2)}\n`;
+    }
+  } catch (e) {
+    err(`iam-br: internal error: failed to format ${opts.format} output: ${(e && e.message) || 'error'}\n`);
+    return EXIT.INTERNAL;
+  }
+  if (opts.output != null) {
+    try {
+      io.writeFile(opts.output, formatted);
+    } catch (e) {
+      err(opts.verbose ? `iam-br: cannot write output '${opts.output}': ${(e && e.message) || 'error'}\n`
+        : 'iam-br: cannot write output (use --verbose for details).\n');
+      return EXIT.INTERNAL;
+    }
+  } else {
+    out(formatted);
+  }
+  // E-5: tool-authored text only (code + count), never an input value.
+  for (const w of result.warnings || []) {
+    const msg = Object.hasOwn(PULUMI_WARNING, w.code) && Number.isInteger(w.accounts) ? PULUMI_WARNING[w.code](w.accounts) : '';
+    if (msg) err(`iam-br: warning ${w.code}: ${msg}\n`);
+  }
+  const stale = result.baseline ? result.baseline.stale.length : 0;
+  if (stale > 0) err(`iam-br: ${stale} baseline entr${stale === 1 ? 'y no longer matches' : 'ies no longer match'} any result; remove them from the baseline file.\n`);
+  err(`iam-br: input=pulumi scope=${result.scanScope} status=${result.analysisStatus} exit=${code} `
+    + `reason=${result.reason} documents=${result.documents.length} findings=${result.findingsCount} blocking=${result.blockingCount}\n`);
+  return code;
+}
+
+/**
+ * Deterministic JSON report for --input pulumi: verdict, scan scope, then one entry per
+ * policy document keyed by `<urn>#<property>`.
+ * @param {object} result scanPulumi() result
+ * @param {object} opts
+ * @param {object} [manifest]
+ * @returns {object}
+ */
+export function toPulumiJsonReport(result, opts, manifest = VERSION_MANIFEST) {
+  const o = opts || {};
+  return {
+    tool: 'iam-blast-radius',
+    version: semanticVersion(manifest),
+    input: 'pulumi',
+    pulumiKind: result.kind,
+    scanScope: result.scanScope,
+    scannedUrns: [...(result.scannedUrns || [])],
+    threshold: o.threshold != null ? o.threshold : 'high',
+    partitionAsserted: isNonEmptyString(o.partition) ? o.partition.trim() : null,
+    subjectAccountAsserted: /^\d{12}$/.test(String(o.subjectAccount ?? '').trim()) ? String(o.subjectAccount).trim() : null,
+    trustedAccountIdsAsserted: parseTrustedAccountIds(o.trustedAccountIds).ids || null,
+    // R2-2: why each provider's account/partition was believed.
+    providers: [...(result.providers || [])],
+    // E-5: run-level warnings ({ code, accounts, message }); never part of the verdict.
+    warnings: [...(result.warnings || [])],
+    // Listed, not analyzed (e.g. source-bound Lambda permissions).
+    unanalyzed: [...(result.unanalyzed || [])],
+    // P9: role groups (informational; never part of the verdict).
+    groups: [...(result.groups || [])],
+    unresolvedEdges: [...(result.unresolvedEdges || [])],
+    baseline: result.baseline
+      ? { applied: result.baseline.applied, accepted: result.baseline.used.length, stale: result.baseline.stale.length }
+      : null,
+    analysisStatus: result.analysisStatus,
+    reason: result.reason,
+    exitCode: result.exitCode,
+    findingsCount: result.findingsCount,
+    blockingCount: result.blockingCount,
+    analysisStates: [...(result.analysisStates || [])],
+    documents: (result.documents || []).map((d) => ({
+      artifact: d.artifact,
+      urn: d.urn,
+      property: d.property,
+      type: d.type,
+      family: d.family,
+      op: d.op,
+      managed: d.managed,
+      location: d.location,
+      analysisStatus: d.result.analysisStatus,
+      reason: d.result.reason,
+      exitCode: d.result.exitCode,
+      findingsCount: d.result.findingsCount,
+      blockingCount: d.result.blockingCount,
+      statementCoverage: statementVerdictCoverage(d.result),
+      analysisStates: [...(d.result.analysisStates || [])],
+      findings: [...(d.result.findings || [])],
+    })),
+  };
 }
 
 // --- Process entry point ------------------------------------------------------
