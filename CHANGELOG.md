@@ -164,8 +164,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Known limitations
 
-- Source-bound, org-scoped and own-account Lambda permissions are listed in the
-  Pulumi report's `unanalyzed[]`, not analyzed.
+- Source-bound and own-account Lambda permissions are listed in the Pulumi report's
+  `unanalyzed[]`, not analyzed. An org-scoped permission is RESOURCE-CROSS-ACCOUNT high
+  (it was listed), and a `sourceArn` binds only with a literal account, or with no account
+  and no glob (a wildcard-account `sourceArn` was treated as bound).
 - `aws-native:events:EventBusPolicy` is not mapped; a policy statement in it fails
   closed (exit 3).
 - A baseline can accept an engine coverage gap (for example `UNKNOWN_ACTION`), as
@@ -200,8 +202,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - COMPUTE-CODE-OVERWRITE now covers `cloudformation:ExecuteChangeSet`,
     `lambda:UpdateAlias` and `ecr:PutImage`.
   - The PassRole paths cover `cloudformation:CreateChangeSet` and
-    `scheduler:CreateSchedule` / `UpdateSchedule` (new scheduler entry); like
-    `events:PutTargets`, they are known because alone they cannot run as a role.
+    `scheduler:CreateSchedule` / `UpdateSchedule` (new scheduler entry); they are
+    known because alone they cannot run as a role. `events:PutTargets` stays withheld:
+    SNS, SQS, Lambda and event-bus targets need no role, so alone it can redirect events.
   - RESOURCE-POLICY-WRITE covers `ec2:CreateNetworkInterfacePermission`.
   - Deletes are DESTRUCTIVE-ACTION. ECR layer uploads and `ecr:CreateRepository` are
     known: nothing runs what they stage until `ecr:PutImage`.

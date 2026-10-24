@@ -560,6 +560,14 @@ const PERMISSION_TYPES = new Set(['aws:lambda/permission:Permission',
   'aws:lambda/layerVersionPermission:LayerVersionPermission', 'aws-native:lambda:Permission']);
 const SERVICE_PRINCIPAL_RE = /^[a-z0-9.-]+\.amazonaws\.com(?:\.cn)?$/;
 const ACTION_RE = /^[A-Za-z0-9-]{1,64}:[A-Za-z0-9*?]{1,128}$/;
+// A sourceArn binds the caller only with a literal account, or no account and no glob (S3).
+function sourceArnPinsAccount(v) {
+  const parts = String(v).split(':');
+  if (parts.length < 6 || parts[0] !== 'arn') return false;
+  if (/^\d{12}$/.test(parts[4])) return true;
+  return parts[4] === '' && !/[*?$]/.test(v);
+}
+
 // Returns { state } (exit 3), { unbound } (finding) or { reason } (listed in unanalyzed[]).
 function permissionVerdict(it, scope) {
   const f = it.inputs;
@@ -571,13 +579,16 @@ function permissionVerdict(it, scope) {
   const risky = { state: 'PULUMI_UNMODELED_PERMISSION' };
   if (!concrete(p)) return risky;
   if (SERVICE_PRINCIPAL_RE.test(p)) {
-    // A match-all sourceArn or a non-account sourceAccount binds nothing.
-    const bound = (concrete(f.sourceArn) && !isMatchAllSourceValue(f.sourceArn))
+    // A match-all sourceArn, a wildcard account in it, or a non-account sourceAccount binds nothing.
+    const bound = (concrete(f.sourceArn) && !isMatchAllSourceValue(f.sourceArn) && sourceArnPinsAccount(f.sourceArn))
       || (concrete(f.sourceAccount) && /^\d{12}$/.test(f.sourceAccount));
     if (bound) return { reason: 'service-principal-source-bound' };
     return concrete(f.action) && ACTION_RE.test(f.action) ? { unbound: p } : risky;
   }
-  if (concrete(f.principalOrgId) || concrete(f.organizationId)) return { reason: 'org-scoped' };
+  // Org-scoped grant: cross-account within the org (same verdict as an org-scoped "*" elsewhere, R6 s).
+  if (concrete(f.principalOrgId) || concrete(f.organizationId)) {
+    return concrete(f.action) && ACTION_RE.test(f.action) ? { orgWide: true } : risky;
+  }
   const acct = /^\d{12}$/.test(p) ? p : (ARN_ACCOUNT_RE.exec(p) || [])[2];
   const ownAcct = scope.accountProven ? scope.account : null;
   if (ownAcct && acct === ownAcct) return { reason: 'own-account-principal' };
@@ -609,6 +620,30 @@ function confusedDeputyFinding(it, svc) {
     ruleVersion: RESOURCE_RULE_VERSION,
     docRef: DOC_CONFUSED_DEPUTY,
     sourceBinding: Object.freeze({ state: 'unbound', boundKeys: [], bypassedKeys: [] }),
+  });
+}
+
+// Org-scoped permission: any principal in the organization may call it (org id not echoed).
+function orgWideFinding(it) {
+  const f = it.inputs;
+  const fn = concrete(f.function) ? f.function : null;
+  return Object.freeze({
+    id: 'RESOURCE-CROSS-ACCOUNT',
+    severity: 'high',
+    title: 'Lambda permission granted to every principal in an organization',
+    statementSid: concrete(f.statementId) ? f.statementId : null,
+    statementIndex: 0,
+    actions: [f.action],
+    resources: fn ? [fn] : [],
+    conditions: null,
+    policyEvidence: 'high',
+    pathExploitability: 'medium',
+    why: `The Lambda permission lets any principal in the organization (principalOrgId / organizationId) call `
+      + `${f.action} on this function: cross-account within the org, not public.`,
+    limit: 'From the aws.lambda.Permission resource alone; other permissions on the function are separate resources.',
+    remediation: 'Grant the specific account or role that needs it instead of the whole organization.',
+    ruleVersion: RESOURCE_RULE_VERSION,
+    docRef: null,
   });
 }
 
@@ -943,7 +978,7 @@ export function extractPulumiDocuments(text, opts = {}) {
       out.documents.push({
         artifact: `${it.urn}#principal`, urn: it.urn, property: 'principal', type: it.type, family: RESOURCE, op: it.op,
         managed: it.external ? 'external' : 'program', location: safeSourcePosition(it.sourcePosition), text: null,
-        finding: v.unbound ? confusedDeputyFinding(it, v.unbound) : null,
+        finding: v.unbound ? confusedDeputyFinding(it, v.unbound) : v.orgWide ? orgWideFinding(it) : null,
         subjectAccount: ps.account, partition: ps.partition, resourceContext: undefined,
         states: [...ps.states, ...(v.state ? [st(v.state, it.urn, kind)] : [])],
       });

@@ -66,11 +66,10 @@ test('Lambda permission: risky shapes fail closed per document', () => {
   assert.ok(permCodes(run(perm({ principal: '04da6b54-80e4-46f7-96ec-b56ff0331ba9' }))).includes('PULUMI_UNKNOWN'));
 });
 
-test('Lambda permission: source-bound, org-scoped and own-account grants are listed, not failed', () => {
+test('Lambda permission: source-bound and own-account grants are listed, not failed', () => {
   for (const [inputs, reason] of [
     [{ principal: 'apigateway.amazonaws.com', sourceArn: `arn:aws:execute-api:us-east-1:${ACCT}:abc/*` }, 'service-principal-source-bound'],
     [{ principal: 's3.amazonaws.com', sourceAccount: ACCT }, 'service-principal-source-bound'],
-    [{ principal: '*', principalOrgId: 'o-abcdefghij' }, 'org-scoped'],
     [{ principal: ACCT }, 'own-account-principal'],
     [{ principal: '*', sourceAccount: ACCT }, 'source-account-bound'],
   ]) {

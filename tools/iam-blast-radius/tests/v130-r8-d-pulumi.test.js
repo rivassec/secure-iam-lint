@@ -136,6 +136,30 @@ test('E-4: a match-all sourceArn or a non-account sourceAccount binds nothing', 
   assert.deepEqual(bound.unanalyzed.map((u) => u.reason), ['service-principal-source-bound']);
 });
 
+test('E-4: a sourceArn binds only with a literal account (or no account and no glob)', () => {
+  for (const sourceArn of ['arn:aws:secretsmanager:*:*:secret:*', `arn:aws:sns:us-east-1:*:t`,
+    'arn:aws:s3:::bucket-*', 'not-an-arn']) {
+    const r = scanPulumi({ text: exportOf(perm({ principal: 's3.amazonaws.com', sourceArn })), ...opts });
+    assert.deepEqual(ids(doc(r, 'fn-perm#principal')), ['RESOURCE-CONFUSED-DEPUTY/high'], sourceArn);
+  }
+  for (const sourceArn of [`arn:aws:secretsmanager:us-east-1:${A}:secret:*`, 'arn:aws:s3:::bucket']) {
+    const r = scanPulumi({ text: exportOf(perm({ principal: 's3.amazonaws.com', sourceArn })), ...opts });
+    assert.deepEqual(r.unanalyzed.map((u) => u.reason), ['service-principal-source-bound'], sourceArn);
+  }
+});
+
+// Was listed as unanalyzed (exit 0); now the R6 s org-scoped verdict.
+test('E-4: an org-scoped grant is RESOURCE-CROSS-ACCOUNT high, never clean', () => {
+  for (const extra of [{ principalOrgId: 'o-exampleorg' }, { organizationId: 'o-exampleorg' }]) {
+    const r = scanPulumi({ text: exportOf(perm({ principal: '*', ...extra })), ...opts });
+    assert.deepEqual(ids(doc(r, 'fn-perm#principal')), ['RESOURCE-CROSS-ACCOUNT/high'], JSON.stringify(extra));
+    assert.equal(r.exitCode, EXIT.FINDINGS);
+    assert.ok(!JSON.stringify(r).includes('o-exampleorg'), 'org id not echoed');
+  }
+  const bad = scanPulumi({ text: exportOf(perm({ principal: '*', principalOrgId: 'o-exampleorg', action: 'not an action' })), ...opts });
+  assert.equal(bad.exitCode, EXIT.FAIL_CLOSED);
+});
+
 test('E-4: an unknown action on an unbound service grant still fails closed', () => {
   const r = scanPulumi({ text: exportOf(perm({ principal: 's3.amazonaws.com', action: '04da6b54-80e4-46f7-96ec-b56ff0331ba9' })), ...opts });
   assert.ok(codes(doc(r, 'fn-perm#principal')).includes('PULUMI_UNKNOWN'));
