@@ -27,10 +27,14 @@ test('E-7: a run-level state beats a document-level COVERAGE_INCOMPLETE at the s
   assert.equal(r.outputs.reason, 'PULUMI_ACCOUNT_UNRESOLVED');
 });
 
-test('E-7 with the account resolved: the unmodeled-permission state is the headline', () => {
+// Lane D made the unbound Lambda permission a per-document finding, so only the
+// role policy's UNKNOWN_ACTION is left at exit 3.
+test('E-7 with the account resolved: the Lambda permission is a finding, the headline is the remaining gap', () => {
   const r = pulumi('e7-headline.json', { 'INPUT_PROVIDER-ACCOUNTS': 'a=111111111111' });
-  assert.equal(r.reason, 'PULUMI_UNMODELED_PERMISSION');
-  assert.ok(r.units.some((u) => u.result.reason === 'COVERAGE_INCOMPLETE'));
+  assert.equal(r.exitCode, 3);
+  assert.equal(r.reason, 'COVERAGE_INCOMPLETE');
+  assert.ok(!r.units.some((u) => u.result.reason === 'PULUMI_UNMODELED_PERMISSION'));
+  assert.ok(Number(r.outputs['blocking-findings-count']) >= 1);
 });
 
 test('E-7 control: without the permission resource the headline stays COVERAGE_INCOMPLETE', () => {

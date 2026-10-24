@@ -63,22 +63,24 @@ test('F-1 control: an unmodeled service keeps the HYBRID downgrade', () => {
   assert.equal(classifyResource('arn:aws:codeartifacts:us-east-2:111111111111:repository/example/*'), MALFORMED);
 });
 
-test('F-1 probes f3b/f3d/f3f: no MALFORMED_RESOURCE_ARN, still fail closed on the withheld actions', () => {
-  for (const id of ['f3b', 'f3d', 'f3f']) {
+// Lane A made the two codeartifact reads known, so in-account scoped reads are clean.
+test('F-1 probes f3a-f3d/f3f: parsed, and scoped codeartifact reads are clean', () => {
+  for (const id of ['f3a', 'f3b', 'f3c', 'f3d', 'f3f']) {
     const r = run(PROBES[id]);
     assert.ok(!codes(r).includes('MALFORMED_RESOURCE_ARN'), `${id}: ${codes(r)}`);
-    // Not CLEAN: UNKNOWN_ACTION until the actions are catalogued (Lane A).
-    assert.notEqual(r.exitCode, EXIT.CLEAN, id);
-    if (r.exitCode === EXIT.FAIL_CLOSED) assert.ok(codes(r).includes('UNKNOWN_ACTION'), `${id}: ${codes(r)}`);
+    assert.equal(r.exitCode, EXIT.CLEAN, `${id}: ${codes(r)}`);
   }
 });
 
-test('F-1 probes f3a/f3c/f3e/f3g/f3h: unchanged verdicts', () => {
-  for (const id of ['f3a', 'f3c']) {
-    const r = run(PROBES[id]);
-    assert.ok(!codes(r).includes('MALFORMED_RESOURCE_ARN'), id);
-    assert.notEqual(r.exitCode, EXIT.CLEAN, id);
+test('F-1 control: the same codeartifact read on a broad scope still fails closed', () => {
+  for (const res of ['*', 'arn:aws:codeartifact:us-east-2:111111111111:repository/*',
+    'arn:aws:codeartifact:us-east-2:*:repository/example/*']) {
+    const r = run({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: 'codeartifact:ReadFromRepository', Resource: res }] });
+    assert.equal(r.exitCode, EXIT.FAIL_CLOSED, res);
   }
+});
+
+test('F-1 probes f3e/f3g/f3h: unchanged verdicts', () => {
   assert.equal(run(PROBES.f3e).exitCode, EXIT.CLEAN);
   assert.equal(run(PROBES.f3h).exitCode, EXIT.CLEAN);
   const g = run(PROBES.f3g);
