@@ -169,6 +169,9 @@ findings are located by `<urn>#<property>`.
   `scan-scope: delta` and exit `0` means "no new risk in this change", not "stack
   clean". For a full scan use `pulumi preview --show-sames --json` or
   `pulumi stack export`. On `main` a workflow can require `scan-scope == 'full'`.
+- **Export vs preview.** `pulumi stack export` scans the deployed state, not the
+  change under review (a stack whose applies have been failing still shows what is
+  deployed). Gate a PR with `pulumi preview --json --show-sames`.
 - **Fail closed.** Values Pulumi doesn't know until `up` (`PULUMI_UNKNOWN`), secrets
   (`PULUMI_SECRET`, never read or echoed), unsupported policy-bearing types, and an
   unresolved or ambiguous account or partition are exit `3`. A brand-new stack's

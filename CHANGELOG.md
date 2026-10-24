@@ -189,6 +189,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **E-5:** with `subject-account` set and providers resolving to more than one
   account, the run warns once (`PULUMI_PROVIDERS_MULTI_ACCOUNT`: stderr by code, JSON
   `warnings[]`, SARIF run property `warnings`). The verdict is unchanged.
+- **F-5 (docs):** `pulumi stack export` scans deployed state; gate PRs with
+  `pulumi preview --json --show-sames`.
 
 ## [1.2.0] - 2026-10-21
 
