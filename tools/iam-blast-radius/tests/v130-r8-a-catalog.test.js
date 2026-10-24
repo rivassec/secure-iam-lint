@@ -113,14 +113,22 @@ test('E-1 (b): detector-backed writes report their finding (narrow ARN)', () => 
 test('E-1 (b): role-taking writes complete a PassRole path; alone they cannot run as a role', () => {
   for (const [a, res] of [['cloudformation:CreateChangeSet', arn('cloudformation', 'stack/s/*')],
     ['scheduler:CreateSchedule', arn('scheduler', 'schedule/default/s')],
-    ['scheduler:UpdateSchedule', arn('scheduler', 'schedule/default/s')],
-    ['events:PutTargets', arn('events', 'rule/r')]]) {
+    ['scheduler:UpdateSchedule', arn('scheduler', 'schedule/default/s')]]) {
     const paired = run(allow(a, res), passRole);
     assert.ok(ids(paired).includes('PASSROLE-SERVICE'), `${a}: ${ids(paired).join(',')}`);
     assert.equal(paired.exitCode, EXIT.FINDINGS, a);
     // Alone: AWS requires iam:PassRole for the role these name, so there is no role to run as.
     assert.equal(run(allow(a, res)).exitCode, EXIT.CLEAN, a);
   }
+});
+
+// A target needs no role for SNS/SQS/Lambda/event-bus delivery, so alone it can redirect events.
+test('E-1: events:PutTargets stays withheld alone and still completes the PassRole path', () => {
+  const res = arn('events', 'rule/r');
+  const alone = run(allow('events:PutTargets', res));
+  assert.equal(alone.exitCode, EXIT.FAIL_CLOSED);
+  assert.ok(codes(alone).includes('UNKNOWN_ACTION'), codes(alone).join(','));
+  assert.ok(ids(run(allow('events:PutTargets', res), passRole)).includes('PASSROLE-SERVICE'));
 });
 
 test('E-1 (b): ECR push staging is clean alone and flagged once PutImage moves a tag', () => {

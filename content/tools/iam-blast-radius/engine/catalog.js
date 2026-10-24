@@ -402,7 +402,9 @@ const TAGGING_WITHHELD_SERVICES = new Set(['lambda', 'cloudformation', 'ecr', 'e
 const ALLOW_WITHHELD = (full) => /^iam:(?:un)?tag/.test(full) || READ_WITHHELD.has(full) ||
   ['iam:getaccountauthorizationdetails', 'iam:getcredentialreport', 'iam:generatecredentialreport',
     // Mints an OpenID token for any identity in the pool (assume its roles as anyone).
-    'cognito-identity:getopenidtokenfordeveloperidentity'].includes(full);
+    'cognito-identity:getopenidtokenfordeveloperidentity',
+    // Retargets a rule without a role (SNS/SQS/Lambda/bus targets): event exfil, no detector.
+    'events:puttargets'].includes(full);
 
 // Merge the generated AWS-reference snapshot UNDER the curated data: an action the
 // curated map already names keeps its curated access level (the rules were tuned
