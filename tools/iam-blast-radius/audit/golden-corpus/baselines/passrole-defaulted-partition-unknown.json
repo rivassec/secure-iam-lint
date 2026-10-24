@@ -17,6 +17,11 @@
       "exitCode": 3,
       "findingsCount": 1,
       "blockingCount": 1,
+      "statementCoverage": {
+        "total": 2,
+        "withoutVerdict": 0,
+        "indexes": []
+      },
       "analysisStates": [
         {
           "analysisState": "unknown",
@@ -232,7 +237,9 @@
             "analysisStatus": "partial",
             "exitCode": 3,
             "blockingCount": 1,
-            "findingsCount": 1
+            "findingsCount": 1,
+            "statementsTotal": 2,
+            "statementsWithoutVerdict": 0
           },
           "results": [
             {

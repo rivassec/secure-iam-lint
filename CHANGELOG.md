@@ -181,6 +181,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `UNMODELED_SERVICE_GLOB`) and `details.count` (malformed values on that axis). SARIF
   adds `malformedReason`, `offendingValue` (markdown-inert) and `malformedCount` to the
   row properties and a fixed reason sentence to the message. Fingerprints don't change.
+- **F-6:** each document reports how many of its statements got no verdict (unknown
+  action, unsupported condition, malformed resource, broad-but-uncovered read, ...):
+  CLI JSON `statementCoverage: { total, withoutVerdict, indexes }` (per document for
+  Pulumi; `null` when the input was rejected) and SARIF run properties
+  `statementsTotal` / `statementsWithoutVerdict`. A document-wide gap (blocked family,
+  budget abort, spoofed token, truncated graph) counts every statement. Findings in an
+  incomplete document are a floor.
 
 ## [1.2.0] - 2026-10-21
 

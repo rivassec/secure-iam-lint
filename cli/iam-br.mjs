@@ -52,7 +52,7 @@ import { parseTrustedAccountIds } from './trusted-accounts.mjs';
 import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 // The SARIF 2.1.0 adapter (story P15-sarif): a PURE projection of a scan() result.
 // The CLI just picks it when --format sarif; the exit code is unaffected.
-import { formatSarif, artifactUri } from './sarif.mjs';
+import { formatSarif, artifactUri, statementVerdictCoverage } from './sarif.mjs';
 // v1.3.0: Pulumi preview / stack export input (one aggregate result over many documents).
 import { scanPulumi, pulumiUnits, applyPulumiBaseline, PULUMI_LIMITS } from './pulumi.mjs';
 import { buildAggregateSarif } from '../action/action-aggregate.mjs';
@@ -543,6 +543,8 @@ export function toJsonReport(result, opts, manifest = VERSION_MANIFEST) {
       ? result.findingsCount
       : (Array.isArray(result.findings) ? result.findings.length : 0),
     blockingCount: result.blockingCount,
+    // F-6: { total, withoutVerdict, indexes } or null when not analyzed.
+    statementCoverage: statementVerdictCoverage(result),
     analysisStates: [...(result.analysisStates || [])],
     findings: [...(result.findings || [])],
   };
@@ -938,6 +940,7 @@ export function toPulumiJsonReport(result, opts, manifest = VERSION_MANIFEST) {
       exitCode: d.result.exitCode,
       findingsCount: d.result.findingsCount,
       blockingCount: d.result.blockingCount,
+      statementCoverage: statementVerdictCoverage(d.result),
       analysisStates: [...(d.result.analysisStates || [])],
       findings: [...(d.result.findings || [])],
     })),

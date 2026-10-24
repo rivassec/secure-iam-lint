@@ -1438,6 +1438,24 @@ function runPropertiesOf(props) {
 }
 
 /**
+ * F-6: how many of a document's statements got no verdict, from the engine coverage.
+ * null when the engine produced no coverage (input rejected, adapter-only result).
+ *
+ * @param {object} result a scan() result
+ * @returns {{total:number, withoutVerdict:number, indexes:number[]}|null}
+ */
+export function statementVerdictCoverage(result) {
+  const s = result && result.coverage && result.coverage.summary;
+  const w = s && s.statementsWithoutVerdict;
+  if (!w || !Number.isInteger(w.count) || !s.statements || !Number.isInteger(s.statements.total)) return null;
+  return {
+    total: s.statements.total,
+    withoutVerdict: w.count,
+    indexes: (Array.isArray(w.indexes) ? w.indexes : []).filter(Number.isInteger),
+  };
+}
+
+/**
  * Build the SARIF 2.1.0 log object for a scan() result. Pure + deterministic.
  *
  * @param {object} result   a scan() result (findings + analysisStates + verdict)
@@ -1452,6 +1470,7 @@ export function buildSarifLog(result, opts, manifest) {
   const uri = { uri: artifactUri(o), logical: o.logicalLocation, startLine: o.startLine, startColumn: o.startColumn };
   const { rules, index } = buildRules(res);
   const { results, budget } = buildResults(res, uri, index);
+  const verdicts = statementVerdictCoverage(res);
 
   // DOCUMENT-level fail-closed (S2-sarif-sanitize-all, iteration 4): if buildResults hit the
   // output cap, append ONE truthful analyzer-state result announcing the truncation. It
@@ -1493,6 +1512,9 @@ export function buildSarifLog(result, opts, manifest) {
         findingsCount: typeof res.findingsCount === 'number'
           ? res.findingsCount
           : (Array.isArray(res.findings) ? res.findings.length : 0),
+        // F-6: counts only (null = not analyzed by the engine).
+        statementsTotal: verdicts ? verdicts.total : null,
+        statementsWithoutVerdict: verdicts ? verdicts.withoutVerdict : null,
         ...runPropertiesOf(o.runProperties),
       },
       results,
