@@ -167,6 +167,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - SARIF paths are relative to the Pulumi project; a project in a repo subdirectory
   does not map to files in code scanning yet.
 
+### Lane C (r8): resource ARNs and coverage detail
+
+- **F-1:** codeartifact, scheduler, ecr-public, acm-pca, amplify, cognito-idp, ses and
+  bedrock-agentcore are modeled `type/id` ARN grammars (checked in the AWS service
+  reference). A wildcard after a concrete top-level name (`repository/<domain>/*`,
+  `package/<domain>/<repo>/*`) now reads narrow instead of `MALFORMED_RESOURCE_ARN`;
+  a whole-collection wildcard (`repository/*`) still reads broad. Withheld actions on
+  these services still exit 3 (`UNKNOWN_ACTION`).
+
 ## [1.2.0] - 2026-10-21
 
 ### Added

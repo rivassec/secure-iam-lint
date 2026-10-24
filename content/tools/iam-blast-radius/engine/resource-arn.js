@@ -107,6 +107,9 @@ const MODELED_TYPED_SERVICES = Object.freeze(new Set([
   'network-firewall', 'elasticbeanstalk', 'appsync', 'mq', 'transfer',
   // type/id grammar verified in the AWS reference.
   'bedrock', 'aws-marketplace', 'partnercentral',
+  // r8 F-1: type/<top-level id>[/sub-path] per the AWS service reference (2026-10-23).
+  'codeartifact', 'scheduler', 'ecr-public', 'acm-pca', 'amplify', 'cognito-idp',
+  'ses', 'bedrock-agentcore',
 ]));
 
 // --- Semantic boundary-crossing PROBE battery --------------------------------
