@@ -259,6 +259,12 @@ const COMPUTE_CODE_OVERWRITE_ACTIONS = Object.freeze([
   // standalone code-exec primitive needing no iam:PassRole, same shape as glue:UpdateJob.
   'glue:UpdateDevEndpoint',
   'cloudformation:UpdateStack',
+  // r8 E-1: runs a staged template through the stack's existing role, like UpdateStack.
+  'cloudformation:ExecuteChangeSet',
+  // r8 E-1: repoints an alias (what callers invoke) to another version's code.
+  'lambda:UpdateAlias',
+  // r8 E-1: moves an image tag that ECS/EKS workloads pull and run under their roles.
+  'ecr:PutImage',
   // F15: new user data runs at next boot under the instance's existing role.
   'ec2:ModifyInstanceAttribute',
 ]);

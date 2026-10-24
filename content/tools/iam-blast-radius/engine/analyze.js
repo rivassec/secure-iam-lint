@@ -82,8 +82,8 @@ function statementScopableReadActions(stmt) {
   if (!stmt || !Array.isArray(stmt.actions)) return [];
   const out = [];
   for (const a of stmt.actions) {
-    // r8: a service wildcard (lambda:Get*) carries the scopable reads it expands to.
-    if (isWildcardAction(a)) { out.push(...defaultCatalog.scopableReadsMatching(a)); continue; }
+    // r8: a service wildcard (lambda:Get*) that covers a scopable read counts as one.
+    if (isWildcardAction(a)) { if (defaultCatalog.wildcardMatchesScopableRead(a)) out.push(a); continue; }
     const res = defaultCatalog.lookup(a);
     if (res.known && res.accessLevel === ACCESS_LEVELS.READ && !res.requiresWildcardResource) out.push(a);
   }

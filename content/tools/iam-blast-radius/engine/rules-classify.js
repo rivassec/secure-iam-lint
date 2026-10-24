@@ -129,6 +129,8 @@ export const RESOURCE_POLICY_WRITE_ACTIONS = Object.freeze([
   'ec2:ModifyImageAttribute',
   'rds:ModifyDBSnapshotAttribute',
   'rds:ModifyDBClusterSnapshotAttribute',
+  // r8 E-1: lets another account attach this ENI to its instance (cross-account grant).
+  'ec2:CreateNetworkInterfacePermission',
 ]);
 
 // F15: actions that share a resource copy rather than rewrite its policy.

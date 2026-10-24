@@ -172,12 +172,30 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Snapshot gaps:** `ecr-public` is snapshotted (`GetAuthorizationToken` and the reads
   are known in an Allow; image push and repository writes stay fail-closed), and
   `sts:GetServiceBearerToken` is known (AWS level Read, Resource `*` only). Action
-  catalog 2026.10.24.1, AWS reference fetched 2026-10-24.
+  catalog 2026.10.24.2, AWS reference fetched 2026-10-24.
 - **Security:** a service-wildcard read on Resource `*` (`dynamodb:Get*`, `ec2:Get*`,
   `kms:Describe*`) read CLEAN while the same concrete read (`dynamodb:GetItem`) failed
-  closed. It now expands to its catalogued scopable reads and exits 3
+  closed. A wildcard that matches a catalogued scopable read now exits 3
   (BROAD_RESOURCE_UNDECIDABLE) unless a rule or Deny covers it. Listing reads
   (`ec2:Describe*`) and Resource-`*`-only reads are unchanged.
+- **E-1, fewer withheld actions in an Allow.** lambda, cloudformation, ecr, eks, events,
+  scheduler and codeartifact are no longer Deny-only, and elasticloadbalancing is
+  snapshotted. Their reads and listings are known (a resource-scopable read on `*` still
+  exits 3); their writes are known only where a detector covers them:
+  - COMPUTE-CODE-OVERWRITE now covers `cloudformation:ExecuteChangeSet`,
+    `lambda:UpdateAlias` and `ecr:PutImage`.
+  - The PassRole paths cover `cloudformation:CreateChangeSet` and
+    `scheduler:CreateSchedule` / `UpdateSchedule` (new scheduler entry); like
+    `events:PutTargets`, they are known because alone they cannot run as a role.
+  - RESOURCE-POLICY-WRITE covers `ec2:CreateNetworkInterfacePermission`.
+  - Deletes are DESTRUCTIVE-ACTION. ECR layer uploads and `ecr:CreateRepository` are
+    known: nothing runs what they stage until `ecr:PutImage`.
+  - Still withheld (exit 3): ENI writes (`ec2:CreateNetworkInterface`, IP assignment,
+    attach / modify), ELB writes, `ecr:BatchImportUpstreamImage`, `events:PutRule`,
+    `lambda:PublishVersion` and the other unmodeled writes, tag writes in these
+    services, `eks:AccessKubernetesApi`, Lambda durable-execution and new microVM /
+    web-function reads (so `lambda:Get*` stays unknown), and sns, logs and config
+    (still Deny-only).
 
 ## [1.2.0] - 2026-10-21
 

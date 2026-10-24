@@ -13,10 +13,11 @@ const allow = (action, resource = '*') => run(P({ Effect: 'Allow', Action: actio
 const LOG = `arn:aws:logs:us-east-1:${ACCT}:log-group:x:*`;
 const REPO = `arn:aws:ecr:us-east-1:${ACCT}:repository/r`;
 
+// r8 E-1: these services are no longer Deny-only; the picks are writes still withheld.
 const PICKS = {
-  ecr: 'ecr:PutImage',
-  codeartifact: 'codeartifact:DeleteRepository',
-  scheduler: 'scheduler:CreateSchedule',
+  ecr: 'ecr:BatchImportUpstreamImage',
+  codeartifact: 'codeartifact:PublishPackageVersion',
+  scheduler: 'scheduler:TagResource',
   eks: 'eks:CreateCluster',
 };
 for (const [svc, action] of Object.entries(PICKS)) {
@@ -53,7 +54,7 @@ test('log write actions on * report WILDCARD-RESOURCE at medium (v1.3.0 r7 log-i
 });
 
 for (const [action, res] of [['logs:GetLogEvents', LOG], ['logs:FilterLogEvents', LOG], ['logs:GetQueryResults', '*'],
-  ['logs:StartQuery', LOG], ['logs:GetLogRecord', '*'], ['ecr:PutImage', REPO],
+  ['logs:StartQuery', LOG], ['logs:GetLogRecord', '*'], ['ecr:BatchImportUpstreamImage', REPO],
   ['codeartifact:GetAuthorizationToken', '*'], ['eks:AccessKubernetesApi', '*']]) {
   test(`${action} in an Allow still fails closed`, () => {
     assert.equal(allow(action, res).exitCode, EXIT.FAIL_CLOSED);

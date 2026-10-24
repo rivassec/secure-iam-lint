@@ -56,7 +56,7 @@ export const ACCESS_LEVELS = Object.freeze({
 const L = ACCESS_LEVELS;
 
 // Dated snapshot identity. Bump both when the curated set below changes.
-export const ACTION_CATALOG_VERSION = '2026.10.24.1';
+export const ACTION_CATALOG_VERSION = '2026.10.24.2';
 export const ACTION_CATALOG_DATE = '2026-10-24';
 
 // The curated snapshot: service -> { actionName: accessLevel }. Keys use the
@@ -96,6 +96,12 @@ const CATALOG_DATA = Object.freeze({
     BatchCheckLayerAvailability: L.READ,
     GetDownloadUrlForLayer: L.READ,
     BatchGetImage: L.READ,
+    // r8 E-1: push staging. Layers are unreferenced blobs and a new repo is empty until
+    // ecr:PutImage (COMPUTE-CODE-OVERWRITE) writes a manifest/tag. Levels: AWS reference.
+    InitiateLayerUpload: L.WRITE,
+    UploadLayerPart: L.WRITE,
+    CompleteLayerUpload: L.WRITE,
+    CreateRepository: L.WRITE,
   },
   iam: {
     // Permissions-management surface (self-escalation primitives).
@@ -376,10 +382,24 @@ function buildIndex(data) {
 // scripts/gen-unmodeled-escalation.mjs). Keep an action here until a detector covers it.
 const UNMODELED_SET = new Set(UNMODELED_ESCALATION);
 // Snapshotted in v1.3.0 for guardrail Denies only: their reference actions stay withheld in an Allow.
-export const DENY_ONLY_SERVICES = new Set(['sns', 'events', 'logs', 'config', 'lambda', 'cloudformation',
-  'ecr', 'codeartifact', 'scheduler', 'eks']);
+// r8 E-1: lambda, cloudformation, ecr, eks, events, scheduler and codeartifact left this set;
+// their writes go through gen-unmodeled-escalation like any reference service.
+export const DENY_ONLY_SERVICES = new Set(['sns', 'logs', 'config']);
+// r8 E-1: reads that are not plain metadata: cluster API access, invocation payloads,
+// and Lambda features whose semantics are not reviewed yet.
+const READ_WITHHELD = new Set([
+  'eks:accesskubernetesapi',
+  'lambda:getdurableexecution', 'lambda:getdurableexecutionhistory', 'lambda:getdurableexecutionstate',
+  'lambda:getmicrovm', 'lambda:getmicrovmimage', 'lambda:getmicrovmimagebuild', 'lambda:getmicrovmimageversion',
+  'lambda:getnetworkconnector', 'lambda:getwebaccountsettings', 'lambda:getwebfunction',
+  'lambda:getwebfunctionendpoint', 'lambda:getwebfunctionrevision',
+]);
+// r8 E-1: tag writes in the services released this round stay withheld (no detector models
+// tag-based ABAC, e.g. the load-balancer controller's aws:ResourceTag gates).
+const TAGGING_WITHHELD_SERVICES = new Set(['lambda', 'cloudformation', 'ecr', 'eks', 'events', 'scheduler',
+  'codeartifact', 'elasticloadbalancing', 'ecr-public']);
 // Fail closed in an Allow until a finding models them: ABAC tag writes and account-wide IAM dumps.
-const ALLOW_WITHHELD = (full) => /^iam:(?:un)?tag/.test(full) ||
+const ALLOW_WITHHELD = (full) => /^iam:(?:un)?tag/.test(full) || READ_WITHHELD.has(full) ||
   ['iam:getaccountauthorizationdetails', 'iam:getcredentialreport', 'iam:generatecredentialreport',
     // Mints an OpenID token for any identity in the pool (assume its roles as anyone).
     'cognito-identity:getopenidtokenfordeveloperidentity'].includes(full);
@@ -409,6 +429,7 @@ function mergeReference(index, refData) {
       if (!accessLevel) continue; // unknown level token: leave the action unknown (fail closed)
       const full = `${svcLower}:${key}`;
       if (UNMODELED_SET.has(full) || DENY_ONLY_SERVICES.has(svcLower) || ALLOW_WITHHELD(full)
+        || (accessLevel === ACCESS_LEVELS.TAGGING && TAGGING_WITHHELD_SERVICES.has(svcLower))
         || (accessLevel === ACCESS_LEVELS.PERMISSIONS && !curatedServices.has(svcLower))) {
         withheld.add(full);
         continue;
@@ -565,23 +586,22 @@ export const defaultCatalog = Object.freeze({
     return this.lookup(token).requiresWildcardResource === true;
   },
   /**
-   * Known, resource-scopable READ actions a service wildcard (s3:Get*) expands to, as
-   * "service:Name". Empty for a concrete token, the bare "*" or an unknown service.
+   * Does a service wildcard (s3:Get*) match a known, resource-scopable READ action?
+   * False for a concrete token, the bare "*" or an unknown service. Stops at the first match.
    * @param {string} token raw action string
-   * @returns {Array<string>}
+   * @returns {boolean}
    */
-  scopableReadsMatching(token) {
-    if (!isWildcardAction(token)) return [];
+  wildcardMatchesScopableRead(token) {
+    if (!isWildcardAction(token)) return false;
     const parts = splitAction(String(token));
     const svc = parts && INDEX.get(parts.service);
-    if (!svc) return [];
-    const out = [];
+    if (!svc) return false;
     for (const [key, entry] of svc) {
       if (entry.accessLevel !== ACCESS_LEVELS.READ) continue;
       if (requiresWildcardKey(`${parts.service}:${key}`)) continue;
-      if (globMatch(parts.action, key)) out.push(`${entry.service}:${entry.name}`);
+      if (globMatch(parts.action, key)) return true;
     }
-    return out;
+    return false;
   },
   /**
    * Classify a WILDCARD action token (one containing '*'/'?') for COVERAGE.

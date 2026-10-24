@@ -54,9 +54,9 @@ test('control: a made-up action in a known service is still UNKNOWN_ACTION', () 
   assert.ok(unknown(run(deny('sns:NoSuchAction'), 'scp-rcp')));
 });
 
-// Deny-only services: reads, lists and tag changes stay fail-closed in an Allow (pre-1.3.0 behavior).
-const NOT_IN_ALLOW = ['logs:GetLogEvents', 'logs:GetQueryResults', 'lambda:GetFunctionConfiguration',
-  'cloudformation:GetTemplate', 'events:PutTargets', 'sns:ListTopics'];
+// Deny-only services (sns/logs/config) and actions still withheld after r8 E-1 fail closed in an Allow.
+const NOT_IN_ALLOW = ['logs:GetLogEvents', 'logs:GetQueryResults', 'lambda:GetDurableExecutionState',
+  'cloudformation:SetStackPolicy', 'events:PutRule', 'sns:ListTopics'];
 for (const action of NOT_IN_ALLOW) {
   test(`${action} in an Allow still fails closed`, () => {
     const narrow = P({ Effect: 'Allow', Action: action, Resource: `arn:aws:${action.split(':')[0]}:us-east-1:${ACCT}:x` });

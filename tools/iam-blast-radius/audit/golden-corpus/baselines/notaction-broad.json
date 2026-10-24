@@ -127,6 +127,9 @@
             "glue:UpdateJob",
             "glue:UpdateDevEndpoint",
             "cloudformation:UpdateStack",
+            "cloudformation:ExecuteChangeSet",
+            "lambda:UpdateAlias",
+            "ecr:PutImage",
             "ec2:ModifyInstanceAttribute"
           ],
           "resources": [
@@ -150,6 +153,9 @@
               "glue:UpdateJob",
               "glue:UpdateDevEndpoint",
               "cloudformation:UpdateStack",
+              "cloudformation:ExecuteChangeSet",
+              "lambda:UpdateAlias",
+              "ecr:PutImage",
               "ec2:ModifyInstanceAttribute"
             ],
             "prerequisites": {
@@ -166,6 +172,9 @@
                         "glue:UpdateJob",
                         "glue:UpdateDevEndpoint",
                         "cloudformation:UpdateStack",
+                        "cloudformation:ExecuteChangeSet",
+                        "lambda:UpdateAlias",
+                        "ecr:PutImage",
                         "ec2:ModifyInstanceAttribute"
                       ]
                     }
@@ -189,6 +198,9 @@
                 "glue:UpdateJob",
                 "glue:UpdateDevEndpoint",
                 "cloudformation:UpdateStack",
+                "cloudformation:ExecuteChangeSet",
+                "lambda:UpdateAlias",
+                "ecr:PutImage",
                 "ec2:ModifyInstanceAttribute"
               ],
               "resources": [
@@ -209,6 +221,9 @@
                 "glue:UpdateJob",
                 "glue:UpdateDevEndpoint",
                 "cloudformation:UpdateStack",
+                "cloudformation:ExecuteChangeSet",
+                "lambda:UpdateAlias",
+                "ecr:PutImage",
                 "ec2:ModifyInstanceAttribute"
               ]
             }
@@ -687,7 +702,7 @@
               "ruleId": "COMPUTE-CODE-OVERWRITE",
               "level": "error",
               "message": {
-                "text": "Overwrite existing compute code/config (runs under its existing role, no PassRole) [identity policy] at statement `EverythingExceptIam`; actions: `cloudformation:UpdateStack`, `codebuild:UpdateProject`, `ec2:ModifyInstanceAttribute`, `glue:UpdateDevEndpoint`, `glue:UpdateJob`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`. Potential blast radius from the supplied policy context only; not effective permissions."
+                "text": "Overwrite existing compute code/config (runs under its existing role, no PassRole) [identity policy] at statement `EverythingExceptIam`; actions: `cloudformation:ExecuteChangeSet`, `cloudformation:UpdateStack`, `codebuild:UpdateProject`, `ec2:ModifyInstanceAttribute`, `ecr:PutImage`, `glue:UpdateDevEndpoint`, `glue:UpdateJob`, `lambda:UpdateAlias`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`. Potential blast radius from the supplied policy context only; not effective permissions."
               },
               "locations": [
                 {
@@ -699,7 +714,7 @@
                 }
               ],
               "partialFingerprints": {
-                "iamBlastRadius/semanticIdentity/v2": "0a2d3b9587b188bc49a030098dcfc678"
+                "iamBlastRadius/semanticIdentity/v2": "c8e0c6f40dded5b79b004d57e29f68c5"
               },
               "properties": {
                 "category": "security",
@@ -723,6 +738,9 @@
                       "glue\\:UpdateJob",
                       "glue\\:UpdateDevEndpoint",
                       "cloudformation\\:UpdateStack",
+                      "cloudformation\\:ExecuteChangeSet",
+                      "lambda\\:UpdateAlias",
+                      "ecr\\:PutImage",
                       "ec2\\:ModifyInstanceAttribute"
                     ],
                     "resources": [
@@ -732,7 +750,7 @@
                 ],
                 "jsonPointer": "/Statement/0",
                 "statementSid": "EverythingExceptIam",
-                "baselineId": "e61a0efc8c655dbca769bed4eb0e0c816b85765a0aee157bc72544ffe9b0b554"
+                "baselineId": "501855f64c19bd8dacfc3b7ea1bbd9674b997f6314c50a77cb56e8a33c4e00a9"
               },
               "ruleIndex": 1
             },
@@ -954,11 +972,14 @@
         "title": "Overwrite existing compute code/config (runs under its existing role, no PassRole)",
         "statementIndex": 0,
         "actions": [
+          "cloudformation:ExecuteChangeSet",
           "cloudformation:UpdateStack",
           "codebuild:UpdateProject",
           "ec2:ModifyInstanceAttribute",
+          "ecr:PutImage",
           "glue:UpdateDevEndpoint",
           "glue:UpdateJob",
+          "lambda:UpdateAlias",
           "lambda:UpdateFunctionCode",
           "lambda:UpdateFunctionConfiguration"
         ],
@@ -966,7 +987,7 @@
           "*"
         ],
         "conditionsPresent": false,
-        "evidenceWhyHash": "f5594962fe94939b"
+        "evidenceWhyHash": "556b994ddb140b26"
       },
       {
         "id": "COMPUTE-SESSION-TAKEOVER",
