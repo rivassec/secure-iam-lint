@@ -284,8 +284,9 @@ OPTIONS
                           The format never changes the exit code.
   --baseline <file>       Accept the results listed in a committed baseline file
                           (see --format baseline). Only accepted findings and
-                          accepted UNKNOWN_ACTION / UNSUPPORTED_CONDITION states
-                          stop counting; any other fail-closed state still exits
+                          accepted UNKNOWN_ACTION / NOT_IN_REFERENCE /
+                          UNSUPPORTED_CONDITION states stop counting; any other
+                          fail-closed state still exits
                           3. Keys are bound to the artifact URI, so pass the same
                           path (or --artifact-uri) the baseline was built with.
   --budget-ms <ms>        Wall-clock budget for analyzing the policy, in

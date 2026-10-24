@@ -40,6 +40,7 @@ import { parseTrustedAccountIds } from './trusted-accounts.mjs';
 // a clean pass. The browser/worker path never arms this (it has its own T5 worker
 // watchdog), so browser analysis stays deterministic.
 import { armGlobBudget, disarmGlobBudget, isGlobBudgetError } from '../content/tools/iam-blast-radius/engine/glob.js';
+import { classifyUnrecognized, REFERENCE_SNAPSHOT_DATE } from '../content/tools/iam-blast-radius/engine/catalog.js';
 
 // Stable exit codes. Frozen so a caller can reference them by name without risk of
 // mutation.
@@ -303,14 +304,29 @@ function incompleteStatesFromCoverage(coverage) {
       { path: el.path },
     ));
   }
-  if ((s.unrecognizedActions || []).length > 0) {
+  const split = classifyUnrecognized(s.unrecognizedActions || []);
+  if (split.unknown.length > 0) {
     out.push(state(
       ANALYSIS_STATE.INCOMPLETE,
       'UNKNOWN_ACTION',
       'One or more actions are not recognized by the action-catalog snapshot, so ' +
         'the analysis could not fully vouch for those grants (unsupported does NOT ' +
         'mean safe).',
-      { details: { actions: s.unrecognizedActions.slice() } },
+      { details: { actions: split.unknown } },
+    ));
+  }
+  // r8 F-2: the service is snapshotted but the name is not in it (typo, non-IAM API name,
+  // wildcard matching nothing). Still fail closed: the snapshot may lag a new action.
+  if (split.notInReference.length > 0) {
+    out.push(state(
+      ANALYSIS_STATE.INCOMPLETE,
+      'NOT_IN_REFERENCE',
+      `One or more actions are not in the ${REFERENCE_SNAPSHOT_DATE} AWS reference snapshot ` +
+        'for their service: a misspelled or non-IAM name (for example an API name such as ' +
+        'HeadObject, which s3:GetObject authorizes), or a wildcard that matches no action. ' +
+        'The analysis fails closed because the snapshot may predate a new action; fix or ' +
+        'remove the name.',
+      { details: { actions: split.notInReference, ...(split.hints.length ? { hints: split.hints } : {}) } },
     ));
   }
   if ((s.unsupportedConditions || []).length > 0) {

@@ -856,6 +856,9 @@ function stateDetailOf(s) {
   const d = s && s.details;
   if (!d || typeof d !== 'object') return null;
   if (s.code === 'UNKNOWN_ACTION') return { label: 'actions', property: 'unknownActions', list: d.actions };
+  if (s.code === 'NOT_IN_REFERENCE') {
+    return { label: 'actions', property: 'notInReferenceActions', list: d.actions, hints: d.hints };
+  }
   if (s.code === 'UNSUPPORTED_CONDITION') {
     return { label: 'condition keys', property: 'unsupportedConditions', list: d.conditions };
   }
@@ -873,7 +876,20 @@ function stateDetailClause(s) {
     if (safe) tokens.push(safe);
   }
   if (tokens.length === 0) return '';
-  return ` Offending ${label}: ${tokens.join(', ')}${more > 0 ? ` (+${more} more)` : ''}.`;
+  return ` Offending ${label}: ${tokens.join(', ')}${more > 0 ? ` (+${more} more)` : ''}.${hintClause(detail.hints)}`;
+}
+
+// r8 F-2: nearest-name hints ("x -> y"); both sides are policy-derived, so inertLeaf each.
+function hintClause(hints) {
+  const pairs = [];
+  for (const h of Array.isArray(hints) ? hints : []) {
+    const a = inertLeaf(h && h.action, MAX_SID_LEN);
+    const b = inertLeaf(h && h.suggestion, MAX_SID_LEN);
+    if (a && b) pairs.push(`${a} -> ${b}`);
+  }
+  const { shown, more } = capMessageTokens(pairs);
+  if (shown.length === 0) return '';
+  return ` Did you mean: ${shown.join(', ')}${more > 0 ? ` (+${more} more)` : ''}?`;
 }
 
 // A deterministic, one-line per-instance message. Deliberately carries the finding
@@ -1069,6 +1085,9 @@ function stateResultRow(s, uri, occurrence = 0) {
   if (detail) {
     const tokens = inertTokenList(normList(detail.list));
     if (tokens.length > 0) properties[detail.property] = tokens;
+    const hints = Array.isArray(detail.hints) ? detail.hints : [];
+    const sugg = inertTokenList(normList(hints.map((h) => `${h && h.action} -> ${h && h.suggestion}`)));
+    if (sugg.length > 0) properties.nameHints = sugg;
   }
   // R5-uri-trunc: a sliced (over-length) artifact URI is recorded via a SEPARATE flag, never
   // by mutating the location string. Same treatment as the finding rows below.

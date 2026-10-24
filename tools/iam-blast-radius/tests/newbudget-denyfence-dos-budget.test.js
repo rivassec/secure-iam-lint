@@ -138,10 +138,13 @@ test('MUST-CLOSE: within-caps N x M deny-fence policy ABORTS under the default 6
 // the abort is caused by the now-charged deny-fence walk, not incidental other work.
 // ---------------------------------------------------------------------------
 
+// N-scaled work (matching N patterns against the detector catalogs) grows with the catalogs;
+// r8 put DOS_N at M=1 at the budget edge, so the isolation runs at ISO_N.
+const ISO_N = 9000;
 test('the deny-fence notResources walk is what is charged: same N, M=1 completes but M=9000 aborts', () => {
-  const small = analyze(buildDenyFencePolicy(DOS_N, 1), CTX);
+  const small = analyze(buildDenyFencePolicy(ISO_N, 1), CTX);
   assert.equal(small.coverage.summary.analysisAborted, false, 'same N with a single spared element does little deny-fence work -> completes');
-  const big = analyze(buildDenyFencePolicy(DOS_N, DOS_M), CTX);
+  const big = analyze(buildDenyFencePolicy(ISO_N, DOS_M), CTX);
   assert.equal(big.coverage.summary.analysisAborted, true, 'holding N fixed and scaling ONLY M (notResources) trips the budget -> the deny-fence walk is the charged dimension');
 });
 

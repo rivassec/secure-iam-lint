@@ -47,7 +47,7 @@ export const VERSION_MANIFEST = Object.freeze({
   ruleVersion: '1',
   // Dated curated action-catalog snapshot (catalog.js ACTION_CATALOG_VERSION),
   // versioned on its own cadence, distinct from the rule version.
-  actionCatalogVersion: '2026.10.21.5',
+  actionCatalogVersion: '2026.10.24.2',
   // Committed deploy marker. Stage-11 #10: DERIVE from the single source
   // (coverage.js BUILD_SHA, imported above) instead of a second 'dev' literal.
   // The release stamps coverage.js BUILD_SHA; a separate literal here would ship a

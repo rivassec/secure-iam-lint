@@ -8,15 +8,17 @@ import { scan, EXIT } from '../../../cli/scan.mjs';
 const ACCT = '111122223333';
 const P = (...st) => JSON.stringify({ Version: '2012-10-17', Statement: st });
 const run = (text, family) => scan({ text, family, partition: 'aws', subjectAccount: ACCT });
-const unknown = (r) => JSON.stringify(r).includes('UNKNOWN_ACTION');
+// r8 F-2: a name missing from a snapshotted service reports NOT_IN_REFERENCE instead.
+const unknown = (r) => /UNKNOWN_ACTION|NOT_IN_REFERENCE/.test(JSON.stringify(r));
 const allow = (action, resource = '*') => run(P({ Effect: 'Allow', Action: action, Resource: resource }), 'identity');
 const LOG = `arn:aws:logs:us-east-1:${ACCT}:log-group:x:*`;
 const REPO = `arn:aws:ecr:us-east-1:${ACCT}:repository/r`;
 
+// r8 E-1: these services are no longer Deny-only; the picks are writes still withheld.
 const PICKS = {
-  ecr: 'ecr:PutImage',
-  codeartifact: 'codeartifact:DeleteRepository',
-  scheduler: 'scheduler:CreateSchedule',
+  ecr: 'ecr:BatchImportUpstreamImage',
+  codeartifact: 'codeartifact:PublishPackageVersion',
+  scheduler: 'scheduler:TagResource',
   eks: 'eks:CreateCluster',
 };
 for (const [svc, action] of Object.entries(PICKS)) {
@@ -27,7 +29,7 @@ for (const [svc, action] of Object.entries(PICKS)) {
   });
 }
 
-test('control: a made-up ecr action is still UNKNOWN_ACTION in a Deny', () => {
+test('control: a made-up ecr action is still unknown (NOT_IN_REFERENCE) in a Deny', () => {
   assert.ok(unknown(run(P({ Effect: 'Deny', Action: 'ecr:NoSuchAction', Resource: '*' }), 'scp-rcp')));
 });
 
@@ -53,7 +55,7 @@ test('log write actions on * report WILDCARD-RESOURCE at medium (v1.3.0 r7 log-i
 });
 
 for (const [action, res] of [['logs:GetLogEvents', LOG], ['logs:FilterLogEvents', LOG], ['logs:GetQueryResults', '*'],
-  ['logs:StartQuery', LOG], ['logs:GetLogRecord', '*'], ['ecr:PutImage', REPO],
+  ['logs:StartQuery', LOG], ['logs:GetLogRecord', '*'], ['ecr:BatchImportUpstreamImage', REPO],
   ['codeartifact:GetAuthorizationToken', '*'], ['eks:AccessKubernetesApi', '*']]) {
   test(`${action} in an Allow still fails closed`, () => {
     assert.equal(allow(action, res).exitCode, EXIT.FAIL_CLOSED);

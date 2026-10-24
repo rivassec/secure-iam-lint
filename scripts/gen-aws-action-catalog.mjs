@@ -43,6 +43,10 @@ const SERVICES = [
   'sns', 'events', 'logs', 'config', 'lambda', 'cloudformation', 'iam',
   'ecr', 'codeartifact', 'scheduler', 'eks',
   'cognito-identity',
+  // v1.3.0 r8: ECR Public (CI image pulls/pushes; trial snapshot gap).
+  'ecr-public',
+  // r8 E-1: AWS Load Balancer Controller (reads known; writes withheld until modeled).
+  'elasticloadbalancing',
 ];
 
 function accessLevel(action) {
@@ -105,6 +109,8 @@ const lines = [
   '//',
   '// Pure committed data (no imports, no runtime network). catalog.js merges it UNDER',
   '// the curated CATALOG_DATA: a curated entry always wins on overlap.',
+  '',
+  `export const AWS_REF_DATE = '${today}';`,
   '',
   'export const AWS_REF_ACTIONS = Object.freeze({',
 ];
