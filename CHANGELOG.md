@@ -167,6 +167,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - SARIF paths are relative to the Pulumi project; a project in a repo subdirectory
   does not map to files in code scanning yet.
 
+### Round 8, lane D (Pulumi)
+
+- **E-3:** ECR registry policies and repository creation templates are analyzed
+  against the registry (`repository/*`, or `repository/<prefix>/*` for a template),
+  and CloudWatch Logs resource policies get the account/region context, in the
+  provider's account and region. Only an account the stack proves counts
+  (`subject-account` / `provider-accounts` never do); otherwise that document alone
+  fails closed with `PULUMI_CONTEXT_UNPROVEN`. The engine accepts such a registry-wide
+  ARN only with the explicit `ecr-registry` resource type. Registry-level ECR actions
+  (`ecr:ReplicateImage`, `ecr:CreateRepository`) are not classified yet and Logs
+  resource policies are not modeled (`UNSUPPORTED_RESOURCE_SHAPE`), so both still
+  exit 3 per document, now with their findings.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added

@@ -83,11 +83,11 @@ const TYPE_MAP = Object.freeze({
   'aws-native:secretsmanager:ResourcePolicy': [{ prop: 'resourcePolicy', family: RESOURCE, required: true, ctx: { kind: 'arn', field: 'secretId', type: 'secretsmanager' } }],
   'aws-native:sqs:QueueInlinePolicy': [{ prop: 'policyDocument', family: RESOURCE, required: true, ctx: { kind: 'sqs-url', field: 'queue' } }],
   'aws-native:organizations:Policy': [{ prop: 'content', family: SCP, required: true, orgType: 'type' }],
-  // R5-2: seen in real state. No single attached resource for registry/template/log policies: exit 3.
+  // R5-2: seen in real state. E-3: registry/template/log context comes from the provider's proven account.
   'aws:ssoadmin/permissionSetInlinePolicy:PermissionSetInlinePolicy': [{ prop: 'inlinePolicy', family: IDENTITY, required: true }],
-  'aws:ecr/registryPolicy:RegistryPolicy': [{ prop: 'policy', family: RESOURCE, required: true, ctx: { kind: 'none', type: 'ecr' } }],
-  'aws:ecr/repositoryCreationTemplate:RepositoryCreationTemplate': [{ prop: 'repositoryPolicy', family: RESOURCE, ctx: { kind: 'none', type: 'ecr' } }],
-  'aws:cloudwatch/logResourcePolicy:LogResourcePolicy': [{ prop: 'policyDocument', family: RESOURCE, required: true, ctx: { kind: 'arn', field: 'resourceArn', type: 'logs' } }],
+  'aws:ecr/registryPolicy:RegistryPolicy': [{ prop: 'policy', family: RESOURCE, required: true, ctx: { kind: 'ecr-registry' } }],
+  'aws:ecr/repositoryCreationTemplate:RepositoryCreationTemplate': [{ prop: 'repositoryPolicy', family: RESOURCE, ctx: { kind: 'ecr-template', field: 'prefix' } }],
+  'aws:cloudwatch/logResourcePolicy:LogResourcePolicy': [{ prop: 'policyDocument', family: RESOURCE, required: true, ctx: { kind: 'logs-account', field: 'resourceArn' } }],
   'aws:dynamodb/resourcePolicy:ResourcePolicy': [{ prop: 'policy', family: RESOURCE, required: true, ctx: { kind: 'arn', field: 'resourceArn', type: 'dynamodb' } }],
 });
 
@@ -314,6 +314,7 @@ const MSG = Object.freeze({
   PULUMI_PARTITION_UNRESOLVED: 'The provider region does not map to a known AWS partition, so the partition is not assumed.',
   PULUMI_PARTITION_MISMATCH: 'The supplied partition differs from the partition the stack proves for these resources, or the resource and provider regions disagree.',
   PULUMI_CONTEXT_AMBIGUOUS: 'More than one resource in the stack matches the resource this policy is attached to.',
+  PULUMI_CONTEXT_UNPROVEN: 'The resource type implies the attached resource (the ECR registry or CloudWatch Logs of the provider account and region), but the stack does not prove that account (a managed IAM resource ARN, allowedAccountIds or an assume-role ARN). subject-account and provider-account name an account but do not prove it, so the context is not inferred.',
   PULUMI_UNMODELED_PERMISSION: 'A Lambda permission grants invoke to the public, another account, or a service with no source binding. It is not modeled yet; unsupported does NOT mean safe.',
 });
 const st = (code, path, kind = ANALYSIS_STATE.INCOMPLETE) => state(kind, code, MSG[code] || 'Pulumi input could not be fully analyzed.', path);
@@ -483,6 +484,8 @@ function resolveScope(it, facts, opts, globalSeen, globalStates) {
     derivedPart = derivedPart || arnPart;
   }
   const resRegion = it.inputs.region;
+  const regionOf = (r) => (isStr(r) && !taint(r) && partitionForRegion(r) ? r : null);
+  const region = regionOf(resRegion) || (f ? regionOf(f.region) : null);
   if (isStr(resRegion) && !taint(resRegion)) {
     const rp = partitionForRegion(resRegion);
     if (!rp || (derivedPart && rp !== derivedPart)) states.push(st('PULUMI_PARTITION_MISMATCH', it.urn));
@@ -509,7 +512,7 @@ function resolveScope(it, facts, opts, globalSeen, globalStates) {
     globalSeen.add(`acct:${where}`);
     globalStates.push(st('PULUMI_ACCOUNT_UNRESOLVED', where));
   }
-  return { account, partition, accountProven: !!derivedAcct && evidence.size === 1 && (!explicitAcct || explicitAcct === derivedAcct), states };
+  return { account, partition, region, accountProven: !!derivedAcct && evidence.size === 1 && (!explicitAcct || explicitAcct === derivedAcct), states };
 }
 
 // R5-4: [{ key, account }] -> Map(provider urn -> account). Key = provider name or full URN;
@@ -572,6 +575,8 @@ function permissionVerdict(it, scope) {
 // --- Resource context (P4): exact join to the REFERENCED resource ------------------------
 
 const S3_NAME_RE = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+// ECR namespace prefix (CreateRepositoryCreationTemplate API); ROOT is handled apart.
+const ECR_PREFIX_RE = /^(?=.{1,256}$)(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*\/?$/;
 const SQS_URL_RE = /^https:\/\/sqs\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?\/(\d{12})\/([A-Za-z0-9_-]{1,80}(?:\.fifo)?)$/;
 
 function concrete(v) { return isStr(v) && v !== '' && !taint(v); }
@@ -645,6 +650,28 @@ function resolveContext(it, ctx, items, scope) {
       }
       break;
     }
+    case 'ecr-registry':
+    case 'ecr-template':
+    case 'logs-account': {
+      // E-3: implied by the type, in the provider's proven account and region. Never guessed.
+      if (ctx.kind === 'logs-account' && concrete(fieldVal) && fieldVal.startsWith('arn:')) { arn = fieldVal; break; }
+      let res = ctx.kind === 'logs-account' ? '*' : 'repository/*';
+      if (ctx.kind === 'ecr-template') {
+        if (fieldVal === undefined) { states.push(st('PULUMI_PROPERTY_MISSING', `${it.urn}#prefix`, ANALYSIS_STATE.MALFORMED)); break; }
+        if (!concrete(fieldVal) || !(fieldVal === 'ROOT' || ECR_PREFIX_RE.test(fieldVal))) {
+          states.push(st('PULUMI_PROPERTY_INVALID', `${it.urn}#prefix`, ANALYSIS_STATE.MALFORMED));
+          break;
+        }
+        if (fieldVal !== 'ROOT') res = `repository/${fieldVal.replace(/\/$/, '')}/*`;
+      }
+      if (!scope.accountProven || !scope.partition || !scope.region || partitionForRegion(scope.region) !== scope.partition) {
+        states.push(st('PULUMI_CONTEXT_UNPROVEN', it.urn));
+        break;
+      }
+      arn = `arn:${scope.partition}:${ctx.kind === 'logs-account' ? 'logs' : 'ecr'}:${scope.region}:${scope.account}:${res}`;
+      account = scope.account;
+      break;
+    }
     case 'ecr-name': {
       if (!concrete(fieldVal)) break;
       const hits = matchOne(items, ['aws:ecr/repository:Repository'], ['name'], fieldVal);
@@ -663,6 +690,8 @@ function ctxType(ctx) {
   if (ctx.kind === 's3' || ctx.kind === 's3-self') return 's3-bucket';
   if (ctx.kind === 'sqs-url') return 'sqs';
   if (ctx.kind === 'ecr-name') return 'ecr';
+  if (ctx.kind === 'ecr-registry' || ctx.kind === 'ecr-template') return 'ecr-registry';
+  if (ctx.kind === 'logs-account') return 'logs';
   return ctx.type;
 }
 
