@@ -862,7 +862,23 @@ function stateDetailOf(s) {
   return null;
 }
 
+// MALFORMED_RESOURCE_ARN reason -> fixed prose (tool-controlled, no markdown chars).
+const MALFORMED_REASON_TEXT = Object.freeze({
+  EMPTY: 'the value is empty',
+  WHITESPACE: 'the value has leading or trailing whitespace',
+  NOT_AN_ARN: 'the value is neither the bare wildcard nor a well-formed ARN',
+  EMPTY_LEADING_SEGMENT: 'the ARN resource part starts with a slash or colon',
+  UNMODELED_SERVICE_GLOB: 'a wildcarded ARN of a service whose resource grammar is not modeled',
+});
+
+function malformedReasonOf(s) {
+  const r = s && s.code === 'MALFORMED_RESOURCE_ARN' && s.details ? s.details.reason : null;
+  return Object.hasOwn(MALFORMED_REASON_TEXT, String(r)) ? String(r) : null;
+}
+
 function stateDetailClause(s) {
+  const reason = malformedReasonOf(s);
+  if (reason) return ` Reason: ${MALFORMED_REASON_TEXT[reason]}.`;
   const detail = stateDetailOf(s);
   if (!detail) return '';
   const { label, list } = detail;
@@ -1069,6 +1085,14 @@ function stateResultRow(s, uri, occurrence = 0) {
   if (detail) {
     const tokens = inertTokenList(normList(detail.list));
     if (tokens.length > 0) properties[detail.property] = tokens;
+  }
+  // MALFORMED_RESOURCE_ARN: reason enum + the first offending value, markdown-inert.
+  const malformedReason = malformedReasonOf(s);
+  if (malformedReason) {
+    properties.malformedReason = malformedReason;
+    const v = s.details.value != null ? inertLeaf(s.details.value, MAX_SID_LEN) : '';
+    if (v) properties.offendingValue = v;
+    if (Number.isInteger(s.details.count)) properties.malformedCount = s.details.count;
   }
   // R5-uri-trunc: a sliced (over-length) artifact URI is recorded via a SEPARATE flag, never
   // by mutating the location string. Same treatment as the finding rows below.

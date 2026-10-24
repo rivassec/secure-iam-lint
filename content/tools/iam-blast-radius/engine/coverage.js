@@ -317,6 +317,8 @@ export function enrichCoverage(coverage, context) {
     code: String(g.code),
     path: g.path != null ? String(g.path) : null,
     kind: String(g.kind),
+    // MALFORMED_RESOURCE_ARN: { value (neutralized, capped), reason, count }.
+    ...(g.details ? { details: Object.freeze({ ...g.details }) } : {}),
   }));
 
   // S3-dos-budget: the analysis was ABORTED mid-run by the cooperative resource

@@ -175,6 +175,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `package/<domain>/<repo>/*`) now reads narrow instead of `MALFORMED_RESOURCE_ARN`;
   a whole-collection wildcard (`repository/*`) still reads broad. Withheld actions on
   these services still exit 3 (`UNKNOWN_ACTION`).
+- **MALFORMED_RESOURCE_ARN details:** the state now carries `details.value` (the first
+  offending value, display-neutralized and capped at 200 characters), `details.reason`
+  (`EMPTY`, `WHITESPACE`, `NOT_AN_ARN`, `EMPTY_LEADING_SEGMENT` or
+  `UNMODELED_SERVICE_GLOB`) and `details.count` (malformed values on that axis). SARIF
+  adds `malformedReason`, `offendingValue` (markdown-inert) and `malformedCount` to the
+  row properties and a fixed reason sentence to the message. Fingerprints don't change.
 
 ## [1.2.0] - 2026-10-21
 
