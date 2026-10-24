@@ -56,8 +56,8 @@ export const ACCESS_LEVELS = Object.freeze({
 const L = ACCESS_LEVELS;
 
 // Dated snapshot identity. Bump both when the curated set below changes.
-export const ACTION_CATALOG_VERSION = '2026.10.21.5';
-export const ACTION_CATALOG_DATE = '2026-10-21';
+export const ACTION_CATALOG_VERSION = '2026.10.24.1';
+export const ACTION_CATALOG_DATE = '2026-10-24';
 
 // The curated snapshot: service -> { actionName: accessLevel }. Keys use the
 // canonical AWS casing for readability; lookups are case-insensitive (AWS treats
@@ -157,6 +157,9 @@ const CATALOG_DATA = Object.freeze({
     GetCallerIdentity: L.READ,
     GetSessionToken: L.READ,
     GetFederationToken: L.WRITE, // mints federated session credentials (AWS: Write)
+    // r8: AWS reference level Read, no resource types. Bearer token for the caller's own
+    // permissions (CodeArtifact / ECR Public); sts is curated, not snapshotted.
+    GetServiceBearerToken: L.READ,
   },
   s3: {
     GetObject: L.READ,
@@ -339,6 +342,7 @@ const CATALOG_DATA = Object.freeze({
 const REQUIRES_WILDCARD_RESOURCE = Object.freeze(new Set([
   'sts:getcalleridentity',
   'sts:getsessiontoken',
+  'sts:getservicebearertoken',
   'ec2:describetags',
   'cloudtrail:lookupevents',
   'cloudtrail:describetrails',

@@ -167,6 +167,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - SARIF paths are relative to the Pulumi project; a project in a repo subdirectory
   does not map to files in code scanning yet.
 
+### Round 8, lane A: action catalog
+
+- **Snapshot gaps:** `ecr-public` is snapshotted (`GetAuthorizationToken` and the reads
+  are known in an Allow; image push and repository writes stay fail-closed), and
+  `sts:GetServiceBearerToken` is known (AWS level Read, Resource `*` only). Action
+  catalog 2026.10.24.1, AWS reference fetched 2026-10-24.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added

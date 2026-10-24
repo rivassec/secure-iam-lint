@@ -43,6 +43,8 @@ const SERVICES = [
   'sns', 'events', 'logs', 'config', 'lambda', 'cloudformation', 'iam',
   'ecr', 'codeartifact', 'scheduler', 'eks',
   'cognito-identity',
+  // v1.3.0 r8: ECR Public (CI image pulls/pushes; trial snapshot gap).
+  'ecr-public',
 ];
 
 function accessLevel(action) {
