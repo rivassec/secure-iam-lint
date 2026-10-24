@@ -427,6 +427,13 @@ reported as a clean pass. See the `max-files` / `max-total-bytes` inputs.
 This Action is an MVP: built-in SARIF upload, Terraform plan parsing,
 family auto-detection, and PR review comments are intentionally out of scope.
 
+## Container
+
+The same CLI ships as a non-root container image, `ghcr.io/rivassec/secure-iam-lint:<version>`,
+for pipelines outside GitHub Actions (for example Argo Workflows or an EventBridge-triggered
+task). Run it with `--network none` and the policy files mounted read-only; exit codes are
+the table above. See the README "Container image" section.
+
 ## Versioning
 
 Releases use immutable `vMAJOR.MINOR.PATCH` tags with a moving `v1` major tag for

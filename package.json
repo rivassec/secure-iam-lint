@@ -39,7 +39,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "test": "cd tools/iam-blast-radius && node --test \"tests/**/*.test.js\"",
