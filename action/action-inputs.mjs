@@ -133,6 +133,13 @@ export function unrecognizedInputs(env) {
   return { names: names.sort(), odd };
 }
 
+// AWS credential variables the Action never needs. Presence only; values are never read.
+export const CREDENTIAL_ENV_NAMES = Object.freeze(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN']);
+
+export function credentialsInEnv(env) {
+  return CREDENTIAL_ENV_NAMES.filter((n) => Object.hasOwn(env || {}, n) && String(env[n]) !== '');
+}
+
 export function readInputs(env) {
   return {
     paths: getInput(env, 'paths'),

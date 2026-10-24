@@ -182,6 +182,11 @@ outputs:
     description: Total findings at/above the fail-on threshold across all scanned files.
   analysis-status:
     description: Aggregate analysis status - complete, partial, or failed.
+  reason:
+    description: >-
+      Headline reason for the run: an enum code such as FINDINGS, COVERAGE_INCOMPLETE or
+      PULUMI_ACCOUNT_UNRESOLVED, or "clean". Never input-derived text. A run-level cause
+      is preferred over COVERAGE_INCOMPLETE when both share the worst exit code.
   scan-scope:
     description: >-
       With pulumi-json only - "delta" (a default preview, changed resources only) or
