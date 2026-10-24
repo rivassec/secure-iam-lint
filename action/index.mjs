@@ -59,7 +59,7 @@ import {
 } from './action-glob.mjs';
 export * from './action-glob.mjs';
 import { scan, EXIT, DEFAULT_BUDGET_MS } from '../cli/scan.mjs';
-import { scanPulumi, pulumiUnits, PULUMI_LIMITS } from '../cli/pulumi.mjs';
+import { scanPulumi, pulumiUnits, PULUMI_LIMITS, PULUMI_WARNING } from '../cli/pulumi.mjs';
 import { buildSarifLog } from '../cli/sarif.mjs';
 // READ-ONLY canonical version manifest (browser-safe, no Node deps) so the SARIF
 // semanticVersion ties to the same identifiers the engine reports.
@@ -435,6 +435,10 @@ function runPulumiInput(inputs, sarifSafe, io, manifest) {
     budgetMs: inputs.budgetMs,
   });
   if (result.exitCode === EXIT.USAGE) return fail(result.reason, result.analysisStates[0].message);
+  // E-5: keyed by code; the text is fixed plus a count, never an input value.
+  for (const w of result.warnings || []) {
+    if (Object.hasOwn(PULUMI_WARNING, w.code) && Number.isInteger(w.accounts)) process.stderr.write(`IAM Blast Radius warning ${w.code}: ${PULUMI_WARNING[w.code](w.accounts)}\n`);
+  }
   const units = pulumiUnits(result, inputs.pulumiJson);
   // An empty stack (no policies, no states) still reports one clean unit, never "nothing scanned".
   if (units.length === 0) units.push({ file: inputs.pulumiJson, sarif: { file: inputs.pulumiJson, runProperties: { scanScope: result.scanScope } }, result: { analysisStatus: 'complete', analysisStates: [], findings: [], blockingCount: 0, findingsCount: 0, exitCode: EXIT.CLEAN, reason: 'CLEAN', family: null } });

@@ -156,3 +156,33 @@ test('E-4/e7: an unmodeled permission never names the run when another document 
   assert.equal(alone.reason, 'PULUMI_UNMODELED_PERMISSION');
   assert.equal(alone.exitCode, EXIT.FAIL_CLOSED);
 });
+
+// --- E-5 ---
+const twoAccounts = JSON.stringify({ version: 3, deployment: { resources: [provider(PA), provider(PB),
+  res('aws:iam/role:Role', 'ra', { name: 'ra', assumeRolePolicy: ROLE.inputs.assumeRolePolicy }),
+  res('aws:iam/role:Role', 'rb', { name: 'rb', assumeRolePolicy: ROLE.inputs.assumeRolePolicy }, {}, PB)] } });
+const mapping = [{ key: PA, account: A }, { key: PB, account: B }];
+
+test('E-5: subject-account on a multi-account stack warns once; never otherwise', () => {
+  const w = scanPulumi({ text: twoAccounts, partition: 'aws', subjectAccount: A, providerAccounts: mapping });
+  assert.deepEqual(w.warnings.map((x) => [x.code, x.accounts]), [['PULUMI_PROVIDERS_MULTI_ACCOUNT', 2]]);
+  assert.equal(w.exitCode, EXIT.FAIL_CLOSED, 'the warning never changes the verdict');
+  assert.deepEqual(scanPulumi({ text: twoAccounts, partition: 'aws', providerAccounts: mapping }).warnings, []);
+  assert.deepEqual(scanPulumi({ text: exportOf(ROLE), ...opts }).warnings, []);
+  assert.equal(toPulumiJsonReport(w, {}).warnings[0].code, 'PULUMI_PROVIDERS_MULTI_ACCOUNT');
+  const runs = buildAggregateSarif(pulumiUnits(w, 'Pulumi.yaml')).runs;
+  assert.ok(runs.length > 0 && runs.every((x) => x.properties.warnings === 'PULUMI_PROVIDERS_MULTI_ACCOUNT'));
+});
+
+test('E-5: the CLI prints the warning by code, with no input value', async () => {
+  let err = '';
+  const io = { readFile: () => twoAccounts, stdout: () => {}, stderr: (s) => { err += s; } };
+  const argv = ['--input', 'pulumi', '--partition', 'aws', '--format', 'json', '--provider-account', `${PA}=${A}`, '--provider-account', `${PB}=${B}`];
+  assert.equal(await run([...argv, '--subject-account', A, 'x.json'], io), EXIT.FAIL_CLOSED);
+  const line = err.split('\n').find((l) => l.includes('PULUMI_PROVIDERS_MULTI_ACCOUNT'));
+  assert.match(line, /^iam-br: warning PULUMI_PROVIDERS_MULTI_ACCOUNT: Providers resolve to 2 AWS accounts/);
+  assert.ok(!line.includes(A) && !line.includes(B) && !line.includes('urn:'));
+  err = '';
+  assert.equal(await run([...argv, 'x.json'], io), EXIT.CLEAN);
+  assert.ok(!err.includes('warning'));
+});

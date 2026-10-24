@@ -319,6 +319,11 @@ const MSG = Object.freeze({
   PULUMI_CONTEXT_UNPROVEN: 'The resource type implies the attached resource (the ECR registry or CloudWatch Logs of the provider account and region), but the stack does not prove that account (a managed IAM resource ARN, allowedAccountIds or an assume-role ARN). subject-account and provider-account name an account but do not prove it, so the context is not inferred.',
   PULUMI_UNMODELED_PERMISSION: 'A Lambda permission grants invoke to the public or to another account. It is not modeled yet; unsupported does NOT mean safe.',
 });
+
+// E-5: run-level warnings (never change a verdict). Messages are fixed text plus a count.
+export const PULUMI_WARNING = Object.freeze({
+  PULUMI_PROVIDERS_MULTI_ACCOUNT: (n) => `Providers resolve to ${n} AWS accounts but subject-account is set, so documents in the other accounts fail closed with PULUMI_ACCOUNT_MISMATCH. Omit subject-account for a multi-account stack; provider-account names each provider's account.`,
+});
 const st = (code, path, kind = ANALYSIS_STATE.INCOMPLETE) => state(kind, code, MSG[code] || 'Pulumi input could not be fully analyzed.', path);
 
 // --- Location: untrusted sourcePosition -> a safe project-relative URI + line. ----------
@@ -845,7 +850,7 @@ function componentPolicies(inputs, budget) {
 export function extractPulumiDocuments(text, opts = {}) {
   const globalStates = [];
   const out = { kind: null, scanScope: 'delta', scannedUrns: [], documents: [], unanalyzed: [], providers: [],
-    groups: [], unresolvedEdges: [], states: globalStates };
+    groups: [], unresolvedEdges: [], states: globalStates, warnings: [] };
   if (opts.oversize === true) { globalStates.push(st('PULUMI_LIMIT', 'pulumi-input')); return out; }
   if (!isStr(text) || text.trim() === '') return { usage: { reason: 'MISSING_INPUT', message: 'No Pulumi JSON supplied (input is missing or empty).' } };
   if (text.length > PULUMI_LIMITS.MAX_BYTES) { globalStates.push(st('PULUMI_LIMIT', 'pulumi-input')); return out; }
@@ -907,6 +912,11 @@ export function extractPulumiDocuments(text, opts = {}) {
   if (mapping.usage) return { usage: mapping.usage };
   opts = { ...opts, mappedAccounts: mapping.map };
   out.providers = providerSummary(facts, opts);
+  // E-5: subject-account on a stack whose providers resolve to several accounts.
+  if (isStr(opts.subjectAccount) && /^\d{12}$/.test(opts.subjectAccount.trim())) {
+    const n = new Set(providerSummary(facts, { ...opts, subjectAccount: undefined }).map((p) => p.account).filter(Boolean)).size;
+    if (n > 1) out.warnings.push({ code: 'PULUMI_PROVIDERS_MULTI_ACCOUNT', accounts: n, message: PULUMI_WARNING.PULUMI_PROVIDERS_MULTI_ACCOUNT(n) });
+  }
   const seen = new Set();
   const budget = { n: PULUMI_LIMITS.MAX_WALK_NODES, exhausted: false };
   // I-1: a component is skipped only when its children are in the file.
@@ -1420,6 +1430,7 @@ export function scanPulumi(input) {
       groups: ext.groups,
       unresolvedEdges: ext.unresolvedEdges,
       analysisStates: ext.states,
+      warnings: ext.warnings,
     }, documents);
   } catch {
     return Object.freeze({
@@ -1438,6 +1449,8 @@ export function scanPulumi(input) {
  */
 export function pulumiUnits(result, fallbackUri) {
   const fb = isStr(fallbackUri) && fallbackUri.trim() !== '' ? fallbackUri.trim() : 'Pulumi.yaml';
+  const codes = (result.warnings || []).map((w) => w.code).filter((c) => /^[A-Z0-9_]+$/.test(c));
+  const warnProp = codes.length > 0 ? { warnings: codes.join(',') } : {};
   const units = (result.documents || []).map((d) => ({
     file: d.location ? d.location.uri : fb,
     baselineUri: pulumiBaselineUri(d),
@@ -1446,12 +1459,12 @@ export function pulumiUnits(result, fallbackUri) {
       logicalLocation: d.artifact,
       startLine: d.location ? d.location.startLine : undefined,
       startColumn: d.location ? d.location.startColumn : undefined,
-      runProperties: { scanScope: result.scanScope, artifact: d.artifact, managed: d.managed },
+      runProperties: { scanScope: result.scanScope, artifact: d.artifact, managed: d.managed, ...warnProp },
     },
     result: d.result,
   }));
   if ((result.analysisStates || []).length > 0) {
-    units.push({ file: fb, baselineUri: 'pulumi-input', sarif: { file: fb, logicalLocation: 'pulumi-input', runProperties: { scanScope: result.scanScope } }, result: failClosedResult(result.analysisStates, null) });
+    units.push({ file: fb, baselineUri: 'pulumi-input', sarif: { file: fb, logicalLocation: 'pulumi-input', runProperties: { scanScope: result.scanScope, ...warnProp } }, result: failClosedResult(result.analysisStates, null) });
   }
   return units;
 }

@@ -54,7 +54,7 @@ import { LIMITS } from '../content/tools/iam-blast-radius/engine/validate.js';
 // The CLI just picks it when --format sarif; the exit code is unaffected.
 import { formatSarif, artifactUri } from './sarif.mjs';
 // v1.3.0: Pulumi preview / stack export input (one aggregate result over many documents).
-import { scanPulumi, pulumiUnits, applyPulumiBaseline, PULUMI_LIMITS } from './pulumi.mjs';
+import { scanPulumi, pulumiUnits, applyPulumiBaseline, PULUMI_LIMITS, PULUMI_WARNING } from './pulumi.mjs';
 import { buildAggregateSarif } from '../action/action-aggregate.mjs';
 import {
   applyBaseline, parseBaseline, buildBaseline, formatBaseline, baselineWriteProblem, MAX_BASELINE_BYTES,
@@ -309,7 +309,8 @@ OPTIONS
                           provider named <p> (its resource name or full URN).
                           Cross-checked against the stack; a mismatch fails closed.
                           It resolves the account but never proves a same-account
-                          trust on its own.
+                          trust on its own. When providers span several accounts,
+                          omit --subject-account (it would mismatch the others).
   --verbose, --debug      Include the underlying errno/detail in read/write error
                           diagnostics. OFF by default so a read failure does NOT
                           reveal whether a path is missing (ENOENT) vs a directory
@@ -880,6 +881,11 @@ function runPulumi(opts, io, out, err, manifest) {
   } else {
     out(formatted);
   }
+  // E-5: tool-authored text only (code + count), never an input value.
+  for (const w of result.warnings || []) {
+    const msg = Object.hasOwn(PULUMI_WARNING, w.code) && Number.isInteger(w.accounts) ? PULUMI_WARNING[w.code](w.accounts) : '';
+    if (msg) err(`iam-br: warning ${w.code}: ${msg}\n`);
+  }
   const stale = result.baseline ? result.baseline.stale.length : 0;
   if (stale > 0) err(`iam-br: ${stale} baseline entr${stale === 1 ? 'y no longer matches' : 'ies no longer match'} any result; remove them from the baseline file.\n`);
   err(`iam-br: input=pulumi scope=${result.scanScope} status=${result.analysisStatus} exit=${code} `
@@ -910,6 +916,8 @@ export function toPulumiJsonReport(result, opts, manifest = VERSION_MANIFEST) {
     trustedAccountIdsAsserted: parseTrustedAccountIds(o.trustedAccountIds).ids || null,
     // R2-2: why each provider's account/partition was believed.
     providers: [...(result.providers || [])],
+    // E-5: run-level warnings ({ code, accounts, message }); never part of the verdict.
+    warnings: [...(result.warnings || [])],
     // Listed, not analyzed (e.g. source-bound Lambda permissions).
     unanalyzed: [...(result.unanalyzed || [])],
     // P9: role groups (informational; never part of the verdict).

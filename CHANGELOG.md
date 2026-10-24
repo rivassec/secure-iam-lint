@@ -186,6 +186,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   RESOURCE-CONFUSED-DEPUTY high. A public or cross-account grant stays exit 3
   (`PULUMI_UNMODELED_PERMISSION`) but no longer names the run when another document
   can.
+- **E-5:** with `subject-account` set and providers resolving to more than one
+  account, the run warns once (`PULUMI_PROVIDERS_MULTI_ACCOUNT`: stderr by code, JSON
+  `warnings[]`, SARIF run property `warnings`). The verdict is unchanged.
 
 ## [1.2.0] - 2026-10-21
 

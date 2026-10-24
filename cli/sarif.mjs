@@ -1403,7 +1403,7 @@ function semanticVersion(manifest) {
 }
 
 // Pulumi run metadata: only these keys, strings sanitized like a URI (attacker-influenced URNs).
-const RUN_PROPERTY_KEYS = Object.freeze(['scanScope', 'artifact', 'managed']);
+const RUN_PROPERTY_KEYS = Object.freeze(['scanScope', 'artifact', 'managed', 'warnings']);
 function runPropertiesOf(props) {
   const out = {};
   if (!props || typeof props !== 'object') return out;

@@ -181,6 +181,9 @@ findings are located by `<urn>#<property>`.
   configured only by `profile`) is `PULUMI_ACCOUNT_UNRESOLVED` (exit `3`). Name its
   account with `provider-accounts` (`<provider>=<account>`, one per line); it is
   cross-checked against the stack and never proves a same-account trust by itself.
+  When providers span more than one account, leave `subject-account` unset: with it
+  set, the other accounts' documents fail closed (`PULUMI_ACCOUNT_MISMATCH`) and the
+  run warns `PULUMI_PROVIDERS_MULTI_ACCOUNT`.
 - **Baselines** work as for files, keyed per `<urn>#<property>`: a renamed resource or
   stack shows up as one stale and one new entry.
 - **Keep `preview.json` inside the job.** Secrets are redacted, but config and resource
