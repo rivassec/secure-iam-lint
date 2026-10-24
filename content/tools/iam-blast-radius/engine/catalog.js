@@ -565,6 +565,25 @@ export const defaultCatalog = Object.freeze({
     return this.lookup(token).requiresWildcardResource === true;
   },
   /**
+   * Known, resource-scopable READ actions a service wildcard (s3:Get*) expands to, as
+   * "service:Name". Empty for a concrete token, the bare "*" or an unknown service.
+   * @param {string} token raw action string
+   * @returns {Array<string>}
+   */
+  scopableReadsMatching(token) {
+    if (!isWildcardAction(token)) return [];
+    const parts = splitAction(String(token));
+    const svc = parts && INDEX.get(parts.service);
+    if (!svc) return [];
+    const out = [];
+    for (const [key, entry] of svc) {
+      if (entry.accessLevel !== ACCESS_LEVELS.READ) continue;
+      if (requiresWildcardKey(`${parts.service}:${key}`)) continue;
+      if (globMatch(parts.action, key)) out.push(`${entry.service}:${entry.name}`);
+    }
+    return out;
+  },
+  /**
    * Classify a WILDCARD action token (one containing '*'/'?') for COVERAGE.
    * A wildcard cannot be existence-checked like a concrete action, but the
    * snapshot can still tell whether it is ANALYZABLE:

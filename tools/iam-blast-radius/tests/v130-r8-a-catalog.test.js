@@ -39,3 +39,17 @@ test('snapshot gap: sts:GetServiceBearerToken is known (AWS: Read, no resource t
   const s = run(allow('sts:GetServiceBearerToken'));
   assert.equal(s.exitCode, EXIT.CLEAN, codes(s).join(','));
 });
+
+test('a service-wildcard read on "*" is checked like its concrete reads (was CLEAN)', () => {
+  for (const a of ['dynamodb:Get*', 'ec2:Get*', 'kms:Describe*', 'sqs:Get*']) {
+    const r = run(allow(a));
+    assert.equal(r.exitCode, EXIT.FAIL_CLOSED, a);
+    assert.ok(codes(r).includes('BROAD_RESOURCE_UNDECIDABLE'), a);
+  }
+  // Listing-only and Resource-"*"-only reads stay clean.
+  assert.equal(run(allow('ec2:Describe*')).exitCode, EXIT.CLEAN);
+  // A narrow resource is unaffected.
+  assert.equal(run(allow('ec2:Get*', `arn:aws:ec2:us-east-2:${ACCT}:instance/i-1`)).exitCode, EXIT.CLEAN);
+  // A same-policy Deny of the reads removes them.
+  assert.equal(run(allow('dynamodb:Get*'), { Effect: 'Deny', Action: 'dynamodb:*', Resource: '*' }).exitCode, EXIT.CLEAN);
+});

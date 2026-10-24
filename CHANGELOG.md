@@ -173,6 +173,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are known in an Allow; image push and repository writes stay fail-closed), and
   `sts:GetServiceBearerToken` is known (AWS level Read, Resource `*` only). Action
   catalog 2026.10.24.1, AWS reference fetched 2026-10-24.
+- **Security:** a service-wildcard read on Resource `*` (`dynamodb:Get*`, `ec2:Get*`,
+  `kms:Describe*`) read CLEAN while the same concrete read (`dynamodb:GetItem`) failed
+  closed. It now expands to its catalogued scopable reads and exits 3
+  (BROAD_RESOURCE_UNDECIDABLE) unless a rule or Deny covers it. Listing reads
+  (`ec2:Describe*`) and Resource-`*`-only reads are unchanged.
 
 ## [1.2.0] - 2026-10-21
 

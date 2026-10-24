@@ -44,7 +44,7 @@ import { classifyConditions, unsupportedConditionKeys, unsupportedConditionBindi
 // exactly the assumption that fails open (and it fails open identically for a glob and a
 // well-formed ARN); this checks the fired findings instead, symmetric across spellings.
 import { classifyResource, RESOURCE_CLASS } from './resource-arn.js';
-import { defaultCatalog, unrecognizedActions, ACCESS_LEVELS } from './catalog.js';
+import { defaultCatalog, unrecognizedActions, isWildcardAction, ACCESS_LEVELS } from './catalog.js';
 // Cooperative resource budgets (S3-dos-budget). analyze() arms a DETERMINISTIC
 // WORK budget (an op-count ceiling, not a clock - so architecture invariant 8 holds)
 // on EVERY run, including the browser/worker path, so a pathological within-caps
@@ -80,12 +80,14 @@ const guardPartition = (o) => (o && KNOWN_PARTITIONS.has(o.partition) ? o.partit
 
 function statementScopableReadActions(stmt) {
   if (!stmt || !Array.isArray(stmt.actions)) return [];
-  return stmt.actions.filter((a) => {
+  const out = [];
+  for (const a of stmt.actions) {
+    // r8: a service wildcard (lambda:Get*) carries the scopable reads it expands to.
+    if (isWildcardAction(a)) { out.push(...defaultCatalog.scopableReadsMatching(a)); continue; }
     const res = defaultCatalog.lookup(a);
-    return res.known
-      && res.accessLevel === ACCESS_LEVELS.READ
-      && !res.requiresWildcardResource;
-  });
+    if (res.known && res.accessLevel === ACCESS_LEVELS.READ && !res.requiresWildcardResource) out.push(a);
+  }
+  return out;
 }
 
 // S3-SWEEP-01 (class-sweep sibling of cli/sarif.mjs S1-NEW02): the INJECTIVE suppression
