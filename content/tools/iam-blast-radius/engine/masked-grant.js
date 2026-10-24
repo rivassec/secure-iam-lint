@@ -207,7 +207,9 @@ export const MAX_DETAIL_VALUE_LEN = 200;
 
 function detailValue(v) {
   const s = neutralizeForDisplay(String(v));
-  return s.length > MAX_DETAIL_VALUE_LEN ? `${s.slice(0, MAX_DETAIL_VALUE_LEN)}...` : s;
+  // A cut value is marked truncated by the trailing "...".
+  const truncated = s.length > MAX_DETAIL_VALUE_LEN;
+  return truncated ? `${s.slice(0, MAX_DETAIL_VALUE_LEN)}...` : s;
 }
 
 // A-condition-budget: total number of Condition VALUES on one statement, summed across
@@ -305,7 +307,8 @@ function detectConditionShapes(cond, i, isAllow, out) {
  * Operates on the frozen model only - no raw text, no re-parse.
  *
  * @param {object|null} model normalized model (from buildModel/modelFromText)
- * @returns {Array<{element:string, code:string, path:(string|null), kind:string}>}
+ * @returns {Array<{element:string, code:string, path:(string|null), kind:string,
+ *   details?:{value:string, reason:string, count:number}}>}
  *   masked-grant analyzer-states, in stable statement-then-element order.
  */
 export function detectMaskedGrants(model) {
