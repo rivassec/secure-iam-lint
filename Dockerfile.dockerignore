@@ -1,3 +1,4 @@
+# Applies only to ./Dockerfile (BuildKit <Dockerfile>.dockerignore); the fuzz build needs the full context.
 *
 !package.json
 !LICENSE
