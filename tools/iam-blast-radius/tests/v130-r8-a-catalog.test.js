@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import { defaultCatalog, ACCESS_LEVELS } from '../../../content/tools/iam-blast-radius/engine/catalog.js';
 import { AWS_REF_ACTIONS } from '../../../content/tools/iam-blast-radius/engine/catalog-aws-ref.js';
 import { scan, EXIT } from '../../../cli/scan.mjs';
+import { buildSarifLog } from '../../../cli/sarif.mjs';
+import { applyBaseline, parseBaseline, buildBaseline } from '../../../cli/baseline.mjs';
 
 const ACCT = '111111111111';
 const run = (...Statement) => scan({
@@ -153,4 +155,84 @@ test('E-1: actions left withheld still fail closed (UNKNOWN_ACTION)', () => {
   }
   // A whole-family wildcard that reaches a withheld member stays unknown too.
   assert.ok(codes(run(allow('lambda:Get*'))).includes('UNKNOWN_ACTION'));
+});
+
+// --- F-2: NOT_IN_REFERENCE (bundle probes f2a-f2d, inline).
+const state = (r, code) => (r.analysisStates || []).find((x) => x.code === code);
+const FN = arn('lambda', 'function:fn');
+
+test('F-2 f2a: a misspelled action of a snapshotted service is NOT_IN_REFERENCE with a hint', () => {
+  const r = run(allow(['lambda:UpdateFunctionCode', 'lambda:UpdateFunction'], FN));
+  assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
+  assert.deepEqual(codes(r), ['NOT_IN_REFERENCE']);
+  const st = state(r, 'NOT_IN_REFERENCE');
+  assert.deepEqual(st.details.actions, ['lambda:UpdateFunction']);
+  assert.deepEqual(st.details.hints, [{ action: 'lambda:UpdateFunction', suggestion: 'lambda:UpdateFunctionCode' }]);
+  assert.match(st.message, /not in the \d{4}-\d{2}-\d{2} AWS reference snapshot/);
+  assert.ok(ids(r).includes('COMPUTE-CODE-OVERWRITE'));
+});
+
+test('F-2 f2b: a wildcard matching no reference action is NOT_IN_REFERENCE; the real action is known', () => {
+  const r = run(allow(['ecr-public:GetAuthorizationToken', 'ecr-public:BatchGet*']));
+  assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
+  assert.deepEqual(codes(r), ['NOT_IN_REFERENCE']);
+  assert.deepEqual(state(r, 'NOT_IN_REFERENCE').details.actions, ['ecr-public:BatchGet*']);
+});
+
+test('F-2 f2c: s3:HeadObject is not an IAM action; hint s3:GetObject (and HeadBucket -> ListBucket)', () => {
+  const r = run(allow(['s3:GetObject', 's3:HeadObject', 's3:HeadBucket'], 'arn:aws:s3:::example-bucket/*'));
+  assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
+  const st = state(r, 'NOT_IN_REFERENCE');
+  assert.deepEqual(st.details.hints, [
+    { action: 's3:HeadBucket', suggestion: 's3:ListBucket' },
+    { action: 's3:HeadObject', suggestion: 's3:GetObject' },
+  ]);
+  assert.equal(state(r, 'UNKNOWN_ACTION'), undefined);
+});
+
+test('F-2 f2d control: the real action alone is a finding, not a state', () => {
+  const r = run(allow('lambda:UpdateFunctionCode', FN));
+  assert.equal(r.exitCode, EXIT.FINDINGS);
+  assert.deepEqual(codes(r), []);
+});
+
+test('F-2: withheld actions, unsnapshotted services and curated-only services stay UNKNOWN_ACTION', () => {
+  const r = run(allow(['events:PutRule', 'lambda:Get*', 'madeupsvc:Thing', 'chime:GetMeeting', 'sqs:SendMessage',
+    's3:GetObjcet'], 'arn:aws:s3:::b/k'));
+  assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
+  assert.deepEqual(state(r, 'UNKNOWN_ACTION').details.actions,
+    ['chime:GetMeeting', 'events:PutRule', 'lambda:Get*', 'madeupsvc:Thing', 'sqs:SendMessage']);
+  assert.deepEqual(state(r, 'NOT_IN_REFERENCE').details.actions, ['s3:GetObjcet']);
+  assert.deepEqual(state(r, 'NOT_IN_REFERENCE').details.hints, [{ action: 's3:GetObjcet', suggestion: 's3:GetObject' }]);
+});
+
+test('F-2: a far-off name gets no hint; the hint is deterministic', () => {
+  const r = run(allow('ec2:Zzzzzzzzzzzzzzzz', arn('ec2', 'instance/i-1')));
+  assert.equal(state(r, 'NOT_IN_REFERENCE').details.hints, undefined);
+  const a = JSON.stringify(run(allow('ec2:DescribeInstance')).analysisStates);
+  assert.equal(a, JSON.stringify(run(allow('ec2:DescribeInstance')).analysisStates));
+  assert.match(a, /ec2:DescribeInstances/);
+});
+
+test('F-2: SARIF names the tokens and hints markdown-inert; no link survives', () => {
+  const r = run(allow(['s3:GetObjec`](https://evil.example)', 's3:GetObjec`'], 'arn:aws:s3:::b/k'));
+  assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
+  const log = buildSarifLog(r, { file: 'p.json' }, { ruleVersion: '1' });
+  const row = log.runs[0].results.find((x) => x.ruleId === 'analysis.NOT_IN_REFERENCE');
+  assert.ok(row, 'NOT_IN_REFERENCE row');
+  assert.match(row.message.text, /Did you mean: /);
+  assert.ok(Array.isArray(row.properties.notInReferenceActions));
+  assert.ok(Array.isArray(row.properties.nameHints));
+  assert.ok(!JSON.stringify(log).includes(']('), 'no markdown link in SARIF');
+});
+
+test('F-2: a NOT_IN_REFERENCE state is baselinable like UNKNOWN_ACTION, keyed by its token list', () => {
+  const text = (acts) => JSON.stringify({ Version: '2012-10-17', Statement: [allow(acts, 'arn:aws:s3:::b/*')] });
+  const sc = (t) => scan({ text: t, family: 'identity', threshold: 'high', subjectAccount: ACCT, partition: 'aws' });
+  const t1 = text(['s3:HeadObject']);
+  const keyed = applyBaseline(sc(t1), 'p.json', null, 'high');
+  const keys = parseBaseline(JSON.stringify(buildBaseline([{ file: 'p.json', result: keyed }]))).keys;
+  assert.notEqual(applyBaseline(sc(t1), 'p.json', keys, 'high').exitCode, EXIT.FAIL_CLOSED);
+  // A new missing name is not covered by the old acceptance.
+  assert.equal(applyBaseline(sc(text(['s3:HeadObject', 's3:HeadBucket'])), 'p.json', keys, 'high').exitCode, EXIT.FAIL_CLOSED);
 });

@@ -196,6 +196,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     services, `eks:AccessKubernetesApi`, Lambda durable-execution and new microVM /
     web-function reads (so `lambda:Get*` stays unknown), and sns, logs and config
     (still Deny-only).
+- **F-2, NOT_IN_REFERENCE.** An action of a fully snapshotted service that is not in the
+  AWS reference snapshot (`s3:HeadObject`, `lambda:UpdateFunction`), or a wildcard that
+  matches none of its actions (`ecr-public:BatchGet*`), now reports the state
+  `NOT_IN_REFERENCE` ("not in the <date> AWS reference snapshot") instead of
+  `UNKNOWN_ACTION`, with a deterministic nearest-name hint in `details.hints` and in
+  SARIF (`Did you mean: ...`, `properties.nameHints`); `s3:HeadObject` -> `s3:GetObject`
+  and `s3:HeadBucket` -> `s3:ListBucket`. It still exits 3. Withheld actions,
+  unsnapshotted services and the curated-only services keep `UNKNOWN_ACTION`. A baseline
+  can accept it like `UNKNOWN_ACTION`; a baseline that accepted these names under
+  `UNKNOWN_ACTION` must be regenerated.
 
 ## [1.2.0] - 2026-10-21
 

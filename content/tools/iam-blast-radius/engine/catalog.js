@@ -38,7 +38,7 @@ import { globMatch } from './glob.js';
 import { UNMODELED_ESCALATION } from './catalog-unmodeled.js';
 // Generated full-service snapshot (scripts/gen-aws-action-catalog.mjs) for the S3
 // and global/account-level services real-world policies hit. Pure data module.
-import { AWS_REF_ACTIONS, AWS_REF_REQUIRES_WILDCARD, AWS_SERVICE_PREFIXES } from './catalog-aws-ref.js';
+import { AWS_REF_ACTIONS, AWS_REF_REQUIRES_WILDCARD, AWS_SERVICE_PREFIXES, AWS_REF_DATE } from './catalog-aws-ref.js';
 
 // AWS access levels (from the service-authorization reference vocabulary). Used
 // as annotation only; the rules do not (yet) consume it, but every catalog entry
@@ -680,6 +680,93 @@ function isDenyServiceCarveOut(stmt, token) {
   if (!m) return false;
   const prefix = m[1].toLowerCase();
   return AWS_SERVICE_PREFIXES.has(prefix) || UNPUBLISHED_PREFIXES.has(prefix);
+}
+
+// --- r8 F-2: not in the reference snapshot -------------------------------------
+// A token whose service IS fully snapshotted (catalog-aws-ref.js) but which names no action
+// of it (a typo, a non-IAM API name, a wildcard matching nothing) is "not in the reference",
+// distinct from a withheld real action. Curated-only services (sqs, kinesis, ...) are a
+// partial slice, so their misses stay plain unknowns.
+export const REFERENCE_SNAPSHOT_DATE = AWS_REF_DATE;
+const REF_NAMES = new Map();
+for (const svc of Object.keys(AWS_REF_ACTIONS)) {
+  const names = new Set(Object.keys(AWS_REF_ACTIONS[svc]));
+  for (const e of (INDEX.get(svc) || new Map()).values()) names.add(e.name);
+  REF_NAMES.set(svc, [...names].sort());
+}
+// API names that are not IAM actions; the action that authorizes them (AWS S3 API docs).
+const AUTHORIZED_BY = Object.freeze({ 's3:headobject': 's3:GetObject', 's3:headbucket': 's3:ListBucket' });
+// Bounds on the classification and hint work (attacker-sized inputs).
+const MAX_CLASSIFIED = 256;
+const MAX_HINT_LEN = 64;
+
+function editDistance(a, b, limit) {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (cur[j] < best) best = cur[j];
+    }
+    if (best > limit) return limit + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+// Nearest same-service action name ("svc:Name") for a concrete miss, or null. Deterministic:
+// the shortest name the miss is a prefix of (UpdateFunction -> UpdateFunctionCode), else the
+// smallest edit distance, then longest shared prefix, then name order.
+function nearestAction(svc, action, names) {
+  const fixed = AUTHORIZED_BY[`${svc}:${action}`];
+  if (fixed) return fixed;
+  let ext = null;
+  for (const name of names) {
+    if (action.length >= 4 && name.toLowerCase().startsWith(action) && (!ext || name.length < ext.length)) ext = name;
+  }
+  if (ext) return `${svc}:${ext}`;
+  const limit = Math.max(2, Math.floor(action.length / 3));
+  let best = null;
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    const d = editDistance(action, lower, limit);
+    if (d > limit) continue;
+    let pre = 0;
+    while (pre < action.length && pre < lower.length && action[pre] === lower[pre]) pre++;
+    if (!best || d < best.d || (d === best.d && pre > best.pre)) best = { d, pre, name };
+  }
+  return best ? `${svc}:${best.name}` : null;
+}
+
+/**
+ * Split unrecognized action tokens into plain unknowns and tokens not in the reference
+ * snapshot (with a nearest-name hint where one is close). Deterministic; never throws.
+ * @param {Array<string>} tokens sorted unknown tokens (unrecognizedActions)
+ * @returns {{unknown:Array<string>, notInReference:Array<string>,
+ *            hints:Array<{action:string, suggestion:string}>}}
+ */
+export function classifyUnrecognized(tokens) {
+  const unknown = [];
+  const notInReference = [];
+  const hints = [];
+  for (const t of Array.isArray(tokens) ? tokens : []) {
+    const token = String(t);
+    const parts = notInReference.length < MAX_CLASSIFIED ? splitAction(token) : null;
+    const names = parts && REF_NAMES.get(parts.service);
+    if (!names || WITHHELD.has(`${parts.service}:${parts.action}`)) { unknown.push(token); continue; }
+    if (isWildcardAction(token)) {
+      if (names.some((n) => globMatch(parts.action, n.toLowerCase()))) { unknown.push(token); continue; }
+      notInReference.push(token);
+      continue;
+    }
+    if (names.some((n) => n.toLowerCase() === parts.action)) { unknown.push(token); continue; }
+    notInReference.push(token);
+    const suggestion = parts.action.length <= MAX_HINT_LEN ? nearestAction(parts.service, parts.action, names) : null;
+    if (suggestion) hints.push({ action: token, suggestion });
+  }
+  return { unknown, notInReference, hints };
 }
 
 /**

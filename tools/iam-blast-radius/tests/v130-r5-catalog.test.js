@@ -8,7 +8,8 @@ import { scan, EXIT } from '../../../cli/scan.mjs';
 const ACCT = '111122223333';
 const P = (...st) => JSON.stringify({ Version: '2012-10-17', Statement: st });
 const run = (text, family) => scan({ text, family, partition: 'aws', subjectAccount: ACCT });
-const unknown = (r) => JSON.stringify(r).includes('UNKNOWN_ACTION');
+// r8 F-2: a name missing from a snapshotted service reports NOT_IN_REFERENCE instead.
+const unknown = (r) => /UNKNOWN_ACTION|NOT_IN_REFERENCE/.test(JSON.stringify(r));
 const allow = (action, resource = '*') => run(P({ Effect: 'Allow', Action: action, Resource: resource }), 'identity');
 const LOG = `arn:aws:logs:us-east-1:${ACCT}:log-group:x:*`;
 const REPO = `arn:aws:ecr:us-east-1:${ACCT}:repository/r`;
@@ -28,7 +29,7 @@ for (const [svc, action] of Object.entries(PICKS)) {
   });
 }
 
-test('control: a made-up ecr action is still UNKNOWN_ACTION in a Deny', () => {
+test('control: a made-up ecr action is still unknown (NOT_IN_REFERENCE) in a Deny', () => {
   assert.ok(unknown(run(P({ Effect: 'Deny', Action: 'ecr:NoSuchAction', Resource: '*' }), 'scp-rcp')));
 });
 

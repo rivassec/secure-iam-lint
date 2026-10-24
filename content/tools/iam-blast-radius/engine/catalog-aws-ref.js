@@ -4,6 +4,8 @@
 // Pure committed data (no imports, no runtime network). catalog.js merges it UNDER
 // the curated CATALOG_DATA: a curated entry always wins on overlap.
 
+export const AWS_REF_DATE = '2026-10-24';
+
 export const AWS_REF_ACTIONS = Object.freeze({
   's3': Object.freeze({
     AbortMultipartUpload: 'WRITE',

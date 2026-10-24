@@ -73,7 +73,7 @@ test('T2-4: the unsafe siblings of every complete shape still report or stay exi
     ['NotAction allow', run('s3', { Effect: 'Allow', Principal: SAME, NotAction: 's3:DeleteBucket', Resource: OBJ }), 'RESOURCE_STATEMENT_UNMODELED'],
     ['NotResource allow', run('s3', { Effect: 'Allow', Principal: SAME, Action: 's3:GetObject', NotResource: 'arn:aws:s3:::example-bucket/p/*' }), 'RESOURCE_STATEMENT_UNMODELED'],
     ['foreign-service action', run('s3', allow(SAME, 'sqs:SendMessage', OBJ)), 'RESOURCE_STATEMENT_UNMODELED'],
-    ['unknown s3 action', run('s3', allow(SAME, 's3:ZzNotReal', OBJ)), 'UNKNOWN_ACTION'],
+    ['unknown s3 action', run('s3', allow(SAME, 's3:ZzNotReal', OBJ)), 'NOT_IN_REFERENCE'],
     ['canonical user', run('s3', allow({ CanonicalUser: '79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be' }, 's3:GetObject', OBJ)), 'RESOURCE_STATEMENT_UNMODELED'],
     ['federated', run('s3', allow({ Federated: 'cognito-identity.amazonaws.com' }, 's3:GetObject', OBJ)), 'RESOURCE_STATEMENT_UNMODELED'],
     ['kms silent key policy', run('kms', allow({ AWS: `arn:aws:iam::${A}:role/app` }, 'kms:Decrypt', '*')), 'KMS_SILENT_POLICY_UNKNOWN'],

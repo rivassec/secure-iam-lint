@@ -8,7 +8,8 @@ import { scan, EXIT } from '../../../cli/scan.mjs';
 const ACCT = '111122223333';
 const P = (...st) => JSON.stringify({ Version: '2012-10-17', Statement: st });
 const run = (text, family) => scan({ text, family, partition: 'aws', subjectAccount: ACCT });
-const unknown = (r) => JSON.stringify(r).includes('UNKNOWN_ACTION');
+// r8 F-2: a name missing from a snapshotted service reports NOT_IN_REFERENCE instead.
+const unknown = (r) => /UNKNOWN_ACTION|NOT_IN_REFERENCE/.test(JSON.stringify(r));
 const deny = (actions) => P({ Effect: 'Deny', Action: actions, Resource: '*' });
 const allow = (action) => P({ Effect: 'Allow', Action: action, Resource: '*' });
 
@@ -50,7 +51,7 @@ test('Control Tower guardrail actions in one SCP Deny: none UNKNOWN_ACTION', () 
   assert.ok(!unknown(r), `UNKNOWN_ACTION present (rc ${r.exitCode})`);
 });
 
-test('control: a made-up action in a known service is still UNKNOWN_ACTION', () => {
+test('control: a made-up action in a known service is still unknown (NOT_IN_REFERENCE)', () => {
   assert.ok(unknown(run(deny('sns:NoSuchAction'), 'scp-rcp')));
 });
 

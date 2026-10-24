@@ -110,6 +110,8 @@ const lines = [
   '// Pure committed data (no imports, no runtime network). catalog.js merges it UNDER',
   '// the curated CATALOG_DATA: a curated entry always wins on overlap.',
   '',
+  `export const AWS_REF_DATE = '${today}';`,
+  '',
   'export const AWS_REF_ACTIONS = Object.freeze({',
 ];
 for (const svc of SERVICES) {
