@@ -167,6 +167,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - SARIF paths are relative to the Pulumi project; a project in a repo subdirectory
   does not map to files in code scanning yet.
 
+### Round 8, lane B: condition keys
+
+- **Org keys (F-3).** `aws:ResourceOrgID`, `aws:ResourceOrgPaths` and
+  `aws:PrincipalOrgPaths` are modeled, so an org gate no longer fails the run closed
+  (exit 3). A positive, literal `aws:ResourceOrgID` (or `ForAnyValue` org path) on a
+  wildcard-account `sts:AssumeRole` keeps ASSUME-ROLE-EXPANSION at its severity and
+  names the org condition as the bound. `IfExists`, negated, globbed (`o-*`) and
+  `${...}` org values are not credited.
+  - The `*OrgPaths` keys are multivalued: without `ForAnyValue`/`ForAllValues` they
+    stay UNSUPPORTED_CONDITION.
+  - Resource policies: `aws:PrincipalOrgPaths` narrows a `"*"` grant only when its
+    org segment is a literal org id; `o-*/...` stays public.
+  - Role trust: `aws:PrincipalOrgPaths` is not credited; the trust keeps its ungated
+    severity.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added

@@ -5,6 +5,7 @@ import { concreteRoleTargetAccount } from './escalation-reachability.js';
 import { evidenceOf, makeEscalation, prereqGroup, prereqTechnique, prerequisitesOf } from './escalation-finding.js';
 import { grantedPatternsFor } from './escalation-action-grants.js';
 import { hasNonEmptyCondition } from './escalation-conditions.js';
+import { classifyConditions } from './conditions.js';
 import { ASSUME_ROLE_ACTIONS, ATTACH_POLICY_ACTIONS, CREDENTIAL_ACTIONS, POLICY_VERSION_ACTIONS, PUT_INLINE_POLICY_ACTIONS, TRUST_MODIFY_ACTIONS, CONCRETE_ACCOUNT_ID_RE } from './escalation-catalogs.js';
 
 export function detectPolicyVersion(allows, out, denies) {
@@ -411,6 +412,17 @@ export function detectComputeSessionTakeover(allows, out, denies) {
   }
 }
 
+// F-3: credited resource-org gates on a statement, as canonical key names (never input text).
+const ORG_BOUND_NAMES = Object.freeze({ 'aws:resourceorgid': 'aws:ResourceOrgID', 'aws:resourceorgpaths': 'aws:ResourceOrgPaths' });
+function resourceOrgBound(stmt) {
+  const names = new Set();
+  for (const e of classifyConditions(stmt.condition).entries) {
+    const n = ORG_BOUND_NAMES[e.key.toLowerCase()];
+    if (n && e.credited) names.add(n);
+  }
+  return [...names].sort();
+}
+
 export function detectAssumeRoleExpansion(allows, out, denies) {
   for (const stmt of allows) {
     const matched = grantedPatternsFor(stmt, ASSUME_ROLE_ACTIONS);
@@ -435,6 +447,14 @@ export function detectAssumeRoleExpansion(allows, out, denies) {
         'such as arn:aws:iam::*:role/* spans every account, not just this one. ' +
         'Which roles are reachable (and how privileged they are) depends on ' +
         'those roles\' trust policies, which are not in scope here.';
+      // F-3: an org gate bounds the account axis to one organization; severity unchanged.
+      const orgKeys = resourceOrgBound(stmt);
+      if (orgKeys.length > 0) {
+        why +=
+          ' The statement\'s ' + orgKeys.join(' and ') + ' condition bounds the target ' +
+          'roles to accounts in the named organization, so the reach is every account in ' +
+          'that organization (as listed in the statement\'s Condition), not every AWS account.';
+      }
     } else {
       const scope =
         reach.accounts.length === 1
