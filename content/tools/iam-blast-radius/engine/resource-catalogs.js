@@ -36,6 +36,8 @@ export const RESOURCE_SERVICES = Object.freeze({
   ECR_REPOSITORY: 'ecr-repository',
   SECRET: 'secretsmanager-secret',
   DYNAMODB_TABLE: 'dynamodb-table',
+  // r8: a log group, or (type hint 'logs') the account's Logs resource policy.
+  LOGS: 'logs',
   GENERIC: 'generic',
 });
 
@@ -51,6 +53,7 @@ export const MODELED_RESOURCE_SERVICES = Object.freeze(new Set([
   RESOURCE_SERVICES.ECR_REPOSITORY,
   RESOURCE_SERVICES.SECRET,
   RESOURCE_SERVICES.DYNAMODB_TABLE,
+  RESOURCE_SERVICES.LOGS,
 ]));
 
 // Resource finding ids owned by the resource evaluator. IAM-1202 adds the
@@ -250,6 +253,7 @@ export const RESOURCE_SERVICE_LABELS = Object.freeze({
   'ecr-repository': 'Amazon ECR repository',
   'secretsmanager-secret': 'AWS Secrets Manager secret',
   'dynamodb-table': 'Amazon DynamoDB table',
+  logs: 'CloudWatch Logs log group',
   generic: 'Other AWS resource',
 });
 

@@ -47,6 +47,22 @@ export const DATA_ACTION_CLASSES = Object.freeze({
     destructive: ['DeleteTable'],
     policy: ['PutResourcePolicy', 'DeleteResourcePolicy'],
   }),
+  // r8: log-group actions (logs: snapshot). Delivery, account and integration actions stay
+  // unclassified (fail closed).
+  logs: C({
+    read: ['GetLogEvents', 'FilterLogEvents', 'GetLogRecord', 'StartQuery', 'GetQueryResults', 'StartLiveTail',
+      'Unmask', 'GetLogGroupFields', 'GetLogFields'],
+    meta: ['DescribeLogGroups', 'DescribeLogStreams', 'DescribeMetricFilters', 'DescribeSubscriptionFilters',
+      'DescribeResourcePolicies', 'DescribeQueries', 'DescribeFieldIndexes', 'ListTagsForResource',
+      'ListTagsLogGroup', 'GetDataProtectionPolicy', 'StopQuery', 'StopLiveTail'],
+    write: ['CreateLogStream', 'PutLogEvents', 'CreateLogGroup', 'PutRetentionPolicy', 'DeleteRetentionPolicy',
+      'PutMetricFilter', 'PutSubscriptionFilter', 'CreateExportTask', 'AssociateKmsKey', 'DisassociateKmsKey',
+      'PutDataProtectionPolicy', 'PutLogGroupDeletionProtection', 'PutIndexPolicy', 'PutTransformer',
+      'TagResource', 'UntagResource', 'TagLogGroup', 'UntagLogGroup'],
+    destructive: ['DeleteLogGroup', 'DeleteLogStream', 'DeleteSubscriptionFilter', 'DeleteMetricFilter',
+      'DeleteDataProtectionPolicy', 'DeleteIndexPolicy', 'DeleteTransformer'],
+    policy: ['PutResourcePolicy', 'DeleteResourcePolicy'],
+  }),
 });
 
 // Service token -> action namespace.
@@ -54,6 +70,7 @@ export const DATA_SERVICE_NS = Object.freeze({
   [RESOURCE_SERVICES.ECR_REPOSITORY]: 'ecr',
   [RESOURCE_SERVICES.SECRET]: 'secretsmanager',
   [RESOURCE_SERVICES.DYNAMODB_TABLE]: 'dynamodb',
+  [RESOURCE_SERVICES.LOGS]: 'logs',
 });
 
 const ALL_CLASSES = Object.freeze(['read', 'write', 'destructive', 'policy', 'meta']);
@@ -81,6 +98,9 @@ const VECTOR = Object.freeze({
     destructive: 'DELETE the secret' },
   dynamodb: { read: 'READ or export every item in the table', write: 'write, overwrite or delete items',
     destructive: 'DELETE the table' },
+  logs: { read: 'READ the log events (and any secrets or personal data logged in them)',
+    write: 'write forged log events, or copy the logs out (subscription filter, export task)',
+    destructive: 'DELETE log groups, streams or their filters' },
 });
 
 // ECR / Secrets Manager / DynamoDB per-service rules. Pure; additive to the generic findings.

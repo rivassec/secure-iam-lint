@@ -27,7 +27,7 @@ const ids = (d) => d.result.findings.map((f) => `${f.id}/${f.severity}`);
 const REG = res('aws:ecr/registryPolicy:RegistryPolicy', 'regpol', { policy: pol({ Sid: 'Repl', Effect: 'Allow',
   Principal: { AWS: `arn:aws:iam::${B}:root` }, Action: ['ecr:ReplicateImage', 'ecr:CreateRepository'], Resource: `arn:aws:ecr:us-east-2:${A}:repository/*` }) });
 const LOGS = res('aws:cloudwatch/logResourcePolicy:LogResourcePolicy', 'logpol', { policyName: 'route53-logs', policyDocument: pol({ Effect: 'Allow',
-  Principal: { Service: 'route53.amazonaws.com' }, Action: ['logs:CreateLogStream', 'logs:PutLogEvents'], Resource: `arn:aws:logs:us-east-1:${A}:log-group:/aws/route53/*` }) });
+  Principal: { Service: 'route53.amazonaws.com' }, Action: ['logs:CreateLogStream', 'logs:PutLogEvents'], Resource: `arn:aws:logs:us-east-2:${A}:log-group:/aws/route53/*` }) });
 const tmpl = (prefix, policy) => res('aws:ecr/repositoryCreationTemplate:RepositoryCreationTemplate', 'tmpl', { ...(prefix === undefined ? {} : { prefix }),
   appliedFors: ['PULL_THROUGH_CACHE'], repositoryPolicy: policy || pol({ Sid: 'OrgPull', Effect: 'Allow', Principal: '*', Action: ['ecr:BatchGetImage', 'ecr:GetDownloadUrlForLayer'],
     Condition: { StringEquals: { 'aws:PrincipalOrgID': 'o-exampleorg' } } }) });
@@ -65,9 +65,26 @@ test('E-3: the cross-account replication grant is now analyzed and reported', ()
   assert.equal(doc(r, 'tmpl#repositoryPolicy').result.exitCode, EXIT.FINDINGS);
   // Registry-level actions are not classified by the ECR evaluator: still exit 3 for that document.
   assert.equal(doc(r, 'regpol#policy').result.exitCode, EXIT.FAIL_CLOSED);
-  // CloudWatch Logs resource policies are not modeled by the engine: unsupported, per document.
-  assert.ok(codes(doc(r, 'logpol#policyDocument')).includes('UNSUPPORTED_RESOURCE_SHAPE'));
+  // r8: Logs resource policies are modeled: the unbound route53 delivery grant is a confused deputy.
+  assert.deepEqual(ids(doc(r, 'logpol#policyDocument')), ['RESOURCE-CONFUSED-DEPUTY/high']);
+  assert.equal(doc(r, 'logpol#policyDocument').result.exitCode, EXIT.FINDINGS);
   assert.equal(r.exitCode, EXIT.FAIL_CLOSED);
+});
+
+test('E-3/r8: a Logs policy naming another region or account fails closed; a bound grant is clean', () => {
+  const logs = (Resource, Condition) => res('aws:cloudwatch/logResourcePolicy:LogResourcePolicy', 'logpol', { policyName: 'p',
+    policyDocument: pol({ Effect: 'Allow', Principal: { Service: 'route53.amazonaws.com' }, Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+      Resource, ...(Condition ? { Condition } : {}) }) });
+  const bound = { StringEquals: { 'aws:SourceAccount': A } };
+  const one = (r) => doc(scanPulumi({ text: exportOf(PROOF, r), ...opts }), 'logpol#policyDocument').result;
+  for (const other of [`arn:aws:logs:us-east-1:${A}:log-group:x:*`, `arn:aws:logs:us-east-2:${B}:log-group:x:*`]) {
+    const d = one(logs(other, bound));
+    assert.equal(d.exitCode, EXIT.FAIL_CLOSED, other);
+    assert.ok(d.analysisStates.some((x) => x.code === 'RESOURCE_CONTEXT_REQUIRED'), other);
+  }
+  const ok = one(logs(`arn:aws:logs:us-east-2:${A}:log-group:/aws/route53/*`, bound));
+  assert.equal(ok.exitCode, EXIT.CLEAN);
+  assert.deepEqual(ok.findings, []);
 });
 
 test('E-3: a public template policy is a finding, not a blocked run', () => {

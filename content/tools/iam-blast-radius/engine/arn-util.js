@@ -65,6 +65,7 @@ export function serviceForArn(arn) {
   if (svc === 'ecr') return /^repository\/[^*?]+$/.test(resource) ? RESOURCE_SERVICES.ECR_REPOSITORY : RESOURCE_SERVICES.GENERIC;
   if (svc === 'secretsmanager') return /^secret:[^*?]+$/.test(resource) ? RESOURCE_SERVICES.SECRET : RESOURCE_SERVICES.GENERIC;
   if (svc === 'dynamodb') return /^table\/[^/*?]+$/.test(resource) ? RESOURCE_SERVICES.DYNAMODB_TABLE : RESOURCE_SERVICES.GENERIC;
+  if (svc === 'logs') return LOG_GROUP_RE.test(resource) ? RESOURCE_SERVICES.LOGS : RESOURCE_SERVICES.GENERIC;
   return RESOURCE_SERVICES.GENERIC;
 }
 
@@ -72,12 +73,14 @@ export function serviceForArn(arn) {
 const TYPE_HINT_SERVICE = Object.freeze({
   's3': 's3', 's3-bucket': 's3', 's3-object': 's3', 'sns': 'sns', 'sqs': 'sqs', 'kms': 'kms', 'kms-key': 'kms',
   'ecr': 'ecr', 'ecr-repository': 'ecr', 'secretsmanager': 'secretsmanager', 'secretsmanager-secret': 'secretsmanager',
-  'dynamodb': 'dynamodb', 'dynamodb-table': 'dynamodb', 'ecr-registry': 'ecr',
+  'dynamodb': 'dynamodb', 'dynamodb-table': 'dynamodb', 'ecr-registry': 'ecr', 'logs': 'logs',
 });
 
 // E-3: a registry policy or creation template covers every repository (under a prefix).
 // Only with the explicit 'ecr-registry' hint: repository/* or repository/<prefix>/*.
 const ECR_REGISTRY_RE = /^repository\/(?:[a-z0-9][a-z0-9._/-]*\/)?\*$/;
+// r8: one log group (optionally :*); the account-wide policy ('*') only with the 'logs' hint.
+const LOG_GROUP_RE = /^log-group:[^*?:]+(?::\*)?$/;
 
 // F14: message when the type hint contradicts the context ARN, else null.
 function contextMismatch(arn, typeHint, arnRaw) {
@@ -87,6 +90,14 @@ function contextMismatch(arn, typeHint, arnRaw) {
     return `The attached-resource type "${typeHint}" does not match the service of the attached-resource ARN "${arnRaw}" (${svc}). Fix the type or the ARN and analyze again.`;
   }
   return null;
+}
+
+// r8: the account-wide Logs policy covers every log group in its account and region; a
+// log group covers its own streams.
+function logsResourceInside(r, res, arn, arnRaw) {
+  if (arn.resource === '*') return globMatch(r.region, arn.region) && globMatch(r.account, arn.account);
+  const group = res.replace(/:log-stream:.*$/, '').replace(/:\*$/, '');
+  return globMatch(res, arnRaw) || globMatch(group, arnRaw.replace(/:\*$/, ''));
 }
 
 // F14/V3-08: does this statement name a Resource outside the attached resource? Checked per statement.
@@ -101,6 +112,7 @@ export function statementNamesForeignResource(stmt, arnRaw) {
       ? true // non-ARN Resource values are rejected elsewhere
       : globMatch(r.service.toLowerCase(), svc) && (svc === 's3'
         ? globMatch(r.resource.split('/')[0], arn.resource.split('/')[0])
+        : svc === 'logs' ? logsResourceInside(r, res, arn, arnRaw)
         // R6-1: a table's index/stream sub-resources belong to the attached table.
         : globMatch(svc === 'dynamodb' ? res.replace(/\/(index|stream)\/.*$/, '') : res, arnRaw));
     if (!ok) return true;
@@ -163,9 +175,11 @@ export function parseResourceContext(context) {
     };
   }
 
-  const registry = typeHint && typeHint.trim().toLowerCase() === 'ecr-registry';
-  const service = registry && String(arn.service).toLowerCase() === 'ecr' && ECR_REGISTRY_RE.test(String(arn.resource))
-    ? RESOURCE_SERVICES.ECR_REPOSITORY : serviceForArn(arn);
+  const hint = typeHint ? typeHint.trim().toLowerCase() : '';
+  const asvc = String(arn.service).toLowerCase();
+  const service = hint === 'ecr-registry' && asvc === 'ecr' && ECR_REGISTRY_RE.test(String(arn.resource))
+    ? RESOURCE_SERVICES.ECR_REPOSITORY
+    : hint === 'logs' && asvc === 'logs' && arn.resource === '*' ? RESOURCE_SERVICES.LOGS : serviceForArn(arn);
   if (!MODELED_RESOURCE_SERVICES.has(service)) {
     return {
       ok: false,
@@ -176,7 +190,7 @@ export function parseResourceContext(context) {
       message:
         `The attached resource "${arnRaw}" is a resource-based-policy shape this ` +
         'analyzer does not yet model (only Amazon S3, SNS, SQS, KMS key, ECR repository, ' +
-        'Secrets Manager secret and DynamoDB table policies are modeled in this release). ' +
+        'Secrets Manager secret, DynamoDB table and CloudWatch Logs policies are modeled in this release). ' +
         'Analysis stops rather than apply ' +
         'S3/KMS-specific reasoning to a service whose semantics are unmodeled - ' +
         'unsupported does NOT mean safe.',

@@ -1127,6 +1127,7 @@ const PER_SERVICE_RULES = new Map([
   [RESOURCE_SERVICES.ECR_REPOSITORY, dataPerServiceRules],
   [RESOURCE_SERVICES.SECRET, dataPerServiceRules],
   [RESOURCE_SERVICES.DYNAMODB_TABLE, dataPerServiceRules],
+  [RESOURCE_SERVICES.LOGS, dataPerServiceRules],
 ]);
 
 /**
@@ -1182,6 +1183,7 @@ const SERVICE_ACTION_PREFIX = Object.freeze({
   [RESOURCE_SERVICES.ECR_REPOSITORY]: 'ecr',
   [RESOURCE_SERVICES.SECRET]: 'secretsmanager',
   [RESOURCE_SERVICES.DYNAMODB_TABLE]: 'dynamodb',
+  [RESOURCE_SERVICES.LOGS]: 'logs',
 });
 function unmodeledReasons(model, ctx) {
   const statements = (model && Array.isArray(model.statements)) ? model.statements : [];

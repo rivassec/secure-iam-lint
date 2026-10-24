@@ -298,9 +298,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`subject-account` / `provider-accounts` never do); otherwise that document alone
   fails closed with `PULUMI_CONTEXT_UNPROVEN`. The engine accepts such a registry-wide
   ARN only with the explicit `ecr-registry` resource type. Registry-level ECR actions
-  (`ecr:ReplicateImage`, `ecr:CreateRepository`) are not classified yet and Logs
-  resource policies are not modeled (`UNSUPPORTED_RESOURCE_SHAPE`), so both still
-  exit 3 per document, now with their findings.
+  (`ecr:ReplicateImage`, `ecr:CreateRepository`) are not classified yet, so that
+  document still exits 3, now with its findings.
+- **CloudWatch Logs resource policies are modeled** (resource type `logs`): a log group
+  ARN, or `arn:aws:logs:<region>:<account>:*` with the `logs` type for the account-wide
+  policy. The generic checks apply (public, cross-account, an unbound service principal
+  is RESOURCE-CONFUSED-DEPUTY high, a source-bound delivery grant is clean), plus
+  RESOURCE-DATA-EXPOSURE for a public read or write and RESOURCE-POLICY-TAKEOVER for
+  `logs:PutResourcePolicy`. Log-group reads, writes, deletes and metadata actions are
+  classified; delivery, account-level and integration actions are not and fail closed,
+  as does a statement naming another account's or region's log groups. In an identity
+  policy `logs` stays Deny-only.
 - **E-4:** `aws:lambda/permission:Permission` verdicts are per document
   (`<urn>#principal`), never run-level. A service-principal grant without a real
   `sourceArn`/`sourceAccount` (a `*` sourceArn binds nothing) is
