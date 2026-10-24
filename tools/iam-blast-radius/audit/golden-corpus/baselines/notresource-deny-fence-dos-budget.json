@@ -17,6 +17,14 @@
       "exitCode": 3,
       "findingsCount": 0,
       "blockingCount": 0,
+      "statementCoverage": {
+        "total": 2,
+        "withoutVerdict": 2,
+        "indexes": [
+          0,
+          1
+        ]
+      },
       "analysisStates": [
         {
           "analysisState": "incomplete",
@@ -61,7 +69,9 @@
             "analysisStatus": "failed",
             "exitCode": 3,
             "blockingCount": 0,
-            "findingsCount": 0
+            "findingsCount": 0,
+            "statementsTotal": 2,
+            "statementsWithoutVerdict": 2
           },
           "results": [
             {

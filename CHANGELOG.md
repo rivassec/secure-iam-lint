@@ -232,6 +232,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   repository). A tag or encryption-context key with an empty suffix, and a `:ref` claim
   on any other provider, stay unsupported.
 
+### Lane C (r8): resource ARNs and coverage detail
+
+- **F-1:** codeartifact, scheduler, ecr-public, acm-pca, amplify, cognito-idp, ses and
+  bedrock-agentcore are modeled `type/id` ARN grammars (checked in the AWS service
+  reference). A wildcard after a concrete top-level name (`repository/<domain>/*`,
+  `package/<domain>/<repo>/*`) now reads narrow instead of `MALFORMED_RESOURCE_ARN`;
+  a whole-collection wildcard (`repository/*`) still reads broad. Withheld actions on
+  these services still exit 3 (`UNKNOWN_ACTION`).
+- **MALFORMED_RESOURCE_ARN details:** the state now carries `details.value` (the first
+  offending value, display-neutralized and capped at 200 characters), `details.reason`
+  (`EMPTY`, `WHITESPACE`, `NOT_AN_ARN`, `EMPTY_LEADING_SEGMENT` or
+  `UNMODELED_SERVICE_GLOB`) and `details.count` (malformed values on that axis). SARIF
+  adds `malformedReason`, `offendingValue` (markdown-inert) and `malformedCount` to the
+  row properties and a fixed reason sentence to the message. Fingerprints don't change.
+- **F-6:** each document reports how many of its statements got no verdict (unknown
+  action, unsupported condition, malformed resource, broad-but-uncovered read, ...):
+  CLI JSON `statementCoverage: { total, withoutVerdict, indexes }` (per document for
+  Pulumi; `null` when the input was rejected) and SARIF run properties
+  `statementsTotal` / `statementsWithoutVerdict`. A document-wide gap (blocked family,
+  budget abort, spoofed token, truncated graph) counts every statement. Findings in an
+  incomplete document are a floor.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added

@@ -17,6 +17,11 @@
       "exitCode": 1,
       "findingsCount": 17,
       "blockingCount": 17,
+      "statementCoverage": {
+        "total": 1,
+        "withoutVerdict": 0,
+        "indexes": []
+      },
       "analysisStates": [],
       "findings": [
         {
@@ -2316,7 +2321,9 @@
             "analysisStatus": "complete",
             "exitCode": 1,
             "blockingCount": 17,
-            "findingsCount": 17
+            "findingsCount": 17,
+            "statementsTotal": 1,
+            "statementsWithoutVerdict": 0
           },
           "results": [
             {

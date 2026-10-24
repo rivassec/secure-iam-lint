@@ -729,7 +729,8 @@ export function scan(input) {
     const suppressed = maskedGrants.filter((g) => g && g.kind === 'incomplete');
     if (malformed.length > 0) {
       const states = malformed.map((g) => state(
-        ANALYSIS_STATE.MALFORMED, g.code, maskedGrantMessage(g.code), { path: g.path },
+        ANALYSIS_STATE.MALFORMED, g.code, maskedGrantMessage(g.code),
+        { path: g.path, ...(g.details ? { details: { ...g.details } } : {}) },
       ));
       // Co-occurring suppressed never-match paths ride along so the full trace survives.
       for (const g of suppressed) {

@@ -865,7 +865,23 @@ function stateDetailOf(s) {
   return null;
 }
 
+// MALFORMED_RESOURCE_ARN reason -> fixed prose (tool-controlled, no markdown chars).
+const MALFORMED_REASON_TEXT = Object.freeze({
+  EMPTY: 'the value is empty',
+  WHITESPACE: 'the value has leading or trailing whitespace',
+  NOT_AN_ARN: 'the value is neither the bare wildcard nor a well-formed ARN',
+  EMPTY_LEADING_SEGMENT: 'the ARN resource part starts with a slash or colon',
+  UNMODELED_SERVICE_GLOB: 'a wildcarded ARN of a service whose resource grammar is not modeled',
+});
+
+function malformedReasonOf(s) {
+  const r = s && s.code === 'MALFORMED_RESOURCE_ARN' && s.details ? s.details.reason : null;
+  return Object.hasOwn(MALFORMED_REASON_TEXT, String(r)) ? String(r) : null;
+}
+
 function stateDetailClause(s) {
+  const reason = malformedReasonOf(s);
+  if (reason) return ` Reason: ${MALFORMED_REASON_TEXT[reason]}.`;
   const detail = stateDetailOf(s);
   if (!detail) return '';
   const { label, list } = detail;
@@ -1088,6 +1104,14 @@ function stateResultRow(s, uri, occurrence = 0) {
     const hints = Array.isArray(detail.hints) ? detail.hints : [];
     const sugg = inertTokenList(normList(hints.map((h) => `${h && h.action} -> ${h && h.suggestion}`)));
     if (sugg.length > 0) properties.nameHints = sugg;
+  }
+  // MALFORMED_RESOURCE_ARN: reason enum + the first offending value, markdown-inert.
+  const malformedReason = malformedReasonOf(s);
+  if (malformedReason) {
+    properties.malformedReason = malformedReason;
+    const v = s.details.value != null ? inertLeaf(s.details.value, MAX_SID_LEN) : '';
+    if (v) properties.offendingValue = v;
+    if (Number.isInteger(s.details.count)) properties.malformedCount = s.details.count;
   }
   // R5-uri-trunc: a sliced (over-length) artifact URI is recorded via a SEPARATE flag, never
   // by mutating the location string. Same treatment as the finding rows below.
@@ -1433,6 +1457,24 @@ function runPropertiesOf(props) {
 }
 
 /**
+ * F-6: how many of a document's statements got no verdict, from the engine coverage.
+ * null when the engine produced no coverage (input rejected, adapter-only result).
+ *
+ * @param {object} result a scan() result
+ * @returns {{total:number, withoutVerdict:number, indexes:number[]}|null}
+ */
+export function statementVerdictCoverage(result) {
+  const s = result && result.coverage && result.coverage.summary;
+  const w = s && s.statementsWithoutVerdict;
+  if (!w || !Number.isInteger(w.count) || !s.statements || !Number.isInteger(s.statements.total)) return null;
+  return {
+    total: s.statements.total,
+    withoutVerdict: w.count,
+    indexes: (Array.isArray(w.indexes) ? w.indexes : []).filter(Number.isInteger),
+  };
+}
+
+/**
  * Build the SARIF 2.1.0 log object for a scan() result. Pure + deterministic.
  *
  * @param {object} result   a scan() result (findings + analysisStates + verdict)
@@ -1447,6 +1489,7 @@ export function buildSarifLog(result, opts, manifest) {
   const uri = { uri: artifactUri(o), logical: o.logicalLocation, startLine: o.startLine, startColumn: o.startColumn };
   const { rules, index } = buildRules(res);
   const { results, budget } = buildResults(res, uri, index);
+  const verdicts = statementVerdictCoverage(res);
 
   // DOCUMENT-level fail-closed (S2-sarif-sanitize-all, iteration 4): if buildResults hit the
   // output cap, append ONE truthful analyzer-state result announcing the truncation. It
@@ -1488,6 +1531,9 @@ export function buildSarifLog(result, opts, manifest) {
         findingsCount: typeof res.findingsCount === 'number'
           ? res.findingsCount
           : (Array.isArray(res.findings) ? res.findings.length : 0),
+        // F-6: counts only (null = not analyzed by the engine).
+        statementsTotal: verdicts ? verdicts.total : null,
+        statementsWithoutVerdict: verdicts ? verdicts.withoutVerdict : null,
         ...runPropertiesOf(o.runProperties),
       },
       results,
