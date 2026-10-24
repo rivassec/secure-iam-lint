@@ -167,6 +167,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - SARIF paths are relative to the Pulumi project; a project in a repo subdirectory
   does not map to files in code scanning yet.
 
+### Lane F: CI, Node and container image
+
+- **Node 24.22.1 in CI and release** (was 24.20.0), picking up the CVE-2026-111497
+  (bundled Brotli) fix. The `setup-node` pin comment now reads `v7.1.0`, the tag the
+  pinned SHA really is.
+- **Fuzz build image:** the ClusterFuzzLite build installs Node 24.22.1 from
+  nodejs.org, verified against a pinned SHA256 from `SHASUMS256.txt`, ahead of the base
+  image's EOL Node 20 for `npm ci` and the build. The fuzz runtime Node still comes
+  from the runner image.
+- **`engines.node` is now `>=22`** (was `>=20`); Node 20 is end-of-life. CI tests
+  Node 24 only.
+- **Container image:** `Dockerfile` (digest-pinned `node:24.22.1-alpine`, non-root) and
+  `.github/workflows/container.yml`: build + smoke test on PRs, and on a `v*.*.*` tag a
+  push to `ghcr.io/rivassec/secure-iam-lint:<version>` with build provenance.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added
@@ -326,7 +341,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (was `node20`, which GitHub is retiring). The Action is still a plain ESM entry
   point (`action/index.mjs`) with no build step, bundled `dist`, or runtime npm
   dependencies; the Node runtime is provided by the runner. GitHub.com-hosted
-  runners are the supported baseline. The npm package's `engines.node` is unchanged.
+  runners are the supported baseline. The npm package's `engines.node` is raised separately (see Changed).
 - **Action self-test coverage** (`.github/workflows/action-selftest.yml`): new cases
   assert both the step outcome and the `exit-code` output for an internal error
   (exit `4`, via an unreadable policy file), a mixed valid + malformed `paths` list
