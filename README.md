@@ -24,6 +24,18 @@ Live: <https://rivassec.com/tools/iam-blast-radius/>
   code is exactly what runs. Validated by 1,488 unit + security tests and three
   external adversarial suites.
 
+### What it does not see
+
+A clean run covers only the policy documents it was given.
+
+- Only AWS policy documents (JSON files) and Pulumi preview / export files are read.
+  Other infrastructure-as-code inputs are not read.
+- IAM created outside code (console, CLI, other tooling) is not seen.
+- Where a stack fails closed (exit `3`), the findings reported are a floor, not the
+  full set: statements it could not analyze are not counted as safe.
+- It reports potential blast radius from the policy alone, not effective
+  permissions.
+
 ## Repository layout
 
     content/tools/iam-blast-radius/   # the shipped web tool (served verbatim; engine + UI)
@@ -127,7 +139,8 @@ Each GitHub Release lists the exact commit SHA for that tag; copy it into the
 | `budget-ms`, `max-files`, `max-total-bytes`, `max-sarif-results`, `max-sarif-bytes` | no | Resource ceilings; breaching one fails closed rather than reporting a partial scan clean. See [ACTION.md](ACTION.md). |
 
 Outputs: `exit-code`, `analysis-status` (`complete` / `partial` / `failed`),
-`findings-count`, `blocking-findings-count`, `sarif-path`, plus `baselined-count` /
+`findings-count`, `blocking-findings-count`, `sarif-path`, `reason` (the headline
+enum code, or `clean`), plus `baselined-count` /
 `baseline-stale-count` when a baseline is given, and `scan-scope` (`delta` / `full`)
 with `pulumi-json`. Outputs are written before the step
 fails, so they are readable under `continue-on-error` - but prefer a baseline, which
@@ -231,6 +244,7 @@ jobs:
           path: iam-blast-radius.sarif
           if-no-files-found: ignore
           retention-days: 1
+          overwrite: true                   # v4+ names are immutable per run; re-runs need this
 
   upload:
     needs: scan
