@@ -60,6 +60,40 @@ jobs:
           # Print the informational hotspot detail (non-gating) for the log.
           node audit/lint/lint.mjs 2>&1 || true
 
+  # Coverage of the shipped code (engine, CLI, Action) by both suites, with Node's
+  # built-in coverage. Floors sit below current numbers (2026-10-26: 99.00% lines,
+  # 90.10% branches, 98.82% functions) so a drop fails the build.
+  coverage:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/iam-blast-radius
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.20.0'
+      - name: Test coverage (lines >= 95%, branches >= 85%, functions >= 95%)
+        run: |
+          set -o pipefail
+          node --test --experimental-test-coverage \
+            --test-coverage-include="../../content/tools/iam-blast-radius/**" \
+            --test-coverage-include="../../cli/**" \
+            --test-coverage-include="../../action/**" \
+            --test-coverage-lines=95 --test-coverage-branches=85 --test-coverage-functions=95 \
+            "tests/**/*.test.js" "audit/**/*.test.js" 2>&1 | tee coverage.txt
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo "### Test coverage (shipped code)"
+            echo '```'
+            grep -E 'all files|start of coverage report' coverage.txt || echo "no coverage report produced"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Obfuscation-proof no-eval / no-proto-mutation guard: the WHOLE suite runs with dynamic
   # code generation (eval / new Function / vm string-compile) and __proto__ assignment
   # DISABLED at the runtime level, so any exercised path that relied on them aborts - a

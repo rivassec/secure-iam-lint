@@ -54,7 +54,16 @@ npx madge --circular --extensions js,mjs ../../content/tools/iam-blast-radius/en
 
 # Browser==CLI parity fuzzer
 node tests/fuzz/parity-fuzz.mjs
+
+# Coverage of the shipped code; CI fails below 95% lines, 85% branches, 95% functions
+node --test --experimental-test-coverage \
+  --test-coverage-include="../../content/tools/iam-blast-radius/**" \
+  --test-coverage-include="../../cli/**" --test-coverage-include="../../action/**" \
+  --test-coverage-lines=95 --test-coverage-branches=85 --test-coverage-functions=95 \
+  "tests/**/*.test.js" "audit/**/*.test.js"
 ```
+
+Any change that adds a code path needs tests for it, or the coverage floors catch it.
 
 CI runs this same set on every PR, plus CodeQL, ClusterFuzzLite, and OpenSSF
 Scorecard.
