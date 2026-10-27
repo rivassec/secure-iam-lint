@@ -62,7 +62,9 @@ jobs:
 
   # Coverage of the shipped code (engine, CLI, Action) by both suites, with Node's
   # built-in coverage. Floors sit below current numbers (2026-10-26: 99.00% lines,
-  # 90.10% branches, 98.82% functions) so a drop fails the build.
+  # 90.10% branches, 98.82% functions) so a drop fails the build. app.js is excluded:
+  # it is browser-only DOM glue that Node can't load; the Playwright e2e job covers it.
+  # Every other shipped JS file must appear in the report (Node omits unloaded files).
   coverage:
     runs-on: ubuntu-latest
     defaults:
@@ -82,15 +84,32 @@ jobs:
             --test-coverage-include="../../content/tools/iam-blast-radius/**" \
             --test-coverage-include="../../cli/**" \
             --test-coverage-include="../../action/**" \
+            --test-coverage-exclude="../../content/tools/iam-blast-radius/app.js" \
             --test-coverage-lines=95 --test-coverage-branches=85 --test-coverage-functions=95 \
             "tests/**/*.test.js" "audit/**/*.test.js" 2>&1 | tee coverage.txt
+      - name: Every shipped JS file is in the report
+        run: |
+          set -o pipefail
+          git -C ../.. ls-files 'content/tools/iam-blast-radius/**.js' 'content/tools/iam-blast-radius/**.mjs' \
+              'cli/**.js' 'cli/**.mjs' 'action/**.js' 'action/**.mjs' \
+            | grep -v '^content/tools/iam-blast-radius/app\.js$' | sed 's#.*/##' | sort -u > expected.txt
+          sed -n '/start of coverage report/,/end of coverage report/p' coverage.txt \
+            | awk -F'|' 'NF>3{f=$1; sub(/^ℹ */,"",f); sub(/ +$/,"",f); print f}' \
+            | { grep -E '\.m?js$' || true; } | sort -u > reported.txt
+          missing=$(comm -23 expected.txt reported.txt)
+          if [ -n "$missing" ]; then
+            echo "::error::shipped JS files missing from the coverage report (no test loads them): $missing"
+            exit 1
+          fi
+          echo "all $(wc -l < expected.txt) shipped JS files are in the coverage report"
       - name: Coverage summary
         if: always()
         run: |
           {
-            echo "### Test coverage (shipped code)"
+            echo "### Test coverage (shipped code, app.js excluded)"
             echo '```'
-            grep -E 'all files|start of coverage report' coverage.txt || echo "no coverage report produced"
+            sed -n '/start of coverage report/,/end of coverage report/p' coverage.txt | grep . \
+              || echo "no coverage report produced"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
