@@ -1,6 +1,6 @@
 # secure-iam-lint
 
-[![CI](https://github.com/rivassec/secure-iam-lint/actions/workflows/ci.yml/badge.svg)](https://github.com/rivassec/secure-iam-lint/actions/workflows/ci.yml) [![Security](https://github.com/rivassec/secure-iam-lint/actions/workflows/security.yml/badge.svg)](https://github.com/rivassec/secure-iam-lint/actions/workflows/security.yml)
+[![CI](https://github.com/rivassec/secure-iam-lint/actions/workflows/ci.yml/badge.svg)](https://github.com/rivassec/secure-iam-lint/actions/workflows/ci.yml) [![Security](https://github.com/rivassec/secure-iam-lint/actions/workflows/security.yml/badge.svg)](https://github.com/rivassec/secure-iam-lint/actions/workflows/security.yml) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15979/badge)](https://www.bestpractices.dev/projects/15979)
 
 **An AWS IAM policy blast-radius analyzer.** Paste an IAM policy and see its
 *potential blast radius* - privilege-escalation paths, role-assumption reach, and
