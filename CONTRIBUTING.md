@@ -54,7 +54,20 @@ npx madge --circular --extensions js,mjs ../../content/tools/iam-blast-radius/en
 
 # Browser==CLI parity fuzzer
 node tests/fuzz/parity-fuzz.mjs
+
+# Coverage of the shipped code; CI fails below 95% lines, 85% branches, 95% functions
+node --test --experimental-test-coverage \
+  --test-coverage-include="../../content/tools/iam-blast-radius/**" \
+  --test-coverage-include="../../cli/**" --test-coverage-include="../../action/**" \
+  --test-coverage-exclude="../../content/tools/iam-blast-radius/app.js" \
+  --test-coverage-lines=95 --test-coverage-branches=85 --test-coverage-functions=95 \
+  "tests/**/*.test.js" "audit/**/*.test.js"
 ```
+
+CI rejects changes that drop shipped-code coverage below those floors, or that add a
+shipped file no test loads (`app.js`, browser-only, is covered by the Playwright e2e job
+instead). The floors are aggregate, so new behavior and failure paths still need their
+own tests.
 
 CI runs this same set on every PR, plus CodeQL, ClusterFuzzLite, and OpenSSF
 Scorecard.
