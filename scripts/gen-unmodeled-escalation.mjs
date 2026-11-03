@@ -5,7 +5,7 @@
 // Candidate = the engine answered "unknown" (exit 3) with the baseline snapshot (the rev
 // before the full-service refresh, default tag catalog-baseline-2026-10-20) but exit 0 with the current snapshot on a
 // narrow-ARN single-action Allow, and the reference level is WRITE or PERMISSIONS. A candidate
-// is dropped when a named detector already fires: alone, or paired with iam:PassRole on a role.
+// is dropped when a named detector already fires: alone (any severity), or paired with iam:PassRole on a role.
 // READ/LIST/TAGGING stay known (no detector treats them as escalation, and withholding
 // ec2:Describe* members would fail every read-only policy closed).
 import { execFileSync } from 'node:child_process';
@@ -38,6 +38,7 @@ const scanner = async (dir) => (await import(pathToFileURL(join(dir, 'cli/scan.m
 const pol = (stmts) => JSON.stringify({ Version: '2012-10-17', Statement: stmts });
 const run = (scan, stmts) => scan({ text: pol(stmts), family: 'identity', threshold: 'high',
   subjectAccount: '123456789012', partition: 'aws' });
+const key0 = (svc, name) => `${svc}:${name}`.toLowerCase();
 const narrow = (svc) => `arn:aws:${svc}:us-east-2:123456789012:res/name`;
 
 try {
@@ -51,7 +52,8 @@ try {
   const baseSrc = `import * as C from './catalog-aws-ref.cur.js';\n`
     + `export const AWS_REF_ACTIONS = Object.freeze(${JSON.stringify(filtered)});\n`
     + `export const AWS_REF_REQUIRES_WILDCARD = C.AWS_REF_REQUIRES_WILDCARD;\n`
-    + `export const AWS_SERVICE_PREFIXES = C.AWS_SERVICE_PREFIXES;\n`;
+    + `export const AWS_SERVICE_PREFIXES = C.AWS_SERVICE_PREFIXES;\n`
+    + `export const AWS_REF_DATE = C.AWS_REF_DATE;\n`;
   const scanBase = await scanner(tree('base', baseSrc));
   const scanCur = await scanner(tree('cur'));
 
@@ -63,6 +65,7 @@ try {
       if (run(scanBase, one).exitCode !== 3) continue; // known before the refresh
       const alone = run(scanCur, one);
       if (alone.exitCode !== 0) continue; // already failed closed or flagged
+      if ((alone.findings || []).length > 0) { covered.push(key0(svc, name)); continue; } // sub-threshold detector
       const paired = run(scanCur, [...one, { Effect: 'Allow', Action: 'iam:PassRole',
         Resource: 'arn:aws:iam::123456789012:role/admin' }]);
       const key = `${svc}:${name}`.toLowerCase();

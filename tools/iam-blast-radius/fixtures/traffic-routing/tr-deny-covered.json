@@ -1,0 +1,12 @@
+{
+  "name": "elasticloadbalancing:ModifyListener fully denied in the same policy",
+  "note": "Explicit Deny precedence removes the grant; no TRAFFIC-ROUTING.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "Listener", "Effect": "Allow", "Action": "elasticloadbalancing:ModifyListener", "Resource": "arn:aws:elasticloadbalancing:us-east-2:123456789012:listener/app/web/0123456789abcdef/0123456789abcdef" },
+      { "Sid": "DenyIt", "Effect": "Deny", "Action": "elasticloadbalancing:ModifyListener", "Resource": "*" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": [], "notFindingIds": ["TRAFFIC-ROUTING"] }
+}

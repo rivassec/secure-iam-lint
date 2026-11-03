@@ -46,9 +46,9 @@
     "service": "s3-object",
     "principalTypes": ["anonymous"],
     "anonymousPresent": true,
-    "findingIds": ["PUBLIC-ACCESS"],
-    "findingSeverities": { "PUBLIC-ACCESS": "high" },
-    "whyIncludes": { "PUBLIC-ACCESS": ["NARROWED", "aws:PrincipalTag/environment", "aws:SourceVpce", "logical AND", "logical OR", "network selector", "principal-identity selector", "NOT be simplified"] },
+    "findingIds": ["RESOURCE-CROSS-ACCOUNT"],
+    "findingSeverities": { "RESOURCE-CROSS-ACCOUNT": "high" },
+    "whyIncludes": { "RESOURCE-CROSS-ACCOUNT": ["NARROWED", "aws:PrincipalTag/environment", "aws:SourceVpce", "logical AND", "logical OR", "network selector", "principal-identity selector", "NOT be simplified"] },
     "graphEdgeTypes": ["can-access-resource"],
     "graphOriginTypes": ["ExternalPrincipal"],
     "notFindingIds": ["WILDCARD-ACTION", "WILDCARD-RESOURCE", "DATA-EXFIL", "DATA-READ"]

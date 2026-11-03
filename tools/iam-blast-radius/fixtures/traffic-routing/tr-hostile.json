@@ -1,0 +1,11 @@
+{
+  "name": "events:PutRule with hostile strings (inert rendering)",
+  "note": "Hostile Sid/resource tokens must ride through as inert data.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "<img src=x onerror=alert(1)>rule", "Effect": "Allow", "Action": "events:PutRule", "Resource": "arn:aws:events:us-east-2:123456789012:rule/<script>alert(1)</script>" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["TRAFFIC-ROUTING"], "hostile": true, "hostileFor": ["TRAFFIC-ROUTING"], "assertInertRendering": true }
+}

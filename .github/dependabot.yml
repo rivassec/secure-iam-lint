@@ -44,3 +44,12 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+
+  # The CLI image base (/Dockerfile) is digest-pinned the same way.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5

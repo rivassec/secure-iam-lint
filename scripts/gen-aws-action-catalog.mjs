@@ -29,6 +29,7 @@ const BASE = 'https://servicereference.us-east-1.amazonaws.com/v1';
 // ec2:Describe* calls), and the global / account-level / billing services a region-deny
 // SCP exempts via NotAction (AWS Organizations example SCP). Keep this list explicit -
 // adding a service changes which actions read as "known".
+// sns/events/logs/config/lambda/cloudformation/iam: Control Tower guardrail SCP actions.
 const SERVICES = [
   's3', 'ec2', 'datapipeline', 'license-manager',
   'consolidatedbilling', 'freetier', 'invoicing', 'payments', 'purchase-orders',
@@ -39,6 +40,13 @@ const SERVICES = [
   'pricing', 'route53', 'route53domains', 'route53-recovery-cluster',
   'route53-recovery-control-config', 'route53-recovery-readiness', 'shield', 'sso',
   'support', 'trustedadvisor', 'waf', 'waf-regional', 'wafv2', 'wellarchitected',
+  'sns', 'events', 'logs', 'config', 'lambda', 'cloudformation', 'iam',
+  'ecr', 'codeartifact', 'scheduler', 'eks',
+  'cognito-identity',
+  // v1.3.0 r8: ECR Public (CI image pulls/pushes; trial snapshot gap).
+  'ecr-public',
+  // r8 E-1: AWS Load Balancer Controller (reads known; writes withheld until modeled).
+  'elasticloadbalancing',
 ];
 
 function accessLevel(action) {
@@ -101,6 +109,8 @@ const lines = [
   '//',
   '// Pure committed data (no imports, no runtime network). catalog.js merges it UNDER',
   '// the curated CATALOG_DATA: a curated entry always wins on overlap.',
+  '',
+  `export const AWS_REF_DATE = '${today}';`,
   '',
   'export const AWS_REF_ACTIONS = Object.freeze({',
 ];

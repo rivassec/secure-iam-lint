@@ -23,7 +23,7 @@ capability. Every change is judged against that.
 
 Requires Node.js >= 21 for the dev gate below (the built-in test runner's glob
 expansion, e.g. `"tests/**/*.test.js"`, landed in Node 21). The shipped CLI itself
-runs on Node >= 20 (per `package.json` `engines`).
+runs on Node >= 22 (per `package.json` `engines`).
 
 ```bash
 git clone https://github.com/rivassec/secure-iam-lint

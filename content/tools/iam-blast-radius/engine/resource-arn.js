@@ -53,6 +53,18 @@ export const RESOURCE_CLASS = Object.freeze({
   MALFORMED: 'MALFORMED',
 });
 
+// Why a value is MALFORMED (tool-controlled enum; safe in any output).
+export const MALFORMED_REASON = Object.freeze({
+  EMPTY: 'EMPTY',
+  WHITESPACE: 'WHITESPACE',
+  NOT_AN_ARN: 'NOT_AN_ARN',
+  EMPTY_LEADING_SEGMENT: 'EMPTY_LEADING_SEGMENT',
+  UNMODELED_SERVICE_GLOB: 'UNMODELED_SERVICE_GLOB',
+});
+
+const ok = (cls) => ({ cls, reason: null });
+const bad = (reason) => ({ cls: RESOURCE_CLASS.MALFORMED, reason });
+
 // The two IAM Resource-ARN wildcards: '*' (any run of chars, incl. empty) and '?'
 // (exactly one char). A leading one makes a segment unbounded from its head.
 const ANY_WILDCARD = /[*?]/;
@@ -107,6 +119,9 @@ const MODELED_TYPED_SERVICES = Object.freeze(new Set([
   'network-firewall', 'elasticbeanstalk', 'appsync', 'mq', 'transfer',
   // type/id grammar verified in the AWS reference.
   'bedrock', 'aws-marketplace', 'partnercentral',
+  // r8 F-1: type/<top-level id>[/sub-path] per the AWS service reference (2026-10-23).
+  'codeartifact', 'scheduler', 'ecr-public', 'acm-pca', 'amplify', 'cognito-idp',
+  'ses', 'bedrock-agentcore',
 ]));
 
 // --- Semantic boundary-crossing PROBE battery --------------------------------
@@ -278,32 +293,45 @@ function classifyOutposts(resourceId) {
  * @returns {string} one of RESOURCE_CLASS
  */
 export function classifyResource(value) {
+  return classifyResourceDetailed(value).cls;
+}
+
+/**
+ * Like classifyResource, plus the MALFORMED_REASON when the class is MALFORMED
+ * (null otherwise). Same single decision path.
+ *
+ * @param {*} value the element value (inert policy data)
+ * @returns {{cls:string, reason:(string|null)}}
+ */
+export function classifyResourceDetailed(value) {
   const raw = String(value == null ? '' : value);
   const v = raw.trim();
-  const cls = classifyTrimmed(v);
+  const res = classifyTrimmed(v);
   // Leading/trailing whitespace: AWS rejects it, and an un-trimmed value slipped the
   // old startsWith('arn:') gate (" arn:aws:s3:::bucket/*" read CLEAN). Whitespace must
   // never RESCUE a value into a confident NARROW/clean, so a would-be-NARROW (or a
   // still-MALFORMED) trimmed value is MALFORMED. But a genuinely BROAD trimmed value
   // is broad regardless of the whitespace (" arn:aws:s3:::*" is still all-buckets), so
   // it keeps firing - the must-warn corpus locks that. Fail closed either way.
-  if (raw !== v && cls !== RESOURCE_CLASS.BROAD) return RESOURCE_CLASS.MALFORMED;
-  return cls;
+  if (raw !== v && res.cls !== RESOURCE_CLASS.BROAD) {
+    return bad(v === '' ? MALFORMED_REASON.EMPTY : MALFORMED_REASON.WHITESPACE);
+  }
+  return res;
 }
 
-// Classify an ALREADY-TRIMMED value. classifyResource() layers the leading/trailing
-// whitespace rule on top.
+// Classify an ALREADY-TRIMMED value -> { cls, reason }. classifyResourceDetailed()
+// layers the leading/trailing whitespace rule on top.
 function classifyTrimmed(v) {
   // An empty element is undeployable per the grammar; fail closed (never CLEAN).
-  if (v === '') return RESOURCE_CLASS.MALFORMED;
+  if (v === '') return bad(MALFORMED_REASON.EMPTY);
   // The bare star is the widest possible, unambiguously decided broad scope.
-  if (v === '*') return RESOURCE_CLASS.BROAD;
+  if (v === '*') return ok(RESOURCE_CLASS.BROAD);
 
   const arn = parseArn(v);
   // Unparsed ARN with a high-order wildcard is still broad.
   if (!arn && /^arn:/.test(v)) {
     const seg = v.split(':');
-    if (seg.length >= 6 && [seg[1], seg[2], seg[4]].some(hasWildcard)) return RESOURCE_CLASS.BROAD;
+    if (seg.length >= 6 && [seg[1], seg[2], seg[4]].some(hasWildcard)) return ok(RESOURCE_CLASS.BROAD);
   }
   if (!arn) {
     // Not "*" and not a well-formed ARN. Two sub-cases, decided SEMANTICALLY:
@@ -317,8 +345,8 @@ function classifyTrimmed(v) {
     //     a threat-model T8 harm). This is the ONE probe-based broad test in the
     //     engine, shared by rules + masked-grant so the two cannot disagree.
     return globReachesMultipleAccounts(v)
-      ? RESOURCE_CLASS.BROAD
-      : RESOURCE_CLASS.MALFORMED;
+      ? ok(RESOURCE_CLASS.BROAD)
+      : bad(MALFORMED_REASON.NOT_AN_ARN);
   }
 
   const service = arn.service.toLowerCase();
@@ -327,7 +355,7 @@ function classifyTrimmed(v) {
   // resource identifier is scoped -> BROAD. A concrete-prefixed identifier does NOT
   // re-narrow a wildcard account back to one account.
   if (hasWildcard(arn.partition) || hasWildcard(service) || hasWildcard(arn.account)) {
-    return RESOURCE_CLASS.BROAD;
+    return ok(RESOURCE_CLASS.BROAD);
   }
 
   // LEADING-SLASH-GRAMMAR services (API Gateway): the leading '/' is the grammar,
@@ -340,7 +368,7 @@ function classifyTrimmed(v) {
   // closed. Placed AFTER the high-order partition/service/account wildcard check, so
   // a genuinely broad ARN is never traded away for this narrower reading.
   if (LEADING_SLASH_SERVICES.has(service) && arn.resourceId.charCodeAt(0) === 47 /* '/' */) {
-    return classifyTyped(arn.resourceId.slice(1), true);
+    return ok(classifyTyped(arn.resourceId.slice(1), true));
   }
 
   // EMPTY LEADING SEGMENT in the resource-id (resourceId begins with '/' or ':').
@@ -358,18 +386,20 @@ function classifyTrimmed(v) {
   // to re-spell around. Placed AFTER the high-order partition/service/account wildcard
   // check so a genuinely broad ARN ('arn:aws:iam::*:/role/*') still fires - the
   // high-order BROAD signal is never traded away for MALFORMED.
-  if (/^[/:]/.test(arn.resourceId)) return RESOURCE_CLASS.MALFORMED;
+  if (/^[/:]/.test(arn.resourceId)) return bad(MALFORMED_REASON.EMPTY_LEADING_SEGMENT);
 
-  if (service === 's3-outposts') return classifyOutposts(arn.resourceId);
-  if (service === 's3') return classifyS3(arn);
+  if (service === 's3-outposts') return ok(classifyOutposts(arn.resourceId));
+  if (service === 's3') return ok(classifyS3(arn));
   if (service === 'sns' || service === 'sqs') {
     // A flat, ACCOUNT-SCOPED resource NAME (topic / queue). A leading wildcard spans
     // the whole account's topics/queues -> BROAD; a concrete or concrete-prefixed
     // name (my-topic, my-topic-*) is a within-account family -> NARROW.
-    if (leadingWildcard(arn.resourceId)) return RESOURCE_CLASS.BROAD;
-    return RESOURCE_CLASS.NARROW;
+    if (leadingWildcard(arn.resourceId)) return ok(RESOURCE_CLASS.BROAD);
+    return ok(RESOURCE_CLASS.NARROW);
   }
-  return classifyTyped(arn.resourceId, MODELED_TYPED_SERVICES.has(service));
+  // classifyTyped is MALFORMED only via the HYBRID downgrade (known=false).
+  const cls = classifyTyped(arn.resourceId, MODELED_TYPED_SERVICES.has(service));
+  return cls === RESOURCE_CLASS.MALFORMED ? bad(MALFORMED_REASON.UNMODELED_SERVICE_GLOB) : ok(cls);
 }
 
 export default classifyResource;

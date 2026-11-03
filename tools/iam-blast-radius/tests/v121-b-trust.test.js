@@ -52,7 +52,8 @@ test('T1-07: IfExists / ForAllValues on aws:PrincipalArn is not bypassable on pl
   const pin = 'arn:aws:iam::444455556666:role/deploy';
   for (const op of ['StringEquals', 'StringEqualsIfExists', 'ForAllValues:StringEquals', 'ForAnyValue:StringEquals']) {
     const r = run({ Principal: { AWS: '*' }, Action: 'sts:AssumeRole', Condition: { [op]: { 'aws:PrincipalArn': pin } } });
-    assert.equal(sev(r, 'TRUST-PUBLIC'), 'high', op);
+    // R5-5: only the plain exact form is rewritten to the named principal.
+    assert.equal(sev(r, op === 'StringEquals' ? 'TRUST-CROSS-ACCOUNT' : 'TRUST-PUBLIC'), 'high', op);
   }
   // A web-identity action may lack the key: IfExists stays bypassable.
   const fed = run({ Principal: '*', Action: ['sts:AssumeRole', 'sts:AssumeRoleWithWebIdentity'], Condition: { StringEqualsIfExists: { 'aws:PrincipalArn': pin } } });
@@ -64,7 +65,7 @@ test('T1-07: IfExists / ForAllValues on aws:PrincipalArn is not bypassable on pl
 
 test('T1-08: a tight pin plus PrincipalOrgID is never scored broader than the pin', () => {
   const both = run({ Principal: { AWS: '*' }, Action: 'sts:AssumeRole', Condition: { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::444455556666:role/deploy', 'aws:PrincipalOrgID': 'o-exampleorg1' } } });
-  assert.equal(sev(both, 'TRUST-PUBLIC'), 'medium');
+  assert.equal(sev(both, 'TRUST-CROSS-ACCOUNT'), 'low'); // R5-5: the named form + PrincipalOrgID
   // Org alone, or a broad pin plus org, stays high.
   const orgOnly = run({ Principal: { AWS: '*' }, Action: 'sts:AssumeRole', Condition: { StringEquals: { 'aws:PrincipalOrgID': 'o-exampleorg1' } } });
   assert.equal(sev(orgOnly, 'TRUST-PUBLIC'), 'high');

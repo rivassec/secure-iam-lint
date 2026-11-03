@@ -10,7 +10,7 @@
 //   - It is OPT-IN: no baseline input -> the verdict is byte-for-byte unchanged.
 //   - It never touches exit 2 (usage) or exit 4 (internal), nor a FAILED analysis
 //     (malformed / blocked / budget / family-gate), nor any partial state other than
-//     UNKNOWN_ACTION and UNSUPPORTED_CONDITION. Those still exit 3.
+//     UNKNOWN_ACTION, NOT_IN_REFERENCE and UNSUPPORTED_CONDITION. Those still exit 3.
 //   - Each accepted item is keyed INDIVIDUALLY. An analyzer-state key folds in the exact
 //     sorted action / condition-key list, so accepting today's unknown action can never
 //     accept a different one tomorrow; a finding key is its full semantic identity
@@ -57,6 +57,7 @@ const ADVISORY_COVERAGE_CODES = new Set(['DUPLICATE_SID']);
 // identifies WHAT was unsupported.
 const BASELINABLE_STATES = Object.freeze({
   UNKNOWN_ACTION: 'actions',
+  NOT_IN_REFERENCE: 'actions',
   UNSUPPORTED_CONDITION: 'conditions',
 });
 

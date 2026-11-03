@@ -1,5 +1,5 @@
 // rules-finding.js - rule finding factory + resource-scope/broadness helpers + deny-fence suppression (makeFinding, resourceScope, denyFencesToNarrow, ruleFindingDenySuppressed, survivingBroadReadActions). Extracted (behavior-preserving).
-import { actionGrants, actionVerb, isFullWildcard, isServiceWildcard, lowerConfidence, statementSid, CAPABILITY_LIMIT, CONDITION_LIMIT, COMPLEMENT_LIMIT, READ_VERB, BULK_READ_ACTIONS, DB_AUTH_ACTIONS, DETECTION_ACTIONS, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, KMS_DECRYPT_ACTIONS, OBJECT_ACL_WRITE_ACTIONS, RESOURCE_POLICY_WRITE_ACTIONS, SECRET_READ_ACTIONS } from './rules-classify.js';
+import { actionGrants, actionVerb, isFullWildcard, isServiceWildcard, lowerConfidence, statementSid, CAPABILITY_LIMIT, CONDITION_LIMIT, COMPLEMENT_LIMIT, READ_VERB, BULK_READ_ACTIONS, DB_AUTH_ACTIONS, DETECTION_ACTIONS, GROUP_MEMBERSHIP_ACTIONS, IAM_ADMIN_ACTIONS, KMS_DECRYPT_ACTIONS, OBJECT_ACL_WRITE_ACTIONS, RESOURCE_POLICY_WRITE_ACTIONS, SECRET_READ_ACTIONS, TRAFFIC_ROUTING_ACTIONS } from './rules-classify.js';
 import { applyDenyToActions, denyActionApplies, notActionSparesGrant } from './escalation-deny.js';
 import { hasNonEmptyCondition } from './escalation-conditions.js';
 import { classifyResource, RESOURCE_CLASS } from './resource-arn.js';
@@ -254,6 +254,7 @@ const RULE_DENY_CATALOGS = Object.freeze({
   'KMS-DECRYPT': KMS_DECRYPT_ACTIONS,
   'DETECTION-IMPAIRMENT': DETECTION_ACTIONS,
   'GROUP-MEMBERSHIP': GROUP_MEMBERSHIP_ACTIONS,
+  'TRAFFIC-ROUTING': TRAFFIC_ROUTING_ACTIONS,
 });
 
 /**

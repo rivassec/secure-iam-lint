@@ -31,6 +31,7 @@
 // of analysis truth (architecture invariant: one engine, two adapters); this
 // module derives its verdict from what the engine already reports.
 import { analyze } from '../content/tools/iam-blast-radius/engine/analyze.js';
+import { parseTrustedAccountIds } from './trusted-accounts.mjs';
 // The cooperative wall-clock budget (S3-dos-budget). analyze() is synchronous and
 // CPU-bound, so it cannot be preempted from outside in single-threaded JS. Instead
 // this adapter ARMS an absolute deadline that the engine's hot wildcard matcher
@@ -39,6 +40,7 @@ import { analyze } from '../content/tools/iam-blast-radius/engine/analyze.js';
 // a clean pass. The browser/worker path never arms this (it has its own T5 worker
 // watchdog), so browser analysis stays deterministic.
 import { armGlobBudget, disarmGlobBudget, isGlobBudgetError } from '../content/tools/iam-blast-radius/engine/glob.js';
+import { classifyUnrecognized, REFERENCE_SNAPSHOT_DATE } from '../content/tools/iam-blast-radius/engine/catalog.js';
 
 // Stable exit codes. Frozen so a caller can reference them by name without risk of
 // mutation.
@@ -302,14 +304,29 @@ function incompleteStatesFromCoverage(coverage) {
       { path: el.path },
     ));
   }
-  if ((s.unrecognizedActions || []).length > 0) {
+  const split = classifyUnrecognized(s.unrecognizedActions || []);
+  if (split.unknown.length > 0) {
     out.push(state(
       ANALYSIS_STATE.INCOMPLETE,
       'UNKNOWN_ACTION',
       'One or more actions are not recognized by the action-catalog snapshot, so ' +
         'the analysis could not fully vouch for those grants (unsupported does NOT ' +
         'mean safe).',
-      { details: { actions: s.unrecognizedActions.slice() } },
+      { details: { actions: split.unknown } },
+    ));
+  }
+  // r8 F-2: the service is snapshotted but the name is not in it (typo, non-IAM API name,
+  // wildcard matching nothing). Still fail closed: the snapshot may lag a new action.
+  if (split.notInReference.length > 0) {
+    out.push(state(
+      ANALYSIS_STATE.INCOMPLETE,
+      'NOT_IN_REFERENCE',
+      `One or more actions are not in the ${REFERENCE_SNAPSHOT_DATE} AWS reference snapshot ` +
+        'for their service: a misspelled or non-IAM name (for example an API name such as ' +
+        'HeadObject, which s3:GetObject authorizes), or a wildcard that matches no action. ' +
+        'The analysis fails closed because the snapshot may predate a new action; fix or ' +
+        'remove the name.',
+      { details: { actions: split.notInReference, ...(split.hints.length ? { hints: split.hints } : {}) } },
     ));
   }
   if ((s.unsupportedConditions || []).length > 0) {
@@ -511,6 +528,9 @@ export function scan(input) {
         'resource, role-trust, trust, permissions-boundary, scp-rcp, scp, rcp, session).',
     );
   }
+  // R7: the explicit trusted-account list; an invalid id is a usage error (exit 2).
+  const trusted = parseTrustedAccountIds(inp.trustedAccountIds);
+  if (trusted.error) return usageError('INVALID_TRUSTED_ACCOUNT_IDS', trusted.error);
 
   // --- 2. Run the engine READ-ONLY. ------------------------------------------
   // requireExplicitFamily is set so the engine also refuses to guess. The family
@@ -533,6 +553,7 @@ export function scan(input) {
       family: familyToken,
       requireExplicitFamily: true,
       subjectAccount: isNonEmptyString(inp.subjectAccount) ? inp.subjectAccount.trim() : undefined,
+      trustedAccountIds: trusted.ids || undefined,
       // Pass only a VALIDATED partition; an unrecognized token is dropped (engine
       // defaults to 'aws') so it cannot masquerade as a confident assertion.
       partition: validPartition || undefined,
@@ -708,7 +729,8 @@ export function scan(input) {
     const suppressed = maskedGrants.filter((g) => g && g.kind === 'incomplete');
     if (malformed.length > 0) {
       const states = malformed.map((g) => state(
-        ANALYSIS_STATE.MALFORMED, g.code, maskedGrantMessage(g.code), { path: g.path },
+        ANALYSIS_STATE.MALFORMED, g.code, maskedGrantMessage(g.code),
+        { path: g.path, ...(g.details ? { details: { ...g.details } } : {}) },
       ));
       // Co-occurring suppressed never-match paths ride along so the full trace survives.
       for (const g of suppressed) {

@@ -38,7 +38,7 @@ import { globMatch } from './glob.js';
 import { UNMODELED_ESCALATION } from './catalog-unmodeled.js';
 // Generated full-service snapshot (scripts/gen-aws-action-catalog.mjs) for the S3
 // and global/account-level services real-world policies hit. Pure data module.
-import { AWS_REF_ACTIONS, AWS_REF_REQUIRES_WILDCARD, AWS_SERVICE_PREFIXES } from './catalog-aws-ref.js';
+import { AWS_REF_ACTIONS, AWS_REF_REQUIRES_WILDCARD, AWS_SERVICE_PREFIXES, AWS_REF_DATE } from './catalog-aws-ref.js';
 
 // AWS access levels (from the service-authorization reference vocabulary). Used
 // as annotation only; the rules do not (yet) consume it, but every catalog entry
@@ -56,8 +56,8 @@ export const ACCESS_LEVELS = Object.freeze({
 const L = ACCESS_LEVELS;
 
 // Dated snapshot identity. Bump both when the curated set below changes.
-export const ACTION_CATALOG_VERSION = '2026.10.20.2';
-export const ACTION_CATALOG_DATE = '2026-10-20';
+export const ACTION_CATALOG_VERSION = '2026.10.24.2';
+export const ACTION_CATALOG_DATE = '2026-10-24';
 
 // The curated snapshot: service -> { actionName: accessLevel }. Keys use the
 // canonical AWS casing for readability; lookups are case-insensitive (AWS treats
@@ -66,6 +66,43 @@ export const ACTION_CATALOG_DATE = '2026-10-20';
 // small, representative slice per service (the actions the rules reason about
 // plus the most common neighbours), NOT an exhaustive enumeration.
 const CATALOG_DATA = Object.freeze({
+  // v1.3.0 r5: CI/ECS role actions known in an Allow (levels from the AWS reference).
+  logs: {
+    CreateLogGroup: L.WRITE,
+    CreateLogStream: L.WRITE,
+    PutLogEvents: L.WRITE,
+    DescribeLogGroups: L.LIST,
+    DescribeLogStreams: L.LIST,
+    DescribeMetricFilters: L.LIST,
+    DescribeSubscriptionFilters: L.LIST,
+  },
+  // R7: SQS ack/visibility/attributes; message reads and producers stay unknown (fail closed).
+  sqs: {
+    GetQueueAttributes: L.READ,
+    GetQueueUrl: L.READ,
+    DeleteMessage: L.WRITE,
+    DeleteMessageBatch: L.WRITE,
+    ChangeMessageVisibility: L.WRITE,
+    ChangeMessageVisibilityBatch: L.WRITE,
+    DeleteQueue: L.WRITE,
+    PurgeQueue: L.WRITE,
+  },
+  // Cognito pool roles: the identity credential-exchange flow (trial finding T-1).
+  'cognito-identity': {
+    GetId: L.WRITE,
+  },
+  ecr: {
+    GetAuthorizationToken: L.READ,
+    BatchCheckLayerAvailability: L.READ,
+    GetDownloadUrlForLayer: L.READ,
+    BatchGetImage: L.READ,
+    // r8 E-1: push staging. Layers are unreferenced blobs and a new repo is empty until
+    // ecr:PutImage (COMPUTE-CODE-OVERWRITE) writes a manifest/tag. Levels: AWS reference.
+    InitiateLayerUpload: L.WRITE,
+    UploadLayerPart: L.WRITE,
+    CompleteLayerUpload: L.WRITE,
+    CreateRepository: L.WRITE,
+  },
   iam: {
     // Permissions-management surface (self-escalation primitives).
     AttachGroupPolicy: L.PERMISSIONS,
@@ -126,6 +163,9 @@ const CATALOG_DATA = Object.freeze({
     GetCallerIdentity: L.READ,
     GetSessionToken: L.READ,
     GetFederationToken: L.WRITE, // mints federated session credentials (AWS: Write)
+    // r8: AWS reference level Read, no resource types. Bearer token for the caller's own
+    // permissions (CodeArtifact / ECR Public); sts is curated, not snapshotted.
+    GetServiceBearerToken: L.READ,
   },
   s3: {
     GetObject: L.READ,
@@ -180,6 +220,7 @@ const CATALOG_DATA = Object.freeze({
     ScheduleKeyDeletion: L.WRITE, // F15: DESTRUCTIVE-ACTION
     DescribeKey: L.READ,
     ListKeys: L.LIST,
+    ListGrants: L.LIST, // r5: read-only; RevokeGrant stays unknown (no detector)
   },
   kinesis: {
     // G9: kinesis:Put* includes PutResourcePolicy (cross-account stream grant).
@@ -307,9 +348,11 @@ const CATALOG_DATA = Object.freeze({
 const REQUIRES_WILDCARD_RESOURCE = Object.freeze(new Set([
   'sts:getcalleridentity',
   'sts:getsessiontoken',
+  'sts:getservicebearertoken',
   'ec2:describetags',
   'cloudtrail:lookupevents',
   'cloudtrail:describetrails',
+  'ecr:getauthorizationtoken',
 ]));
 
 // Case-insensitive index: lowercased service -> Map(lowercased action -> {name,
@@ -338,6 +381,28 @@ function buildIndex(data) {
 // exit 3 into a clean exit 0 on a real escalation (generated list, see
 // scripts/gen-unmodeled-escalation.mjs). Keep an action here until a detector covers it.
 const UNMODELED_SET = new Set(UNMODELED_ESCALATION);
+// Snapshotted in v1.3.0 for guardrail Denies only: their reference actions stay withheld in an Allow.
+// r8 E-1: lambda, cloudformation, ecr, eks, events, scheduler and codeartifact left this set;
+// their writes go through gen-unmodeled-escalation like any reference service.
+export const DENY_ONLY_SERVICES = new Set(['sns', 'logs', 'config']);
+// r8 E-1: reads that are not plain metadata: cluster API access, invocation payloads,
+// and Lambda features whose semantics are not reviewed yet.
+const READ_WITHHELD = new Set([
+  'eks:accesskubernetesapi',
+  'lambda:getdurableexecution', 'lambda:getdurableexecutionhistory', 'lambda:getdurableexecutionstate',
+  'lambda:getmicrovm', 'lambda:getmicrovmimage', 'lambda:getmicrovmimagebuild', 'lambda:getmicrovmimageversion',
+  'lambda:getnetworkconnector', 'lambda:getwebaccountsettings', 'lambda:getwebfunction',
+  'lambda:getwebfunctionendpoint', 'lambda:getwebfunctionrevision',
+]);
+// r8 E-1: tag writes in the services released this round stay withheld (no detector models
+// tag-based ABAC, e.g. the load-balancer controller's aws:ResourceTag gates).
+const TAGGING_WITHHELD_SERVICES = new Set(['lambda', 'cloudformation', 'ecr', 'eks', 'events', 'scheduler',
+  'codeartifact', 'elasticloadbalancing', 'ecr-public']);
+// Fail closed in an Allow until a finding models them: ABAC tag writes and account-wide IAM dumps.
+const ALLOW_WITHHELD = (full) => /^iam:(?:un)?tag/.test(full) || READ_WITHHELD.has(full) ||
+  ['iam:getaccountauthorizationdetails', 'iam:getcredentialreport', 'iam:generatecredentialreport',
+    // Mints an OpenID token for any identity in the pool (assume its roles as anyone).
+    'cognito-identity:getopenidtokenfordeveloperidentity'].includes(full);
 
 // Merge the generated AWS-reference snapshot UNDER the curated data: an action the
 // curated map already names keeps its curated access level (the rules were tuned
@@ -363,7 +428,8 @@ function mergeReference(index, refData) {
       const accessLevel = ACCESS_LEVELS[set[action]];
       if (!accessLevel) continue; // unknown level token: leave the action unknown (fail closed)
       const full = `${svcLower}:${key}`;
-      if (UNMODELED_SET.has(full)
+      if (UNMODELED_SET.has(full) || DENY_ONLY_SERVICES.has(svcLower) || ALLOW_WITHHELD(full)
+        || (accessLevel === ACCESS_LEVELS.TAGGING && TAGGING_WITHHELD_SERVICES.has(svcLower))
         || (accessLevel === ACCESS_LEVELS.PERMISSIONS && !curatedServices.has(svcLower))) {
         withheld.add(full);
         continue;
@@ -520,6 +586,24 @@ export const defaultCatalog = Object.freeze({
     return this.lookup(token).requiresWildcardResource === true;
   },
   /**
+   * Does a service wildcard (s3:Get*) match a known, resource-scopable READ action?
+   * False for a concrete token, the bare "*" or an unknown service. Stops at the first match.
+   * @param {string} token raw action string
+   * @returns {boolean}
+   */
+  wildcardMatchesScopableRead(token) {
+    if (!isWildcardAction(token)) return false;
+    const parts = splitAction(String(token));
+    const svc = parts && INDEX.get(parts.service);
+    if (!svc) return false;
+    for (const [key, entry] of svc) {
+      if (entry.accessLevel !== ACCESS_LEVELS.READ) continue;
+      if (requiresWildcardKey(`${parts.service}:${key}`)) continue;
+      if (globMatch(parts.action, key)) return true;
+    }
+    return false;
+  },
+  /**
    * Classify a WILDCARD action token (one containing '*'/'?') for COVERAGE.
    * A wildcard cannot be existence-checked like a concrete action, but the
    * snapshot can still tell whether it is ANALYZABLE:
@@ -596,6 +680,93 @@ function isDenyServiceCarveOut(stmt, token) {
   if (!m) return false;
   const prefix = m[1].toLowerCase();
   return AWS_SERVICE_PREFIXES.has(prefix) || UNPUBLISHED_PREFIXES.has(prefix);
+}
+
+// --- r8 F-2: not in the reference snapshot -------------------------------------
+// A token whose service IS fully snapshotted (catalog-aws-ref.js) but which names no action
+// of it (a typo, a non-IAM API name, a wildcard matching nothing) is "not in the reference",
+// distinct from a withheld real action. Curated-only services (sqs, kinesis, ...) are a
+// partial slice, so their misses stay plain unknowns.
+export const REFERENCE_SNAPSHOT_DATE = AWS_REF_DATE;
+const REF_NAMES = new Map();
+for (const svc of Object.keys(AWS_REF_ACTIONS)) {
+  const names = new Set(Object.keys(AWS_REF_ACTIONS[svc]));
+  for (const e of (INDEX.get(svc) || new Map()).values()) names.add(e.name);
+  REF_NAMES.set(svc, [...names].sort());
+}
+// API names that are not IAM actions; the action that authorizes them (AWS S3 API docs).
+const AUTHORIZED_BY = Object.freeze({ 's3:headobject': 's3:GetObject', 's3:headbucket': 's3:ListBucket' });
+// Bounds on the classification and hint work (attacker-sized inputs).
+const MAX_CLASSIFIED = 256;
+const MAX_HINT_LEN = 64;
+
+function editDistance(a, b, limit) {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (cur[j] < best) best = cur[j];
+    }
+    if (best > limit) return limit + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+// Nearest same-service action name ("svc:Name") for a concrete miss, or null. Deterministic:
+// the shortest name the miss is a prefix of (UpdateFunction -> UpdateFunctionCode), else the
+// smallest edit distance, then longest shared prefix, then name order.
+function nearestAction(svc, action, names) {
+  const fixed = AUTHORIZED_BY[`${svc}:${action}`];
+  if (fixed) return fixed;
+  let ext = null;
+  for (const name of names) {
+    if (action.length >= 4 && name.toLowerCase().startsWith(action) && (!ext || name.length < ext.length)) ext = name;
+  }
+  if (ext) return `${svc}:${ext}`;
+  const limit = Math.max(2, Math.floor(action.length / 3));
+  let best = null;
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    const d = editDistance(action, lower, limit);
+    if (d > limit) continue;
+    let pre = 0;
+    while (pre < action.length && pre < lower.length && action[pre] === lower[pre]) pre++;
+    if (!best || d < best.d || (d === best.d && pre > best.pre)) best = { d, pre, name };
+  }
+  return best ? `${svc}:${best.name}` : null;
+}
+
+/**
+ * Split unrecognized action tokens into plain unknowns and tokens not in the reference
+ * snapshot (with a nearest-name hint where one is close). Deterministic; never throws.
+ * @param {Array<string>} tokens sorted unknown tokens (unrecognizedActions)
+ * @returns {{unknown:Array<string>, notInReference:Array<string>,
+ *            hints:Array<{action:string, suggestion:string}>}}
+ */
+export function classifyUnrecognized(tokens) {
+  const unknown = [];
+  const notInReference = [];
+  const hints = [];
+  for (const t of Array.isArray(tokens) ? tokens : []) {
+    const token = String(t);
+    const parts = notInReference.length < MAX_CLASSIFIED ? splitAction(token) : null;
+    const names = parts && REF_NAMES.get(parts.service);
+    if (!names || WITHHELD.has(`${parts.service}:${parts.action}`)) { unknown.push(token); continue; }
+    if (isWildcardAction(token)) {
+      if (names.some((n) => globMatch(parts.action, n.toLowerCase()))) { unknown.push(token); continue; }
+      notInReference.push(token);
+      continue;
+    }
+    if (names.some((n) => n.toLowerCase() === parts.action)) { unknown.push(token); continue; }
+    notInReference.push(token);
+    const suggestion = parts.action.length <= MAX_HINT_LEN ? nearestAction(parts.service, parts.action, names) : null;
+    if (suggestion) hints.push({ action: token, suggestion });
+  }
+  return { unknown, notInReference, hints };
 }
 
 /**

@@ -2,7 +2,7 @@
 import { accountOfEntry, hasTransportOnlyDeny } from './resource-shared.js';
 import { classifyPrincipals } from './trust.js';
 import { makeResourceFinding, summarizeEntries } from './resource-finding.js';
-import { principalScopingAnalysis } from './resource-conditions.js';
+import { principalScopingAnalysis, vacuousSourceGuards } from './resource-conditions.js';
 import { DOC_CROSS_ACCOUNT, DOC_SNS_ACCESS, DOC_SQS_ACCESS, RESOURCE_SERVICE_LABELS, RESOURCE_SERVICES } from './resource-catalogs.js';
 
 export const MESSAGING_DATA_PLANE_VECTORS = Object.freeze({
@@ -112,7 +112,7 @@ export function messagingPerServiceRules(model, ctx) {
     // the specific vector (exfiltrate / inject / drain / poison). Additive to the
     // generic critical PUBLIC-ACCESS: it never downgrades or suppresses it.
     if (c.anonymous) {
-      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service);
+      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service, vacuousSourceGuards(stmt));
       const principalScoped = expansionKeys.length === 0 && scopingKeys.length > 0;
       if (!principalScoped) {
         const vectors = [];

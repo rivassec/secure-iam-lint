@@ -1,0 +1,11 @@
+{
+  "name": "ec2:CreateNetworkInterface on one subnet (boundary: medium, not high)",
+  "note": "Not a redirect action: reported at medium.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "Eni", "Effect": "Allow", "Action": "ec2:CreateNetworkInterface", "Resource": "arn:aws:ec2:us-east-2:123456789012:subnet/subnet-0example" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["TRAFFIC-ROUTING"] }
+}

@@ -10,11 +10,18 @@
       "family": "identity",
       "threshold": "info",
       "partitionAsserted": null,
+      "subjectAccountAsserted": null,
+      "trustedAccountIdsAsserted": null,
       "analysisStatus": "complete",
       "reason": "CLEAN",
       "exitCode": 0,
       "findingsCount": 0,
       "blockingCount": 0,
+      "statementCoverage": {
+        "total": 3,
+        "withoutVerdict": 0,
+        "indexes": []
+      },
       "analysisStates": [],
       "findings": []
     }
@@ -36,7 +43,9 @@
             "analysisStatus": "complete",
             "exitCode": 0,
             "blockingCount": 0,
-            "findingsCount": 0
+            "findingsCount": 0,
+            "statementsTotal": 3,
+            "statementsWithoutVerdict": 0
           },
           "results": []
         }
