@@ -19,9 +19,10 @@
     "madge": "8.0.0",
     "typescript": "5.9.3"
   },
-  "comment:overrides": "Force PATCHED versions of dev-only transitive deps (via @playwright/test / @jazzer.js/core) that OSV flagged. The shipped package has zero runtime deps, so these never reach a consumer; we patch rather than ignore.",
+  "comment:overrides": "Force PATCHED versions of dev-only transitive deps (via @playwright/test / @jazzer.js/core / madge) that OSV flagged. The shipped package has zero runtime deps, so these never reach a consumer; we patch rather than ignore.",
   "overrides": {
     "@babel/core": "^7.29.6",
-    "tmp": "^0.2.6"
+    "tmp": "^0.2.6",
+    "minimatch": "^11.0.1"
   }
 }
