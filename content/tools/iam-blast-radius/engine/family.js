@@ -86,6 +86,24 @@ const KNOWN_PRINCIPAL_TYPES = new Set(['AWS', 'Service', 'Federated', 'Canonical
 // legacy '2008-10-17' - is unsupported. The engine NEVER silently rewrites an
 // unsupported version to this one; it fails closed instead.
 export const SUPPORTED_POLICY_VERSION = '2012-10-17';
+// 2008-10-17 differs only in treating ${...} as literal text (R5-3).
+export const LEGACY_POLICY_VERSION = '2008-10-17';
+// Any "${" in an analyzed key or value (decoded). Bounded; exhausting the walk counts as yes.
+function modelHasPolicyVariable(model) {
+  let budget = 200000;
+  const stack = [model && model.id, model && model.statements];
+  while (stack.length > 0) {
+    if (--budget < 0) return true;
+    const v = stack.pop();
+    if (typeof v === 'string') { if (v.includes('${')) return true; continue; }
+    if (v === null || typeof v !== 'object') continue;
+    for (const k of Object.keys(v)) {
+      if (k.includes('${')) return true;
+      stack.push(v[k]);
+    }
+  }
+  return false;
+}
 
 // Human labels for the UI / exports. Falls back to the raw token.
 export const FAMILY_LABELS = Object.freeze({
@@ -674,7 +692,10 @@ export function detectFamily(model, options) {
   // to - a version whose semantics were never validated. This is orthogonal to
   // the family shape, so it stacks with any shape block above.
   const version = model && typeof model.version === 'string' ? model.version : null;
-  if (version !== null && version !== SUPPORTED_POLICY_VERSION) {
+  // R5-3: a variable-free 2008-10-17 document reads the same under 2012-10-17.
+  const legacyEquivalent = version === LEGACY_POLICY_VERSION && !modelHasPolicyVariable(model);
+  if (legacyEquivalent) notes.push(`Policy Version "${LEGACY_POLICY_VERSION}" has no policy variables, so it is analyzed as "${SUPPORTED_POLICY_VERSION}".`);
+  if (version !== null && version !== SUPPORTED_POLICY_VERSION && !legacyEquivalent) {
     blockingCodes.push(code(
       COVERAGE_CODES.UNSUPPORTED_POLICY_VERSION,
       `Policy Version "${version}" is not supported. This analyzer models the ` +

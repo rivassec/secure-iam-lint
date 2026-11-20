@@ -102,6 +102,8 @@ const APPLICABILITY = Object.freeze({
   // F1-01/F1-02: single-action ACL-write primitive, same shape and exclusions as
   // DB-AUTH (notAction/NotResource are the WILDCARD shapes, not an object-ACL grant).
   'OBJECT-ACL-WRITE': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
+  // r8: same shape and exclusions as OBJECT-ACL-WRITE.
+  'TRAFFIC-ROUTING': ['positive', 'negative', 'boundary', 'deny', 'condition', 'hostile'],
   'DESTRUCTIVE-ACTION': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   'DETECTION-IMPAIRMENT': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notResource', 'hostile'],
   'NOTACTION-ALLOW': ['positive', 'negative', 'boundary', 'deny', 'condition', 'notAction', 'hostile'],

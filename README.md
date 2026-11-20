@@ -24,6 +24,18 @@ Live: <https://rivassec.com/tools/iam-blast-radius/>
   code is exactly what runs. Validated by 1,488 unit + security tests and three
   external adversarial suites.
 
+### What it does not see
+
+A clean run covers only the policy documents it was given.
+
+- Only AWS policy documents (JSON files) and Pulumi preview / export files are read.
+  Other infrastructure-as-code inputs are not read.
+- IAM created outside code (console, CLI, other tooling) is not seen.
+- Where a stack fails closed (exit `3`), the findings reported are a floor, not the
+  full set: statements it could not analyze are not counted as safe.
+- It reports potential blast radius from the policy alone, not effective
+  permissions.
+
 ## Repository layout
 
     content/tools/iam-blast-radius/   # the shipped web tool (served verbatim; engine + UI)
@@ -103,21 +115,23 @@ tag; for security-sensitive workflows pin the full commit SHA instead:
 
 ```yaml
       # Resolve the commit for a release tag and pin it (keep the version comment):
-      #   git ls-remote https://github.com/rivassec/secure-iam-lint 'refs/tags/v1.2.0^{}'
-      - uses: rivassec/secure-iam-lint@v1.2.0
+      #   git ls-remote https://github.com/rivassec/secure-iam-lint 'refs/tags/v1.3.0^{}'
+      - uses: rivassec/secure-iam-lint@v1.3.0
 ```
 
 Each GitHub Release lists the exact commit SHA for that tag; copy it into the
-`uses:` line in place of `v1.2.0` for a pin that cannot move.
+`uses:` line in place of `v1.3.0` for a pin that cannot move.
 
 ### Inputs and outputs
 
 | Input | Required | Notes |
 | ----- | -------- | ----- |
-| `paths` | yes | Newline-separated files or globs, e.g. `policies/**/*.json`. |
-| `family` | yes | `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp` or `scp-rcp` (also `trust` for `role-trust`). Never auto-detected: one family per run, so a mixed repo runs the Action once per family. |
-| `resource-arn`, `resource-type`, `resource-account` | for `resource` | The resource the policy is attached to. Without `resource-arn` the `resource` family fails closed. |
-| `subject-account` | no | 12-digit account id for account-aware checks (e.g. `iam:PassRole` viability). |
+| `paths` | yes, unless `pulumi-json` | Newline-separated files or globs, e.g. `policies/**/*.json`. |
+| `pulumi-json` | no | A `pulumi preview --json` or `pulumi stack export` file to scan instead of `paths`. See [Scanning Pulumi programs](#scanning-pulumi-programs). |
+| `family` | yes, unless `pulumi-json` | `identity`, `role-trust`, `resource`, `permissions-boundary`, `session`, `scp`, `rcp` or `scp-rcp` (also `trust` for `role-trust`). Never auto-detected: one family per run, so a mixed repo runs the Action once per family. |
+| `resource-arn`, `resource-type`, `resource-account` | for `resource`; `resource-arn` for same-account `role-trust` | The resource the policy is attached to. Without `resource-arn` the `resource` family fails closed. For `role-trust`, the role's own ARN: without it a trust is never reported as same-account. |
+| `trusted-account-ids` | no | Account ids you trust: a role-trust whose principals are all exact role/user ARNs there is rated medium, not cross-account high. Account roots stay high. |
+| `subject-account` | no | 12-digit account id for account-aware checks (e.g. `iam:PassRole` viability). For `role-trust` it is the account that owns every role in the run. |
 | `partition` | no | `aws`, `aws-us-gov`, `aws-cn`, ... Deliberately has **no default**: an omitted partition is "not asserted", and any verdict that depends on it fails closed (exit `3`). |
 | `fail-on` | no | Minimum severity that fails the check (default `high`; `none` disables). |
 | `sarif-output` | no | SARIF 2.1.0 path, relative to the workspace (default `iam-blast-radius.sarif`). |
@@ -125,8 +139,10 @@ Each GitHub Release lists the exact commit SHA for that tag; copy it into the
 | `budget-ms`, `max-files`, `max-total-bytes`, `max-sarif-results`, `max-sarif-bytes` | no | Resource ceilings; breaching one fails closed rather than reporting a partial scan clean. See [ACTION.md](ACTION.md). |
 
 Outputs: `exit-code`, `analysis-status` (`complete` / `partial` / `failed`),
-`findings-count`, `blocking-findings-count`, `sarif-path`, plus `baselined-count` /
-`baseline-stale-count` when a baseline is given. Outputs are written before the step
+`findings-count`, `blocking-findings-count`, `sarif-path`, `reason` (the headline
+enum code, or `clean`), plus `baselined-count` /
+`baseline-stale-count` when a baseline is given, and `scan-scope` (`delta` / `full`)
+with `pulumi-json`. Outputs are written before the step
 fails, so they are readable under `continue-on-error` - but prefer a baseline, which
 still fails on new results. A mixed repo runs one step per family (see
 [ACTION.md](ACTION.md#mixed-repos-one-step-per-family)).
@@ -142,9 +158,52 @@ still fails on new results. A mixed repo runs one step per family (see
 | `4` | Internal error. | **fail** |
 
 Exit `3` is never a green check. Multi-file runs report the worst code, so one
-unanalysable file fails the run even when every other file is clean. Note that the
-`resource` family currently always reports incomplete coverage (it sees the
-resource policy but not the identity side), so it reports exit `3` by design.
+unanalysable file fails the run even when every other file is clean. A `resource`
+policy reads clean only when every part of it is modeled; anything unmodeled is
+exit `3` and located by JSON path.
+
+### Scanning Pulumi programs
+
+Point the Action (or `iam-br --input pulumi <file>`) at JSON your Pulumi job already
+produces; the tool never runs Pulumi and never calls AWS. Each IAM policy in the file
+is scanned with the family and attached resource its resource type implies, and
+findings are located by `<urn>#<property>`.
+
+```yaml
+      - run: pulumi preview --stack dev --json > preview.json   # after your normal preview
+      - uses: rivassec/secure-iam-lint@v1
+        with:
+          pulumi-json: preview.json
+          subject-account: '123456789012'
+          partition: aws
+```
+
+- **Delta vs full.** A default preview lists only changed resources, so the run reports
+  `scan-scope: delta` and exit `0` means "no new risk in this change", not "stack
+  clean". For a full scan use `pulumi preview --show-sames --json` or
+  `pulumi stack export`. On `main` a workflow can require `scan-scope == 'full'`.
+- **Export vs preview.** `pulumi stack export` scans the deployed state, not the
+  change under review (a stack whose applies have been failing still shows what is
+  deployed). Gate a PR with `pulumi preview --json --show-sames`.
+- **Fail closed.** Values Pulumi doesn't know until `up` (`PULUMI_UNKNOWN`), secrets
+  (`PULUMI_SECRET`, never read or echoed), unsupported policy-bearing types, and an
+  unresolved or ambiguous account or partition are exit `3`. A brand-new stack's
+  preview usually exits `3`; scan a stack whose referenced resources already exist,
+  or its stack export.
+- **Same-account trust** is reported only when the stack proves the role's own
+  account (from IAM resource ARNs or the provider's config), never from
+  `subject-account` alone.
+- **Multi-account stacks.** A provider the stack can't prove (for example one
+  configured only by `profile`) is `PULUMI_ACCOUNT_UNRESOLVED` (exit `3`). Name its
+  account with `provider-accounts` (`<provider>=<account>`, one per line); it is
+  cross-checked against the stack and never proves a same-account trust by itself.
+  When providers span more than one account, leave `subject-account` unset: with it
+  set, the other accounts' documents fail closed (`PULUMI_ACCOUNT_MISMATCH`) and the
+  run warns `PULUMI_PROVIDERS_MULTI_ACCOUNT`.
+- **Baselines** work as for files, keyed per `<urn>#<property>`: a renamed resource or
+  stack shows up as one stale and one new entry.
+- **Keep `preview.json` inside the job.** Secrets are redacted, but config and resource
+  names are still sensitive; don't upload it as an artifact.
 
 ### Supported runners
 
@@ -191,6 +250,7 @@ jobs:
           path: iam-blast-radius.sarif
           if-no-files-found: ignore
           retention-days: 1
+          overwrite: true                   # v4+ names are immutable per run; re-runs need this
 
   upload:
     needs: scan
@@ -227,6 +287,23 @@ Notes:
   the Action more than once, so uploads do not overwrite each other.
 - The pins above are the versions current at the v1.1.0 release; let Dependabot
   keep your copies current (it also rewrites the `# vX.Y.Z` comments).
+
+## Container image
+
+The CLI is also available as a container image, for runners that are not GitHub Actions
+(Argo Workflows, EventBridge-triggered tasks, any CI). It is `node:24-alpine` plus the
+shipped CLI, with no runtime dependencies, running as a non-root user. It needs no
+network and no AWS credentials.
+
+    docker run --rm --network none -v "$PWD:/work:ro" -w /work \
+      ghcr.io/rivassec/secure-iam-lint:1.3.0 --family identity policy.json
+
+Arguments are the `iam-br` CLI's, and the exit-code contract is unchanged (`0` clean,
+`1` findings, `2` usage, `3` could not analyze, `4` internal): fail the job on any
+non-zero exit. Pin the image by digest in production. Each tag push (`v*.*.*`) publishes
+one image with a build provenance attestation; verify it with
+`gh attestation verify oci://ghcr.io/rivassec/secure-iam-lint:<version> --repo rivassec/secure-iam-lint`.
+Build it yourself with `docker build -t secure-iam-lint .` from a checkout.
 
 ## History
 

@@ -1,0 +1,11 @@
+{
+  "name": "events:PutTargets on one rule (positive, high)",
+  "note": "SNS/SQS/Lambda/bus targets need no role, so the holder can send the rule's events to a target it picks.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "Targets", "Effect": "Allow", "Action": "events:PutTargets", "Resource": "arn:aws:events:us-east-2:123456789012:rule/orders" }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["TRAFFIC-ROUTING"] }
+}

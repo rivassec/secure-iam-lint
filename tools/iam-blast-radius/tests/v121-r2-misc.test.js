@@ -30,7 +30,7 @@ test('V1-7: String/Arn equality pins are still credited', () => {
   for (const cond of [
     { StringEquals: { 'aws:PrincipalAccount': '444455556666' } },
     { ArnEquals: { 'aws:PrincipalArn': 'arn:aws:iam::444455556666:role/r' } },
-  ]) assert.equal(sev(res([pub(cond)]), 'PUBLIC-ACCESS'), 'high', JSON.stringify(cond));
+  ]) assert.equal(sev(res([pub(cond)]), 'RESOURCE-CROSS-ACCOUNT'), 'high', JSON.stringify(cond));
 });
 
 test('V3-08: a statement naming another bucket keeps the public finding and stays exit 3', () => {

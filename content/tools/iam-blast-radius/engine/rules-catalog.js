@@ -155,6 +155,15 @@ export const RULES = Object.freeze({
     docRef:
       'https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html',
   }),
+  // r8: ENI / ELB / EventBridge writes that change where traffic or events go.
+  'TRAFFIC-ROUTING': Object.freeze({
+    id: 'TRAFFIC-ROUTING',
+    order: 15,
+    title: 'Network / event routing change (ENI, load balancer, EventBridge)',
+    ruleVersion: '1',
+    docRef:
+      'https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-use-identity-based.html',
+  }),
 });
 
 export const RULE_IDS = Object.freeze(Object.keys(RULES));

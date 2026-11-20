@@ -20,6 +20,11 @@ export function accountOrOrgValueNarrows(value) {
   return !hasGlob(s);
 }
 
+// F-3: an org path (o-x/r-y/ou-z/...) narrows only when its org segment is a literal o-id.
+export function orgPathValueNarrows(value) {
+  return /^o-[a-z0-9]+$/i.test(String(value).split('/')[0]);
+}
+
 // Whether an ARN's account segment (field index 4:
 // arn:partition:service:region:ACCOUNT:resource) is PINNED to a single concrete
 // account id. "arn:aws:iam::123456789012:role/app-*" pins account 123456789012;

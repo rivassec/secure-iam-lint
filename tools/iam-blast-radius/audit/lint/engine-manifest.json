@@ -42,6 +42,7 @@
   "resource-arn.js",
   "resource-catalogs.js",
   "resource-conditions.js",
+  "resource-data-rules.js",
   "resource-finding.js",
   "resource-kms-rules.js",
   "resource-messaging-rules.js",

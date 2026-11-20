@@ -120,7 +120,8 @@
 // startsWith('arn:') gate) kills the "two gates agree wrongly" fail-open: a value
 // like "arn:" / "arn:aws" / " arn:aws:s3:::bucket/*" / a suffix-glob "*.pem" is now
 // decided by ONE grammar shared with rules.js, so the two surfaces cannot disagree.
-import { classifyResource, RESOURCE_CLASS } from './resource-arn.js';
+import { classifyResourceDetailed, RESOURCE_CLASS } from './resource-arn.js';
+import { neutralizeForDisplay } from './format-control.js';
 // A-condition-budget: the canonical Condition-value cap. validate.js is a leaf module
 // (no engine imports), so importing LIMITS introduces no cycle and keeps the shipped
 // browser engine graph free of any 'node:' import. The cap lives with the other input
@@ -165,8 +166,10 @@ export const MASKED_GRANT_CODES = Object.freeze({
 // result: a broad value can no longer fire NEITHER a finding NOR an incomplete (the
 // dynamodb:GetItem-on-broad fail-open, where the resource was broad yet no rule fired) -
 // every non-"*" value reaches a finding or incomplete, never a bare clean.
-function isUndecidableResourceValue(value) {
-  return classifyResource(value) === RESOURCE_CLASS.MALFORMED;
+// Returns the MALFORMED_REASON, or null for a decidable (BROAD/NARROW) value.
+function undecidableReason(value) {
+  const d = classifyResourceDetailed(value);
+  return d.cls === RESOURCE_CLASS.MALFORMED ? d.reason : null;
 }
 
 // Detection kinds:
@@ -193,8 +196,20 @@ function isForAnyValueOperator(operator) {
   return String(operator).toLowerCase().startsWith('foranyvalue:');
 }
 
-function entry(element, code, path, kind) {
-  return Object.freeze({ element, code, path: path == null ? null : String(path), kind });
+function entry(element, code, path, kind, details) {
+  const e = { element, code, path: path == null ? null : String(path), kind };
+  if (details) e.details = Object.freeze(details);
+  return Object.freeze(e);
+}
+
+// Cap on an offending value echoed in details (attacker-controlled; display-neutralized).
+export const MAX_DETAIL_VALUE_LEN = 200;
+
+function detailValue(v) {
+  const s = neutralizeForDisplay(String(v));
+  // A cut value is marked truncated by the trailing "...".
+  const truncated = s.length > MAX_DETAIL_VALUE_LEN;
+  return truncated ? `${s.slice(0, MAX_DETAIL_VALUE_LEN)}...` : s;
 }
 
 // A-condition-budget: total number of Condition VALUES on one statement, summed across
@@ -292,7 +307,8 @@ function detectConditionShapes(cond, i, isAllow, out) {
  * Operates on the frozen model only - no raw text, no re-parse.
  *
  * @param {object|null} model normalized model (from buildModel/modelFromText)
- * @returns {Array<{element:string, code:string, path:(string|null), kind:string}>}
+ * @returns {Array<{element:string, code:string, path:(string|null), kind:string,
+ *   details?:{value:string, reason:string, count:number}}>}
  *   masked-grant analyzer-states, in stable statement-then-element order.
  */
 export function detectMaskedGrants(model) {
@@ -387,15 +403,23 @@ export function detectMaskedGrants(model) {
     // a URL) can never return a silent CLEAN (threat-model T8). Emitted at most once
     // per axis per statement (element granularity), pointing at the axis; a value
     // that is already provably broad is excluded (it fires DATA-EXFIL instead - see
-    // isUndecidableResourceValue). Allow-only, symmetric to the empty-complement
+    // undecidableReason). Allow-only, symmetric to the empty-complement
     // shapes: a malformed Resource on a Deny cannot mask an Allow finding.
+    // details: the FIRST offending value (neutralized, capped), why, and how many.
     for (const [axis, list] of [['Resource', s.resources], ['NotResource', s.notResources]]) {
-      if (Array.isArray(list) && list.some(isUndecidableResourceValue)) {
+      if (!Array.isArray(list)) continue;
+      const bads = [];
+      for (const v of list) {
+        const reason = undecidableReason(v);
+        if (reason) bads.push({ v, reason });
+      }
+      if (bads.length > 0) {
         out.push(entry(
           axis,
           MASKED_GRANT_CODES.MALFORMED_RESOURCE_ARN,
           `Statement[${i}].${axis}`,
           MASKED_GRANT_KINDS.MALFORMED,
+          { value: detailValue(bads[0].v), reason: bads[0].reason, count: bads.length },
         ));
       }
     }

@@ -562,7 +562,7 @@ test('runAction: outputs carry the full contract set', () => {
   const io = makeIo({ 'admin.json': ADMIN_IDENTITY });
   const r = runAction({ env, io });
   assert.deepEqual(Object.keys(r.outputs).sort(), [
-    'analysis-status', 'blocking-findings-count', 'exit-code', 'findings-count', 'sarif-path',
+    'analysis-status', 'blocking-findings-count', 'exit-code', 'findings-count', 'reason', 'sarif-path',
   ]);
   assert.equal(r.outputs['sarif-path'], 'out/br.sarif');
   assert.equal(r.outputs['exit-code'], String(r.exitCode));

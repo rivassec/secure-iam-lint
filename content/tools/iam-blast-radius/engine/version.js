@@ -40,14 +40,14 @@ export const VERSION_MANIFEST = Object.freeze({
   // canonical release version; the root package.json `version` MUST equal this
   // (enforced by the version-coherence node test). Distinct from the internal
   // rule/action catalog versions below - bump on any user-facing release.
-  releaseVersion: '1.2.0',
+  releaseVersion: '1.3.0',
   // Rule/finding catalog version. analyze.js CATALOG_VERSION, coverage.js
   // RULE_VERSION, worker.js's fallback catalogVersion, and every rule/escalation
   // finding's `ruleVersion` all equal this.
   ruleVersion: '1',
   // Dated curated action-catalog snapshot (catalog.js ACTION_CATALOG_VERSION),
   // versioned on its own cadence, distinct from the rule version.
-  actionCatalogVersion: '2026.10.20.2',
+  actionCatalogVersion: '2026.10.24.2',
   // Committed deploy marker. Stage-11 #10: DERIVE from the single source
   // (coverage.js BUILD_SHA, imported above) instead of a second 'dev' literal.
   // The release stamps coverage.js BUILD_SHA; a separate literal here would ship a

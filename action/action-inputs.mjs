@@ -113,7 +113,8 @@ export function getInput(env, name) {
 export const DECLARED_INPUTS = Object.freeze([
   'paths', 'family', 'subject-account', 'resource-arn', 'resource-type', 'resource-account',
   'partition', 'fail-on', 'sarif-output', 'baseline', 'baseline-output', 'budget-ms',
-  'max-files', 'max-total-bytes', 'max-sarif-results', 'max-sarif-bytes',
+  'max-files', 'max-total-bytes', 'max-sarif-results', 'max-sarif-bytes', 'pulumi-json',
+  'provider-accounts', 'trusted-account-ids',
 ]);
 
 // Undeclared INPUT_* names; odd names are only counted.
@@ -132,11 +133,21 @@ export function unrecognizedInputs(env) {
   return { names: names.sort(), odd };
 }
 
+// AWS credential variables the Action never needs. Presence only; values are never read.
+export const CREDENTIAL_ENV_NAMES = Object.freeze(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN']);
+
+export function credentialsInEnv(env) {
+  return CREDENTIAL_ENV_NAMES.filter((n) => Object.hasOwn(env || {}, n) && String(env[n]) !== '');
+}
+
 export function readInputs(env) {
   return {
     paths: getInput(env, 'paths'),
+    pulumiJson: getInput(env, 'pulumi-json'),
+    providerAccounts: getInput(env, 'provider-accounts'),
     family: getInput(env, 'family'),
     subjectAccount: getInput(env, 'subject-account'),
+    trustedAccountIds: getInput(env, 'trusted-account-ids'),
     // The resource family's attached-resource context (review finding D1): built from
     // resource-arn / resource-type (+ optional resource-account). Omitted entirely when
     // neither is given, so a resource policy WITHOUT context still fails closed.

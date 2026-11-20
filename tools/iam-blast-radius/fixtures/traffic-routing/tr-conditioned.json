@@ -1,0 +1,12 @@
+{
+  "name": "elasticloadbalancing:ModifyRule tag-gated",
+  "note": "A tag Condition lowers confidence but the capability is still reported.",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Sid": "RuleTag", "Effect": "Allow", "Action": "elasticloadbalancing:ModifyRule", "Resource": "arn:aws:elasticloadbalancing:us-east-2:123456789012:listener-rule/app/web/0123456789abcdef/0123456789abcdef/0123456789abcdef",
+        "Condition": { "StringEquals": { "aws:ResourceTag/team": "web" } } }
+    ]
+  },
+  "expect": { "valid": true, "findingIds": ["TRAFFIC-ROUTING"] }
+}

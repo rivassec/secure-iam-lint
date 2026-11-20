@@ -2,7 +2,7 @@
 import { accountOfEntry, hasTransportOnlyDeny } from './resource-shared.js';
 import { classifyPrincipals } from './trust.js';
 import { makeResourceFinding, summarizeEntries, S3_OBJECT_ACTIONS } from './resource-finding.js';
-import { principalScopingAnalysis, NETWORK_SELECTOR_KEYS } from './resource-conditions.js';
+import { principalScopingAnalysis, vacuousSourceGuards, NETWORK_SELECTOR_KEYS } from './resource-conditions.js';
 import { DOC_KMS_CONDITIONS, DOC_KMS_GRANTS, DOC_KMS_KEY_POLICY, RESOURCE_SERVICE_LABELS, RESOURCE_SERVICES } from './resource-catalogs.js';
 import { S3_BUCKET_CONTROL_ACTIONS } from './resource-s3-rules.js';
 
@@ -236,7 +236,7 @@ export function kmsPerServiceRules(model, ctx) {
     // account-open (trap 2). State the channel selector narrows the request VECTOR,
     // not WHO may act; never downgrade the generic "*" over-grant.
     if (c.anonymous) {
-      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service);
+      const { scopingKeys, expansionKeys } = principalScopingAnalysis(stmt.condition, service, vacuousSourceGuards(stmt));
       const principalScoped = expansionKeys.length === 0 && scopingKeys.length > 0;
       if (!principalScoped) {
         const decoys = kmsChannelDecoyKeys(stmt.condition);

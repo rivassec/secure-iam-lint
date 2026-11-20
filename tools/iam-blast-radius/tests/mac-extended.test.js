@@ -61,13 +61,13 @@ test('CLI accepts --resource-type/--resource-arn/--resource-account', async () =
 test('L1-02: Principal "*" + exact foreign PrincipalArn scores like the named form', () => {
   const pub = trust('*', 'sts:AssumeRole', { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::444455556666:role/deploy' } });
   assert.equal(pub.exitCode, EXIT.FINDINGS);
-  assert.ok(ids(pub).includes('TRUST-PUBLIC:high'), ids(pub).join(','));
+  assert.ok(ids(pub).includes('TRUST-CROSS-ACCOUNT:high'), ids(pub).join(',')); // R5-5
   const named = trust({ AWS: 'arn:aws:iam::444455556666:role/deploy' }, 'sts:AssumeRole', undefined);
   assert.equal(named.exitCode, pub.exitCode);
   // An exact ExternalId correlation lowers it to medium, mirroring the named form.
   const corr = trust('*', 'sts:AssumeRole', {
     StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::444455556666:role/deploy', 'sts:ExternalId': 'exact-123' },
   });
-  assert.ok(ids(corr).includes('TRUST-PUBLIC:medium'), ids(corr).join(','));
+  assert.ok(ids(corr).includes('TRUST-CROSS-ACCOUNT:low'), ids(corr).join(',')); // R5-5: named + ExternalId
   assert.equal(corr.exitCode, EXIT.CLEAN);
 });

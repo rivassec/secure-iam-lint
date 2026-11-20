@@ -8,6 +8,334 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Nothing yet.
 
+## [1.3.0] - 2026-10-21
+
+### Added
+
+- **Pulumi input.** `iam-br --input pulumi <file>` and the Action input `pulumi-json`
+  scan every IAM policy in a `pulumi preview --json` or `pulumi stack export`. Each
+  policy's family and attached resource come from its resource type (classic AWS
+  types and the verified aws-native types). Findings are keyed `<urn>#<property>`
+  in JSON and SARIF `logicalLocations`, with the program's source line when it is
+  inside the project. The tool never runs Pulumi or calls AWS.
+  - A default preview reports `scanScope: "delta"` (Action output `scan-scope`):
+    exit 0 then means "no new risk in this change", not "stack clean". Use
+    `--show-sames` or a stack export for a full scan.
+  - The report lists the asserted subject account, each provider's account and
+    partition with the evidence behind them, per-role `groups[]` (trust, inline,
+    attached policies, `can-assume` edges) and `unresolvedEdges[]`. Groups are
+    informational and never change a verdict.
+  - Baselines work with Pulumi input, keyed per `<urn>#<property>` (inline policies
+    by name): a resource or stack rename shows as one stale and one new entry.
+- **TRUST-SAME-ACCOUNT** (low; medium for the account root): a role trust whose
+  principals are all valid ARNs in the role's own account, proven by the role's ARN
+  (`--resource-arn` / `resource-arn`, or the Pulumi stack). `--subject-account`
+  alone never proves it. The JSON report echoes `subjectAccountAsserted`.
+- **Action catalog:** sns, events, logs, config, lambda and cloudformation are
+  snapshotted for Deny statements, so AWS Control Tower guardrail SCPs no longer
+  fail on unknown actions (on a real Control Tower organization, most guardrail
+  statements now read clean, with no new highs). All iam reference actions are snapshotted.
+  ecr, codeartifact, scheduler and eks are snapshotted for Deny statements too.
+  cognito-identity is snapshotted, and its credential-exchange flow (`GetId`,
+  `GetCredentialsForIdentity`, `GetOpenIdToken`) is known in an Allow;
+  `GetOpenIdTokenForDeveloperIdentity` and `SetIdentityPoolRoles` stay fail-closed.
+- **Known in an Allow:** the CI/ECS role basics, logs `CreateLogGroup`,
+  `CreateLogStream`, `PutLogEvents` and the log-group/stream/filter `Describe*`
+  listings, plus ecr `GetAuthorizationToken`, `BatchCheckLayerAvailability`,
+  `GetDownloadUrlForLayer` and `BatchGetImage`. Log-data reads (`GetLogEvents`,
+  `FilterLogEvents`, queries) stay unknown (exit 3).
+- **Pulumi:** `aws:ssoadmin/permissionSetInlinePolicy`, `aws:ecr/registryPolicy`,
+  `aws:ecr/repositoryCreationTemplate`, `aws:cloudwatch/logResourcePolicy` and
+  `aws:dynamodb/resourcePolicy` are mapped; a resource policy with no single
+  attached resource fails closed.
+- **Pulumi:** `--provider-account <provider>=<account>` and the `provider-accounts`
+  input name the account of a provider the stack can't prove (for example one
+  configured only by profile). It is cross-checked against the stack, a mismatch
+  fails closed, and it never proves a same-account trust on its own.
+- **Resource policies on ECR repositories, Secrets Manager secrets and DynamoDB
+  tables** are analyzed (`--resource-type ecr-repository | secretsmanager-secret |
+  dynamodb-table`, or via the Pulumi mapping). Public, cross-account, same-account
+  and confused-deputy findings apply, plus RESOURCE-DATA-EXPOSURE (a public read,
+  write or delete) and RESOURCE-POLICY-TAKEOVER (a grant that can rewrite the
+  resource policy). An unclassified action keeps the policy at exit 3. On these
+  three services an org- or account-scoped `*` is cross-account (not public), an
+  exact `aws:PrincipalArn` pin lowers a cross-account grant to medium,
+  `aws:SourceOrgID` counts as a service source binding, and a `ForAllValues` guard
+  on a service-only source key (absent for IAM callers, so it constrains nothing)
+  is called out as vacuous.
+- **`--trusted-account-id <id>`** (repeatable or a comma list) and the Action input
+  `trusted-account-ids`: a role trust whose principals are all exact role, user or
+  assumed-role ARNs in a listed account is TRUST-CROSS-ACCOUNT medium instead of high.
+  Account-root principals, wildcards and mixed or unlisted principals stay high; the
+  list is the only source of trust and is never inferred. The JSON report echoes
+  `trustedAccountIdsAsserted`.
+- **Pulumi role grouping carries the trust audience into the role's policies:** a role
+  assumable by every identity of a Cognito identity pool has its data read, write and
+  delete findings raised to at least high, unless every resource is scoped per user by
+  `${cognito-identity.amazonaws.com:sub}`; whatever the bucket is called, S3 object
+  read, write or delete on a whole bucket or `*` reports **POPULATION-SCALE-DATA-ACCESS**
+  (high). A Cognito trust is population-scale unless an exact `:sub` pin narrows it.
+- **TRUST-POD-IDENTITY-UNBOUND** (low): an unbound `pods.eks.amazonaws.com` statement
+  next to a pinned IRSA `sub` lets any same-account Pod Identity association bind the
+  role, bypassing the pin; only an exact `aws:SourceArn` pin to EKS cluster ARNs binds
+  it. With Pulumi input it is medium when the role can write IAM.
+- The GitHub OIDC `repository_id` claim is modeled as a single-repository pin: with a
+  branch pin the trust is low, with any ref high, never internet-open critical.
+- **RESOURCE-INERT-STATEMENT** (info): a resource-policy statement that grants only
+  AWS service principals but requires a principal-only key (`aws:PrincipalOrgID`,
+  `aws:PrincipalArn`, ...) never matches a service call, so it grants nothing and is
+  no longer reported as confused deputy.
+- The condition keys `kms:GrantIsForAWSResource` and `kms:CallerAccount` are modeled
+  for the AWS-managed key-policy shapes, and `kms:ListGrants` is a known read.
+
+### Security
+
+- **The Pulumi adapter fails closed (exit 3), naming the URN and property,** on:
+  preview unknowns (`PULUMI_UNKNOWN`) and secrets (`PULUMI_SECRET`, never read or
+  echoed), on mapped and unmapped properties alike; duplicate JSON keys, URNs or
+  inline policy names; unknown operations, malformed entries and size, count or depth
+  limits; unmapped IAM types and policy documents (JSON or YAML text) in properties
+  it doesn't analyze; an unresolved, ambiguous or mismatched account or partition;
+  and ambiguous resource joins. It never builds a placeholder ARN.
+- Only IAM resources (always in the caller's account) or provider config prove a
+  stack's account; imported, read or ARN-adoptable resources (SNS, SQS, KMS, Lambda
+  and others) never do, and prior-state outputs are reused only for in-place updates
+  on the same provider.
+- **Lambda permissions:** a grant to the public or another account exits 3
+  (`PULUMI_UNMODELED_PERMISSION`, per document); a service grant with no
+  `sourceArn`/`sourceAccount` is RESOURCE-CONFUSED-DEPUTY high (lane D, E-4).
+- A wildcard `aws:SourceOrgID` / `aws:SourceOrgPaths` value (`o-*`, `*/*`) is no
+  longer credited as a source binding. An exact `aws:PrincipalArn` pin lowers only a
+  read-only cross-account grant in the pinned principal's own account. A vacuous
+  `ForAllValues` source guard no longer escalates a scoped `*` to public.
+- In an Allow, actions of the Deny-only services, iam tag/untag actions and the
+  account-wide IAM dumps (`GetAccountAuthorizationDetails`, credential reports)
+  stay unknown (exit 3) until a finding models them.
+
+### Changed
+
+- **Behavior change:** read-only wildcards in the Deny-only services
+  (`lambda:Get*`, `lambda:List*`, `cloudformation:Describe*`, `config:Describe*`)
+  and `iam:Get*` on `*` now exit 3 instead of 0, because they reach data-plane reads
+  (log events, Lambda environment variables, templates) or account-wide IAM dumps.
+  A read-only policy that was green on v1.2.0 may fail closed on v1.3.0.
+- A same-account trust that v1.2.0 reported as TRUST-CROSS-ACCOUNT high is
+  TRUST-SAME-ACCOUNT when the role ARN is supplied. Baseline ids include severity,
+  so an accepted cross-account finding re-fires once as the new finding.
+- `gate:no-network` matches network API names as whole words.
+- **Calibrations from a real-estate triage:** log-ingestion writes
+  (`CreateLogGroup`/`CreateLogStream`/`PutLogEvents`) on a broad scope are
+  WILDCARD-RESOURCE medium; reads and writes on the CodePipeline artifact store
+  `codepipeline-<region>-*` are medium, only for the AWS artifact-store actions
+  (bucket configuration, lifecycle, versioning and retention writes stay high); `sqs:DeleteMessage`/`DeleteMessageBatch` are a
+  consumer ack, not destructive (`DeleteQueue`/`PurgeQueue` stay destructive). Any other
+  action, a `logs:` wildcard, or a delete keeps the high.
+- **Renamed:** across the resource family, a `Principal "*"` scoped by a positive
+  principal condition (`aws:PrincipalOrgID`, `aws:PrincipalAccount`,
+  `aws:PrincipalArn`, `aws:PrincipalTag`, `kms:CallerAccount`, ...) is
+  RESOURCE-CROSS-ACCOUNT instead of PUBLIC-ACCESS, with the same severity; scoped to
+  the owner's own account by `aws:PrincipalAccount`, it is RESOURCE-SAME-ACCOUNT-GRANT
+  high (it grants every principal in the account directly; the `:root` form stays
+  medium).
+  Baseline ids include the rule id, so an accepted PUBLIC-ACCESS on such a policy
+  re-fires once as the new finding.
+- A `2008-10-17` policy without policy variables is analyzed as `2012-10-17` (its
+  only semantic difference is `${...}`); one with a variable still fails closed.
+- A `Principal "*"` trust pinned by an exact `ArnEquals`/`StringEquals` on
+  `aws:PrincipalArn` to concrete principal ARNs is reported as those named
+  principals (TRUST-CROSS-ACCOUNT, or TRUST-SAME-ACCOUNT with the role ARN), not
+  TRUST-PUBLIC. Like operators, wildcards, `IfExists` and set operators stay public.
+- Pulumi component resources (`custom: false`) are no longer backstopped; the child
+  resources they create are analyzed on their own.
+
+### Action outputs and docs (round 8, lane E)
+
+- Action: the failure headline prefers a run-level state (for example
+  `PULUMI_ACCOUNT_UNRESOLVED`) over a document-level `COVERAGE_INCOMPLETE` when both
+  share the worst exit code. The exit code is unchanged.
+- Action: new `reason` output, the headline reason as an enum code (or `clean`),
+  never input-derived text.
+- Action: a runner warning `AWS_CREDENTIALS_IN_ENV` (variable names only, never
+  values) when AWS credentials are in the step environment; the Action needs none.
+- Docs: ACTION.md Credentials section; data in the SARIF vs the CLI's JSON (SARIF
+  evidence blocks can carry ARNs, account ids and condition values); the
+  `actions/upload-artifact` `overwrite: true` note for re-runs; README scope section
+  on what the tool does not see.
+
+### Known limitations
+
+- Source-bound and own-account Lambda permissions are listed in the Pulumi report's
+  `unanalyzed[]`, not analyzed. An org-scoped permission is RESOURCE-CROSS-ACCOUNT high
+  (it was listed), and a `sourceArn` binds only with a literal account, or with no account
+  and no glob (a wildcard-account `sourceArn` was treated as bound).
+- `aws-native:events:EventBusPolicy` is not mapped; a policy statement in it fails
+  closed (exit 3).
+- A baseline can accept an engine coverage gap (for example `UNKNOWN_ACTION`), as
+  in v1.2.0; `analysis-status: partial` stays visible. Pulumi adapter states are
+  never accepted.
+- `kms:RevokeGrant` stays unknown in an Allow (a permissions change with no
+  detector), so a key policy whose grant statement allows it still exits 3.
+- DynamoDB stream policies, and a wildcard ARN as the attached resource, stay
+  unsupported (exit 3).
+- Without `trusted-account-ids`, an exact cross-account role trust stays
+  TRUST-CROSS-ACCOUNT high: an in-org role can't be told apart from a vendor's.
+- A bare identity policy can't know its role's trust, so the Cognito population-scale
+  raise applies only with Pulumi input.
+- SARIF paths are relative to the Pulumi project; a project in a repo subdirectory
+  does not map to files in code scanning yet.
+
+### Round 8, lane A: action catalog
+
+- **Snapshot gaps:** `ecr-public` is snapshotted (`GetAuthorizationToken` and the reads
+  are known in an Allow; image push and repository writes stay fail-closed), and
+  `sts:GetServiceBearerToken` is known (AWS level Read, Resource `*` only). Action
+  catalog 2026.10.24.2, AWS reference fetched 2026-10-24.
+- **Security:** a service-wildcard read on Resource `*` (`dynamodb:Get*`, `ec2:Get*`,
+  `kms:Describe*`) read CLEAN while the same concrete read (`dynamodb:GetItem`) failed
+  closed. A wildcard that matches a catalogued scopable read now exits 3
+  (BROAD_RESOURCE_UNDECIDABLE) unless a rule or Deny covers it. Listing reads
+  (`ec2:Describe*`) and Resource-`*`-only reads are unchanged.
+- **E-1, fewer withheld actions in an Allow.** lambda, cloudformation, ecr, eks, events,
+  scheduler and codeartifact are no longer Deny-only, and elasticloadbalancing is
+  snapshotted. Their reads and listings are known (a resource-scopable read on `*` still
+  exits 3); their writes are known only where a detector covers them:
+  - COMPUTE-CODE-OVERWRITE now covers `cloudformation:ExecuteChangeSet`,
+    `lambda:UpdateAlias` and `ecr:PutImage`.
+  - The PassRole paths cover `cloudformation:CreateChangeSet` and
+    `scheduler:CreateSchedule` / `UpdateSchedule` (new scheduler entry); they are
+    known because alone they cannot run as a role.
+  - RESOURCE-POLICY-WRITE covers `ec2:CreateNetworkInterfacePermission`.
+  - Deletes are DESTRUCTIVE-ACTION. ECR layer uploads and `ecr:CreateRepository` are
+    known: nothing runs what they stage until `ecr:PutImage`.
+  - New rule **TRAFFIC-ROUTING** covers the ENI, security-group, ELB and EventBridge
+    routing writes. High (exit 1 at the default `fail-on`) for the actions that can point
+    existing traffic or events at a target the holder picks, including one in another
+    account: `elasticloadbalancing:CreateListener` / `CreateRule` / `ModifyListener` /
+    `ModifyRule`, `events:PutTargets` (SNS, SQS, Lambda and bus targets need no role) and
+    `events:UpdateApiDestination`. Medium for the rest: ENI create / attach / detach /
+    modify and IP assignment, security-group rule writes, the other ELB writes, and
+    `events:PutRule`, `EnableRule` / `DisableRule`, `PutEvents`, buses, API destinations,
+    endpoints, archives and replays. On Resource `*` these also keep WILDCARD-RESOURCE
+    high. `ec2:AuthorizeSecurityGroupIngress` on a named group used to read CLEAN with no
+    finding; it is now a medium finding. The AWS VPC CNI policy moves from exit 3 to 1.
+  - Still withheld (exit 3): ELB trust stores, EventBridge connections
+    (`RetrieveConnectionCredentials`, `CreateConnection`), partner sources, subscribers and
+    `InvokeApiDestination`, route-table writes, `ecr:BatchImportUpstreamImage`,
+    `lambda:PublishVersion` and the other unmodeled writes, tag writes in these
+    services, `eks:AccessKubernetesApi`, Lambda durable-execution and new microVM /
+    web-function reads (so `lambda:Get*` stays unknown), and sns, logs and config
+    (still Deny-only).
+- **F-2, NOT_IN_REFERENCE.** An action of a fully snapshotted service that is not in the
+  AWS reference snapshot (`s3:HeadObject`, `lambda:UpdateFunction`), or a wildcard that
+  matches none of its actions (`ecr-public:BatchGet*`), now reports the state
+  `NOT_IN_REFERENCE` ("not in the <date> AWS reference snapshot") instead of
+  `UNKNOWN_ACTION`, with a deterministic nearest-name hint in `details.hints` and in
+  SARIF (`Did you mean: ...`, `properties.nameHints`); `s3:HeadObject` -> `s3:GetObject`
+  and `s3:HeadBucket` -> `s3:ListBucket`. It still exits 3. Withheld actions,
+  unsnapshotted services and the curated-only services keep `UNKNOWN_ACTION`. A baseline
+  can accept it like `UNKNOWN_ACTION`; a baseline that accepted these names under
+  `UNKNOWN_ACTION` must be regenerated.
+- **Work budget:** rule matching skips catalog entries a pattern cannot match (wrong
+  length with no `*`, or wrong service before the first `:`), an exact filter with a
+  randomized equivalence test. The 9,998-pattern deny-fence case uses about 34M of the
+  60M work budget (it was at 59.7M in v1.2.0, and the bigger catalogs pushed it over).
+  `scripts/gen-unmodeled-escalation.mjs` runs again (its baseline shim lacked
+  `AWS_REF_DATE`) and counts a sub-threshold detector finding as coverage.
+
+### Round 8, lane B: condition keys
+
+- **Org keys (F-3).** `aws:ResourceOrgID`, `aws:ResourceOrgPaths` and
+  `aws:PrincipalOrgPaths` are modeled, so an org gate no longer fails the run closed
+  (exit 3). A positive, literal `aws:ResourceOrgID` (or `ForAnyValue` org path) on a
+  wildcard-account `sts:AssumeRole` keeps ASSUME-ROLE-EXPANSION at its severity and
+  names the org condition as the bound. `IfExists`, negated, globbed (`o-*`) and
+  `${...}` org values are not credited.
+  - The `*OrgPaths` keys are multivalued: without `ForAnyValue`/`ForAllValues` they
+    stay UNSUPPORTED_CONDITION.
+  - Resource policies: `aws:PrincipalOrgPaths` narrows a `"*"` grant only when its
+    org segment is a literal org id; `o-*/...` stays public.
+  - Role trust: `aws:PrincipalOrgPaths` is not credited; the trust keeps its ungated
+    severity.
+- **Trial condition keys (E-2).** Modeled as gates that can only narrow an Allow, so
+  findings are unchanged and the run no longer fails closed on them:
+  `iam:AWSServiceName`, `sts:AWSServiceName`, `ec2:AuthorizedService`,
+  `acm-pca:TemplateArn`, `aws:RequestTag/<k>`, `aws:ResourceTag/<k>`,
+  `ec2:ResourceTag/<k>` and `kms:EncryptionContext:<k>` (selectors, never credited);
+  `ec2:Subnet`, `ec2:CreateAction` and `elasticloadbalancing:CreateAction`
+  (constraints, credited only under a positive match); and the GitHub OIDC
+  `token.actions.githubusercontent.com:ref` claim (never credited: a ref does not pin a
+  repository). A tag or encryption-context key with an empty suffix, and a `:ref` claim
+  on any other provider, stay unsupported.
+
+### Lane C (r8): resource ARNs and coverage detail
+
+- **F-1:** codeartifact, scheduler, ecr-public, acm-pca, amplify, cognito-idp, ses and
+  bedrock-agentcore are modeled `type/id` ARN grammars (checked in the AWS service
+  reference). A wildcard after a concrete top-level name (`repository/<domain>/*`,
+  `package/<domain>/<repo>/*`) now reads narrow instead of `MALFORMED_RESOURCE_ARN`;
+  a whole-collection wildcard (`repository/*`) still reads broad. Withheld actions on
+  these services still exit 3 (`UNKNOWN_ACTION`).
+- **MALFORMED_RESOURCE_ARN details:** the state now carries `details.value` (the first
+  offending value, display-neutralized and capped at 200 characters), `details.reason`
+  (`EMPTY`, `WHITESPACE`, `NOT_AN_ARN`, `EMPTY_LEADING_SEGMENT` or
+  `UNMODELED_SERVICE_GLOB`) and `details.count` (malformed values on that axis). SARIF
+  adds `malformedReason`, `offendingValue` (markdown-inert) and `malformedCount` to the
+  row properties and a fixed reason sentence to the message. Fingerprints don't change.
+- **F-6:** each document reports how many of its statements got no verdict (unknown
+  action, unsupported condition, malformed resource, broad-but-uncovered read, ...):
+  CLI JSON `statementCoverage: { total, withoutVerdict, indexes }` (per document for
+  Pulumi; `null` when the input was rejected) and SARIF run properties
+  `statementsTotal` / `statementsWithoutVerdict`. A document-wide gap (blocked family,
+  budget abort, spoofed token, truncated graph) counts every statement. Findings in an
+  incomplete document are a floor.
+
+### Round 8, lane D (Pulumi)
+
+- **E-3:** ECR registry policies and repository creation templates are analyzed
+  against the registry (`repository/*`, or `repository/<prefix>/*` for a template),
+  and CloudWatch Logs resource policies get the account/region context, in the
+  provider's account and region. Only an account the stack proves counts
+  (`subject-account` / `provider-accounts` never do); otherwise that document alone
+  fails closed with `PULUMI_CONTEXT_UNPROVEN`. The engine accepts such a registry-wide
+  ARN only with the explicit `ecr-registry` resource type. Registry-level ECR actions
+  (`ecr:ReplicateImage`, `ecr:CreateRepository`) are not classified yet, so that
+  document still exits 3, now with its findings.
+- **CloudWatch Logs resource policies are modeled** (resource type `logs`): a log group
+  ARN, or `arn:aws:logs:<region>:<account>:*` with the `logs` type for the account-wide
+  policy. The generic checks apply (public, cross-account, an unbound service principal
+  is RESOURCE-CONFUSED-DEPUTY high, a source-bound delivery grant is clean), plus
+  RESOURCE-DATA-EXPOSURE for a public read or write and RESOURCE-POLICY-TAKEOVER for
+  `logs:PutResourcePolicy`. Log-group reads, writes, deletes and metadata actions are
+  classified; delivery, account-level and integration actions are not and fail closed,
+  as does a statement naming another account's or region's log groups. In an identity
+  policy `logs` stays Deny-only.
+- **E-4:** `aws:lambda/permission:Permission` verdicts are per document
+  (`<urn>#principal`), never run-level. A service-principal grant without a real
+  `sourceArn`/`sourceAccount` (a `*` sourceArn binds nothing) is
+  RESOURCE-CONFUSED-DEPUTY high. A public or cross-account grant stays exit 3
+  (`PULUMI_UNMODELED_PERMISSION`) but no longer names the run when another document
+  can.
+- **E-5:** with `subject-account` set and providers resolving to more than one
+  account, the run warns once (`PULUMI_PROVIDERS_MULTI_ACCOUNT`: stderr by code, JSON
+  `warnings[]`, SARIF run property `warnings`). The verdict is unchanged.
+- **F-5 (docs):** `pulumi stack export` scans deployed state; gate PRs with
+  `pulumi preview --json --show-sames`.
+
+### Lane F: CI, Node and container image
+
+- **Node 24.22.1 in CI and release** (was 24.20.0), picking up the CVE-2026-111497
+  (bundled Brotli) fix. The `setup-node` pin comment now reads `v7.1.0`, the tag the
+  pinned SHA really is.
+- **Fuzz build image:** the ClusterFuzzLite build installs Node 24.22.1 from
+  nodejs.org, verified against a pinned SHA256 from `SHASUMS256.txt`, ahead of the base
+  image's EOL Node 20 for `npm ci` and the build. The fuzz runtime Node still comes
+  from the runner image.
+- **`engines.node` is now `>=22`** (was `>=20`); Node 20 is end-of-life. CI tests
+  Node 24 only.
+- **Container image:** `Dockerfile` (digest-pinned `node:24.22.1-alpine`, non-root) and
+  `.github/workflows/container.yml`: build + smoke test on PRs, and on a `v*.*.*` tag a
+  push to `ghcr.io/rivassec/secure-iam-lint:<version>` with build provenance.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added
@@ -167,7 +495,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (was `node20`, which GitHub is retiring). The Action is still a plain ESM entry
   point (`action/index.mjs`) with no build step, bundled `dist`, or runtime npm
   dependencies; the Node runtime is provided by the runner. GitHub.com-hosted
-  runners are the supported baseline. The npm package's `engines.node` is unchanged.
+  runners are the supported baseline. The npm package's `engines.node` is raised separately (see Changed).
 - **Action self-test coverage** (`.github/workflows/action-selftest.yml`): new cases
   assert both the step outcome and the `exit-code` output for an internal error
   (exit `4`, via an unreadable policy file), a mixed valid + malformed `paths` list
@@ -235,7 +563,8 @@ marks the release and makes the compare/tag links below resolve - is pending.
   self-check runs in CI, and pointed at a real AWS account it verifies the engine
   never reads CLEAN on a policy AWS reports as allowing the action.
 
-[Unreleased]: https://github.com/rivassec/secure-iam-lint/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/rivassec/secure-iam-lint/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/rivassec/secure-iam-lint/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/rivassec/secure-iam-lint/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/rivassec/secure-iam-lint/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/rivassec/secure-iam-lint/releases/tag/v1.0.0

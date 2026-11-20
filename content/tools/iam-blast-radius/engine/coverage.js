@@ -130,6 +130,48 @@ export function duplicateSids(model) {
   return out;
 }
 
+// F-6: the statement index a coverage path names ("Statement[3].Resource" -> 3), or null.
+function statementIndexOfPath(path) {
+  const m = /^Statement\[(\d+)\]/.exec(String(path == null ? '' : path));
+  return m ? Number(m[1]) : null;
+}
+
+// F-6: which statements were left without a verdict. A signal that names no statement
+// (blocked family, budget abort, spoofed token, truncated graph, unmodeled trust Deny,
+// an unlocated element) counts every statement: unknown scope is never read as zero.
+// Action / condition-key lists are per document, so a statement carrying a listed token
+// counts (may over-count, never under-count).
+function statementsWithoutVerdict(statements, sig) {
+  const all = statements.map((s, i) => (typeof s.index === 'number' ? s.index : i));
+  const idx = new Set();
+  let docWide = sig.docWide;
+  const addPath = (p) => {
+    const n = statementIndexOfPath(p);
+    if (n == null) docWide = true; else idx.add(n);
+  };
+  for (const p of sig.paths) addPath(p);
+  for (const n of sig.indexes) if (Number.isInteger(n)) idx.add(n); else docWide = true;
+  const actions = new Set(sig.actions);
+  const keys = new Set(sig.conditionKeys.map((k) => k.toLowerCase()));
+  statements.forEach((s, i) => {
+    const at = all[i];
+    const toks = [...(Array.isArray(s.actions) ? s.actions : []), ...(Array.isArray(s.notActions) ? s.notActions : [])];
+    if (actions.size > 0 && toks.some((t) => actions.has(String(t)))) idx.add(at);
+    const cond = s.condition && typeof s.condition === 'object' ? s.condition : null;
+    if (keys.size > 0 && cond) {
+      for (const op of Object.keys(cond)) {
+        const block = cond[op];
+        if (block && typeof block === 'object'
+          && Object.keys(block).some((k) => keys.has(k.toLowerCase()))) idx.add(at);
+      }
+    }
+  });
+  // A listed token or key that matched no statement is still a gap: fail closed.
+  if (idx.size === 0 && (actions.size > 0 || keys.size > 0)) docWide = true;
+  const indexes = docWide ? all.slice() : all.filter((n) => idx.has(n));
+  return Object.freeze({ count: indexes.length, indexes: Object.freeze(indexes) });
+}
+
 /**
  * Enrich a family-gate coverage object into the full analysis-coverage summary.
  *
@@ -317,6 +359,8 @@ export function enrichCoverage(coverage, context) {
     code: String(g.code),
     path: g.path != null ? String(g.path) : null,
     kind: String(g.kind),
+    // MALFORMED_RESOURCE_ARN: { value (neutralized, capped), reason, count }.
+    ...(g.details ? { details: Object.freeze({ ...g.details }) } : {}),
   }));
 
   // S3-dos-budget: the analysis was ABORTED mid-run by the cooperative resource
@@ -458,6 +502,25 @@ export function enrichCoverage(coverage, context) {
     codes.push('SPOOFED_TOKEN_NORMALIZED');
   }
 
+  const withoutVerdict = statementsWithoutVerdict(statements, {
+    docWide: !!cov.blocked || analysisAborted || spoofedTokenCount > 0 || truncated
+      || trustDeny.unmodeled
+      || !!(resourceContextSummary && resourceContextSummary.incomplete
+        && resourceContextSummary.reasons.length === 0),
+    paths: [
+      ...unsupportedElements.map((e) => e.path),
+      ...maskedGrants.map((g) => g.path),
+      ...(resourceContextSummary && resourceContextSummary.incomplete
+        ? resourceContextSummary.reasons.map((r) => r.path) : []),
+    ],
+    indexes: [
+      ...actionResourceMismatches.map((m) => m.statementIndex),
+      ...broadUndecidableUncovered.map((u) => u.statementIndex),
+    ],
+    actions: unrecognizedActions,
+    conditionKeys: unsupportedConditions,
+  });
+
   const summary = Object.freeze({
     detectedFamily: cov.detected || 'unknown',
     detectedFamilyLabel: FAMILY_LABELS[cov.detected] || String(cov.detected || 'unknown'),
@@ -467,6 +530,8 @@ export function enrichCoverage(coverage, context) {
     blocked: !!cov.blocked,
     incomplete,
     statements: Object.freeze({ total, accepted, rejected }),
+    // F-6: statements left without a verdict ({ count, indexes }); see statementsWithoutVerdict.
+    statementsWithoutVerdict: withoutVerdict,
     unrecognizedActions: Object.freeze(unrecognizedActions),
     unsupportedConditions: Object.freeze(unsupportedConditions),
     unsupportedConditionBindings: Object.freeze(unsupportedConditionBindings),

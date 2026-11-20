@@ -53,7 +53,7 @@
 
 import { modelFromText } from './model.js';
 import {
-  ruleWildcardAction, ruleWildcardResource, matchPatterns, ruleDirectIamAdmin, ruleResourcePolicyWrite, ruleObjectAclWrite, ruleDataExfil, ruleDbAuth, ruleKmsDecrypt, classifyContainerReads, undetAllCanonicalS3, undetFindingText, ruleDataReadScoped, denyEntirelyDeniesResource, sparedResourceFullyDeniedElsewhere, allowGrantsSparedResource, survivingSparedContainerReads, ruleDestructive, ruleDetectionImpairment, ruleNotActionAllow, ruleGroupMembership,
+  ruleWildcardAction, ruleWildcardResource, matchPatterns, ruleDirectIamAdmin, ruleResourcePolicyWrite, ruleObjectAclWrite, ruleDataExfil, ruleDbAuth, ruleKmsDecrypt, classifyContainerReads, undetAllCanonicalS3, undetFindingText, ruleDataReadScoped, denyEntirelyDeniesResource, sparedResourceFullyDeniedElsewhere, allowGrantsSparedResource, survivingSparedContainerReads, ruleDestructive, ruleDetectionImpairment, ruleNotActionAllow, ruleGroupMembership, ruleTrafficRouting,
 } from './rules-detectors.js';
 export * from './rules-detectors.js';
 import {
@@ -115,6 +115,7 @@ const RULE_FUNCTIONS = [
   ruleDetectionImpairment,
   ruleNotActionAllow,
   ruleGroupMembership,
+  ruleTrafficRouting,
 ];
 
 // --- Public entry points -----------------------------------------------------

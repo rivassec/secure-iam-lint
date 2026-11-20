@@ -41,13 +41,13 @@ const REQUIRED = {
     28: 'PUBLIC-ACCESS',
     32: 'RESOURCE-SAME-ACCOUNT-GRANT',
     33: 'RESOURCE-SAME-ACCOUNT-GRANT',
-    49: 'PUBLIC-ACCESS',
+    49: 'RESOURCE-CROSS-ACCOUNT', // v1.3.0: a scoped "*" is cross-account, not public
     51: 'RESOURCE-KMS-ACCOUNT-DELEGATION',
     53: 'RESOURCE-CONFUSED-DEPUTY',
   },
   suite3: {
     69: 'PUBLIC-ACCESS',
-    85: 'PUBLIC-ACCESS',
+    85: 'RESOURCE-CROSS-ACCOUNT',
   },
 };
 

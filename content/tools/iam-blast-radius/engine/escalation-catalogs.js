@@ -63,7 +63,9 @@ const PASS_ROLE_SERVICES = Object.freeze([
     service: 'cloudformation',
     principal: 'cloudformation.amazonaws.com',
     id: 'PASSROLE-SERVICE',
-    execActions: Object.freeze(['cloudformation:CreateStack', 'cloudformation:UpdateStack']),
+    // r8 E-1: CreateChangeSet takes a RoleARN too (needs iam:PassRole).
+    execActions: Object.freeze(['cloudformation:CreateStack', 'cloudformation:UpdateStack',
+      'cloudformation:CreateChangeSet']),
   }),
   Object.freeze({
     service: 'sagemaker',
@@ -94,6 +96,13 @@ const PASS_ROLE_SERVICES = Object.freeze([
     principal: 'events.amazonaws.com',
     id: 'PASSROLE-SERVICE',
     execActions: Object.freeze(['events:PutTargets']),
+  }),
+  Object.freeze({
+    // r8 E-1: every schedule names a RoleArn the scheduler assumes (iam:PassRole required).
+    service: 'scheduler',
+    principal: 'scheduler.amazonaws.com',
+    id: 'PASSROLE-SERVICE',
+    execActions: Object.freeze(['scheduler:CreateSchedule', 'scheduler:UpdateSchedule']),
   }),
 ]);
 

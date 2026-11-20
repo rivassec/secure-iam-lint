@@ -472,7 +472,8 @@ test('Principal "*" gated by a positive scoping condition is NOT critical public
     Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole',
     Condition: { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::111122223333:role/App' } },
   }]);
-  const af = arn.findings.find((x) => x.id === 'TRUST-PUBLIC');
+  // R5-5: an exact pin is rated as the named principal.
+  const af = arn.findings.find((x) => x.id === 'TRUST-CROSS-ACCOUNT');
   assert.ok(af);
   assert.notEqual(af.severity, 'critical');
 });
@@ -1604,12 +1605,11 @@ test('S7-4: a truncated aws:PrincipalArn scoping value fails closed (broad), nev
     Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole',
     Condition: { StringEquals: { 'aws:PrincipalArn': 'arn:aws:iam::111122223333:role/App' } },
   }]);
-  const lf = legit.findings.find((x) => x.id === 'TRUST-PUBLIC');
+  // R5-5: a tight pin IS the named principal (TRUST-CROSS-ACCOUNT high), unlike the junk values above.
+  const lf = legit.findings.find((x) => x.id === 'TRUST-CROSS-ACCOUNT');
   assert.ok(lf);
-  // L1-02: a tight pin scores like NAMING that principal (high), never medium -
-  // but it is still described as a specific principal, unlike the junk values above.
   assert.equal(lf.severity, 'high', 'a tight pin scores like the named cross-account form');
-  assert.match(lf.why, /a specific principal/i);
+  assert.match(lf.why, /named directly/i);
 
   // CONTROL 2: an already-broad wildcard ARN stays critical (arnValueNarrows
   // rejects it before this path; unchanged behavior).

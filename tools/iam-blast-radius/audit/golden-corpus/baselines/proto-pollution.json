@@ -10,11 +10,14 @@
       "family": "identity",
       "threshold": "high",
       "partitionAsserted": null,
+      "subjectAccountAsserted": null,
+      "trustedAccountIdsAsserted": null,
       "analysisStatus": "failed",
       "reason": "MALFORMED_INPUT",
       "exitCode": 3,
       "findingsCount": 0,
       "blockingCount": 0,
+      "statementCoverage": null,
       "analysisStates": [
         {
           "analysisState": "malformed",
@@ -59,7 +62,9 @@
             "analysisStatus": "failed",
             "exitCode": 3,
             "blockingCount": 0,
-            "findingsCount": 0
+            "findingsCount": 0,
+            "statementsTotal": null,
+            "statementsWithoutVerdict": null
           },
           "results": [
             {

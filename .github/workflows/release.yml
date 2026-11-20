@@ -76,12 +76,12 @@ jobs:
       # release.yml runs only on a maintainer tag push / approved dispatch, sets no
       # `cache:`, and all inputs come from the committed lockfile - no runtime cache to
       # poison (zizmor confidence: Low).
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.0.0 # zizmor: ignore[cache-poisoning]
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0 # zizmor: ignore[cache-poisoning]
         with:
-          node-version: '24.20.0'
+          node-version: '24.22.1'
           registry-url: 'https://registry.npmjs.org'
 
-      # No npm upgrade step: node 24.20.0 (pinned above) BUNDLES npm 11.19.0, which is
+      # No npm upgrade step: node 24.22.1 (pinned above) BUNDLES npm 11.19.1, which is
       # >= 11.5.1 and performs the OIDC token exchange for trusted publishing. npm's
       # version is thus pinned via the exact, checksum-verified node distribution - no
       # separate `npm install -g` (an unpinned global install) needed. If the node pin

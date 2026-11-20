@@ -75,7 +75,7 @@ test('T1-01: controls keep their scoring', () => {
   assert.equal(find(junk, 'TRUST-PUBLIC').severity, 'high');
   // An exact concrete-account ARN is a genuine single-principal scope (not critical).
   const exact = trust(pub({ ArnEquals: { 'aws:PrincipalArn': `arn:aws:iam::444455556666:role/deploy` } }));
-  assert.notEqual(find(exact, 'TRUST-PUBLIC').severity, 'critical');
+  assert.notEqual(find(exact, 'TRUST-CROSS-ACCOUNT').severity, 'critical'); // R5-5: named form
 });
 
 test('T1-02: resource-side variables read as pinned, not caller-controlled', () => {

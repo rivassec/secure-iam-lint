@@ -103,6 +103,8 @@ export function buildTrustGraph(model, findings) {
       // exact "may assume" overclaim the finding layer removed (trust.js
       // findingsForStatement; threat-model T8, IAM-805 iteration 3).
       if (f.id === 'TRUST-SESSION-CONTROL') continue;
+      // The pods.eks statement already draws its edge via TRUST-SERVICE.
+      if (f.id === 'TRUST-POD-IDENTITY-UNBOUND') continue;
       // IAM-903: an INVALID partial-wildcard Principal-element ARN is fail-closed
       // (marked invalid + a coverage warning); it must NOT draw a can-assume edge.
       // Drawing one would silently expand the invalid pattern into trust for every

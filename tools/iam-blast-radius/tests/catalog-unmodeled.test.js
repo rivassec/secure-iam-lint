@@ -39,7 +39,6 @@ test('every withheld action is a reference WRITE/PERMISSIONS action the catalog 
 
 test('the ec2 escalation primitives the refresh made "known" fail closed in an Allow', () => {
   for (const action of [
-    'ec2:CreateNetworkInterfacePermission',
     'ec2:ModifyVpcEndpointServicePermissions', 'ec2:DisableSnapshotBlockPublicAccess',
   ]) {
     const r = run([allow(action)]);
@@ -47,7 +46,8 @@ test('the ec2 escalation primitives the refresh made "known" fail closed in an A
     assert.ok(codes(r).includes('UNKNOWN_ACTION'), action);
   }
   // F15: now modeled by a named detector - still never CLEAN.
-  for (const action of ['ec2:ModifySnapshotAttribute', 'ec2:ModifyImageAttribute', 'ec2:ModifyInstanceAttribute']) {
+  for (const action of ['ec2:ModifySnapshotAttribute', 'ec2:ModifyImageAttribute', 'ec2:ModifyInstanceAttribute',
+    'ec2:CreateNetworkInterfacePermission']) {
     assert.equal(run([allow(action)]).exitCode, EXIT.FINDINGS, action);
   }
 });

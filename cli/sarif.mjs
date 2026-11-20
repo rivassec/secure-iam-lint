@@ -856,13 +856,32 @@ function stateDetailOf(s) {
   const d = s && s.details;
   if (!d || typeof d !== 'object') return null;
   if (s.code === 'UNKNOWN_ACTION') return { label: 'actions', property: 'unknownActions', list: d.actions };
+  if (s.code === 'NOT_IN_REFERENCE') {
+    return { label: 'actions', property: 'notInReferenceActions', list: d.actions, hints: d.hints };
+  }
   if (s.code === 'UNSUPPORTED_CONDITION') {
     return { label: 'condition keys', property: 'unsupportedConditions', list: d.conditions };
   }
   return null;
 }
 
+// MALFORMED_RESOURCE_ARN reason -> fixed prose (tool-controlled, no markdown chars).
+const MALFORMED_REASON_TEXT = Object.freeze({
+  EMPTY: 'the value is empty',
+  WHITESPACE: 'the value has leading or trailing whitespace',
+  NOT_AN_ARN: 'the value is neither the bare wildcard nor a well-formed ARN',
+  EMPTY_LEADING_SEGMENT: 'the ARN resource part starts with a slash or colon',
+  UNMODELED_SERVICE_GLOB: 'a wildcarded ARN of a service whose resource grammar is not modeled',
+});
+
+function malformedReasonOf(s) {
+  const r = s && s.code === 'MALFORMED_RESOURCE_ARN' && s.details ? s.details.reason : null;
+  return Object.hasOwn(MALFORMED_REASON_TEXT, String(r)) ? String(r) : null;
+}
+
 function stateDetailClause(s) {
+  const reason = malformedReasonOf(s);
+  if (reason) return ` Reason: ${MALFORMED_REASON_TEXT[reason]}.`;
   const detail = stateDetailOf(s);
   if (!detail) return '';
   const { label, list } = detail;
@@ -873,7 +892,20 @@ function stateDetailClause(s) {
     if (safe) tokens.push(safe);
   }
   if (tokens.length === 0) return '';
-  return ` Offending ${label}: ${tokens.join(', ')}${more > 0 ? ` (+${more} more)` : ''}.`;
+  return ` Offending ${label}: ${tokens.join(', ')}${more > 0 ? ` (+${more} more)` : ''}.${hintClause(detail.hints)}`;
+}
+
+// r8 F-2: nearest-name hints ("x -> y"); both sides are policy-derived, so inertLeaf each.
+function hintClause(hints) {
+  const pairs = [];
+  for (const h of Array.isArray(hints) ? hints : []) {
+    const a = inertLeaf(h && h.action, MAX_SID_LEN);
+    const b = inertLeaf(h && h.suggestion, MAX_SID_LEN);
+    if (a && b) pairs.push(`${a} -> ${b}`);
+  }
+  const { shown, more } = capMessageTokens(pairs);
+  if (shown.length === 0) return '';
+  return ` Did you mean: ${shown.join(', ')}${more > 0 ? ` (+${more} more)` : ''}?`;
 }
 
 // A deterministic, one-line per-instance message. Deliberately carries the finding
@@ -1069,6 +1101,17 @@ function stateResultRow(s, uri, occurrence = 0) {
   if (detail) {
     const tokens = inertTokenList(normList(detail.list));
     if (tokens.length > 0) properties[detail.property] = tokens;
+    const hints = Array.isArray(detail.hints) ? detail.hints : [];
+    const sugg = inertTokenList(normList(hints.map((h) => `${h && h.action} -> ${h && h.suggestion}`)));
+    if (sugg.length > 0) properties.nameHints = sugg;
+  }
+  // MALFORMED_RESOURCE_ARN: reason enum + the first offending value, markdown-inert.
+  const malformedReason = malformedReasonOf(s);
+  if (malformedReason) {
+    properties.malformedReason = malformedReason;
+    const v = s.details.value != null ? inertLeaf(s.details.value, MAX_SID_LEN) : '';
+    if (v) properties.offendingValue = v;
+    if (Number.isInteger(s.details.count)) properties.malformedCount = s.details.count;
   }
   // R5-uri-trunc: a sliced (over-length) artifact URI is recorded via a SEPARATE flag, never
   // by mutating the location string. Same treatment as the finding rows below.
@@ -1176,16 +1219,24 @@ function truncationState(budget) {
 // Returns { location, uriTruncated }. The location's artifact-location URI is the sanitized-
 // but-UNMODIFIED (never marker-appended) path; uriTruncated tells the caller to record a
 // SEPARATE properties.uriTruncated flag so a slice is visible without corrupting the URI.
-function locationFor(uri) {
+function locationFor(where) {
   // SECURITY (S2-sarif-sanitize-all): the artifact URI can be attacker-influenced - in
   // the Action a fork PR names the scanned file, and a hostile name could carry control
   // chars / newlines into a SARIF location. Strip them (path punctuation is preserved so
   // a legitimate repo-relative path is not mangled). See sanitizeUri.
-  const { uri: safeUri, truncated } = sanitizeUri(uri);
-  return {
-    location: { physicalLocation: { artifactLocation: { uri: safeUri } } },
-    uriTruncated: truncated,
-  };
+  const w = (where && typeof where === 'object') ? where : { uri: where };
+  const { uri: safeUri, truncated } = sanitizeUri(w.uri);
+  const physicalLocation = { artifactLocation: { uri: safeUri } };
+  // v1.3.0 (Pulumi): optional line region and logical location (URN#property), same sanitizer.
+  if (Number.isInteger(w.startLine) && w.startLine > 0 && w.startLine < 1e7) {
+    physicalLocation.region = { startLine: w.startLine };
+    if (Number.isInteger(w.startColumn) && w.startColumn > 0 && w.startColumn < 1e7) physicalLocation.region.startColumn = w.startColumn;
+  }
+  const location = { physicalLocation };
+  if (isNonEmptyString(w.logical)) {
+    location.logicalLocations = [{ fullyQualifiedName: sanitizeUri(w.logical).uri, kind: 'resource' }];
+  }
+  return { location, uriTruncated: truncated };
 }
 
 // Build the two DISJOINT result groups. Security findings first (in engine order),
@@ -1394,19 +1445,51 @@ function semanticVersion(manifest) {
   return (manifest && manifest.ruleVersion) || '0';
 }
 
+// Pulumi run metadata: only these keys, strings sanitized like a URI (attacker-influenced URNs).
+const RUN_PROPERTY_KEYS = Object.freeze(['scanScope', 'artifact', 'managed', 'warnings']);
+function runPropertiesOf(props) {
+  const out = {};
+  if (!props || typeof props !== 'object') return out;
+  for (const k of RUN_PROPERTY_KEYS) {
+    if (isNonEmptyString(props[k])) out[k] = sanitizeUri(props[k]).uri;
+  }
+  return out;
+}
+
+/**
+ * F-6: how many of a document's statements got no verdict, from the engine coverage.
+ * null when the engine produced no coverage (input rejected, adapter-only result).
+ *
+ * @param {object} result a scan() result
+ * @returns {{total:number, withoutVerdict:number, indexes:number[]}|null}
+ */
+export function statementVerdictCoverage(result) {
+  const s = result && result.coverage && result.coverage.summary;
+  const w = s && s.statementsWithoutVerdict;
+  if (!w || !Number.isInteger(w.count) || !s.statements || !Number.isInteger(s.statements.total)) return null;
+  return {
+    total: s.statements.total,
+    withoutVerdict: w.count,
+    indexes: (Array.isArray(w.indexes) ? w.indexes : []).filter(Number.isInteger),
+  };
+}
+
 /**
  * Build the SARIF 2.1.0 log object for a scan() result. Pure + deterministic.
  *
  * @param {object} result   a scan() result (findings + analysisStates + verdict)
- * @param {object} [opts]    { artifactUri?, file? } - location model inputs
+ * @param {object} [opts]    { artifactUri?, file?, logicalLocation?, startLine?, startColumn?,
+ *   runProperties? } - location model inputs (the last four: Pulumi input)
  * @param {object} [manifest] the version manifest ({ ruleVersion, ... })
  * @returns {object} a SARIF 2.1.0 log
  */
 export function buildSarifLog(result, opts, manifest) {
   const res = result || {};
-  const uri = artifactUri(opts);
+  const o = opts || {};
+  const uri = { uri: artifactUri(o), logical: o.logicalLocation, startLine: o.startLine, startColumn: o.startColumn };
   const { rules, index } = buildRules(res);
   const { results, budget } = buildResults(res, uri, index);
+  const verdicts = statementVerdictCoverage(res);
 
   // DOCUMENT-level fail-closed (S2-sarif-sanitize-all, iteration 4): if buildResults hit the
   // output cap, append ONE truthful analyzer-state result announcing the truncation. It
@@ -1448,6 +1531,10 @@ export function buildSarifLog(result, opts, manifest) {
         findingsCount: typeof res.findingsCount === 'number'
           ? res.findingsCount
           : (Array.isArray(res.findings) ? res.findings.length : 0),
+        // F-6: counts only (null = not analyzed by the engine).
+        statementsTotal: verdicts ? verdicts.total : null,
+        statementsWithoutVerdict: verdicts ? verdicts.withoutVerdict : null,
+        ...runPropertiesOf(o.runProperties),
       },
       results,
     }],
